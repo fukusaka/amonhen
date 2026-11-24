@@ -1,0 +1,17 @@
+[package]
+name = "amonhen-math"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+publish.workspace = true
+license.workspace = true
+
+# Markdown の数式（`$…$`・`$$…$$`・```` ```math ````）を SVG に描く。読み取りと組版は RaTeX（KaTeX の移植）、字形は
+# KaTeX のフォントの輪郭をそのまま `<path>` にする。版は固定し、上げるときは corpus の絵を見比べる。mhchem（`\ce`）は
+# 入れない（既定のフィーチャーを切る）。
+[dependencies]
+ratex-font = "=0.1.16"
+ratex-katex-fonts = "=0.1.16"
+ratex-layout = { version = "=0.1.16", default-features = false }
+ratex-parser = { version = "=0.1.16", default-features = false }
+ratex-types = "=0.1.16"

@@ -289,9 +289,11 @@ macOS アプリに追いつく（1 つの機能を 1 つの pull request で、�
 - [x] 75. アプリのメニューの Commit・Commit and Push・Stage All・Set Upstream…・Rebase…・Go to HEAD・Find in History… をコマンドに。Merge Branches… と Rebase… で History で選んでいるコミットも選べる
 - [x] 76. コミット情報の右クリック（ID・短い ID・件名・メッセージ・git show のコピー、Edit Message…）と、名前を押してその人で History を探す
 - [x] 77. コミットのメッセージの URL とコミット ID をリンクに、トレーラーを分けて並べ、git notes（エンジンがあれば）、History の検索の語に印
+- [x] 78. コミット情報の Tag・Merged Tag の行（タガー・件名・署名）、merge で取り込んだコミットの数、署名の形式と指紋
 - [x] 79. merge を 1 つずつ畳む・開く（右クリック・←/→）、すべて畳む・すべて開く。アプリ・TUI と同じファイルにリポジトリごとに覚える
 - [x] 80. History と編集モードで、コミットを別のコミットに重ねて落とすとそれにまとめる（その上へ動かして squash にした編集モードを開く）
 - [x] 81. Working Copy でいくつものファイルを選ぶ（⌘・Ctrl クリック、Shift クリック、Shift+↑↓）。Space・⌫・行のボタン・Stash… は選んだものすべてに効く
 - [x] 82. 途中の操作の行で、何をどこへしている途中か（何手目か）と、なぜ止まり次に何をするかを言う（エンジンがあれば。アプリの帯と同じ）。revert には Skip を出さない
 - [x] 83. 見分けられる失敗を分かる言葉で知らせ、アプリと同じ次の一手（Pull…・Open Working Copy・Set Upstream…・Open Worktree・Open in Terminal・Try Again）と、Details に助言を
+- [x] 85. 編集モードで p・r・s・f・d・e で行のすることを決め、行の下の線を引いて古いコミットを取り込む・手を付けていない古いものを外す
 - [x] 86. History をアプリと同じに: 最初はすべてのブランチ、ブランチの History は上流も、「N branches」、検索の ▾、「3 / 10」の件数、祖先を最初から目立たせる、中身を取りすぎる検索から Fetching and Folders へ

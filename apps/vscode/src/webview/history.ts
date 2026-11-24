@@ -928,6 +928,9 @@ export function createHistoryView(): View {
         root.classList.add('editing');
         editMode.open(message.rows, message.original, message.editMessageAt);
         break;
+      case 'editMore':
+        editMode.more(message.rows);
+        break;
       case 'editPreview':
         editMode.preview(message.key, message.lines, message.conflicts, message.stacked);
         break;

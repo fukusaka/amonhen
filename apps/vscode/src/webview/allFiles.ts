@@ -333,6 +333,8 @@ interface MdRun {
   /** GitHub 独自の絵文字（`:octocat:` などの画像だけのもの）。`text` を薄い札で見せる */
   custom_emoji?: string;
   line_break?: boolean;
+  /** 文中の数式を描けなかった理由（`text` は書いたままの原文で、`code` の印つき） */
+  math_error?: string;
 }
 type MdAlign = 'left' | 'center' | 'right';
 interface MdCell {
@@ -349,6 +351,7 @@ type MdBlock =
   | { kind: 'paragraph'; runs: MdRun[]; align?: MdAlign }
   | { kind: 'code'; language: string; text: string; syntax?: [number, number, number][][] }
   | { kind: 'diagram'; language: string; text: string; error?: string }
+  | { kind: 'math'; text: string; error?: string }
   | { kind: 'quote'; alert?: string; blocks: MdBlock[] }
   | { kind: 'list'; start?: number; items: { task?: boolean; blocks: MdBlock[] }[] }
   | { kind: 'table'; aligns: string[]; head: MdRun[][]; rows: MdRun[][][] }
@@ -405,6 +408,7 @@ function renderRuns(runs: readonly MdRun[]): Node[] {
       return chip;
     }
     let node: HTMLElement = el(run.kbd ? 'kbd' : run.code ? 'code' : 'span', '', run.text);
+    if (run.math_error) node.title = run.math_error;
     if (run.bold) node = wrapIn('strong', node);
     if (run.italic) node = wrapIn('em', node);
     if (run.strike) node = wrapIn('s', node);
@@ -502,6 +506,13 @@ function renderBlock(block: MdBlock): HTMLElement {
       // 図（mermaid など）は、まだ描かずにコードとして見せる
       const pre = el('pre', 'md-code');
       pre.title = block.error ? `Diagram (${block.language}): ${block.error}` : `Diagram (${block.language}), shown as its code`;
+      pre.append(el('code', '', block.text));
+      return pre;
+    }
+    case 'math': {
+      // 数式は、まだ描かずに TeX をコードとして見せる（文中の式は原文がコードの文字で来る）
+      const pre = el('pre', 'md-code');
+      pre.title = block.error ? `Math: ${block.error}` : 'Math, shown as its TeX';
       pre.append(el('code', '', block.text));
       return pre;
     }

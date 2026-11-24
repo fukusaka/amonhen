@@ -261,7 +261,7 @@ GTK4 のアプリは macOS のアプリと同じふるまいをめざす。わ�
 | いくつものコミットを選ぶ（範囲・2 つ・飛び飛び） | ✓ | ✓ | ✓ | ✓ | △ | ✓ | VSCode: エンジンがあるとき。<br>CLI: 2 つは `diff <rev> <rev>`。<br>TUI: `m`・Shift-↑↓・Ctrl か Alt のクリック。 |
 | 選んだいくつもの ref の History | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | CLI: `log --branch` を重ねる。<br>Windows: サイドバーで ref を選ぶとその History、Ctrl+クリックで ref を足す・外す。View に All Branches と Current Branch。<br>TUI: サイドバーの `v` で ref に印をつけると、History はそれらから辿れるものだけ。Esc で印を外す。ref を開くとそのコミットを選ぶ。 |
 | コミットのメニュー: checkout・新しいブランチやタグ・cherry-pick・revert・ID のコピー | ✓ | ✓ | ✓ | ✓ | △ | ✓ | CLI: `amonhen run` から。<br>TUI: `c`・`b`・`T`・`y`・`v`・`Y`（OSC 52 で端末のクリップボードへ）。 |
-| 編集モード（pick・reword・squash・fixup・drop・edit、ドラッグで並べ替え） | ✓ | ✓ | ✓ | ✓ | △ | ✓ | VSCode: エンジンがあるとき。ないときは 1 つずつ。<br>CLI: `amonhen run` から。<br>TUI: `E` で画面に重ねる。`J` `K` で行を動かす。 |
+| 編集モード（pick・reword・squash・fixup・drop・edit、ドラッグで並べ替え） | ✓ | ✓ | ✓ | ✓ | △ | ✓ | VSCode: エンジンがあるとき。ないときは 1 つずつ。p・r・s・f・d・e で行のすることを決め、行の下の線を引いて古いコミットを取り込む・手を付けていないものを外す。編集モードは History の代わりに出す一覧。<br>CLI: `amonhen run` から。<br>TUI: `E` で画面に重ねる。`J` `K` で行を動かす。 |
 | 書き換えの見込み（積み重ね・push 済みのブランチ、コンフリクトの見込み） | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | VSCode: daemon 越し。ほかのブランチの rebase では、アプリと同じく代わりにコンフリクトの見込みを出す。<br>CLI: `rewrite-preview`。 |
 | 近道: Edit Message…・Squash into Previous…・Drop…・Combine N…・コミットのドラッグ | ✓ | ✓ | ✓ | ✓ | △ | ✓ | VSCode: エンジンがあれば編集モードを開く。ないときはすぐ書き換え、Combine N Commits はない。コミットを行の間に落とすと動かし、行に重ねて落とすとそのコミットにまとめる（エンジンがあれば。History と編集モードで）。Webview は外への落としを知れないので、外へ出して drop はない。<br>CLI: `amonhen run` から。<br>TUI: `e` でメッセージ、`F` で親にまとめる、`X` で Drop、選んだコミットの `E` で Combine N。merge と rebase はサイドバーの `m` `r`。コミットを別のコミットへドラッグすると、動かすかまとめるかを聞く。 |
 | コミットを分ける | ✓ | ✓ | ✓ | ✓ | △ | ✓ | CLI: `amonhen run` から。<br>TUI: History の `\|`（先に確かめる）。Working Copy で止まる。 |
@@ -279,13 +279,14 @@ GTK4 のアプリは macOS のアプリと同じふるまいをめざす。わ�
 | hunk の前後を広げる・ファイル全体を出す | ✓ | ✓ | ✓ | ✓ | n/a | ✓ | VSCode: エンジンがあれば。hunk の見出しの ⇕ でそのファイルを 20 行広げ、ファイル全体は ⋯ の Show Whole File。<br>TUI: `+` で今見ているファイルの前後を 20 行広げ、`F` で全体を出す。 |
 | 空白を無視する（行末・量の違い・すべて） | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | VSCode: エンジンがあれば。<br>CLI: `show -w`・`-b`・`--ignore-space-at-eol`。<br>TUI: 詳細の `w` で順に替える。 |
 | 画像を比べる（並べる・スワイプ・オニオンスキン・違うピクセル） | ✓ | ✓ | ✓ | ✓ | n/a | — | VSCode: 20 MB を超える画像は比べない。 |
+| 透けた絵の下の市松模様を明るく・暗く（既定は絵の色から） | ✓ | ✓ | — | — | n/a | — | |
 | すべてのファイル: その時点の木と、コミットの行に印を付けたファイルの中身 | ✓ | ✓ | ✓ | ✓ | n/a | ✓ | VSCode: エンジンがあれば。<br>TUI: History の `a`。画面に重ねる。プレビューはない（中身は文字で出す）。 |
-| すべてのファイルのプレビュー: 拡大縮小できる画像・SVG の絵とモバイル向けの確認・整形した Markdown・バイナリの Quick Look | ✓ | ✓ | △ | △ | n/a | — | VSCode: そのほかのバイナリは Quick Look の代わりに VSCode のエディタで開く。モバイル向けの確認はすべての部品をまとめて並べ、1 つを選んで元の絵と並べる切り替えはない。Mermaid の図はコードのまま。<br>GTK4: Quick Look の代わりに GNOME のプレビュー（か既定のアプリ）。SVG の絵は librsvg で描く。<br>Windows: 拡大縮小できる画像・SVG の絵とモバイル向けの確認・整形した Markdown とその中の Mermaid・DOT の図（Direct2D の SVG は文字を描かないので resvg で描く）。部品の切り替えはパスの帯にある。gantt の時間帯はまだ設定にない（UTC）。バイナリのプレビューはまだない。コミットの中の画像・`<picture>`・`align`・画像の大きさ・`<details>` を描き、DOT の画像ノードも絵を出す。文の途中の画像はそこで行が切れ、`<kbd>` はキーの札でなく等幅の文字、`<sub>`・`<sup>` は飾りのない文字。 |
+| すべてのファイルのプレビュー: 拡大縮小できる画像・SVG の絵とモバイル向けの確認・整形した Markdown・バイナリの Quick Look | ✓ | ✓ | △ | △ | n/a | — | VSCode: そのほかのバイナリは Quick Look の代わりに VSCode のエディタで開く。モバイル向けの確認はすべての部品をまとめて並べ、1 つを選んで元の絵と並べる切り替えはない。Mermaid の図と数式はコードのまま（エンジンは数式を描かない）。<br>GTK4: Quick Look の代わりに GNOME のプレビュー（か既定のアプリ）。SVG の絵は librsvg で描く。<br>Windows: 拡大縮小できる画像・SVG の絵とモバイル向けの確認・整形した Markdown とその中の Mermaid・DOT の図（Direct2D の SVG は文字を描かないので resvg で描く）。部品の切り替えはパスの帯にある。gantt の時間帯はまだ設定にない（UTC）。数式は TeX をコードとして見せる。バイナリのプレビューはまだない。コミットの中の画像・`<picture>`・`align`・画像の大きさ・`<details>` を描き、DOT の画像ノードも絵を出す。文の途中の画像はそこで行が切れ、`<kbd>` はキーの札でなく等幅の文字、`<sub>`・`<sup>` は飾りのない文字。 |
 | すべてのファイル: Android の VectorDrawable の絵（色はコミットの `res` から、animated-vector は動く前の絵） | ✓ | ✓ | ✓ | — | n/a | — | VSCode: VectorDrawable の XML はテキストで出す。 |
 | ファイルの見出しのメニュー（Blame・File History・パスのコピー・開く） | ✓ | ✓ | ✓ | ✓ | n/a | ✓ | VSCode: 右クリックと ⋯ の Show Whole File・Blame・File History・この版／前の版に戻す・Copy Path（Copy Path 以外はエンジンがあれば）と、VSCode の差分のエディターで開く。この時点のファイルを開くはない。<br>TUI: 見ているファイルの `B`・`L`・`Y`（パスのコピー）・`e`（git のエディタで開く）。 |
 | 選んだものの差分（範囲をまとめる・A..B / A...B・飛び飛び） | ✓ | ✓ | ✓ | ✓ | △ | ✓ | VSCode: エンジンがあるとき。<br>CLI: `diff <rev> <rev>`。<br>TUI: `m` と Shift-↑↓（か Ctrl・Alt を押しながらクリック）で選ぶ。`x` で向きを入れ替え、`.` で merge-base から。 |
 | 選んだものの操作（cherry-pick・revert・squash・ID のコピー） | ✓ | ✓ | △ | ✓ | △ | ✓ | VSCode: エンジンがあるとき。<br>CLI: `amonhen run` から。<br>Windows: 続いたコミットをまとめるときは、ダイアログでメッセージを直してすぐ書き換える（編集モードはない）。<br>TUI: 印をつけたコミットに `y` `v`、`E` でまとめた形の編集モード、`Y` で ID のコピー、Save as Patch で保存。 |
-| 署名のポップオーバー | ✓ | ✓ | ✓ | △ | n/a | ✓ | VSCode: 詳細の Signature の行（様子・説明・署名した人と鍵）。ポップオーバーはない。コミットに付いたタグの署名は出さない。<br>TUI: 確かめた結果を詳細に出す。ポップオーバーはない。 |
+| 署名のポップオーバー | ✓ | ✓ | ✓ | ✓ | n/a | ✓ | VSCode: 詳細の Signature の行（様子・説明・署名した人・形式・鍵。指紋はツールチップ）と、タガー・件名・署名を添えた Tag・Merged Tag の行（エンジンがあれば）。ポップオーバーはない。<br>TUI: 確かめた結果を詳細に出す。ポップオーバーはない。 |
 | 単語の強調と構文の色 | ✓ | ✓ | ✓ | ✓ | n/a | ✓ | VSCode: 構文の色はエンジンがあれば、差分を出した後に付く。 |
 
 ## Blame・File History

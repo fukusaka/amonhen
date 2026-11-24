@@ -1,6 +1,6 @@
 //! Markdown を、FE が自前で組み立てて見せるための形（見出し・段落・リスト・引用・表・コードなどの並び）にする
 //! （History の「すべてのファイル」の整形表示）。読み取りは pulldown-cmark（CommonMark と GitHub の拡張の表・取り消し線・
-//! タスクリスト・脚注）。HTML は GitHub が描くものだけを同じ形に移す（`html`。太字・リンク・画像・表・`<details>`
+//! タスクリスト・脚注・数式）。数式は `math` で描く。HTML は GitHub が描くものだけを同じ形に移す（`html`。太字・リンク・画像・表・`<details>`
 //! など。`style`・`class`・`<script>`・フォームは描かず、知らないタグは落として中の文字を残す）。
 
 use pulldown_cmark::{
@@ -62,6 +62,18 @@ pub struct Run {
     /// 段落の中の改行（`text` は空）。
     #[serde(skip_serializing_if = "std::ops::Not::not")]
     pub line_break: bool,
+    /// 文中の数式（`$…$`・`` $`…`$ ``、見出し・表のマスの中の `$$…$$`）を描いた絵。`text` は書いたままの原文
+    /// （`$x^2$`）で、`code` が付いているので、絵を描かない FE はそれをコードとして見せる。
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub math: Option<crate::math::MathPicture>,
+    /// 文中の数式を描けなかった理由（FE は原文をコードとして見せ、理由を添える）。
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub math_error: Option<String>,
+    /// 文中の数式の TeX（区切りの `$` を除いたもの）と、ブロックの組み方で描くか（`math::render_all` が描く）。
+    #[serde(skip)]
+    pub(crate) math_tex: Option<String>,
+    #[serde(skip)]
+    pub(crate) math_display: bool,
 }
 
 /// リストの 1 項目。
@@ -152,6 +164,17 @@ pub enum Block {
         /// 近いもので描いたことを伝える一文（FE は絵の下に添える）。
         #[serde(skip_serializing_if = "Option::is_none")]
         note: Option<String>,
+        #[serde(skip_serializing_if = "Option::is_none")]
+        error: Option<String>,
+    },
+    /// 数式のブロック（```` ```math ````・`$$…$$`）。`text` は TeX。`math` の絵（`svg`・`width`・`height`・`depth`、
+    /// 大きさは em）は色を CSS の変数のままにしたもので、FE は描くときに `math::colorize` で文字の色を当てる。描けな
+    /// ければ絵はなく、`error` に理由（FE は `text` をコードとして見せ、理由を添える）。`math` フィーチャーのない
+    /// 作りでは、どちらもない（FE は `text` をコードとして見せる）。
+    Math {
+        text: String,
+        #[serde(flatten, skip_serializing_if = "Option::is_none")]
+        math: Option<crate::math::MathPicture>,
         #[serde(skip_serializing_if = "Option::is_none")]
         error: Option<String>,
     },
@@ -405,6 +428,14 @@ fn flatten(block: Block) -> Vec<Run> {
             code: true,
             ..Run::default()
         }),
+        // 表のマス・見出しの中では、文中の式としてブロックの組み方で描く
+        Block::Math { text, .. } => out.push(Run {
+            text: format!("$${text}$$"),
+            code: true,
+            math_tex: Some(text),
+            math_display: true,
+            ..Run::default()
+        }),
         Block::Quote { blocks, .. }
         | Block::Footnote { blocks, .. }
         | Block::Details { blocks, .. } => {
@@ -630,6 +661,7 @@ impl Builder {
             && last.image.is_none()
             && last.footnote.is_none()
             && !last.line_break
+            && last.math_tex.is_none()
             // キーはタグごとに 1 つの札（`<kbd>A</kbd><kbd>B</kbd>` を 1 つにしない）。
             && !(last.kbd && run.kbd && self.kbd_break)
             && same_style(last, &run)
@@ -645,6 +677,66 @@ impl Builder {
         self.runs.push(Run {
             line_break: true,
             ..Run::default()
+        });
+    }
+
+    /// 文中の数式。`raw` は書いたままの原文（描けない FE はコードとして見せる）、`tex` は TeX。
+    fn inline_math(&mut self, raw: &str, tex: String, display: bool) {
+        if self.style.image.is_some() {
+            // 画像の代わりの文の中は文字のまま
+            self.push_run(raw, false);
+            return;
+        }
+        self.kbd_break = false;
+        self.runs.push(Run {
+            text: raw.to_owned(),
+            code: true,
+            link: self.style.links.last().cloned(),
+            math_tex: Some(tex),
+            math_display: display,
+            ..Run::default()
+        });
+    }
+
+    /// `$$…$$`。段落の中なら段落を分けて数式のブロックにする（MathJax・GitHub と同じく、独立した行に中央寄せで
+    /// 描く）。見出し・表のマスの中は文中の式（ブロックの組み方）。
+    fn display_math(&mut self, raw: &str, tex: String) {
+        if self.style.image.is_some() {
+            self.push_run(raw, false);
+            return;
+        }
+        let place = self.container().map(|i| &self.stack[i]);
+        match place {
+            Some(Open::Paragraph) => {
+                let runs = tidy(std::mem::take(&mut self.runs));
+                if !runs.is_empty() {
+                    self.add(Block::Paragraph {
+                        runs,
+                        align: Align::None,
+                    });
+                }
+            }
+            Some(
+                Open::Heading(_)
+                | Open::Cell
+                | Open::Tag(
+                    _,
+                    Elem::Summary(_)
+                    | Elem::Cell(_)
+                    | Elem::Box {
+                        heading: Some(_), ..
+                    },
+                ),
+            ) => {
+                self.inline_math(raw, tex, true);
+                return;
+            }
+            _ => self.boundary(),
+        }
+        self.add(Block::Math {
+            text: tex,
+            math: None,
+            error: None,
         });
     }
 
@@ -1304,6 +1396,7 @@ pub fn parse_with_images(
 ) -> Vec<Block> {
     let images = images.map(|i| i.bounded());
     let mut blocks = parse_blocks(text, zone, images.as_ref());
+    crate::math::render_all(&mut blocks);
     for block in &mut blocks {
         linkify_block(block, github);
     }
@@ -1319,9 +1412,10 @@ fn parse_blocks(
         | Options::ENABLE_TABLES
         | Options::ENABLE_STRIKETHROUGH
         | Options::ENABLE_TASKLISTS
-        | Options::ENABLE_FOOTNOTES;
+        | Options::ENABLE_FOOTNOTES
+        | Options::ENABLE_MATH;
     let mut b = Builder::new();
-    for event in Parser::new_ext(text, options) {
+    for (event, range) in Parser::new_ext(text, options).into_offset_iter() {
         match event {
             Event::Start(tag) => match tag {
                 Tag::Paragraph => {
@@ -1463,6 +1557,14 @@ fn parse_blocks(
                             if text.ends_with('\n') {
                                 text.pop();
                             }
+                            if language.eq_ignore_ascii_case("math") {
+                                b.add(Block::Math {
+                                    text,
+                                    math: None,
+                                    error: None,
+                                });
+                                continue;
+                            }
                             let block = match crate::diagram::draw_with(
                                 &language,
                                 &text,
@@ -1573,6 +1675,27 @@ fn parse_blocks(
                     b.push_run(&text, true);
                 }
             }
+            Event::InlineMath(tex) | Event::DisplayMath(tex) => {
+                let raw = text.get(range.clone()).unwrap_or_default();
+                let display = raw.starts_with("$$");
+                let digit_after = text
+                    .get(range.end..)
+                    .is_some_and(|rest| rest.starts_with(|c: char| c.is_ascii_digit()));
+                if let Some(html) = &mut b.html_block {
+                    html.push_str(raw);
+                } else if let Some(pre) = b.pre() {
+                    pre.push_str(raw);
+                } else if b.tokenizer.in_raw() {
+                    // 読まない HTML の要素（`<script>` など）の中
+                } else if !display && digit_after {
+                    // 閉じの `$` のすぐ後が数字なら数式にしない（`$5/$10` の値段。pandoc と同じ決まり）
+                    b.push_run(raw, false);
+                } else if display {
+                    b.display_math(raw, tex.trim().to_owned());
+                } else {
+                    b.inline_math(raw, code_span(&tex).to_owned(), false);
+                }
+            }
             Event::Html(text) => match &mut b.html_block {
                 Some(html) => html.push_str(&text),
                 None => b.html(&text),
@@ -1598,10 +1721,27 @@ fn parse_blocks(
                 footnote: Some(label.to_string()),
                 ..Run::default()
             }),
-            _ => {}
         }
     }
     b.finish()
+}
+
+/// GitHub の `` $`…`$ `` の中身（コードの区切りと同じく、両端の同じ数の `` ` `` を除き、両端が空白なら 1 つずつ除く）。
+/// そうでなければそのまま。
+fn code_span(tex: &str) -> &str {
+    let ticks = tex.len() - tex.trim_start_matches('`').len();
+    if ticks == 0 || tex.len() < ticks * 2 + 1 {
+        return tex;
+    }
+    let tail = tex.len() - tex.trim_end_matches('`').len();
+    if tail != ticks {
+        return tex;
+    }
+    let inner = &tex[ticks..tex.len() - ticks];
+    match inner.strip_prefix(' ').and_then(|i| i.strip_suffix(' ')) {
+        Some(trimmed) if !trimmed.trim().is_empty() => trimmed,
+        _ => inner,
+    }
 }
 
 /// `parse_with` の結果の JSON（FE 向け）。
