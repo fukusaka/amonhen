@@ -1260,10 +1260,19 @@ pub fn render(
                 // 外へ（u）の半分の大きさと、脇へ（v）の半分の大きさ
                 let ext = (u.0 * ln.w).abs().max((u.1 * ln.h).abs()) / 2.0;
                 let mut span = (v.0 * ln.w).abs().max((v.1 * ln.h).abs()) / 2.0;
+                // 上下の輪は、ランクの間の線が出入りする真ん中を空けて脇へ寄せる
+                let mut aside = 0.0;
                 if port_side.is_some() {
                     span = span.min(ext * 1.5);
+                    if u.0 == 0.0 {
+                        aside = span * 0.6 * -u.1;
+                        span *= 0.35;
+                    }
                 }
-                let at = |p: f64, q: f64| (c.0 + u.0 * p + v.0 * q, c.1 + u.1 * p + v.1 * q);
+                let at = |p: f64, q: f64| {
+                    let q = q + aside;
+                    (c.0 + u.0 * p + v.0 * q, c.1 + u.1 * p + v.1 * q)
+                };
                 path = if ortho {
                     let r = ext + size;
                     vec![
