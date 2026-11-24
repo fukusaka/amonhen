@@ -236,6 +236,8 @@ export interface DetailsExtras {
   signature?: SignatureView;
   /** そのコミットを親に持つコミット */
   children: string[];
+  /** git notes（refs/notes/commits）。なければ undefined */
+  notes?: string;
 }
 
 export type HistoryWebviewMessage =

@@ -1298,6 +1298,8 @@ First release.
 
 - The Working Copy diff can ignore whitespace (at line ends, changes in amount or all), with the engine. Lines and
   hunks aren't staged or discarded meanwhile.
+- In the commit details, URLs and commit IDs in the message are links, the trailers are listed apart from the body,
+  git notes follow the message (with the engine), and History's search terms are marked.
 - The app menus' Commit, Commit and Push, Stage All, Set Upstream…, Rebase…, Go to HEAD and Find in History… are
   commands, so they can be bound to keys; Merge Branches… and Rebase… also offer the commit selected in History.
 - The commit details' right-click copies the ID, the short ID, the subject, the message or a git show command, and
