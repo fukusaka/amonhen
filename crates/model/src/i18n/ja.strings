@@ -2502,6 +2502,8 @@
 "This formula couldn’t be drawn" = "この数式は描けませんでした";
 "This formula is too long to draw ({limit} bytes at most)" = "この数式は長すぎて描けません（{limit} バイトまで）";
 "This formula is too large to draw" = "この数式は大きすぎて描けません";
+"{message} (line {line}, column {column})" = "{message}（{line} 行目の {column} 文字目）";
+"{message} (column {column})" = "{message}（{column} 文字目）";
 "images that can’t be read are drawn as empty frames" = "読めない画像は空の枠";
 "unknown shapes are drawn as boxes" = "知らない形は箱";
 "orthogonal edges are drawn as polylines" = "直角の線（ortho）は折れ線";

@@ -207,7 +207,24 @@ fn render_one(tex: &str, display: bool) -> Result<MathPicture, String> {
             height: f.height,
             depth: f.depth,
         }),
-        Err(e @ Error::Parse { .. }) => Err(e.describe(tex).unwrap_or_default()),
+        // 原文は FE が見せるので、理由と位置だけ
+        Err(e @ Error::Parse { .. }) => {
+            let message = e.message().unwrap_or_default();
+            Err(match e.position(tex) {
+                Some((line, column)) if tex.contains('\n') => amonhen_model::tr!(
+                    "{message} (line {line}, column {column})",
+                    message = message,
+                    line = line,
+                    column = column
+                ),
+                Some((_, column)) => amonhen_model::tr!(
+                    "{message} (column {column})",
+                    message = message,
+                    column = column
+                ),
+                None => message.to_owned(),
+            })
+        }
         Err(Error::TooLong) => Err(amonhen_model::tr!(
             "This formula is too long to draw ({limit} bytes at most)",
             limit = amonhen_math::MAX_SOURCE
@@ -423,14 +440,22 @@ mod tests {
         };
         assert!(runs[1].math.is_none() && runs[1].code);
         assert_eq!(runs[1].text, "$\\nope{x}$");
-        assert!(runs[1].math_error.as_deref().is_some_and(|e| !e.is_empty()));
+        let inline = runs[1].math_error.as_deref().unwrap();
+        assert!(
+            inline.contains("nope") && inline.ends_with("(column 1)"),
+            "{inline}"
+        );
         let Block::Math { text, math, error } = &blocks[1] else {
             panic!("{blocks:?}")
         };
         assert_eq!(text, "\\frac{1}{2");
         assert!(math.is_none());
         let error = error.as_deref().unwrap();
-        assert!(error.contains("\\frac{1}{2\n"), "{error}");
+        // 原文はもう一度見せない（FE がコードとして見せる）
+        assert!(
+            !error.contains("\\frac") && !error.contains('\n'),
+            "{error}"
+        );
         // 長すぎる式
         let long = format!("$$\n{}\n$$", "x+".repeat(amonhen_math::MAX_SOURCE));
         let blocks = parse(&long);

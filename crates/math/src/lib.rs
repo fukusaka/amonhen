@@ -62,29 +62,29 @@ pub enum Error {
 }
 
 impl Error {
-    /// 誤りの文と、原文の中で誤りを ^ で指した行（位置がわかるとき）。
-    pub fn describe(&self, tex: &str) -> Option<String> {
-        let Error::Parse { message, at } = self else {
+    /// 書き方の誤りの文（1 行目だけ。原文や ^ の行は含めない。FE は原文を別に見せる）。
+    pub fn message(&self) -> Option<&str> {
+        let Error::Parse { message, .. } = self else {
             return None;
         };
-        let mut out = message.clone();
-        if let Some(at) = *at
-            && at <= tex.len()
-            && tex.is_char_boundary(at)
-        {
-            let line_start = tex[..at].rfind('\n').map_or(0, |i| i + 1);
-            let line_end = tex[at..].find('\n').map_or(tex.len(), |i| at + i);
-            let line = &tex[line_start..line_end];
-            let column = tex[line_start..at].chars().count();
-            if line.chars().count() <= 200 {
-                out.push('\n');
-                out.push_str(line);
-                out.push('\n');
-                out.push_str(&" ".repeat(column));
-                out.push('^');
-            }
+        message.lines().next().map(str::trim)
+    }
+
+    /// 書き方の誤りの、原文 `tex` の中の位置（1 から数えた行と、その行の中の文字の位置）。
+    pub fn position(&self, tex: &str) -> Option<(usize, usize)> {
+        let Error::Parse { at: Some(at), .. } = self else {
+            return None;
+        };
+        let at = *at;
+        if at > tex.len() || !tex.is_char_boundary(at) {
+            return None;
         }
-        Some(out)
+        let before = &tex[..at];
+        let line_start = before.rfind('\n').map_or(0, |i| i + 1);
+        Some((
+            before.matches('\n').count() + 1,
+            before[line_start..].chars().count() + 1,
+        ))
     }
 }
 
@@ -232,9 +232,14 @@ mod tests {
         let e = render(r"\frac{1}{2", true).unwrap_err();
         assert!(matches!(e, Error::Parse { .. }), "{e:?}");
         let e = render(r"x + \unknowncommand{y}", true).unwrap_err();
-        let text = e.describe(r"x + \unknowncommand{y}").unwrap();
-        assert!(text.contains("unknowncommand"), "{text}");
-        assert!(text.contains("\n    ^"), "{text}");
+        let text = e.message().unwrap();
+        assert!(
+            text.contains("unknowncommand") && !text.contains('\n'),
+            "{text}"
+        );
+        assert_eq!(e.position(r"x + \unknowncommand{y}"), Some((1, 5)));
+        let e = render("a\\\\\n  \\nope", true).unwrap_err();
+        assert_eq!(e.position("a\\\\\n  \\nope"), Some((2, 3)));
     }
 
     #[test]
