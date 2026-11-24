@@ -113,6 +113,16 @@ fn measure(text: &str, font: &Font) -> f64 {
 }
 
 impl Text {
+    /// 枠の中に収めるときの幅: 文字の行は、アプリの書体が測り（Arial）より広くてもはみ出さないよう
+    /// `TEXT_SLACK` 倍にする（表は升の中で見込んであるのでそのまま）。
+    pub fn fit_width(&self) -> f64 {
+        if self.html.is_some() {
+            self.width
+        } else {
+            self.width * crate::html::TEXT_SLACK
+        }
+    }
+
     pub fn is_empty(&self) -> bool {
         self.html.is_none()
             && self

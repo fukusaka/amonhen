@@ -26,6 +26,8 @@ const PATCH: f64 = 40.0;
 const INCH: f64 = 72.0;
 const PAD: f64 = 8.0;
 const FONT_SIZE: f64 = 14.0;
+/// クラスタの題の左右の余白（アプリの書体のゆとりとは別に）。
+const TITLE_PAD: f64 = 8.0;
 /// クラスタの中の余白。
 const CLUSTER_MARGIN: f64 = 8.0;
 
@@ -477,7 +479,15 @@ pub fn render(
             }
         };
         let (mut lw, mut lh) = match (&label, &rec) {
-            (Some(t), _) if !t.is_empty() => (t.width + 2.0 * mx, t.height + 2.0 * my),
+            // 枠のある形は、アプリの書体が広くても文字が線に触れないように
+            (Some(t), _) if !t.is_empty() => {
+                let tw = if matches!(spec.kind, Kind::Plain) {
+                    t.width
+                } else {
+                    t.fit_width()
+                };
+                (tw + 2.0 * mx, t.height + 2.0 * my)
+            }
             (_, Some(f)) => (f.w, f.h),
             _ => (0.0, 0.0),
         };
@@ -697,7 +707,8 @@ pub fn render(
         let tail_label = mk("taillabel", &end_font, &mut ctx);
         let xlabel = mk("xlabel", &font, &mut ctx);
         let size = label.as_ref().map(|t| {
-            let (w, h) = (t.width + 4.0, t.height + 2.0);
+            // 線の脇に置くので、アプリの書体が広くても線に重ならないように
+            let (w, h) = (t.fit_width() + 4.0, t.height + 2.0);
             if dir.sideways() { (h, w) } else { (w, h) }
         });
         let off = |node: usize, port: Option<&str>| -> f64 {
@@ -766,9 +777,9 @@ pub fn render(
             .value("label")
             .filter(|v| !v.text.is_empty())
             .map(|v| label_text(v, &names, &font, &mut ctx, scheme.as_deref()));
-        let (lw, lh) = label
-            .as_ref()
-            .map_or((0.0, 0.0), |t| (t.width + 8.0, t.height + 4.0));
+        let (lw, lh) = label.as_ref().map_or((0.0, 0.0), |t| {
+            (t.fit_width() + 2.0 * TITLE_PAD, t.height + 4.0)
+        });
         let margin = a
             .num("margin")
             .map_or(CLUSTER_MARGIN, |m| m.clamp(0.0, 200.0));
@@ -1018,8 +1029,8 @@ pub fn render(
         if let Some(t) = &cv.label {
             let margin = lclusters[ci].margin;
             let cx = match cv.just {
-                'l' => b[0] + margin + t.width / 2.0,
-                'r' => b[2] - margin - t.width / 2.0,
+                'l' => b[0] + margin + t.fit_width() / 2.0,
+                'r' => b[2] - margin - t.fit_width() / 2.0,
                 _ => (b[0] + b[2]) / 2.0,
             };
             let cy = if cv.loc_bottom {
@@ -1028,9 +1039,9 @@ pub fn render(
                 b[1] + margin / 2.0 + 2.0 + t.height / 2.0
             };
             title_rects.push([
-                cx - t.width / 2.0 - 4.0,
+                cx - t.fit_width() / 2.0 - 4.0,
                 cy - t.height / 2.0 - 1.0,
-                cx + t.width / 2.0 + 4.0,
+                cx + t.fit_width() / 2.0 + 4.0,
                 cy + t.height / 2.0 + 1.0,
             ]);
             clusters_out.push_str(&text_svg(

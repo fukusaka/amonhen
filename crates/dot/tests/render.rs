@@ -233,6 +233,70 @@ fn defaults_stay_readable_on_given_grounds() {
     );
 }
 
+/// 最初の `<rect`・`<ellipse` などの属性の数。
+fn attr_num(s: &str, name: &str) -> f64 {
+    s.split(&format!(" {name}=\""))
+        .nth(1)
+        .and_then(|r| r.split('"').next())
+        .and_then(|v| v.parse().ok())
+        .unwrap()
+}
+
+fn measured(text: &str) -> f64 {
+    amonhen_dot::text::plain_label(
+        text,
+        &amonhen_dot::text::Names::default(),
+        &amonhen_dot::text::Font::new(14.0),
+    )
+    .width
+}
+
+/// アプリの書体が測り（Arial）より 1 割広くても、クラスタの題・枠のあるノードの文字は線に触れない。
+#[test]
+fn leaves_room_for_wider_app_fonts() {
+    let title = "A rather long cluster title that is wider than its nodes";
+    let need = measured(title) * 1.1 + 16.0;
+    for (dir, layout) in [
+        ("TB", "dot"),
+        ("LR", "dot"),
+        ("RL", "dot"),
+        ("BT", "dot"),
+        ("TB", "fdp"),
+        ("TB", "osage"),
+        ("TB", "neato"),
+    ] {
+        let svg = render(&format!(
+            "digraph {{ rankdir={dir}; layout={layout}; subgraph cluster_a {{ label=\"{title}\"; x }} w -> x }}"
+        ))
+        .unwrap()
+        .svg;
+        let cluster = svg.split("class=\"dot-cluster\"").nth(1).unwrap();
+        let width = attr_num(cluster, "width");
+        assert!(width >= need - 0.01, "{dir} {layout}: {width} < {need}");
+    }
+    // 枠のあるノードと record の欄
+    let long = "a label long enough to set the width";
+    let svg = render(&format!(
+        "digraph {{ b [shape=box, label=\"{long}\"]; r [shape=record, label=\"{long}|x\"] }}"
+    ))
+    .unwrap()
+    .svg;
+    let w = measured(long) * 1.1;
+    let b = svg.split("data-id=\"b\"").nth(1).unwrap();
+    let bw = attr_num(b, "width");
+    assert!(bw >= w + 2.0 * 7.9, "box {bw} < {w}");
+    // record の欄: 長い方の欄の左右に 8 ずつ（欄の線は 2 本目の x）
+    let r = svg.split("data-id=\"r\"").nth(1).unwrap();
+    let left = attr_num(r, "x");
+    let sep: f64 = r
+        .split("<path d=\"M")
+        .nth(1)
+        .and_then(|p| p.split(',').next())
+        .and_then(|v| v.parse().ok())
+        .unwrap();
+    assert!(sep - left >= w + 16.0 - 0.01, "record {} < {w}", sep - left);
+}
+
 #[test]
 fn stripes_clusters() {
     let svg = render(

@@ -171,7 +171,8 @@ pub fn parse(label: &str, horizontal: bool, names: &Names, font: &Font) -> Optio
 /// 自然な大きさ（`w`・`h` に入れる）。
 pub fn size(f: &mut Field, font_size: f64) -> (f64, f64) {
     if let Some(t) = &f.text {
-        let w = t.width + 2.0 * MARGIN_X;
+        // アプリの書体が測り（Arial）より広くても欄の線に触れないように
+        let w = t.fit_width() + 2.0 * MARGIN_X;
         let h = t.height.max(font_size * 1.2) + 2.0 * MARGIN_Y;
         f.w = w;
         f.h = h;

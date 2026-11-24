@@ -31,7 +31,7 @@ const IMAGE_PX: f64 = 0.75;
 /// 升の文字の幅のゆとり。幅は Arial の送りで見積もるが、アプリの書体（macOS の sans-serif、Linux の DejaVu Sans・
 /// Noto Sans など）は 1 割ほど広いことがあり、升の余白（`cellpadding`）が小さいと枠からはみ出る。ノードの
 /// ラベルは周りの余白が吸うが、升は詰まっているので見積もりを広げておく。
-const TEXT_SLACK: f64 = 1.1;
+pub(crate) const TEXT_SLACK: f64 = 1.1;
 /// 既定の線の色（ノードの枠と同じ）。
 const BORDER: &str = "var(--_b)";
 
