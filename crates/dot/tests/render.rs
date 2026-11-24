@@ -55,6 +55,10 @@ const SAMPLES: &[(&str, &str)] = &[
         "digraph { bgcolor=\"white:lightgrey\"; gradientangle=90; node [shape=plain]; t [label=<<table bgcolor=\"yellow:blue\" gradientangle=\"90\" style=\"rounded\"><tr><td bgcolor=\"red:white\" style=\"radial\">radial</td><td bgcolor=\"green;0.3:white\">fraction</td></tr></table>>]; subgraph cluster_a { label=A; bgcolor=\"pink:white\"; style=radial; a } t -> a }",
     ),
     (
+        "lr_titles",
+        "digraph { rankdir=LR; subgraph cluster_a { label=\"A rather long cluster title\"; x } subgraph cluster_b { label=\"Another long title\"; subgraph cluster_c { label=\"The innermost title of all\"; y } y -> z } w -> x -> y }",
+    ),
+    (
         "ortho_free",
         "graph { layout=neato; splines=ortho; a -- b -- c -- a; c -- d }",
     ),
@@ -107,6 +111,34 @@ fn matches_the_image_sample() {
     let plain = render(IMAGE_SAMPLE).unwrap();
     assert_eq!(plain.notes, [Note::Images]);
     assert!(!plain.svg.contains("<image "));
+}
+
+/// LR・RL のクラスタの箱は題より広い（題が箱からはみ出さない）。
+#[test]
+fn sideways_clusters_fit_their_titles() {
+    for dir in ["LR", "RL"] {
+        let src = format!(
+            "digraph {{ rankdir={dir}; subgraph cluster_a {{ label=\"A very long title for one node\"; x }} subgraph cluster_b {{ label=\"Outer title that is longer still\"; subgraph cluster_c {{ label=\"Inner\"; y }} }} w -> x -> y }}"
+        );
+        let svg = render(&src).unwrap().svg;
+        for group in svg.split("<g class=\"dot-cluster\"").skip(1) {
+            let width: f64 = group
+                .split("width=\"")
+                .nth(1)
+                .and_then(|r| r.split('"').next())
+                .and_then(|w| w.parse().ok())
+                .unwrap();
+            let title = group.split("class=\"dot-cluster-label\"").nth(1).unwrap();
+            let text = title.split('>').nth(1).unwrap().split('<').next().unwrap();
+            let need = amonhen_dot::text::plain_label(
+                text,
+                &amonhen_dot::text::Names::default(),
+                &amonhen_dot::text::Font::new(14.0),
+            )
+            .width;
+            assert!(width >= need, "{dir}: {text}: {width} < {need}\n{svg}");
+        }
+    }
 }
 
 #[test]
