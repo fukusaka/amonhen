@@ -173,8 +173,19 @@ pub fn image_sources(blocks: &[Block]) -> Vec<String> {
     fn walk(blocks: &[Block], out: &mut Vec<String>) {
         for block in blocks {
             match block {
-                Block::Heading { runs: r, .. } | Block::Paragraph { runs: r } => runs(r, out),
+                Block::Heading { runs: r, .. } | Block::Paragraph { runs: r, .. } => runs(r, out),
                 Block::Quote { blocks, .. } | Block::Footnote { blocks, .. } => walk(blocks, out),
+                Block::Details {
+                    summary, blocks, ..
+                } => {
+                    runs(summary, out);
+                    walk(blocks, out);
+                }
+                Block::HtmlTable { cells, .. } => {
+                    for cell in cells {
+                        runs(&cell.runs, out);
+                    }
+                }
                 Block::List { items, .. } => {
                     for item in items {
                         walk(&item.blocks, out);
@@ -185,7 +196,7 @@ pub fn image_sources(blocks: &[Block]) -> Vec<String> {
                         runs(cell, out);
                     }
                 }
-                Block::Code { .. } | Block::Diagram { .. } | Block::Rule | Block::Html { .. } => {}
+                Block::Code { .. } | Block::Diagram { .. } | Block::Rule => {}
             }
         }
     }
@@ -505,7 +516,7 @@ impl<'a> Builder<'a> {
             if run.strike {
                 tags.push(self.tag("strike", |t| t.set_strikethrough(true)));
             }
-            if run.code || run.html {
+            if run.code {
                 tags.push(self.tag("mono", |t| {
                     t.set_family(Some("monospace"));
                     t.set_scale(0.9);
@@ -513,9 +524,6 @@ impl<'a> Builder<'a> {
             }
             if run.code {
                 tags.push(self.tag("code", |t| t.set_background_rgba(Some(&SHADE))));
-            }
-            if run.html {
-                tags.push(self.dim());
             }
             if run.custom_emoji.is_some() {
                 // GitHub 独自の絵文字は画像を持たないので、名前を薄い札で見せる。
@@ -588,7 +596,7 @@ impl<'a> Builder<'a> {
 
     fn block(&self, block: &Block, ctx: &Ctx) {
         match block {
-            Block::Heading { level, runs } => {
+            Block::Heading { level, runs, .. } => {
                 let start = self.offset();
                 let hanging = self.marker(ctx);
                 let size = HEADINGS[(*level).clamp(1, 6) as usize - 1];
@@ -600,7 +608,7 @@ impl<'a> Builder<'a> {
                 }
                 self.paragraph(start, ctx, hanging, if *level <= 2 { 12 } else { 8 });
             }
-            Block::Paragraph { runs } => {
+            Block::Paragraph { runs, .. } => {
                 let start = self.offset();
                 let hanging = self.marker(ctx);
                 self.runs(runs, BODY, false);
@@ -742,18 +750,8 @@ impl<'a> Builder<'a> {
                 self.insert(" \n", &[rule]);
                 self.paragraph(start, ctx, false, 12);
             }
-            Block::Html { text } => {
-                self.lone_marker(ctx);
-                let start = self.offset();
-                let mono = self.tag("mono", |t| {
-                    t.set_family(Some("monospace"));
-                    t.set_scale(0.9);
-                });
-                let dim = self.dim();
-                self.insert(text.trim_end_matches('\n'), &[mono, dim]);
-                self.insert("\n", &[]);
-                self.paragraph(start, ctx, false, 10);
-            }
+            Block::Details { blocks, .. } => self.blocks(blocks, ctx),
+            Block::HtmlTable { .. } => {}
             Block::Footnote { label, blocks } => {
                 self.lone_marker(ctx);
                 let start = self.offset();
@@ -895,7 +893,7 @@ fn markup(runs: &[Run], head: bool) -> String {
         if let Some(note) = &run.footnote {
             text = format!("<sup>[{}]</sup>", esc(note));
         }
-        if run.code || run.html {
+        if run.code {
             text = format!("<tt>{text}</tt>");
         }
         if run.bold || head {

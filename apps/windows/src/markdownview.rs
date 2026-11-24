@@ -124,9 +124,9 @@ fn collect(list: &[Block], theme: &ThemeColors, dark: bool, out: &mut Vec<Option
                 );
                 render_diagram(&amonhen_core::diagram::colorize(svg, &vars, backdrop)?)
             })),
-            Block::Quote { blocks: inner, .. } | Block::Footnote { blocks: inner, .. } => {
-                collect(inner, theme, dark, out)
-            }
+            Block::Quote { blocks: inner, .. }
+            | Block::Footnote { blocks: inner, .. }
+            | Block::Details { blocks: inner, .. } => collect(inner, theme, dark, out),
             Block::List { items, .. } => {
                 for item in items {
                     collect(&item.blocks, theme, dark, out);
@@ -202,8 +202,6 @@ fn inlines(runs: &[Run], bold: bool) -> Vec<RichTextInline> {
                 (format!("[{}]", r.text), Some(link()))
             } else if r.link.is_some() {
                 (r.text.clone(), Some(link()))
-            } else if r.html {
-                (r.text.clone(), Some(Color::rgb(0x80, 0x80, 0x80)))
             } else {
                 (r.text.clone(), None)
             };
@@ -212,7 +210,7 @@ fn inlines(runs: &[Run], bold: bool) -> Vec<RichTextInline> {
                 is_bold: bold || r.bold,
                 is_italic: r.italic || r.image.is_some(),
                 foreground,
-                is_monospace: r.code || r.html,
+                is_monospace: r.code || r.kbd,
                 is_strikethrough: r.strike,
             })
         })
@@ -257,7 +255,7 @@ fn blocks(list: &[Block], pictures: &Pictures) -> View {
 
 fn block(b: &Block, pictures: &Pictures) -> View {
     match b {
-        Block::Heading { level, runs } => {
+        Block::Heading { level, runs, .. } => {
             let size = HEADINGS[(*level as usize).clamp(1, 6) - 1];
             let heading = text(runs, size, true);
             // 大きな見出しは、下に細い線（GitHub と同じ）。
@@ -271,7 +269,7 @@ fn block(b: &Block, pictures: &Pictures) -> View {
                 heading
             }
         }
-        Block::Paragraph { runs } => text(runs, BODY, false),
+        Block::Paragraph { runs, .. } => text(runs, BODY, false),
         // 図は絵にして、近いもので描いたならそのことを下に添える。描けなければコードとして見せ、理由を添える
         // （macOS 版・GTK4 版と同じ）。
         Block::Diagram {
@@ -369,9 +367,26 @@ fn block(b: &Block, pictures: &Pictures) -> View {
         }
         Block::Table { aligns, head, rows } => table(aligns, head, rows),
         Block::Rule => Border::new().height(1.0).background(shade()).into(),
-        Block::Html { text: html } => {
-            plain(html, BODY - 1.0, true, Some(Color::rgb(0x80, 0x80, 0x80)))
+        // HTML の `<details>` は、まだ開いたままで見せる（見出しを太字で）。
+        Block::Details {
+            summary,
+            blocks: inner,
+            ..
+        } => {
+            let head = if summary.is_empty() {
+                plain(&details_title(), BODY, false, None)
+            } else {
+                text(summary, BODY, true)
+            };
+            StackPanel::new()
+                .spacing(6.0)
+                .children((head, blocks(inner, pictures)))
         }
+        Block::HtmlTable {
+            columns,
+            rows,
+            cells,
+        } => html_table(*columns, *rows, cells),
         Block::Footnote {
             label,
             blocks: inner,
@@ -430,6 +445,50 @@ fn table(aligns: &[Align], head: &[Vec<Run>], rows: &[Vec<Vec<Run>>]) -> View {
                 .into_iter()
                 .enumerate()
                 .map(|(i, c)| (i.to_string(), c)),
+        ),))
+}
+
+/// 見出しのない `<details>` の見出し（GitHub と同じ「Details」。訳の鍵は「HTML details: 」を付けたもの）。
+fn details_title() -> String {
+    let title = tr!("HTML details: Details");
+    title
+        .strip_prefix("HTML details: ")
+        .map_or(title.clone(), str::to_owned)
+}
+
+/// HTML の表（マスは `colspan`・`rowspan` をまたぐ。見出しのマスは太字と背景）。
+fn html_table(columns: u32, rows: u32, cells: &[amonhen_core::markdown::TableCell]) -> View {
+    let views = cells.iter().map(|c| -> View {
+        let align = match c.align {
+            Align::Center => HorizontalAlignment::Center,
+            Align::Right => HorizontalAlignment::Right,
+            _ => HorizontalAlignment::Left,
+        };
+        Border::new()
+            .grid_row(c.row as i32)
+            .grid_column(c.column as i32)
+            .grid_row_span(c.rowspan as i32)
+            .grid_column_span(c.colspan as i32)
+            .border_thickness(Thickness::uniform(0.5))
+            .border_brush(shade())
+            .background(if c.header {
+                shade()
+            } else {
+                Brush::Solid(Color::transparent())
+            })
+            .padding(Thickness::new(8.0, 4.0, 8.0, 4.0))
+            .content(
+                Border::new()
+                    .horizontal_alignment(align)
+                    .content(text(&c.runs, BODY, c.header)),
+            )
+    });
+    Grid::new()
+        .horizontal_alignment(HorizontalAlignment::Left)
+        .columns(vec![GridLength::Auto; columns as usize])
+        .rows(vec![GridLength::Auto; rows as usize])
+        .children((View::keyed_fragment(
+            views.enumerate().map(|(i, c)| (i.to_string(), c)),
         ),))
 }
 
