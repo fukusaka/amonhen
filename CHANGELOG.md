@@ -1292,6 +1292,12 @@ First release.
 - The app menus' Commit, Commit and Push, Stage All, Set Upstream…, Rebase…, Go to HEAD and Find in History… are
   commands, so they can be bound to keys; Merge Branches… and Rebase… also offer the commit selected in History.
 
+#### Changed
+
+- A failure the app knows (sign-in, host key, network, rejected push, diverged branches, local changes, a lock, no
+  upstream, a branch in another worktree) is said in plain words with the app's next steps, such as Pull…, Set
+  Upstream… or Try Again; Details adds the advice.
+
 #### Fixed
 
 - Restoring the version before a commit that renamed a file brings back the old name instead of only deleting the new

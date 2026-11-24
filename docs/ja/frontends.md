@@ -367,7 +367,7 @@ GTK4 のアプリは macOS のアプリと同じふるまいをめざす。わ�
 | 機能 | macOS | GTK4 | Windows | VSCode | CLI | TUI | Notes |
 | --- | :-: | :-: | :-: | :-: | :-: | :-: | --- |
 | 進行中の操作と Continue / Skip / Abort | ✓ | ✓ | ✓ | ✓ | n/a | ✓ | VSCode: サイドバーの行。<br>TUI: 一番下の行に出し、`C` `K` `A`。 |
-| 失敗とその原因・Details | ✓ | ✓ | ✓ | ✓ | n/a | ✓ | VSCode: 知らせに原因（git の fatal:・error: の行）を出し、Details で全文と git の命令を出力パネルに出す。<br>TUI: 原因は一番下の行に。`!` で git のコマンドと答えの全部を出す。 |
+| 失敗とその原因・Details | ✓ | ✓ | ✓ | ✓ | n/a | ✓ | VSCode: 見分けられる失敗（認証・ホスト鍵・つながらない・断られた・分かれた・作業中の変更・ロック・上流なし・worktree）は知らせを分かる言葉にし、アプリと同じ次の一手（Pull…・Open Working Copy・Set Upstream…・Open Worktree・Open in Terminal・Try Again）を添える。そうでなければ git の fatal:・error: の行。Details で助言と全文と git の命令を出力パネルに出す。<br>TUI: 原因は一番下の行に。`!` で git のコマンドと答えの全部を出す。 |
 | 切れたつながりと Reconnect | ✓ | ✓ | ✓ | n/a | n/a | ✓ | TUI: 一番下の行に出し、`R` で同じ場所を開き直す。 |
 | 終わった操作が何をしたか、数秒 | ✓ | ✓ | ✓ | ✓ | n/a | ✓ | VSCode: ステータスバーの文か、Undo 付きの知らせ。<br>TUI: 一番下の行に。 |
 
