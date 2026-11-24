@@ -689,17 +689,26 @@ pub fn render(model: &Model, budget: Budget, notes: &mut BTreeSet<Note>) -> Stri
         let margin = a
             .num("margin")
             .map_or(CLUSTER_MARGIN, |m| m.clamp(0.0, 200.0));
+        let loc_bottom = a
+            .get("labelloc")
+            .is_some_and(|s| s.trim().eq_ignore_ascii_case("b"));
+        // 題の側（配置の座標で。LR・RL は配置の x が絵の y）。BT は Graphviz と同じく、`t` が絵の下になる
+        let side = match (dir, loc_bottom) {
+            (Dir::TB | Dir::BT, false) => LabelSide::Top,
+            (Dir::TB | Dir::BT, true) => LabelSide::Bottom,
+            (Dir::LR | Dir::RL, false) => LabelSide::Left,
+            (Dir::LR | Dir::RL, true) => LabelSide::Right,
+        };
         lclusters.push(layout::Cluster {
             parent: c.parent,
             margin,
             label: if dir.sideways() { (lh, lw) } else { (lw, lh) },
+            side,
         });
         cviews.push(ClusterView {
             label,
             font,
-            loc_bottom: a
-                .get("labelloc")
-                .is_some_and(|s| s.trim().eq_ignore_ascii_case("b")),
+            loc_bottom: loc_bottom != (dir == Dir::BT),
             just: a
                 .get("labeljust")
                 .and_then(|s| s.trim().chars().next())
@@ -730,11 +739,6 @@ pub fn render(model: &Model, budget: Budget, notes: &mut BTreeSet<Note>) -> Stri
     let lopt = layout::Options {
         nodesep,
         ranksep,
-        label_side: match dir {
-            Dir::TB => LabelSide::Top,
-            Dir::BT => LabelSide::Bottom,
-            Dir::LR | Dir::RL => LabelSide::Left,
-        },
         label_left: dir.sideways(),
         ordering_out: g
             .get("ordering")
@@ -742,6 +746,10 @@ pub fn render(model: &Model, budget: Budget, notes: &mut BTreeSet<Note>) -> Stri
         rank_iter: budget.rank_iter,
         x_iter: budget.x_iter,
         sweeps: budget.sweeps,
+        cluster_rank: !g.flag("newrank").unwrap_or(false)
+            && !g.get("clusterrank").is_some_and(|s| {
+                matches!(s.trim().to_ascii_lowercase().as_str(), "global" | "none")
+            }),
     };
     let lay = layout::layout(&lnodes, &ledges, &lclusters, &sets, &lopt);
     let lh = lay.height;
