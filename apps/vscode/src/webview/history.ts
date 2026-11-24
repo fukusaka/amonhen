@@ -283,6 +283,8 @@ export function createHistoryView(): View {
             oid: row.oid,
             commitEditable: row.editable,
             commitCanSquash: row.canSquash,
+            // ブランチ・タグの名前のコピー（アプリの Copy Branch Name “…”）
+            ...(row.refs.some((r) => r.kind === 'branch' || r.kind === 'remote' || r.kind === 'tag') ? { commitHasRefs: true } : {}),
             ...(row.hidden ? { commitFolded: true } : {}),
             ...(row.expanded ? { commitExpanded: true } : {}),
             preventDefaultContextMenuItems: true,
@@ -457,6 +459,9 @@ export function createHistoryView(): View {
       // 読んでいない行があれば、続いているか・編集できるかはコアに確かめてもらう
       commitsCanCombine: isContiguous(marked) && shown.every((r) => !r || r.editable),
       commitsAreTwo: marked.size === 2,
+      // merge を含めばパッチにできない。今のブランチに取り込むのは HEAD でないものが 2 つ以上（アプリと同じ）
+      commitsHaveMerge: shown.some((r) => r?.merge === true),
+      commitsCanMerge: shown.filter((r) => r && !r.refs.some((l) => l.current)).length >= 2,
     };
     requestSelection('forward');
     if (reveal) revealRow(next.focus);

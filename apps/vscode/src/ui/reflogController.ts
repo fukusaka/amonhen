@@ -1,4 +1,5 @@
 /** メインビューの Reflog の拡張ホスト側。共有の daemon のコアの `reflog` で、HEAD の reflog を読む */
+import { basename, resolve } from 'node:path';
 import * as vscode from 'vscode';
 import { daemonFor } from '../daemon/connection.ts';
 import type { ReflogEntry, ReflogHostMessage, ReflogWebviewMessage } from '../reflog/protocol.ts';
@@ -94,7 +95,17 @@ export class ReflogController implements vscode.Disposable {
         time: e.time,
         reachable: e.reachable,
       }));
-      this.post({ type: 'reflog', entries });
+      // worktree が 2 つ以上なら、どの worktree の HEAD かを言う（アプリと同じ）
+      let worktree: string | undefined;
+      try {
+        const listed = (await client.call({ op: 'run', command: { op: 'worktrees' } })).json;
+        const list = ((listed['info'] as { worktrees?: { path: string; bare?: boolean }[] } | undefined)?.worktrees ?? []).filter((w) => !w.bare);
+        if (list.length > 1) worktree = basename(list.find((w) => resolve(w.path) === resolve(repo.root))?.path ?? repo.root);
+      } catch {
+        // 古いエンジン。言わない
+      }
+      if (generation !== this.generation) return;
+      this.post({ type: 'reflog', entries, ...(worktree ? { worktree } : {}) });
     } catch (err) {
       if (generation === this.generation) showError(err);
     }

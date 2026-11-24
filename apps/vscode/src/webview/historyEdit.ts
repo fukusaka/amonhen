@@ -114,7 +114,8 @@ export function createEditMode(onClose: () => void, onSelect: (oid: string) => v
         const select = el('select');
         select.disabled = row.merge === true || applying;
         for (const action of choices(rows, i)) {
-          const option = el('option', '', ACTION_TITLES[action]);
+          // アプリと同じく git の語に説明を添える（pick — Keep など）
+        const option = el('option', '', `${action} — ${ACTION_TITLES[action]}`);
           option.value = action;
           option.title = ACTION_TOOLTIPS[action];
           select.append(option);

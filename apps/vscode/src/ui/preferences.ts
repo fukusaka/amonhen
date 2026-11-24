@@ -75,6 +75,16 @@ export async function setDetailsLayout(layout: DetailsLayout): Promise<void> {
   await store?.update('history.detailsLayout', { tree: layout.tree });
 }
 
+/** 前に選んだパッチの形（1 つの mbox か）と送り状 */
+export function patchFormat(): { single: boolean; cover: boolean } {
+  const v = store?.get<{ single?: boolean; cover?: boolean }>('patches.format');
+  return { single: v?.single === true, cover: v?.cover === true };
+}
+
+export async function setPatchFormat(format: { single: boolean; cover: boolean }): Promise<void> {
+  await store?.update('patches.format', format);
+}
+
 /** 前に選んだアーカイブの形 */
 export function archiveFormat(): ArchiveFormat | undefined {
   return store?.get<ArchiveFormat>('archive.format');

@@ -2169,6 +2169,13 @@ async function detailsCopyFlow(): Promise<void> {
   assert.equal(await copied('amonhen.details.copyMessage'), git('log', '-1', '--format=%B', oid).trim());
   assert.equal(await copied('amonhen.details.copyShortId'), oid.slice(0, 7));
   assert.equal(await copied('amonhen.details.copyShowCommand'), `git show ${oid}`);
+  // History の行の右クリック: このコミットを指すブランチの名前（HEAD のブランチ 1 つなら選ばずにそのまま）
+  const branch = git('symbolic-ref', '--short', 'HEAD').trim();
+  const names = git('for-each-ref', '--points-at', oid, '--format=%(refname:short)', 'refs/heads', 'refs/remotes', 'refs/tags').trim().split('\n');
+  if (names.length === 1) {
+    await vscode.commands.executeCommand('amonhen.history.copyRefName', { webviewSection: 'commit', oid });
+    assert.equal(await vscode.env.clipboard.readText(), branch);
+  }
 }
 
 async function orphanFlow(): Promise<void> {

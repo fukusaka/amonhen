@@ -294,3 +294,4 @@ macOS アプリに追いつく（1 つの機能を 1 つの pull request で、�
 - [x] 81. Working Copy でいくつものファイルを選ぶ（⌘・Ctrl クリック、Shift クリック、Shift+↑↓）。Space・⌫・行のボタン・Stash… は選んだものすべてに効く
 - [x] 82. 途中の操作の行で、何をどこへしている途中か（何手目か）と、なぜ止まり次に何をするかを言う（エンジンがあれば。アプリの帯と同じ）。revert には Skip を出さない
 - [x] 83. 見分けられる失敗を分かる言葉で知らせ、アプリと同じ次の一手（Pull…・Open Working Copy・Set Upstream…・Open Worktree・Open in Terminal・Try Again）と、Details に助言を
+- [x] 87. History のメニューをアプリと同じに: Copy Branch or Tag Name…・Copy Short IDs、Squash into Previous… と Interactive Rebase from Here…、どのコミットにも Cherry-pick、Split と複数選択の Merge・Save Patches は使えるときだけ、Go to Parent / Child のキー、編集モードの「drop — Remove」、パッチの形とカバーレターの組み合わせ、Reflog の worktree

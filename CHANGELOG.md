@@ -1316,6 +1316,10 @@ First release.
 - The sidebar's in-progress row says what is being done where and the step, and why it stopped with what to do next
   (the commit, conflicts, a failed exec, a stop to edit), as the app's band does (with the engine); a revert has no
   Skip.
+- History's menus follow the app: Copy Branch or Tag Name… and Copy Short IDs, Squash into Previous… and
+  Interactive Rebase from Here…, Cherry-pick on every commit, Split, Merge and Save Patches only where they work, and
+  Go to Parent / Child on ⌘⌥↓ / ⌘⌥↑. Save as Patch combines an mbox with a cover letter and remembers the choice, the
+  edit mode reads "drop — Remove", and the Reflog names its worktree when there are several.
 
 #### Changed
 
