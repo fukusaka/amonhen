@@ -24,6 +24,8 @@ pub enum Request {
         rebuild: bool,
         /// History を、これらのコミット（選んだ ref の指す先、16 進）から辿れるものだけにする。空ならすべて。
         tips: Vec<String>,
+        /// この語で探して、合うコミットだけの History にする（アプリの Show Only Matching Commits）。
+        matching: Option<String>,
     },
     /// History の行（`start` から `count` 行）。
     Rows {
@@ -320,6 +322,7 @@ fn load(front: &dyn Front, request: Request, events: &Sender<Event>) -> Result<L
             expanded,
             rebuild,
             tips,
+            matching,
         } => Loaded::Opened {
             workdir: front.call(json!({"op": "hello"}))?.json["workdir"]
                 .as_str()
@@ -350,7 +353,22 @@ fn load(front: &dyn Front, request: Request, events: &Sender<Event>) -> Result<L
                 if !tips.is_empty() {
                     request["tips"] = json!(tips);
                 }
-                front.call(request)?.json
+                let history = front.call(request)?.json;
+                match matching {
+                    // 探して、合った行だけの History を作る（元の History は手放す）。
+                    Some(query) => {
+                        let id = history["history"].clone();
+                        let rows = front
+                            .call(json!({"op": "historySearch", "history": id, "query": query}))?
+                            .u32s("rows");
+                        let matched = front
+                            .call(json!({"op": "historyMatching", "history": id, "rows": rows}))?
+                            .json;
+                        let _ = front.call(json!({"op": "historyRelease", "history": id}));
+                        matched
+                    }
+                    None => history,
+                }
             },
         },
         Request::Rows {

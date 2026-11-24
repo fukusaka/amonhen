@@ -638,6 +638,8 @@ pub struct App {
     tag_remote: Option<(String, bool)>,
     /// 消す worktree（変更の数を読んでいる間）。
     removing_worktree: Option<String>,
+    /// History を、この語に合うコミットだけにしている（`&`。アプリの Show Only Matching Commits）。
+    matching: Option<String>,
     /// worktree ごとの変更のあるファイルの数（パスごと。開いているものは Working Copy の数）。
     worktree_counts: std::collections::HashMap<String, u64>,
     /// 開いている worktree のパスと、ほかの読める worktree のパス（2 つ以上あるときだけ）。
@@ -828,6 +830,7 @@ impl App {
             editing_remote: None,
             tag_remote: None,
             removing_worktree: None,
+            matching: None,
             worktree_counts: Default::default(),
             worktree_paths: None,
             counts_fresh_at: None,
@@ -1007,6 +1010,7 @@ impl App {
             expanded: self.expanded.clone(),
             rebuild: self.rebuilding,
             tips: self.sidebar.marked_targets(),
+            matching: self.matching.clone(),
         });
     }
 
@@ -1578,8 +1582,14 @@ impl App {
                             .find(|e| e["kind"] == "stash")
                             .and_then(|e| e["name"].as_str())
                             .map(str::to_owned);
-                        // 検索していたら、新しい History で検索し直す。
-                        if let Some((query, _)) = self.search.clone() {
+                        // 合うものだけにしていれば、すべての行が合った行。でなければ、検索していたら新しい History で
+                        // 検索し直す。
+                        if let Some(query) = self.matching.clone() {
+                            self.cancel_search();
+                            self.search = Some((query, None));
+                            self.history
+                                .set_matches((0..self.history.total()).collect());
+                        } else if let Some((query, _)) = self.search.clone() {
                             self.start_search(query);
                         }
                         if let Some(id) = selected {
@@ -2818,6 +2828,8 @@ impl App {
                 KeyCode::Backspace => {
                     query.pop();
                 }
+                // 打ったものを消す（シェルと同じ。ほかの欄と同じく）。
+                KeyCode::Char('u') if control => query.clear(),
                 KeyCode::Char(ch) if !control => query.push(ch),
                 _ => {}
             }
@@ -6798,6 +6810,13 @@ impl App {
     /// History を検索する。動いている検索は取り消す。
     fn start_search(&mut self, query: String) {
         self.cancel_search();
+        // 合うものだけにしていれば、新しい語で絞り直す。
+        if self.matching.is_some() {
+            self.matching = Some(query.clone());
+            self.search = Some((query, None));
+            self.open();
+            return;
+        }
         let cancelled = Arc::new(AtomicBool::new(false));
         self.send(Request::Search {
             history: self.history.id().clone(),
@@ -6818,6 +6837,10 @@ impl App {
     fn clear_search(&mut self) -> bool {
         self.cancel_search();
         let had = self.search.take().is_some();
+        // 合うものだけにしていたら、すべてに戻す。
+        if self.matching.take().is_some() {
+            self.open();
+        }
         self.history.clear_matches() || had
     }
 
@@ -8130,6 +8153,19 @@ impl App {
                     Some(self.search.as_ref().map_or(String::new(), |s| s.0.clone()));
                 true
             }
+            // 合うコミットだけにする・すべてに戻す（アプリの Show Only Matching Commits）。
+            KeyCode::Char('&') => {
+                match (self.matching.take(), &self.search) {
+                    (Some(_), _) => {}
+                    (None, Some((query, _))) => self.matching = Some(query.clone()),
+                    (None, None) => {
+                        self.error = Some(tr!("Search with / first"));
+                        return true;
+                    }
+                }
+                self.open();
+                true
+            }
             // コミットの ID を端末のクリップボードに（印があれば、印をつけたものすべて）。
             KeyCode::Char('Y') => self.copy_ids(),
             // 選んでいるコミットから、新しいブランチの worktree を作る（アプリの New Worktree…）。
@@ -8867,11 +8903,18 @@ impl App {
                                 (None, Some(at)) => format!("{at}/{of}"),
                                 (None, None) => of.to_string(),
                             };
-                            tr!(
-                                "/{query}: {found}   n/N next/previous   Esc clear",
-                                query = query,
-                                found = found
-                            )
+                            match self.matching {
+                                Some(_) => tr!(
+                                    "/{query}: {found}, only matching   n/N next/previous   & all   Esc clear",
+                                    query = query,
+                                    found = found
+                                ),
+                                None => tr!(
+                                    "/{query}: {found}   n/N next/previous   & only matching   Esc clear",
+                                    query = query,
+                                    found = found
+                                ),
+                            }
                         }
                         None => tr!("j/k move   / search   Enter details   0 sidebar   q quit"),
                     },

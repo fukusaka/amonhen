@@ -851,6 +851,34 @@ fn sidebar_opens_on_demand_when_narrow() {
     );
 }
 
+/// 検索した後の `&` で、合うコミットだけの History にする（もう一度 `&` か Esc ですべてに戻す）
+#[test]
+fn ampersand_shows_only_matching_commits() {
+    let dir = tempfile::tempdir().unwrap();
+    merged(dir.path());
+    let only = amonhen_tui::snapshot(open(dir.path()), 120, 9, clock(), "/version\n&").unwrap();
+    println!("{only}");
+    assert!(only.contains("Bump the version"), "{only}");
+    assert!(!only.contains("Merge branch 'topic'"), "{only}");
+    let last = only.lines().last().unwrap();
+    assert!(last.starts_with(" /version: 1/1, only matching"), "{last}");
+    assert!(last.ends_with("1/1"), "{last}");
+    // 語を替えると、その語で絞り直す。
+    let again = amonhen_tui::snapshot(open(dir.path()), 120, 9, clock(), "/version\n&/\x15Merge\n")
+        .unwrap();
+    assert!(again.contains("Merge branch 'topic'"), "{again}");
+    assert!(!again.contains("Bump the version"), "{again}");
+    // もう一度 `&` か Esc で、すべてに戻す。
+    for keys in ["/version\n&&", "/version\n&\x1b"] {
+        let all = amonhen_tui::snapshot(open(dir.path()), 120, 9, clock(), keys).unwrap();
+        assert!(all.contains("Merge branch 'topic'"), "{all}");
+        assert!(all.contains("Bump the version"), "{all}");
+    }
+    // 検索していなければ、そう言う。
+    let first = amonhen_tui::snapshot(open(dir.path()), 120, 9, clock(), "&").unwrap();
+    assert!(first.contains("Search with / first"), "{first}");
+}
+
 /// `/` で History を検索し、合った行を選ぶ。`n` `N` で次と前、Esc でやめる
 #[test]
 fn slash_searches_history() {
