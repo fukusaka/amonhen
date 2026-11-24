@@ -13,6 +13,7 @@ use crate::curve::{self, Cubic, P};
 use crate::graph::{Attrs, Model};
 use crate::layout::{self, LabelSide, Route};
 use crate::record::{self, Field};
+use crate::route;
 use crate::shapes::{self, Geom, Kind};
 use crate::text::{self, Font, Names, Text, color_attr, text_svg};
 
@@ -795,6 +796,8 @@ pub fn render(model: &Model, budget: Budget, notes: &mut BTreeSet<Note>) -> Stri
         let fb = [p.0.min(q.0), p.1.min(q.1), p.0.max(q.0), p.1.max(q.1)];
         cluster_boxes[ci] = Some(fb);
     }
+    // クラスタの題の箱（絵の座標。辺が避ける）
+    let mut title_rects: Vec<[f64; 4]> = Vec::new();
     let mut corder: Vec<usize> = (0..model.clusters.len()).collect();
     let cdepth = |mut c: usize| {
         let mut d = 0;
@@ -880,6 +883,12 @@ pub fn render(model: &Model, budget: Budget, notes: &mut BTreeSet<Note>) -> Stri
             } else {
                 b[1] + margin / 2.0 + 2.0 + t.height / 2.0
             };
+            title_rects.push([
+                cx - t.width / 2.0 - 4.0,
+                cy - t.height / 2.0 - 1.0,
+                cx + t.width / 2.0 + 4.0,
+                cy + t.height / 2.0 + 1.0,
+            ]);
             let fill = if cv.font.color.is_some() {
                 String::new()
             } else {
@@ -900,6 +909,36 @@ pub fn render(model: &Model, budget: Budget, notes: &mut BTreeSet<Note>) -> Stri
         }
         clusters_out.push_str("</g>");
     }
+
+    // 辺が避ける箱（配置の座標）: 端でないノードとクラスタの題
+    let from_final = |f: P| -> P {
+        match dir {
+            Dir::TB => f,
+            Dir::BT => (f.0, lh - f.1),
+            Dir::LR => (f.1, f.0),
+            Dir::RL => (f.1, lh - f.0),
+        }
+    };
+    let mut obstacles = {
+        const NODE_PAD: f64 = 4.0;
+        let mut rects: Vec<(route::Rect, Option<usize>)> = Vec::new();
+        for (i, v) in views.iter().enumerate() {
+            if v.invis {
+                continue;
+            }
+            let (x, y) = lay.nodes[i];
+            let (w, h) = (lnodes[i].w / 2.0 + NODE_PAD, lnodes[i].h / 2.0 + NODE_PAD);
+            rects.push(([x - w, y - h, x + w, y + h], Some(i)));
+        }
+        for r in &title_rects {
+            let (p, q) = (from_final((r[0], r[1])), from_final((r[2], r[3])));
+            rects.push((
+                [p.0.min(q.0), p.1.min(q.1), p.0.max(q.0), p.1.max(q.1)],
+                None,
+            ));
+        }
+        route::Obstacles::new(rects)
+    };
 
     // 辺
     let compound = g.flag("compound").unwrap_or(false);
@@ -942,7 +981,10 @@ pub fn render(model: &Model, budget: Budget, notes: &mut BTreeSet<Note>) -> Stri
         let mut label_at: Option<P>;
         match &lay.routes[ei] {
             Route::Path { points, label } => {
-                let pts: Vec<P> = points.clone();
+                let mut pts: Vec<P> = points.clone();
+                if !(straight || curved) {
+                    obstacles.avoid(&mut pts, &[e.tail, e.head], !polyline);
+                }
                 let mut lp: Vec<P> = pts.clone();
                 if straight || curved {
                     lp = vec![pts[0], pts[pts.len() - 1]];
@@ -982,8 +1024,17 @@ pub fn render(model: &Model, budget: Budget, notes: &mut BTreeSet<Note>) -> Stri
                         ((pa.0 + pb.0) / 2.0, pa.1 - lh / 2.0 - 2.0)
                     });
                 } else {
-                    let lift =
-                        h_a + 14.0 + 12.0 * *lane as f64 + (pb.0 - pa.0).abs().min(400.0) * 0.05;
+                    // 間のノード・題の上を越える（弧の頂きは制御点の 3/4）
+                    let between = obstacles.overlapping(
+                        [pa.0.min(pb.0), pa.1 - 10_000.0, pa.0.max(pb.0), pa.1 + 1.0],
+                        &[e.tail, e.head],
+                    );
+                    let clear = between
+                        .iter()
+                        .map(|r| (pa.1 - r[1]) / 0.75 + 6.0)
+                        .fold(0.0, f64::max);
+                    let lift = (h_a + 14.0 + (pb.0 - pa.0).abs().min(400.0) * 0.05).max(clear)
+                        + 12.0 * *lane as f64;
                     let top = pa.1.min(pb.1) - lift;
                     path = vec![Cubic(pa, (pa.0, top), (pb.0, top), pb)];
                     label_at = ev.label.as_ref().map(|t| {
