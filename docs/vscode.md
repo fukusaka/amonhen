@@ -298,4 +298,5 @@ left out for now: VSCode has its own extensions and settings for them.
 - [x] 74. Ignore whitespace in the Working Copy diff (with the engine; lines and hunks aren't staged or discarded meanwhile)
 - [x] 75. The app menus' Commit, Commit and Push, Stage All, Set Upstream…, Rebase…, Go to HEAD and Find in History… as commands; Merge Branches… and Rebase… offer the commit selected in History
 - [x] 76. The commit details' right-click (copy the ID, short ID, subject, message or git show command; Edit Message…) and names that search History by that person
+- [x] 77. The commit message's URLs and commit IDs as links, trailers listed apart, git notes (with the engine) and History's search terms marked
 - [x] 82. The in-progress row says what is being done where and the step, and why it stopped with what to do next (with the engine), as the app's band; no Skip for a revert

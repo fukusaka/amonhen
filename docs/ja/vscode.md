@@ -288,4 +288,5 @@ macOS アプリに追いつく（1 つの機能を 1 つの pull request で、�
 - [x] 74. Working Copy の差分で空白を無視する（エンジンがあれば。その間は行・hunk を stage・破棄しない）
 - [x] 75. アプリのメニューの Commit・Commit and Push・Stage All・Set Upstream…・Rebase…・Go to HEAD・Find in History… をコマンドに。Merge Branches… と Rebase… で History で選んでいるコミットも選べる
 - [x] 76. コミット情報の右クリック（ID・短い ID・件名・メッセージ・git show のコピー、Edit Message…）と、名前を押してその人で History を探す
+- [x] 77. コミットのメッセージの URL とコミット ID をリンクに、トレーラーを分けて並べ、git notes（エンジンがあれば）、History の検索の語に印
 - [x] 82. 途中の操作の行で、何をどこへしている途中か（何手目か）と、なぜ止まり次に何をするかを言う（エンジンがあれば。アプリの帯と同じ）。revert には Skip を出さない

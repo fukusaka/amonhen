@@ -316,25 +316,46 @@ interface MdRun {
   italic?: boolean;
   strike?: boolean;
   code?: boolean;
-  html?: boolean;
+  /** HTML の `<kbd>`・`<sub>`・`<sup>`・`<ins>` */
+  kbd?: boolean;
+  sub?: boolean;
+  sup?: boolean;
+  underline?: boolean;
   link?: string;
   image?: string;
+  /** `<picture>` の、暗い外観・明るい外観で見せる画像（合うものがなければ `image`） */
+  image_dark?: string;
+  image_light?: string;
+  /** 画像の HTML の `width`・`height` */
+  width?: number;
+  height?: number;
   footnote?: string;
   /** GitHub 独自の絵文字（`:octocat:` などの画像だけのもの）。`text` を薄い札で見せる */
   custom_emoji?: string;
   line_break?: boolean;
 }
+type MdAlign = 'left' | 'center' | 'right';
+interface MdCell {
+  row: number;
+  column: number;
+  rowspan: number;
+  colspan: number;
+  header?: boolean;
+  align?: MdAlign;
+  runs: MdRun[];
+}
 type MdBlock =
-  | { kind: 'heading'; level: number; runs: MdRun[] }
-  | { kind: 'paragraph'; runs: MdRun[] }
+  | { kind: 'heading'; level: number; runs: MdRun[]; align?: MdAlign }
+  | { kind: 'paragraph'; runs: MdRun[]; align?: MdAlign }
   | { kind: 'code'; language: string; text: string; syntax?: [number, number, number][][] }
   | { kind: 'diagram'; language: string; text: string; error?: string }
   | { kind: 'quote'; alert?: string; blocks: MdBlock[] }
   | { kind: 'list'; start?: number; items: { task?: boolean; blocks: MdBlock[] }[] }
   | { kind: 'table'; aligns: string[]; head: MdRun[][]; rows: MdRun[][][] }
   | { kind: 'rule' }
-  | { kind: 'html'; text: string }
-  | { kind: 'footnote'; label: string; blocks: MdBlock[] };
+  | { kind: 'footnote'; label: string; blocks: MdBlock[] }
+  | { kind: 'details'; summary: MdRun[]; open?: boolean; blocks: MdBlock[] }
+  | { kind: 'htmlTable'; columns: number; rows: number; cells: MdCell[] };
 
 /** Markdown を整形して見せる（コアが読んだブロックから組み立てる。外からは何も読まない） */
 function renderMarkdown(blocks: readonly unknown[]): HTMLElement {
@@ -343,20 +364,38 @@ function renderMarkdown(blocks: readonly unknown[]): HTMLElement {
   return box;
 }
 
+/** 今の外観が暗いか（`<picture>` の画像を選ぶ） */
+function darkTheme(): boolean {
+  return document.body.classList.contains('vscode-dark') || document.body.classList.contains('vscode-high-contrast');
+}
+
+/** リンクで包む */
+function linked(node: HTMLElement, link: string | undefined): HTMLElement {
+  if (!link) return node;
+  const a = el('a');
+  a.href = link;
+  a.title = link;
+  a.append(node);
+  return a;
+}
+
 function renderRuns(runs: readonly MdRun[]): Node[] {
   return runs.map((run) => {
     if (run.line_break) return el('br');
-    if (run.image) {
+    const image = (darkTheme() ? run.image_dark : run.image_light) ?? run.image;
+    if (image) {
       // コミットの中の絵は拡張ホストが data URL にしてある。外の URL は読まず、代わりの文を出す
-      if (run.image.startsWith('data:')) {
+      if (image.startsWith('data:')) {
         const img = el('img', 'md-img');
-        img.src = run.image;
+        img.src = image;
         img.alt = run.text;
-        return img;
+        if (run.width) img.width = run.width;
+        if (run.height) img.height = run.height;
+        return linked(img, run.link);
       }
-      const alt = el('span', 'md-image', `🖼 ${run.text || run.image}`);
-      alt.title = run.image;
-      return alt;
+      const alt = el('span', 'md-image', `🖼 ${run.text || image}`);
+      alt.title = image;
+      return linked(alt, run.link);
     }
     if (run.footnote) return el('sup', 'md-footnote', `[${run.footnote}]`);
     if (run.custom_emoji) {
@@ -365,10 +404,13 @@ function renderRuns(runs: readonly MdRun[]): Node[] {
       chip.title = 'GitHub’s own emoji, shown by name (its image isn’t included)';
       return chip;
     }
-    let node: HTMLElement = el(run.code ? 'code' : 'span', run.html ? 'md-html' : '', run.text);
+    let node: HTMLElement = el(run.kbd ? 'kbd' : run.code ? 'code' : 'span', '', run.text);
     if (run.bold) node = wrapIn('strong', node);
     if (run.italic) node = wrapIn('em', node);
     if (run.strike) node = wrapIn('s', node);
+    if (run.underline) node = wrapIn('ins', node);
+    if (run.sub) node = wrapIn('sub', node);
+    if (run.sup) node = wrapIn('sup', node);
     if (run.link) {
       const a = el('a');
       a.href = run.link;
@@ -380,7 +422,7 @@ function renderRuns(runs: readonly MdRun[]): Node[] {
   });
 }
 
-function wrapIn(tag: 'strong' | 'em' | 's', child: Node): HTMLElement {
+function wrapIn(tag: 'strong' | 'em' | 's' | 'ins' | 'sub' | 'sup', child: Node): HTMLElement {
   const e = el(tag);
   e.append(child);
   return e;
@@ -390,11 +432,13 @@ function renderBlock(block: MdBlock): HTMLElement {
   switch (block.kind) {
     case 'heading': {
       const h = el(`h${Math.min(6, Math.max(1, block.level))}` as 'h1');
+      if (block.align) h.style.textAlign = block.align;
       h.append(...renderRuns(block.runs));
       return h;
     }
     case 'paragraph': {
       const p = el('p');
+      if (block.align) p.style.textAlign = block.align;
       p.append(...renderRuns(block.runs));
       return p;
     }
@@ -463,8 +507,36 @@ function renderBlock(block: MdBlock): HTMLElement {
     }
     case 'rule':
       return el('hr');
-    case 'html':
-      return el('pre', 'md-html', block.text);
+    case 'details': {
+      // HTML の <details>（押すと開く・閉じる。見出しがなければ GitHub と同じ「Details」）
+      const details = el('details', 'md-details');
+      details.open = block.open === true;
+      const summary = el('summary');
+      if (block.summary.length > 0) summary.append(...renderRuns(block.summary));
+      else summary.textContent = 'Details';
+      details.append(summary, ...block.blocks.map(renderBlock));
+      return details;
+    }
+    case 'htmlTable': {
+      // HTML の表（マスは行・列の順で、colspan・rowspan を解いてある）
+      const table = el('table', 'md-table');
+      let tr: HTMLTableRowElement | undefined;
+      let row = -1;
+      for (const cell of block.cells) {
+        if (cell.row !== row || !tr) {
+          tr = el('tr');
+          table.append(tr);
+          row = cell.row;
+        }
+        const td = el(cell.header ? 'th' : 'td');
+        if (cell.colspan > 1) td.colSpan = cell.colspan;
+        if (cell.rowspan > 1) td.rowSpan = cell.rowspan;
+        if (cell.align) td.style.textAlign = cell.align;
+        td.append(...renderRuns(cell.runs));
+        tr.append(td);
+      }
+      return table;
+    }
     case 'footnote': {
       const div = el('div', 'md-footnote-body');
       div.append(el('sup', '', `[${block.label}]`), ...block.blocks.map(renderBlock));
