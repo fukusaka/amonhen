@@ -716,6 +716,8 @@ pub struct App {
     failure_details: Option<String>,
     /// `!` の枠に出しているのが、失敗の全部か（でなければ hooks の出力）。
     showing_failure: bool,
+    /// 最後の失敗の全文（git のコマンドを探す間）。見つかったら、詳細の先頭に `$ git …` を足す。
+    failure_seen: Option<String>,
     /// `failure_details` は失敗ではなく、命令の出力（Run in Each Submodule）。
     details_are_output: bool,
     /// hooks の出力を枠に出している（そのときの一番上の行）。
@@ -876,6 +878,7 @@ impl App {
             hook_output: None,
             failure_details: None,
             showing_failure: false,
+            failure_seen: None,
             details_are_output: false,
             showing_hooks: None,
             palette: None,
@@ -4020,6 +4023,32 @@ impl App {
             self.dirty = true;
             return;
         }
+        // 失敗した git のコマンド: 同じエラーで失敗した、いちばん新しい git の記録。
+        if name == "failureCommand" {
+            let Some(error) = self.failure_seen.take() else {
+                return;
+            };
+            let records = result.map(|r| r["records"].clone()).unwrap_or_default();
+            let found = (records.as_array().into_iter().flatten())
+                .filter(|r| r["kind"] == "git" && r["ok"] == false)
+                .filter(|r| {
+                    let theirs = r["error"].as_str().unwrap_or("").trim();
+                    !theirs.is_empty() && (error.contains(theirs) || theirs.contains(&error))
+                })
+                .max_by_key(|r| r["seq"].as_u64().unwrap_or(0))
+                .and_then(|r| r["label"].as_str().map(str::to_owned));
+            if let Some(command) = found {
+                let first = self.failure_details.is_none();
+                self.failure_details = Some(format!("$ {command}\n\n{error}"));
+                self.details_are_output = false;
+                // 1 行の失敗にも、`!` でコマンドを出せると書く。
+                if first && let Some(shown) = &mut self.error {
+                    shown.push_str(&tr!(" (! shows all)"));
+                }
+                self.dirty = true;
+            }
+            return;
+        }
         // Operations: 手元の記録と daemon の記録を合わせて、新しい順に。選んでいたものは番号で引き継ぐ。
         if name == "activity" {
             let reply = result.unwrap_or_default();
@@ -4176,6 +4205,12 @@ impl App {
                 let lines = error.lines().filter(|l| !l.trim().is_empty()).count();
                 self.failure_details = (lines > 1).then(|| error.trim_end().to_owned());
                 self.details_are_output = false;
+                // 失敗した git のコマンドを Activity の記録から探す（アプリの Details と同じく、詳細の先頭に）。
+                self.failure_seen = Some(error.trim_end().to_owned());
+                self.send(Request::Call {
+                    name: "failureCommand",
+                    request: json!({"op": "activity"}),
+                });
                 self.error = Some(match lines > 1 {
                     true => line.trim().to_owned() + &tr!(" (! shows all)"),
                     false => line.trim().to_owned(),

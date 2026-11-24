@@ -1953,6 +1953,8 @@ fn a_failure_shows_in_full_with_bang() {
     println!("{all}");
     assert!(all.contains(" Details of the failure "), "{all}");
     assert!(all.contains("a.txt"), "{all}");
+    // 先頭に、失敗した git のコマンド（アプリの Details と同じ）。
+    assert!(all.contains("$ git "), "{all}");
     assert_eq!(git_out(dir.path(), &["branch", "--show-current"]), "main\n");
 }
 
