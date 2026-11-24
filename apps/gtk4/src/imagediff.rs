@@ -182,6 +182,7 @@ pub fn panel(
         None,
         false,
         None,
+        &[],
     )
 }
 
@@ -205,6 +206,7 @@ pub fn compare(
         Some(titles),
         true,
         leading,
+        &[],
     );
     with_notes(panel, notes)
 }
@@ -219,8 +221,35 @@ pub fn size_caption(data: &[u8]) -> String {
 pub fn single(data: &[u8], notes: Option<gtk::Widget>) -> Option<gtk::Widget> {
     let image = texture(Some(data))?;
     let caption = describe(Some(data), Some(&image));
-    let panel = build(None, Some(image), caption, None, None, None, true, None);
+    let panel = build(
+        None,
+        Some(image),
+        caption,
+        None,
+        None,
+        None,
+        true,
+        None,
+        &[],
+    );
     Some(with_notes(panel, notes))
+}
+
+/// すべてのファイルで開いた Android の VectorDrawable（SVG にしたもの `svg`）。`caption` は大きさの説明、
+/// `footnote` は絵の下に添える短い説明（引けなかった色など。Markdown の図の注記と同じ見た目）。読めなければ None。
+pub fn drawable(svg: &[u8], caption: String, footnote: &[String]) -> Option<gtk::Widget> {
+    let image = texture(Some(svg))?;
+    Some(build(
+        None,
+        Some(image),
+        caption,
+        None,
+        None,
+        None,
+        true,
+        None,
+        footnote,
+    ))
 }
 
 /// `notes` があれば、`panel` の下に一覧の欄を置く（欄の高さの 35% ほど、仕切りで変えられる）。
@@ -254,6 +283,7 @@ fn with_notes(panel: gtk::Widget, notes: Option<gtk::Widget>) -> gtk::Widget {
 
 /// 欄を作る。`modes` がなければ 1 枚だけ（`after` を出す）。`titles` は前と後の見出し（なければ「前」「後」）。
 /// `fill` なら高さいっぱいに広げる（すべてのファイル。下の仕切りの線は引かない）。`leading` は帯の左端に置く。
+/// `footnote` は大きさの説明の下に添える文。
 #[allow(clippy::too_many_arguments)]
 fn build(
     old: Option<gdk::Texture>,
@@ -264,6 +294,7 @@ fn build(
     titles: Option<(String, String)>,
     fill: bool,
     leading: Option<gtk::Widget>,
+    footnote: &[String],
 ) -> gtk::Widget {
     let single = modes.is_none();
     let canvas = Canvas::new(old, new);
@@ -392,6 +423,19 @@ fn build(
     root.append(&bar);
     root.append(&canvas);
     root.append(&caption);
+    if !footnote.is_empty() {
+        let note = gtk::Label::new(Some(&footnote.join("\n")));
+        note.set_xalign(0.0);
+        note.set_wrap(true);
+        note.set_wrap_mode(pango::WrapMode::WordChar);
+        note.set_selectable(true);
+        note.add_css_class("dim-label");
+        // Markdown の図の注記と同じ、少し小さい字
+        let attrs = pango::AttrList::new();
+        attrs.insert(pango::AttrFloat::new_scale(0.9));
+        note.set_attributes(Some(&attrs));
+        root.append(&note);
+    }
     let outer = gtk::Box::new(gtk::Orientation::Vertical, 6);
     outer.append(&root);
     if fill {
