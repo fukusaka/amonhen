@@ -775,6 +775,8 @@ pub struct App {
     drop_asked: Option<(String, String, bool)>,
     /// History の行に出す項目を選んでいる間（`I`）。
     items_asked: bool,
+    /// History の All Files（`a`）。画面に重ねる。
+    all_files: Option<crate::allfiles::AllFiles>,
     /// 端末のクリップボードに入れる文字（OSC 52。描くループが書く）。
     copy: Option<String>,
     /// 編集モードで、変更があるのに Esc を 1 度押した（もう 1 度で捨てる）。
@@ -929,6 +931,7 @@ impl App {
             drag_plan: None,
             drop_asked: None,
             items_asked: false,
+            all_files: None,
             copy: None,
             edit_discard: false,
             plan_message: None,
@@ -1237,7 +1240,8 @@ impl App {
             || self.daemon.is_some()
             || self.showing_events.is_some()
             || self.showing_performance
-            || self.edit_mode.is_some();
+            || self.edit_mode.is_some()
+            || self.all_files.is_some();
         if std::mem::take(&mut self.dirty) || (over && damage != Damage::default()) {
             return Some(Damage::ALL);
         }
@@ -1572,6 +1576,12 @@ impl App {
                     _ => self.dirty = true,
                 }
                 match loaded {
+                    Loaded::TreeFile { path, result } => {
+                        if let Some(files) = &mut self.all_files {
+                            files.set_content(path, result);
+                            self.dirty = true;
+                        }
+                    }
                     Loaded::Opened {
                         workdir,
                         refs,
@@ -2005,6 +2015,61 @@ impl App {
             self.naming = Naming::PatchVersion;
             self.typing_branch = Some((String::new(), String::new(), "2".to_owned()));
             self.dirty = true;
+            return;
+        }
+        // All Files: 左の木と右の中身。Esc で閉じる。
+        if let Some(files) = &mut self.all_files {
+            self.dirty = true;
+            let height = usize::from(self.size.1.saturating_sub(4));
+            match key.code {
+                KeyCode::Esc | KeyCode::Char('q') => self.all_files = None,
+                KeyCode::Tab => files.focus_content = !files.focus_content,
+                KeyCode::Char('d') if control && files.focus_content => {
+                    let page = files.page();
+                    files.scroll(page / 2);
+                }
+                KeyCode::Char('u') if control && files.focus_content => {
+                    let page = files.page();
+                    files.scroll(-page / 2);
+                }
+                KeyCode::Char('j') | KeyCode::Down if files.focus_content => files.scroll(1),
+                KeyCode::Char('k') | KeyCode::Up if files.focus_content => files.scroll(-1),
+                KeyCode::Char('h') | KeyCode::Left if files.focus_content => files.pan(-8),
+                KeyCode::Char('l') | KeyCode::Right if files.focus_content => files.pan(8),
+                KeyCode::PageDown if files.focus_content => {
+                    let page = files.page();
+                    files.scroll(page);
+                }
+                KeyCode::PageUp if files.focus_content => {
+                    let page = files.page();
+                    files.scroll(-page);
+                }
+                KeyCode::Char('j') | KeyCode::Down => files.move_selection(1, height),
+                KeyCode::Char('k') | KeyCode::Up => files.move_selection(-1, height),
+                KeyCode::PageDown => files.move_selection(height as i64, height),
+                KeyCode::PageUp => files.move_selection(-(height as i64), height),
+                KeyCode::Enter | KeyCode::Char('l') | KeyCode::Right => {
+                    match files.selected().map(|(p, folder)| (p.to_owned(), folder)) {
+                        Some((_, true)) => {
+                            if let Some(path) = files.toggle() {
+                                files.loading.push_back(path.clone());
+                                let oid = files.oid.clone();
+                                self.send(Request::Run {
+                                    name: "allFilesEntries",
+                                    command: json!({"op": "treeEntries", "oid": oid, "path": path}),
+                                });
+                            }
+                        }
+                        Some((path, false)) => {
+                            files.focus_content = true;
+                            let oid = files.oid.clone();
+                            self.send(Request::TreeFile { oid, path });
+                        }
+                        None => {}
+                    }
+                }
+                _ => {}
+            }
             return;
         }
         // History の行に出す項目: 押したものを出す・隠す。
@@ -4356,6 +4421,26 @@ impl App {
             }
             return;
         }
+        if name == "allFilesChanged" {
+            if let (Some(files), Ok(reply)) = (&mut self.all_files, result) {
+                files.set_changed(&reply["info"]["stats"]);
+                self.dirty = true;
+            }
+            return;
+        }
+        // All Files のフォルダの中身（頼んだ順に届く）。
+        if name == "allFilesEntries" {
+            if let Some(files) = &mut self.all_files
+                && let Some(path) = files.loading.pop_front()
+            {
+                match result {
+                    Ok(reply) => files.entries(&path, &reply["info"]["entries"]),
+                    Err(error) => self.error = Some(error),
+                }
+                self.dirty = true;
+            }
+            return;
+        }
         // ほかの worktree の変更の数（裏で読む。読めなければ前の数のまま）。
         if name == "worktreeCounts" {
             for w in (result.ok().as_ref())
@@ -6126,6 +6211,27 @@ impl App {
 
     /// 印をつけたコミット（first-parent の並びで続いたもの）を、編集モードで 1 つにまとめる（アプリの Combine）。
     /// 一番古いものから HEAD までを開き、新しい方をひとつ古いものとまとめる行にしておく。当てるのは編集モードで。
+    /// 選んでいるコミットの All Files を開く（根のフォルダを読む）。
+    fn open_all_files(&mut self) {
+        let Some((id, _, subject)) = self.history.selected_commit() else {
+            return;
+        };
+        let (id, subject) = (id.to_string(), subject.to_owned());
+        let changed = self.details.changed_paths(&id).unwrap_or_default();
+        let title = format!("{} “{subject}”", &id[..8]);
+        self.all_files = Some(crate::allfiles::AllFiles::new(id.clone(), title, changed));
+        // 変わったファイル（詳細を読んでいなくても印をつける）。
+        self.send(Request::Run {
+            name: "allFilesChanged",
+            command: json!({"op": "commitExtras", "oid": id}),
+        });
+        self.send(Request::Run {
+            name: "allFilesEntries",
+            command: json!({"op": "treeEntries", "oid": id, "path": ""}),
+        });
+        self.dirty = true;
+    }
+
     /// History の行に出す項目を聞く（出しているものに ✓）。
     fn ask_history_items(&mut self) {
         let items = self.history.items();
@@ -8587,6 +8693,11 @@ impl App {
                 self.toggle_history_order();
                 None
             }
+            // 選んでいるコミットのすべてのファイル（アプリの All Files）。
+            KeyCode::Char('a') => {
+                self.open_all_files();
+                None
+            }
             // 行に出す項目を選ぶ（アプリの History の Items。この TUI を動かしている間だけ）。
             KeyCode::Char('I') => {
                 self.ask_history_items();
@@ -9740,6 +9851,15 @@ impl App {
         }
         if let Some(ops) = &self.operations {
             self.draw_operations(ops, area, buf);
+        }
+        if let Some(files) = &mut self.all_files {
+            let at = Rect::new(
+                area.x,
+                area.y + 1,
+                area.width,
+                area.height.saturating_sub(1),
+            );
+            files.draw(at, buf, &self.theme);
         }
         if let Some(cache) = &self.history_cache {
             self.draw_history_cache(cache, area, buf);

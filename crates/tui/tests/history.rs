@@ -4039,6 +4039,43 @@ fn generated_and_large_files_are_folded_at_first() {
     assert!(side.iter().any(|l| l.contains("+small 1")), "{side:?}");
 }
 
+/// History の `a`: コミットの時点のすべてのファイル（アプリの All Files）。フォルダは Enter で開き、ファイルは
+/// 右に中身。そのコミットで変わったファイルには印、中身は変わった行に印をつけたファイル全体
+#[test]
+fn all_files_of_a_commit() {
+    let dir = tempfile::tempdir().unwrap();
+    let dir = dir.path();
+    git(dir, BASE, &["init", "-q", "-b", "main"]);
+    std::fs::create_dir(dir.join("src")).unwrap();
+    std::fs::write(dir.join("src/lib.rs"), "one\ntwo\n").unwrap();
+    std::fs::write(dir.join("README.md"), "readme\n").unwrap();
+    git(dir, BASE, &["add", "."]);
+    git(dir, BASE, &["commit", "-q", "-m", "Start"]);
+    std::fs::write(dir.join("src/lib.rs"), "one\ntwo\nthree\n").unwrap();
+    git(dir, BASE + DAY, &["commit", "-q", "-am", "Add three"]);
+    let tree = amonhen_tui::snapshot(open(dir), 140, 14, clock(), "a").unwrap();
+    println!("{tree}");
+    assert!(tree.contains("All Files of"), "{tree}");
+    assert!(tree.contains("▸ src/"), "{tree}");
+    assert!(tree.contains("README.md"), "{tree}");
+    // src を開き、lib.rs（変わったファイル、印 M）の中身: ファイル全体で、足した行に印。
+    let opened = amonhen_tui::snapshot(open(dir), 140, 14, clock(), "a\n").unwrap();
+    println!("{opened}");
+    assert!(opened.contains("▾ src/"), "{opened}");
+    let lib = opened.lines().find(|l| l.contains("lib.rs")).unwrap();
+    assert!(lib.contains('M'), "{lib}");
+    let content = amonhen_tui::snapshot(open(dir), 140, 14, clock(), "a\nj\n").unwrap();
+    println!("{content}");
+    assert!(content.contains("one"), "{content}");
+    assert!(content.contains("+three"), "{content}");
+    // 変わっていないファイルは、印なしの中身。
+    let readme = amonhen_tui::snapshot(open(dir), 140, 14, clock(), "a\njj\n").unwrap();
+    assert!(readme.contains("readme"), "{readme}");
+    // Esc で閉じる。
+    let closed = amonhen_tui::snapshot(open(dir), 140, 14, clock(), "a\x1b").unwrap();
+    assert!(!closed.contains("All Files of"), "{closed}");
+}
+
 /// 詳細の `t`: 変わったファイルを木で出す（フォルダの下に名前だけ）。`z` でフォルダをたたみ、もう一度で開く
 #[test]
 fn changed_files_as_a_tree() {

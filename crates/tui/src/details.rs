@@ -552,6 +552,27 @@ pub struct Details {
 const WIDEN_BY: u32 = 20;
 
 impl Details {
+    /// 出しているコミットが `id`（16 進）なら、そのコミットで変わったファイル（パス → A・D・R・M）。
+    pub fn changed_paths(&self, id: &str) -> Option<std::collections::HashMap<String, char>> {
+        let commit = self.commit.as_ref().filter(|c| c.id.to_string() == id)?;
+        Some(
+            commit
+                .files
+                .iter()
+                .map(|f| {
+                    let letter = match f.kind.as_str() {
+                        "added" => 'A',
+                        "deleted" => 'D',
+                        "renamed" => 'R',
+                        "copied" => 'C',
+                        _ => 'M',
+                    };
+                    (f.path.clone(), letter)
+                })
+                .collect(),
+        )
+    }
+
     /// 頭・ファイルの一覧・差分の `line` 行目の字。
     fn line_text(commit: &Commit, line: u32) -> String {
         let head = commit.head.len() as u32;

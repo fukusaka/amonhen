@@ -4,6 +4,7 @@
 //! ワーカー（`loader`）で行い、メインスレッドは 1 本のチャネルで入力・答えを待つ。状態（`app`）はただのデータで、
 //! 描画はその関数。何も変わらなければ描かない。
 
+mod allfiles;
 mod app;
 #[cfg(unix)]
 pub mod askpass;

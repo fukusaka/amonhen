@@ -123,6 +123,8 @@ pub enum Request {
     MakeCommit { message: String, amend: bool },
     /// コミット（16 進の ID）のメッセージ（amend で欄に入れる）。
     Message { id: String },
+    /// コミット `oid` の時点のファイル `path` の中身（`treeFile`。All Files）。
+    TreeFile { oid: String, path: String },
 }
 
 pub enum Loaded {
@@ -181,6 +183,11 @@ pub enum Loaded {
     },
     /// コミットを作った（hooks が書いたもの）。だめなら理由。
     Committed(std::result::Result<String, String>),
+    /// All Files のファイルの中身（`treeFile` の答え）。だめなら理由。
+    TreeFile {
+        path: String,
+        result: std::result::Result<Reply, String>,
+    },
     /// コミットのメッセージ（読めなければ `None`）。
     Message(Option<String>),
     /// stage・unstage・discard が済んだ。だめなら理由。
@@ -237,7 +244,8 @@ impl Loader {
             | Request::DiscardRows { .. }
             | Request::Discard { .. }
             | Request::MakeCommit { .. }
-            | Request::Message { .. } => &self.work,
+            | Request::Message { .. }
+            | Request::TreeFile { .. } => &self.work,
         };
         let _ = to.send(request);
     }
@@ -559,6 +567,12 @@ fn load(front: &dyn Front, request: Request, events: &Sender<Event>) -> Result<L
                 .map(|r| r.json["output"].as_str().unwrap_or("").to_owned())
                 .map_err(|e| e.to_string()),
         ),
+        Request::TreeFile { oid, path } => Loaded::TreeFile {
+            result: front
+                .call(json!({"op": "treeFile", "oid": oid, "path": path}))
+                .map_err(|e| e.to_string()),
+            path,
+        },
         Request::Message { id } => Loaded::Message(
             run(front, json!({"op": "commitInfo", "oid": id}))
                 .ok()
