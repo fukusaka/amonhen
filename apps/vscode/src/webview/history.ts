@@ -672,11 +672,12 @@ export function createHistoryView(): View {
     }
   });
 
-  // ドラッグでの並べ替え。編集できるコミットの上にだけ落とせる
+  // ドラッグでの並べ替え。編集できるコミットの上にだけ落とせる。行の真ん中に落とすと、そのコミットにまとめる
+  // （squash。アプリと同じ）
   let dragging: RowData | undefined;
   let dropTarget: HTMLElement | undefined;
   const clearDropTarget = () => {
-    dropTarget?.classList.remove('drop-above', 'drop-below');
+    dropTarget?.classList.remove('drop-above', 'drop-below', 'drop-on');
     dropTarget = undefined;
   };
   list.addEventListener('dragstart', (e) => {
@@ -698,10 +699,9 @@ export function createHistoryView(): View {
     }
     e.preventDefault();
     const el = (e.target as HTMLElement).closest<HTMLElement>('.row')!;
-    const above = isUpperHalf(e, el);
     clearDropTarget();
     dropTarget = el;
-    el.classList.add(above ? 'drop-above' : 'drop-below');
+    el.classList.add(`drop-${dropZone(e, el)}`);
   });
   list.addEventListener('dragleave', clearDropTarget);
   list.addEventListener('drop', (e) => {
@@ -713,9 +713,14 @@ export function createHistoryView(): View {
     if (!dragging || dragging.chain === undefined || target?.chain === undefined || !el) {
       return;
     }
-    // 上半分なら target の上（より新しい側）、下半分なら下に置く
-    const above = isUpperHalf(e, el);
-    let to = above ? target.chain : target.chain + 1;
+    const zone = dropZone(e, el);
+    if (zone === 'on') {
+      post({ type: 'squashOnto', oid: dragging.oid, onto: target.oid });
+      dragging = undefined;
+      return;
+    }
+    // 上の端なら target の上（より新しい側）、下の端なら下に置く
+    let to = zone === 'above' ? target.chain : target.chain + 1;
     // 自分より下に動かすときは、自分が抜けた分だけ詰まる
     if (to > dragging.chain) to -= 1;
     if (to !== dragging.chain) {
@@ -727,6 +732,13 @@ export function createHistoryView(): View {
     dragging = undefined;
     clearDropTarget();
   });
+
+  /** 行のどこに落とすか: 上と下の 4 分の 1 は行の間（並べ替え）、真ん中はその行に重ねる（squash） */
+  function dropZone(e: MouseEvent, el: HTMLElement): 'above' | 'on' | 'below' {
+    const rect = el.getBoundingClientRect();
+    const y = (e.clientY - rect.top) / rect.height;
+    return y < 0.25 ? 'above' : y > 0.75 ? 'below' : 'on';
+  }
 
   function isUpperHalf(e: MouseEvent, el: HTMLElement): boolean {
     const rect = el.getBoundingClientRect();
