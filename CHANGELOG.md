@@ -1275,6 +1275,11 @@ First release.
 - The Working Copy diff can ignore whitespace (at line ends, changes in amount or all), with the engine. Lines and
   hunks aren't staged or discarded meanwhile.
 
+#### Fixed
+
+- Restoring the version before a commit that renamed a file brings back the old name instead of only deleting the new
+  one, and Restore This Version isn't offered for a file the commit deleted.
+
 ### [0.2.9] - 2026-11-24
 
 History's details work like the app's: the file headers are the changed files, and with the engine they widen a
