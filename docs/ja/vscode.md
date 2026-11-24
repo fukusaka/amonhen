@@ -286,6 +286,6 @@ macOS アプリに追いつく（1 つの機能を 1 つの pull request で、�
 - [x] 72. History の詳細の「すべてのファイル」（その時点の木と、コミットの行に印を付けた中身。拡大縮小できる画像、SVG の絵とモバイルの確認、整形した Markdown、そのほかのバイナリはエディタで）。エンジンがあれば
 - [x] 73. 長い行の折り返し（`amonhen.wrapLongLines`、Alt+Z、差分の上の ↩︎）、コミット情報の高さを保つ（仕切りのダブルクリックで合わせ直す）、Markdown の GitHub 独自の絵文字を薄い札に
 - [x] 74. Working Copy の差分で空白を無視する（エンジンがあれば。その間は行・hunk を stage・破棄しない）
-- [x] 82. 途中の操作の行で、何をどこへしている途中か（何手目か）と、なぜ止まり次に何をするかを言う（エンジンがあれば。アプリの帯と同じ）。revert には Skip を出さない
 - [x] 75. アプリのメニューの Commit・Commit and Push・Stage All・Set Upstream…・Rebase…・Go to HEAD・Find in History… をコマンドに。Merge Branches… と Rebase… で History で選んでいるコミットも選べる
 - [x] 76. コミット情報の右クリック（ID・短い ID・件名・メッセージ・git show のコピー、Edit Message…）と、名前を押してその人で History を探す
+- [x] 82. 途中の操作の行で、何をどこへしている途中か（何手目か）と、なぜ止まり次に何をするかを言う（エンジンがあれば。アプリの帯と同じ）。revert には Skip を出さない
