@@ -324,9 +324,15 @@ fn working_copy_lists_files_beside_the_diff() {
     let list: Vec<String> = lines[1..8].iter().filter_map(|l| column(l, 1)).collect();
     let diff: Vec<String> = lines[1..8].iter().filter_map(|l| column(l, 2)).collect();
     // stage の印（まだ・済み）、状態の 1 文字、パス。
+    // 右の端に、HEAD からの行数（アプリの行の +/−。untracked にはない）。
+    let squeeze = |l: &String| l.split_whitespace().collect::<Vec<_>>().join(" ");
     assert_eq!(
-        list[..3],
-        ["[ ] M lane.rs", "[x] A staged.txt", "[ ] ? untracked.txt"]
+        list[..3].iter().map(squeeze).collect::<Vec<_>>(),
+        [
+            "[ ] M lane.rs +1 -1",
+            "[x] A staged.txt +1",
+            "[ ] ? untracked.txt"
+        ]
     );
     assert_eq!(diff[0], " lane.rs +1 -1");
     assert_eq!(diff[1], " @@ -1,4 +1,4 @@");
@@ -751,12 +757,16 @@ fn the_working_copy_lists_a_tree_or_names_and_filters() {
     assert!(
         names
             .iter()
-            .any(|l| l.starts_with("[x] A a.rs") && l.ends_with("src")),
+            .any(|l| l.starts_with("[x] A a.rs  src") && l.ends_with("+1")),
         "{names:?}"
     );
     // パスで絞る。
     let filtered = list("1/src\n");
-    assert_eq!(filtered[..3], ["[x] A src/a.rs", "[x] A src/b.rs", ""]);
+    let squeeze = |l: &String| l.split_whitespace().collect::<Vec<_>>().join(" ");
+    assert_eq!(
+        filtered[..3].iter().map(squeeze).collect::<Vec<_>>(),
+        ["[x] A src/a.rs +1", "[x] A src/b.rs +1", ""]
+    );
 }
 
 /// 書きかけのメッセージは `<git dir>/amonhen/commit-draft` に残り、次に開いたときに欄に戻る。コミットすると消える。

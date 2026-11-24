@@ -1694,6 +1694,11 @@ impl App {
                             && sequence["empty"] != true
                             && sequence["retried"] != true;
                         self.changes.status(&status);
+                        // 行ごとの行数は、一覧を出してから裏で（アプリと同じ）。
+                        self.send(Request::Background {
+                            name: "workingStats",
+                            command: json!({"op": "workingStats"}),
+                        });
                         self.count_open_worktree();
                         self.sidebar.set_conflicts(self.changes.conflicts());
                         // Commit and Push: コミットの後の状態（上流より進んだ数）が届いたら、push を確かめる。
@@ -4056,6 +4061,16 @@ impl App {
                 Err(error) => self.error = Some(error),
             }
             self.read_operations();
+            return;
+        }
+        // Working Copy の行ごとの行数（裏で読む。読めなければ前の数のまま）。
+        if name == "workingStats" {
+            if let Ok(reply) = result
+                && self.changes.set_stats(&reply["info"]["stats"])
+            {
+                self.damage |= Damage::MAIN;
+                self.dirty = true;
+            }
             return;
         }
         // ほかの worktree の変更の数（裏で読む。読めなければ前の数のまま）。
