@@ -7,6 +7,19 @@ becomes the GitHub Release notes.
 
 ## App and engine
 
+### Unreleased
+
+#### Added
+
+- DOT diagrams in Markdown previews draw images (a node's `image`, a table's `<IMG>`) from the same commit, by a path
+  relative to the Markdown file's folder.
+- DOT diagrams draw gradient fills in HTML-like tables, cells and cluster and graph backgrounds, striped clusters,
+  tapered edges, `decorate`, node `labelloc`, and dashed or dotted table borders.
+
+#### Fixed
+
+- DOT diagrams: in `rankdir=LR`/`RL`, a cluster is widened to fit a title longer than its box.
+
 ### [0.2.14] - 2026-11-24
 
 On macOS, Show Only Commit Details can be undone again, with a button at the top right of the commit details.

@@ -1,10 +1,10 @@
 //! HTML のラベルの表（`<TABLE>`・`<TR>`・`<TD>`）: 読んで、升目に組み、SVG に描く。
 //!
 //! 属性は Graphviz の説明のとおり: 表の `border`（既定 1）・`cellborder`（既定は `border`）・`cellspacing`
-//! （既定 2）・`cellpadding`（既定 2）・`bgcolor`・`color`・`width`・`height`・`fixedsize`・`sides`・`style`
-//! （rounded）・`columns`・`rows`（`*` で間の線）・`port`・`align`・`valign`。升の `colspan`・`rowspan`・`border`・
-//! `cellpadding`・`bgcolor`・`color`・`align`（`text` も）・`valign`・`balign`・`width`・`height`・`fixedsize`・
-//! `sides`・`port`。`<HR/>`・`<VR/>` は行・升の間の線。中の文字は `text` の HTML（`<font>`・`<b>`・`<br/>` など）、
+//! （既定 2）・`cellpadding`（既定 2）・`bgcolor`（色の並びはグラデーション）・`gradientangle`・`color`・`width`・
+//! `height`・`fixedsize`・`sides`・`style`（rounded・radial・dashed・dotted）・`columns`・`rows`（`*` で間の線）・
+//! `port`・`align`・`valign`。升の `colspan`・`rowspan`・`border`・`cellpadding`・`bgcolor`・`gradientangle`・
+//! `style`・`color`・`align`（`text` も）・`valign`・`balign`・`width`・`height`・`fixedsize`・`sides`・`port`。`<HR/>`・`<VR/>` は行・升の間の線。中の文字は `text` の HTML（`<font>`・`<b>`・`<br/>` など）、
 //! 升の中の表は入れ子にする。`<IMG>` は `SRC` を呼ぶ側の読み手で読み、`SCALE` で升に合わせて描く（読めなければ
 //! 枠だけ。呼ぶ側が注記する）。
 
