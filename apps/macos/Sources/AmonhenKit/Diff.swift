@@ -538,8 +538,8 @@ public indirect enum MarkdownBlock: Decodable, Sendable {
     case paragraph(runs: [Run])
     case code(language: String, text: String)
     /// 図（` ```mermaid ` など）。`svg` は色を CSS の変数のままにした絵（描くときに `colorizeDiagram` で配色を当てる）。
-    /// 描けなければ `error` に理由。
-    case diagram(language: String, text: String, svg: String?, config: MermaidThemeConfig?, error: String?)
+    /// 近いもので描いた図（DOT の HTML の表など）なら `note` にそのことを伝える一文。描けなければ `error` に理由。
+    case diagram(language: String, text: String, svg: String?, config: MermaidThemeConfig?, note: String?, error: String?)
     case quote(alert: String?, blocks: [MarkdownBlock])
     case list(start: Int?, items: [Item])
     case table(aligns: [String], head: [[Run]], rows: [[[Run]]])
@@ -548,7 +548,7 @@ public indirect enum MarkdownBlock: Decodable, Sendable {
     case footnote(label: String, blocks: [MarkdownBlock])
 
     enum Key: String, CodingKey {
-        case kind, level, runs, language, text, alert, blocks, start, items, aligns, head, rows, label, svg, config, error
+        case kind, level, runs, language, text, alert, blocks, start, items, aligns, head, rows, label, svg, config, note, error
     }
 
     public init(from decoder: any Decoder) throws {
@@ -562,6 +562,7 @@ public indirect enum MarkdownBlock: Decodable, Sendable {
                 language: try c.decode(String.self, forKey: .language), text: try c.decode(String.self, forKey: .text),
                 svg: try c.decodeIfPresent(String.self, forKey: .svg),
                 config: try c.decodeIfPresent(MermaidThemeConfig.self, forKey: .config),
+                note: try c.decodeIfPresent(String.self, forKey: .note),
                 error: try c.decodeIfPresent(String.self, forKey: .error))
         case "quote":
             self = .quote(alert: try c.decodeIfPresent(String.self, forKey: .alert), blocks: try c.decode([MarkdownBlock].self, forKey: .blocks))

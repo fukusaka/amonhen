@@ -86,6 +86,9 @@ pub enum Block {
         /// 図の中で指定した Mermaid のテーマ（設定の配色より先に使う）。
         #[serde(skip_serializing_if = "Option::is_none")]
         config: Option<crate::diagram::MermaidConfig>,
+        /// 近いもので描いたことを伝える一文（FE は絵の下に添える）。
+        #[serde(skip_serializing_if = "Option::is_none")]
+        note: Option<String>,
         #[serde(skip_serializing_if = "Option::is_none")]
         error: Option<String>,
     },
@@ -389,6 +392,15 @@ fn parse_blocks(
                                     text,
                                     svg: Some(svg),
                                     config,
+                                    note: None,
+                                    error: None,
+                                },
+                                Some(crate::diagram::Drawn::Noted(svg, note)) => Block::Diagram {
+                                    language,
+                                    text,
+                                    svg: Some(svg),
+                                    config: None,
+                                    note: Some(note),
                                     error: None,
                                 },
                                 Some(crate::diagram::Drawn::Error(error)) => Block::Diagram {
@@ -396,6 +408,7 @@ fn parse_blocks(
                                     text,
                                     svg: None,
                                     config: None,
+                                    note: None,
                                     error: Some(error),
                                 },
                             };

@@ -1,5 +1,7 @@
-//! Markdown の図（` ```mermaid ` のブロック）を SVG に描く（History の「すべてのファイル」の整形表示）。描くのは
-//! pele（Obsidian の Mermaid の描き手）を移した `amonhen-pele` で、`diagrams` フィーチャーのときだけ入る。
+//! Markdown の図（` ```mermaid `・` ```dot ` のブロック）を SVG に描く（History の「すべてのファイル」の整形表示）。
+//! Mermaid を描くのは pele（Obsidian の Mermaid の描き手）を移した `amonhen-pele`、Graphviz の DOT（` ```dot `・
+//! ` ```graphviz `・` ```gv `）は `amonhen-dot` で、どちらも `diagrams` フィーチャーのときだけ入る。DOT の図も pele と
+//! 同じ CSS の変数で色を書くので、`colorize` で同じように色を当てる。
 //!
 //! 形と位置（pele の SVG）は Markdown を読むときに一度だけ作る。色は pele が CSS の変数（`--pele-*`）で決めるので、
 //! 描くときに `colorize` で配色（構文の色・pele・Mermaid）の変数を当て、`svgcss` で属性に書き写して CoreSVG・
@@ -26,6 +28,8 @@ pub enum Drawn {
     /// pele の SVG（色は CSS の変数のまま。`colorize` で色を当てる）と、図の中で指定した Mermaid のテーマ
     /// （`%%{init: …}%%`・front matter の `config` の `theme`・`themeVariables`。なければ `None`）。
     Svg(String, Option<MermaidConfig>),
+    /// 近いもので描いた図（DOT の HTML の表など）と、そのことを伝える一文（訳した文）。色は `Svg` と同じ。
+    Noted(String, String),
     /// 描けない（書き方の誤りなど）。理由は pele の言葉のまま（英語）。
     Error(String),
 }
@@ -38,10 +42,81 @@ pub fn draw(language: &str, text: &str) -> Option<Drawn> {
 
 /// `draw` の、gantt の日付をこの時間帯の地方時で数えるもの（None は UTC）。
 pub fn draw_in_zone(language: &str, text: &str, zone: Option<Arc<dyn TimeZone>>) -> Option<Drawn> {
-    if !language.eq_ignore_ascii_case("mermaid") {
-        return None;
+    if language.eq_ignore_ascii_case("mermaid") {
+        return draw_mermaid(text, zone);
     }
-    draw_mermaid(text, zone)
+    // dot・graphviz・gv は `layout` の属性で配置を選ぶ。neato などの名前のフェンスはその配置が既定
+    if DOT_FENCES.iter().any(|l| language.eq_ignore_ascii_case(l)) {
+        return draw_dot(text, language);
+    }
+    None
+}
+
+/// Graphviz の DOT として描くフェンスの言葉。
+const DOT_FENCES: &[&str] = &[
+    "dot",
+    "graphviz",
+    "gv",
+    "neato",
+    "fdp",
+    "sfdp",
+    "twopi",
+    "circo",
+    "osage",
+    "patchwork",
+];
+
+/// Graphviz の DOT の図。Mermaid と同じく大きなスタックの別スレッドで描き、panic は図の誤りにする。
+#[cfg(feature = "diagrams")]
+fn draw_dot(text: &str, language: &str) -> Option<Drawn> {
+    let source = text.to_owned();
+    let engine = amonhen_dot::engines::Engine::from_name(language)
+        .unwrap_or(amonhen_dot::engines::Engine::Dot);
+    let drawn = std::thread::Builder::new()
+        .name("dot".into())
+        .stack_size(PELE_STACK)
+        .spawn(move || amonhen_dot::render_with(&source, engine))
+        .ok()?
+        .join();
+    Some(match drawn {
+        Ok(Ok(d)) if d.notes.is_empty() => Drawn::Svg(d.svg, None),
+        Ok(Ok(d)) => Drawn::Noted(d.svg, approximation_note(&d.notes)),
+        Ok(Err(e)) => Drawn::Error(e.message),
+        Err(_) => Drawn::Error(amonhen_model::tr!("This diagram couldn’t be drawn")),
+    })
+}
+
+#[cfg(not(feature = "diagrams"))]
+fn draw_dot(_text: &str, _language: &str) -> Option<Drawn> {
+    None
+}
+
+/// 近いもので描いたことを伝える一文。
+#[cfg(feature = "diagrams")]
+fn approximation_note(notes: &[amonhen_dot::Note]) -> String {
+    use amonhen_dot::Note;
+    let reasons: Vec<String> = notes
+        .iter()
+        .map(|n| match n {
+            Note::Images => amonhen_model::tr!("images are drawn as empty frames"),
+            Note::UnknownShapes => amonhen_model::tr!("unknown shapes are drawn as boxes"),
+            Note::Ortho => amonhen_model::tr!("orthogonal edges are drawn as polylines"),
+            Note::UnknownColors => {
+                amonhen_model::tr!("unknown colors are drawn in the default color")
+            }
+            Note::ColorSchemes => {
+                amonhen_model::tr!("unknown color schemes are drawn in the default color")
+            }
+            Note::OtherLayouts => {
+                amonhen_model::tr!("unknown layout engines are drawn with the dot layout")
+            }
+            Note::LayoutOptions => amonhen_model::tr!("some layout options are approximated"),
+        })
+        .collect();
+    amonhen_model::tr!(
+        "This picture is an approximation: {reasons}.",
+        reasons = amonhen_model::i18n::list(&reasons)
+    )
 }
 
 #[cfg(feature = "diagrams")]
@@ -119,7 +194,7 @@ pub fn sample() -> Option<String> {
         "mermaid",
         "flowchart LR\n  subgraph Repository\n    A[Commit] --> B{Review}\n  end\n  B -->|merge| C[(main)]\n",
     )? {
-        Drawn::Svg(svg, _) => Some(svg),
+        Drawn::Svg(svg, _) | Drawn::Noted(svg, _) => Some(svg),
         Drawn::Error(_) => None,
     }
 }
@@ -469,12 +544,36 @@ pub fn colors_for(
 /// pele の SVG `svg` に配色 `vars` を当て、CoreSVG・librsvg で描ける SVG にする。`backdrop` なら図の地を
 /// `--pele-bg` で塗る。読めなければ `None`。
 pub fn colorize(svg: &str, vars: &[(String, String)], backdrop: bool) -> Option<String> {
+    colorize_impl(svg, vars, backdrop, false)
+}
+
+/// `colorize` と同じで、CoreSVG（macOS）向けに書く: 斜体の文字を傾け（CoreSVG は `font-style` を読まない）、
+/// DOT の図の飾りの混ざる行を span ごとの `<text>` に分け、飾りの線を描く（`svgcss::inline_slanted`）。
+pub fn colorize_for_coresvg(
+    svg: &str,
+    vars: &[(String, String)],
+    backdrop: bool,
+) -> Option<String> {
+    colorize_impl(svg, vars, backdrop, true)
+}
+
+fn colorize_impl(
+    svg: &str,
+    vars: &[(String, String)],
+    backdrop: bool,
+    coresvg: bool,
+) -> Option<String> {
     let vars: Vec<(&str, &str)> = vars.iter().map(|(k, v)| (k.as_str(), v.as_str())).collect();
+    let inline = if coresvg {
+        crate::svgcss::inline_slanted
+    } else {
+        crate::svgcss::inline_with
+    };
     if backdrop {
         let with = add_backdrop(svg)?;
-        return crate::svgcss::inline_with(&with, &vars);
+        return inline(&with, &vars);
     }
-    crate::svgcss::inline_with(svg, &vars)
+    inline(svg, &vars)
 }
 
 /// 根の `<svg>` の中の先頭に、`viewBox` いっぱいの地の四角を足す。
@@ -633,6 +732,122 @@ mod tests {
         assert!(light.contains(">Start</text>"));
     }
 
+    /// 太字・斜体と、下線・色の混ざる DOT のラベル（どちらも 1 行）。
+    #[cfg(feature = "diagrams")]
+    const MIXED_DOT: [&str; 2] = [
+        "digraph { a [label=<<b>bold</b> and <i>italic</i>>] }",
+        "digraph { a [label=<plain <u>under</u> <font color=\"red\">red</font>>] }",
+    ];
+
+    #[cfg(feature = "diagrams")]
+    #[test]
+    fn dot_labels_flow_for_librsvg() {
+        // librsvg は `<tspan>` の飾りも text-decoration も読むので、span の並ぶ行は 1 つの `<text>` に流す（書体が
+        // 測りより広くても、span の間の空白はつぶれない）。CoreSVG だけの線と手がかりは渡さない
+        for (src, words) in MIXED_DOT.into_iter().zip([
+            &["bold", " and ", "italic"][..],
+            &["plain ", "under", " ", "red"],
+        ]) {
+            let Some(Drawn::Svg(svg, None)) = draw("dot", src) else {
+                panic!("not drawn");
+            };
+            let flat = colorize(&svg, &palette(Scheme::Pele, false, &theme()), false).unwrap();
+            assert!(
+                !flat.contains("data-coresvg-only") && !flat.contains("data-x"),
+                "{flat}"
+            );
+            assert!(!flat.contains("skewX"), "{flat}");
+            let labels: Vec<&str> = flat
+                .split("<text")
+                .skip(1)
+                .filter(|t| t.contains("<tspan"))
+                .collect();
+            assert_eq!(labels.len(), 1, "{flat}");
+            let label = labels[0].split("</text>").next().unwrap();
+            // librsvg は `<tspan>` の両端の空白を縮めるので、空白を残させる
+            assert!(label.contains("text-anchor=\"middle\""), "{flat}");
+            assert!(label.contains("xml:space=\"preserve\""), "{flat}");
+            assert!(!label.contains("<tspan x="), "{flat}");
+            let spans: Vec<&str> = label
+                .split("<tspan")
+                .skip(1)
+                .map(|t| t.split('>').nth(1).unwrap().split('<').next().unwrap())
+                .collect();
+            assert_eq!(spans, words, "{flat}");
+        }
+        let flat = |src: &str| {
+            let Some(Drawn::Svg(svg, None)) = draw("dot", src) else {
+                panic!("not drawn");
+            };
+            colorize(&svg, &palette(Scheme::Pele, false, &theme()), false).unwrap()
+        };
+        let a = flat(MIXED_DOT[0]);
+        assert!(a.contains("font-weight=\"700\">bold</tspan>"), "{a}");
+        assert!(a.contains("font-style=\"italic\">italic</tspan>"), "{a}");
+        let b = flat(MIXED_DOT[1]);
+        assert!(
+            b.contains("text-decoration=\"underline\">under</tspan>"),
+            "{b}"
+        );
+        assert!(b.contains("fill=\"#ff0000\">red</tspan>"), "{b}");
+    }
+
+    #[cfg(feature = "diagrams")]
+    #[test]
+    fn dot_labels_split_for_coresvg() {
+        // CoreSVG は `<tspan>` の飾りも text-decoration も読まないので、span ごとの `<text>` に分け（左端は
+        // `data-x`）、下線は線で描く。分けた `<text>` の両端の空白は描き手によって縮んだり残ったりするので、空白は
+        // 描かずに位置の間に置く: どの `<text>` も空白で始まり・終わらず、間はちょうど空白 1 つ分
+        use amonhen_pele::text::measurer::{default_measurer, style};
+        let measure = |t: &str, st: u32| default_measurer().width(t, 14.0, st);
+        for (src, words) in MIXED_DOT.into_iter().zip([
+            [("bold", style::BOLD), ("and", 0), ("italic", 0)],
+            [("plain", 0), ("under", 0), ("red", 0)],
+        ]) {
+            let Some(Drawn::Svg(svg, None)) = draw("dot", src) else {
+                panic!("not drawn");
+            };
+            let flat =
+                colorize_for_coresvg(&svg, &palette(Scheme::Pele, false, &theme()), false).unwrap();
+            assert!(!flat.contains("<tspan"), "{flat}");
+            assert!(
+                !flat.contains("text-decoration") && !flat.contains("data-x"),
+                "{flat}"
+            );
+            let texts: Vec<(&str, f64, &str)> = flat
+                .split("<text")
+                .skip(1)
+                .map(|t| {
+                    let x = t.split("x=\"").nth(1).unwrap().split('"').next().unwrap();
+                    let body = t.split('>').nth(1).unwrap().split('<').next().unwrap();
+                    (t.split('>').next().unwrap(), x.parse().unwrap(), body)
+                })
+                .collect();
+            assert_eq!(
+                texts.iter().map(|t| t.2).collect::<Vec<_>>(),
+                words.iter().map(|w| w.0).collect::<Vec<_>>(),
+                "{flat}"
+            );
+            for k in 1..texts.len() {
+                let (word, st) = words[k - 1];
+                let gap = texts[k].1 - texts[k - 1].1 - measure(word, st);
+                assert!((gap - measure(" ", 0)).abs() < 0.05, "{gap} {flat}");
+            }
+            for (open, x, word) in &texts {
+                assert!(open.contains("text-anchor=\"start\""), "{flat}");
+                assert_eq!(
+                    open.contains("font-weight=\"700\""),
+                    *word == "bold",
+                    "{flat}"
+                );
+                assert_eq!(open.contains("skewX"), *word == "italic", "{flat}");
+                // 下線は文字の左端から文字の幅だけ
+                let line = format!("<path d=\"M{x},");
+                assert_eq!(flat.contains(&line), *word == "under", "{flat}");
+            }
+        }
+    }
+
     #[cfg(feature = "diagrams")]
     #[test]
     fn a_diagram_can_name_its_own_theme() {
@@ -686,6 +901,95 @@ mod tests {
             svg.contains(">Repository</text>") && svg.contains(">merge</text>"),
             "{svg}"
         );
+    }
+
+    #[cfg(feature = "diagrams")]
+    #[test]
+    fn dot_blocks_are_drawn_and_colored() {
+        let md = "```dot\ndigraph { a [label=\"A  b\"]; a -> b [color=red]; b -> c }\n```\n\n```GV\ngraph { x -- y }\n```\n";
+        let blocks = crate::markdown::parse_in_zone(md, None, None);
+        let crate::markdown::Block::Diagram {
+            language,
+            svg: Some(svg),
+            note: None,
+            error: None,
+            ..
+        } = &blocks[0]
+        else {
+            panic!("{blocks:?}");
+        };
+        assert_eq!(language, "dot");
+        assert!(matches!(
+            &blocks[1],
+            crate::markdown::Block::Diagram { svg: Some(_), .. }
+        ));
+        // テーマの色は配色で、文が決めた色はそのまま
+        let syntax = colorize(svg, &palette(Scheme::Syntax, false, &theme()), false).unwrap();
+        assert!(!syntax.contains("var("), "{syntax}");
+        assert!(syntax.contains("#aa0000") && syntax.contains("#ff0000"));
+        let dark = colorize(svg, &palette(Scheme::Pele, true, &theme()), false).unwrap();
+        assert!(dark.contains("#d0d0d0") && dark.contains("#ff0000"));
+        // 続く空白を保つ
+        assert!(syntax.contains("xml:space=\"preserve\""), "{syntax}");
+        for language in ["graphviz", "Dot", "neato", "Circo"] {
+            assert!(matches!(
+                draw(language, "digraph { a -> b }"),
+                Some(Drawn::Svg(_, None))
+            ));
+        }
+        // フェンスの言葉は既定の配置で、`layout` が勝つ
+        let Some(Drawn::Svg(lr, _)) = draw("dot", "digraph { rankdir=LR; a -> b }") else {
+            panic!("not drawn");
+        };
+        let Some(Drawn::Svg(free, _)) = draw("neato", "digraph { rankdir=LR; a -> b }") else {
+            panic!("not drawn");
+        };
+        let Some(Drawn::Svg(back, _)) = draw("neato", "digraph { layout=dot; rankdir=LR; a -> b }")
+        else {
+            panic!("not drawn");
+        };
+        assert_ne!(lr, free);
+        assert_eq!(lr, back);
+        assert!(matches!(draw("dot", "digraph {"), Some(Drawn::Error(_))));
+        // グラデーションの塗りも残る
+        let Some(Drawn::Svg(svg, _)) = draw(
+            "dot",
+            "digraph { a [style=filled, fillcolor=\"red:blue\"] }",
+        ) else {
+            panic!("not drawn");
+        };
+        let colored = colorize(&svg, &palette(Scheme::Pele, false, &theme()), false).unwrap();
+        assert!(
+            colored.contains("<linearGradient") && colored.contains("url(#"),
+            "{colored}"
+        );
+    }
+
+    #[cfg(feature = "diagrams")]
+    #[test]
+    fn dot_approximations_carry_a_note() {
+        let md = "```dot\ndigraph { a [shape=none, label=<<table><tr><td><img src=\"x.png\"/></td></tr></table>>, color=nosuch] }\n```\n";
+        let blocks = crate::markdown::parse_in_zone(md, None, None);
+        let crate::markdown::Block::Diagram {
+            svg: Some(_),
+            note: Some(note),
+            ..
+        } = &blocks[0]
+        else {
+            panic!("{blocks:?}");
+        };
+        assert!(
+            note.contains("images") && note.contains("unknown colors"),
+            "{note}"
+        );
+        let json = serde_json::to_string(&blocks[0]).unwrap();
+        assert!(json.contains("\"note\":"), "{json}");
+        amonhen_model::i18n::with(amonhen_model::i18n::Lang::Ja, || {
+            let Some(Drawn::Noted(_, note)) = draw("dot", "digraph { a [shape=blob] }") else {
+                panic!("no note");
+            };
+            assert!(note.contains("箱"), "{note}");
+        });
     }
 
     #[cfg(feature = "diagrams")]

@@ -29,6 +29,49 @@ WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING
 FROM, OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR
 OTHER DEALINGS IN THE SOFTWARE.
 
+This product includes color specifications and designs developed by Cynthia
+Brewer (http://colorbrewer.org/): the ColorBrewer color schemes in
+crates/dot/src/brewer.rs, licensed as follows:
+
+Apache-Style Software License for ColorBrewer software and ColorBrewer Color
+Schemes
+
+Copyright (c) 2002 Cynthia Brewer, Mark Harrower, and The Pennsylvania State
+University.
+
+Licensed under the Apache License, Version 2.0 (the "License"); you may not
+use this file except in compliance with the License. You may obtain a copy of
+the License at
+
+http://www.apache.org/licenses/LICENSE-2.0
+
+Unless required by applicable law or agreed to in writing, software
+distributed under the License is distributed on an "AS IS" BASIS, WITHOUT
+WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied. See the
+License for the specific language governing permissions and limitations under
+the License.
+
+Redistribution and use in source and binary forms, with or without
+modification, are permitted provided that the following conditions are met:
+
+1. Redistributions as source code must retain the above copyright notice, this
+list of conditions and the following disclaimer.
+
+2. The end-user documentation included with the redistribution, if any, must
+include the following acknowledgment: "This product includes color
+specifications and designs developed by Cynthia Brewer
+(http://colorbrewer.org/)." Alternately, this acknowledgment may appear in the
+software itself, if and wherever such third-party acknowledgments normally
+appear.
+
+4. The name "ColorBrewer" must not be used to endorse or promote products
+derived from this software without prior written permission. For written
+permission, please contact Cynthia Brewer at cbrewer@psu.edu.
+
+5. Products derived from this software may not be called "ColorBrewer", nor
+may "ColorBrewer" appear in their name, without prior written permission of
+Cynthia Brewer.
+
 Portions of this product are ported from other projects. Their license texts are
 in the headers of the ported source files.
 
@@ -40,3 +83,8 @@ in the headers of the ported source files.
 - crates/pele: pele 1.13.0, Copyright (c) 2026 kepano, MIT License.
 - crates/core/src/mermaidtheme.rs: the colours of Mermaid's named themes, Copyright (c) 2014 - 2022 Knut
   Sveidqvist, MIT License; khroma 2.1.0, Copyright (c) 2019-present Fabio Spampinato, Andrew Maney, MIT License.
+- crates/dot/src/x11.rs: the X11 color names and values from X.Org's rgb.txt, Copyright The Open Group,
+  MIT (X11) License.
+- crates/dot/src/brewer.rs: the ColorBrewer color schemes from axismaps/colorbrewer's export/colorbrewer.json
+  and colorbrewer_schemes.js (for the classes the JSON lacks), Copyright (c) 2002 Cynthia Brewer, Mark
+  Harrower, and The Pennsylvania State University, Apache-Style Software License for ColorBrewer (above).

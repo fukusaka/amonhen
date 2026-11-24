@@ -53,6 +53,7 @@ version = "0.2.14"
 name = "amonhen-core"
 version = "0.2.14"
 dependencies = [
+ "amonhen-dot",
  "amonhen-layout",
  "amonhen-model",
  "amonhen-pele",
@@ -70,6 +71,13 @@ dependencies = [
  "serde_bytes",
  "serde_json",
  "sha1_smol",
+]
+
+[[package]]
+name = "amonhen-dot"
+version = "0.2.12"
+dependencies = [
+ "amonhen-pele",
 ]
 
 [[package]]

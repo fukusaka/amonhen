@@ -88,6 +88,7 @@ version = "0.2.14"
 dependencies = [
  "amonhen-backend-cli",
  "amonhen-backend-gix",
+ "amonhen-dot",
  "amonhen-layout",
  "amonhen-model",
  "amonhen-pele",
@@ -125,6 +126,13 @@ dependencies = [
  "libc",
  "serde_json",
  "tempfile",
+]
+
+[[package]]
+name = "amonhen-dot"
+version = "0.2.12"
+dependencies = [
+ "amonhen-pele",
 ]
 
 [[package]]

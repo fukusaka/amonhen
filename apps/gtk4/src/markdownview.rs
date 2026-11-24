@@ -630,6 +630,7 @@ impl<'a> Builder<'a> {
                 text,
                 svg,
                 config,
+                note,
                 error,
             } => {
                 let Some(picture) = svg
@@ -665,6 +666,17 @@ impl<'a> Builder<'a> {
                 self.view.add_child_at_anchor(&picture, &anchor);
                 self.insert("\n", &[]);
                 self.paragraph(start, ctx, false, 12);
+                // 近いもので描いた図には、そのことを絵の下に添える
+                if let Some(note) = note {
+                    let start = self.offset();
+                    let dim = self.tag("diagram-note", |t| {
+                        t.set_foreground_rgba(Some(&gdk::RGBA::new(0.5, 0.5, 0.5, 1.0)));
+                        t.set_scale(0.9);
+                    });
+                    self.insert(note, &[dim]);
+                    self.insert("\n", &[]);
+                    self.paragraph(start, ctx, false, 10);
+                }
             }
             Block::Quote {
                 alert: kind,

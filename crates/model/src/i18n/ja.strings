@@ -2488,3 +2488,11 @@
 "flutter_svg can’t load this SVG: {error}" = "flutter_svg はこの SVG を読めない: {error}";
 "What {name} reports" = "{name} の報告";
 "This diagram couldn’t be drawn" = "この図は描けませんでした";
+"This picture is an approximation: {reasons}." = "この絵は近いもので描いています（{reasons}）。";
+"images are drawn as empty frames" = "画像は空の枠";
+"unknown shapes are drawn as boxes" = "知らない形は箱";
+"orthogonal edges are drawn as polylines" = "直角の線（ortho）は折れ線";
+"unknown colors are drawn in the default color" = "読めない色は既定の色";
+"unknown color schemes are drawn in the default color" = "知らない配色の色は既定の色";
+"unknown layout engines are drawn with the dot layout" = "知らない配置は dot の配置";
+"some layout options are approximated" = "配置の属性の一部は近いもの";
