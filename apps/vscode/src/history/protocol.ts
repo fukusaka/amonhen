@@ -225,6 +225,19 @@ export interface SignatureView {
   /** 署名した人・鍵（分かれば） */
   signer?: string;
   key?: string;
+  /** 署名の形式（GPG・SSH・X.509）と鍵の指紋（分かれば。アプリの署名の吹き出しと同じ） */
+  format?: string;
+  fingerprint?: string;
+}
+
+/** コミットを指すタグ・merge したタグ（注釈付きならタガー・日時・件名と署名） */
+export interface TagView {
+  name: string;
+  tagger?: string;
+  /** UNIX 時刻（秒） */
+  time?: number;
+  subject?: string;
+  signature?: SignatureView;
 }
 
 /** コミットの詳細のうち時間のかかる分（コアの `commitExtras`）。署名と子のコミット */
@@ -234,6 +247,12 @@ export interface DetailsExtras {
   signature?: SignatureView;
   /** そのコミットを親に持つコミット */
   children: string[];
+  /** このコミットを指すタグ（エンジンの `tagObjects`） */
+  tags?: TagView[];
+  /** この merge が取り込んだタグ（コミットの mergetag） */
+  mergedTags?: TagView[];
+  /** merge で取り込んだコミットの数（merge でなければ 0） */
+  mergedCount?: number;
 }
 
 export type HistoryWebviewMessage =

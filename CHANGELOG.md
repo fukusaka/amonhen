@@ -1281,6 +1281,8 @@ First release.
 
 - The Working Copy diff can ignore whitespace (at line ends, changes in amount or all), with the engine. Lines and
   hunks aren't staged or discarded meanwhile.
+- The commit details show the tags on the commit and the tags a merge took in, with their tagger, subject and
+  signature, the number of commits a merge took in, and the signature's format and fingerprint (with the engine).
 
 #### Fixed
 
