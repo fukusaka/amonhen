@@ -217,7 +217,7 @@ final class DiagramPicture {
     }
 
     /// 今の外観での色の `#rrggbb`。
-    private static func hex(_ color: NSColor) -> String {
+    static func hex(_ color: NSColor) -> String {
         guard let c = color.usingColorSpace(.sRGB) else { return "#000000" }
         let v = { (x: CGFloat) in Int((max(0, min(1, x)) * 255).rounded()) }
         return String(format: "#%02x%02x%02x", v(c.redComponent), v(c.greenComponent), v(c.blueComponent))

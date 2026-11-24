@@ -190,6 +190,7 @@ pub fn panel(
         None,
         &[],
         None,
+        false,
     )
 }
 
@@ -215,6 +216,7 @@ pub fn compare(
         leading,
         &[],
         None,
+        false,
     );
     with_notes(panel, notes)
 }
@@ -241,6 +243,7 @@ pub fn single(data: &[u8], notes: Option<gtk::Widget>) -> Option<gtk::Widget> {
         None,
         &[],
         vector,
+        false,
     );
     Some(with_notes(panel, notes))
 }
@@ -260,6 +263,7 @@ pub fn drawable(svg: &[u8], caption: String, footnote: &[String]) -> Option<gtk:
         None,
         footnote,
         Some(glib::Bytes::from(svg)),
+        true,
     ))
 }
 
@@ -295,7 +299,7 @@ fn with_notes(panel: gtk::Widget, notes: Option<gtk::Widget>) -> gtk::Widget {
 /// 欄を作る。`modes` がなければ 1 枚だけ（`after` を出す）。`titles` は前と後の見出し（なければ「前」「後」）。
 /// `fill` なら高さいっぱいに広げる（すべてのファイル。下の仕切りの線は引かない）。`leading` は帯の左端に置く。
 /// `footnote` は大きさの説明の下に添える文。`vector` は 1 枚の絵が SVG のときの中身で、拡大したときにその大きさで
-/// 描き直す（テクスチャを伸ばすとぼやける）。
+/// 描き直す（テクスチャを伸ばすとぼやける）。`themed_checker` なら市松模様を外観に合わせる。
 #[allow(clippy::too_many_arguments)]
 fn build(
     old: Option<gdk::Texture>,
@@ -308,10 +312,12 @@ fn build(
     leading: Option<gtk::Widget>,
     footnote: &[String],
     vector: Option<glib::Bytes>,
+    themed_checker: bool,
 ) -> gtk::Widget {
     let single = modes.is_none();
     let canvas = Canvas::new(old, new);
     canvas.imp().vector.replace(vector);
+    canvas.imp().themed_checker.set(themed_checker);
     if let Some(titles) = titles {
         canvas.imp().titles.replace(titles);
     }
@@ -519,6 +525,8 @@ mod imp {
         pub on_position: RefCell<Option<OnPosition>>,
         /// 1 枚だけ見せる（比べない。`after` を出す）。
         pub single: Cell<bool>,
+        /// 市松模様を外観に合わせる（暗い外観では暗く）。絵が画面の文字の色を使うとき（VectorDrawable）。
+        pub themed_checker: Cell<bool>,
         /// 倍率（画像の 1 ピクセルを何ピクセルで描くか）。None なら枠に合わせる。
         pub zoom: Cell<Option<f32>>,
         /// 拡大したときの、枠の中心からのずらし。
@@ -843,6 +851,9 @@ impl Canvas {
     }
 
     fn draw(&self, snapshot: &gtk::Snapshot) {
+        let dark = self.imp().themed_checker.get() && adw::StyleManager::default().is_dark();
+        let checker =
+            |snapshot: &gtk::Snapshot, rect: &graphene::Rect| checker(snapshot, rect, dark);
         let fg = self.color();
         let secondary = gdk::RGBA::new(fg.red(), fg.green(), fg.blue(), fg.alpha() * 0.6);
         let label = |text: &str, x: f32, y: f32| {
@@ -962,13 +973,14 @@ impl Canvas {
     }
 }
 
-/// 透けたところを見せる市松模様。
-fn checker(snapshot: &gtk::Snapshot, rect: &graphene::Rect) {
+/// 透けたところを見せる市松模様（`dark` なら暗い色で）。
+fn checker(snapshot: &gtk::Snapshot, rect: &graphene::Rect, dark: bool) {
     if rect.width() <= 0.0 || rect.height() <= 0.0 {
         return;
     }
-    snapshot.append_color(&gdk::RGBA::WHITE, rect);
-    let gray = gdk::RGBA::new(0.86, 0.86, 0.86, 1.0);
+    let (base, square) = if dark { (0.16, 0.24) } else { (1.0, 0.86) };
+    snapshot.append_color(&gdk::RGBA::new(base, base, base, 1.0), rect);
+    let gray = gdk::RGBA::new(square, square, square, 1.0);
     let s = 8.0;
     let (right, bottom) = (rect.x() + rect.width(), rect.y() + rect.height());
     let mut y = rect.y();

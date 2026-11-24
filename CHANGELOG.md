@@ -12,7 +12,8 @@ becomes the GitHub Release notes.
 #### Added
 
 - History's All Files draws Android VectorDrawables (`.xml` with a `<vector>` or `<animated-vector>` root) as pictures,
-  resolving `@color/…` from the commit's `res` folder and noting what's drawn in gray (macOS, GTK4).
+  resolving `@color/…` from the commit's `res` folder; what can't be resolved is drawn in the text color, with a note
+  (macOS, GTK4).
 - DOT diagrams in Markdown previews draw images (a node's `image`, a table's `<IMG>`) from the same commit, by a path
   relative to the Markdown file's folder.
 - DOT diagrams draw gradient fills in HTML-like tables, cells and cluster and graph backgrounds, striped clusters,

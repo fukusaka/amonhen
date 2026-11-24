@@ -1906,11 +1906,12 @@ pub unsafe extern "C" fn amonhen_is_vector_drawable(
 /// コミット `commit`（20 バイト）の `path` の Android の VectorDrawable（中身 `data` の `len` バイト）を、描ける SVG
 /// にする（コアの `Repository::vector_drawable`。色の参照は同じコミットのリソースから引く）。SVG を返し、長さを
 /// `out_len` に書く（`amonhen_blob_free` で解放する）。描けなければ NULL で、理由は `amonhen_last_error`。`notes` に
-/// 絵の下に添える説明の JSON の配列（文字列）を書く（`amonhen_string_free` で解放する）。裏のスレッドで呼ぶ。
+/// 絵の下に添える説明の JSON の配列（文字列）を書く（`amonhen_string_free` で解放する）。引けない色は `fallback`
+/// （画面の文字の色の `#rrggbb`。NULL なら灰色）で描く。裏のスレッドで呼ぶ。
 ///
 /// # Safety
 /// `repo` は有効、`commit` は 20 バイトを読める領域、`path` は NUL で終わる UTF-8、`data` は `len` バイト読めること。
-/// `out_len` と `notes` は書けること（NULL でもよい）。
+/// `fallback` は NULL か NUL で終わる UTF-8。`out_len` と `notes` は書けること（NULL でもよい）。
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn amonhen_vector_drawable(
     repo_ptr: *const AmonhenRepo,
@@ -1918,6 +1919,7 @@ pub unsafe extern "C" fn amonhen_vector_drawable(
     path: *const c_char,
     data: *const u8,
     len: usize,
+    fallback: *const c_char,
     out_len: *mut usize,
     notes: *mut *mut c_char,
 ) -> *mut u8 {
@@ -1940,7 +1942,8 @@ pub unsafe extern "C" fn amonhen_vector_drawable(
     } else {
         unsafe { std::slice::from_raw_parts(data, len) }
     };
-    match repo!(repo_ptr).vector_drawable(&commit, path, bytes) {
+    let fallback = str_arg(fallback).ok();
+    match repo!(repo_ptr).vector_drawable(&commit, path, bytes, fallback) {
         Ok(picture) => {
             if let Some(notes) = unsafe { notes.as_mut() } {
                 let json = serde_json::to_string(&picture.notes).unwrap_or_default();

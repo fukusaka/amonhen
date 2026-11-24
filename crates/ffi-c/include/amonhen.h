@@ -1113,17 +1113,19 @@ bool amonhen_is_vector_drawable(const char *path,
  * コミット `commit`（20 バイト）の `path` の Android の VectorDrawable（中身 `data` の `len` バイト）を、描ける SVG
  * にする（コアの `Repository::vector_drawable`。色の参照は同じコミットのリソースから引く）。SVG を返し、長さを
  * `out_len` に書く（`amonhen_blob_free` で解放する）。描けなければ NULL で、理由は `amonhen_last_error`。`notes` に
- * 絵の下に添える説明の JSON の配列（文字列）を書く（`amonhen_string_free` で解放する）。裏のスレッドで呼ぶ。
+ * 絵の下に添える説明の JSON の配列（文字列）を書く（`amonhen_string_free` で解放する）。引けない色は `fallback`
+ * （画面の文字の色の `#rrggbb`。NULL なら灰色）で描く。裏のスレッドで呼ぶ。
  *
  * # Safety
  * `repo` は有効、`commit` は 20 バイトを読める領域、`path` は NUL で終わる UTF-8、`data` は `len` バイト読めること。
- * `out_len` と `notes` は書けること（NULL でもよい）。
+ * `fallback` は NULL か NUL で終わる UTF-8。`out_len` と `notes` は書けること（NULL でもよい）。
  */
 uint8_t *amonhen_vector_drawable(const AmonhenRepo *repo_ptr,
                                  const uint8_t *commit,
                                  const char *path,
                                  const uint8_t *data,
                                  uintptr_t len,
+                                 const char *fallback,
                                  uintptr_t *out_len,
                                  char **notes);
 

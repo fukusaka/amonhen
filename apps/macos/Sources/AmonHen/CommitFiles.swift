@@ -79,10 +79,11 @@ final class ImageDiffPanel: NSView {
     init(
         before old: NSImage?, after new: NSImage?, titles: (String, String), caption text: String, svg: Bool, mode: Mode,
         position: CGFloat, single: Bool, notes: NSAttributedString? = nil, accessory: NSView? = nil,
-        footnote: [String] = []
+        footnote: [String] = [], themedChecker: Bool = false
     ) {
         canvas = ImageCompareCanvas(before: old, after: new)
         canvas.single = single
+        canvas.themedChecker = themedChecker
         canvas.titles = titles
         super.init(frame: NSRect(x: 0, y: 0, width: 600, height: 300))
         wantsLayer = true
@@ -243,6 +244,8 @@ final class ImageCompareCanvas: NSView {
     var onPosition: ((CGFloat) -> Void)?
     /// 1 枚だけ見せる（比べない）。
     var single = false
+    /// 市松模様を外観に合わせる（暗い外観では暗く）。絵が画面の文字の色を使うとき（VectorDrawable）。
+    var themedChecker = false
     /// 前と後の見出し（SVG をブラウザと iOS で比べるときは、その名前）。
     var titles = (L("Before"), L("After"))
     /// 倍率（画像の 1 ピクセルを何ポイントで描くか）。nil なら枠に合わせる。
@@ -339,9 +342,10 @@ final class ImageCompareCanvas: NSView {
     }
 
     private func checker(_ rect: NSRect) {
-        NSColor.white.setFill()
+        let dark = themedChecker && effectiveAppearance.bestMatch(from: [.aqua, .darkAqua]) == .darkAqua
+        NSColor(white: dark ? 0.16 : 1, alpha: 1).setFill()
         rect.fill()
-        NSColor(white: 0.86, alpha: 1).setFill()
+        NSColor(white: dark ? 0.24 : 0.86, alpha: 1).setFill()
         let s: CGFloat = 8
         var y = rect.minY
         var row = 0
@@ -912,6 +916,12 @@ final class CommitFilesBrowser: NSView, NSOutlineViewDataSource, NSOutlineViewDe
         if let openPath { open(path: openPath, line: nil) }
     }
 
+    override func viewDidChangeEffectiveAppearance() {
+        super.viewDidChangeEffectiveAppearance()
+        // VectorDrawable の絵は引けない色を外観の文字の色で描くので、外観が変わったら描き直す
+        if imagePanel != nil, !drawableSwitch.isHidden, !drawableText, let openPath { open(path: openPath, line: nil) }
+    }
+
     @objc private func drawableViewChanged() {
         drawableText = drawableSwitch.selectedSegment == 1
         if let openPath { open(path: openPath, line: nil) }
@@ -1072,8 +1082,11 @@ final class CommitFilesBrowser: NSView, NSOutlineViewDataSource, NSOutlineViewDe
                 drawableSwitch.isHidden = false
                 drawableSwitch.selectedSegment = drawableText ? 1 : 0
                 if drawableText { return showFile(path: path, index: index, line: line, request: request) }
-                let picture = await Task.detached(priority: .userInitiated) {
-                    try? store.vectorDrawable(commit: commitID, path: path, data: data)
+                // 引けない色（Android のテーマ属性など）は、今の外観の文字の色で描く（外観が変わったら描き直す）
+                var fallback = ""
+                effectiveAppearance.performAsCurrentDrawingAppearance { fallback = DiagramPicture.hex(.labelColor) }
+                let picture = await Task.detached(priority: .userInitiated) { [fallback] in
+                    try? store.vectorDrawable(commit: commitID, path: path, data: data, fallback: fallback)
                 }.value
                 guard request == self.request else { return }
                 // 描けないもの（参照した drawable がないなど）はテキストで見せる。
@@ -1085,7 +1098,7 @@ final class CommitFilesBrowser: NSView, NSOutlineViewDataSource, NSOutlineViewDe
                 let size = "\(Int(image.size.width)) × \(Int(image.size.height)) dp · \(bytes)"
                 let panel = ImageDiffPanel(
                     before: nil, after: image, titles: ("", ""), caption: size, svg: false, mode: .twoUp,
-                    position: 0.5, single: true, footnote: picture.notes)
+                    position: 0.5, single: true, footnote: picture.notes, themedChecker: true)
                 imagePanel = panel
                 addSubview(panel, positioned: .below, relativeTo: pathBar)
                 needsLayout = true

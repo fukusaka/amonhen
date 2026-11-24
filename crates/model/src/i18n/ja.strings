@@ -2482,8 +2482,8 @@
 "The animated vector has no drawable" = "animated-vector に drawable がありません";
 "The animated vector’s drawable isn’t in this commit: {value}" = "animated-vector の drawable がこのコミットにありません: {value}";
 "The animated vector’s drawable isn’t a <vector>: {value}" = "animated-vector の drawable が <vector> ではありません: {value}";
-"Android theme attributes can’t be resolved here, so they’re drawn in gray: {refs}" = "Android のテーマ属性はここでは解決できないので、灰色で描く: {refs}";
-"Colors not found in this commit’s resources are drawn in gray: {refs}" = "このコミットのリソースにない色は、灰色で描く: {refs}";
+"Android theme attributes can’t be resolved here, so they’re drawn in the text color: {refs}" = "Android のテーマ属性はここでは解決できないので、文字の色で描く: {refs}";
+"Colors not found in this commit’s resources are drawn in the text color: {refs}" = "このコミットのリソースにない色は、文字の色で描く: {refs}";
 "Approximation: the SVG rewritten the way {renderer} degrades it, drawn by this app" = "近似: {renderer} が崩すように SVG を書き換え、このアプリで描いたもの";
 "The vector_graphics data ends early" = "vector_graphics のデータが途中で切れている";
 "The vector_graphics data is broken" = "vector_graphics のデータが壊れている";

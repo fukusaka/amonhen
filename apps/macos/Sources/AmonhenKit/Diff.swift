@@ -427,15 +427,17 @@ extension Repository {
     }
 
     /// コミット `commit`（20 バイト）の `path` の VectorDrawable（中身 `data`）を絵にする。色の参照は同じコミットの
-    /// リソースから引く。裏のスレッドで呼ぶ。
-    public func vectorDrawable(commit: Data, path: String, data: Data) throws -> VectorDrawablePicture {
+    /// リソースから引き、引けない色は `fallback`（画面の文字の色の `#rrggbb`。nil なら灰色）で描く。裏のスレッドで呼ぶ。
+    public func vectorDrawable(commit: Data, path: String, data: Data, fallback: String? = nil) throws
+        -> VectorDrawablePicture
+    {
         var length: UInt = 0
         var notes: UnsafeMutablePointer<CChar>?
         let raw = commit.withUnsafeBytes { id in
             data.withUnsafeBytes { bytes in
                 amonhen_vector_drawable(
                     self.raw, id.baseAddress!.assumingMemoryBound(to: UInt8.self), path,
-                    bytes.bindMemory(to: UInt8.self).baseAddress, UInt(bytes.count), &length, &notes)
+                    bytes.bindMemory(to: UInt8.self).baseAddress, UInt(bytes.count), fallback, &length, &notes)
             }
         }
         guard let raw else { throw AmonhenError.last() }
