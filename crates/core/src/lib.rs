@@ -31,6 +31,7 @@ pub mod svglint;
 pub mod svgmobile;
 pub mod svgsim;
 pub mod undo;
+pub mod vectordrawable;
 pub mod vgc;
 pub mod words;
 pub mod worktree;
