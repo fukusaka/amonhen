@@ -15,6 +15,7 @@
 mod circular;
 mod common;
 mod force;
+mod pack;
 mod radial;
 mod stress;
 
@@ -36,6 +37,8 @@ pub enum Engine {
     Sfdp,
     Twopi,
     Circo,
+    Osage,
+    Patchwork,
 }
 
 impl Engine {
@@ -49,6 +52,8 @@ impl Engine {
             "sfdp" => Engine::Sfdp,
             "twopi" => Engine::Twopi,
             "circo" => Engine::Circo,
+            "osage" => Engine::Osage,
+            "patchwork" => Engine::Patchwork,
             _ => return None,
         })
     }
@@ -56,6 +61,11 @@ impl Engine {
     /// クラスタの箱を描くか（twopi・circo・sfdp は Graphviz でも描かない）。
     pub fn draws_clusters(self) -> bool {
         !matches!(self, Engine::Twopi | Engine::Circo | Engine::Sfdp)
+    }
+
+    /// 辺を描くか（patchwork は描かない）。
+    pub fn draws_edges(self) -> bool {
+        self != Engine::Patchwork
     }
 }
 
@@ -117,6 +127,7 @@ pub fn place(
     g: &Attrs,
     notes: &mut BTreeSet<Note>,
 ) -> Placement {
+    let mut sizes = None;
     let (nodes, mut clusters) = match engine {
         Engine::Dot | Engine::Neato | Engine::Nop => {
             let nodes = stress::layout(items, links, g, engine == Engine::Nop, notes);
@@ -129,6 +140,15 @@ pub fn place(
         }
         Engine::Twopi => (radial::layout(items, links, g), None),
         Engine::Circo => (circular::layout(items, links, g), None),
+        Engine::Osage => {
+            let (nodes, boxes) = pack::osage(items, groups, g, notes);
+            (nodes, Some(boxes))
+        }
+        Engine::Patchwork => {
+            let (nodes, boxes, s) = pack::patchwork(items, groups);
+            sizes = Some(s);
+            (nodes, Some(boxes))
+        }
     };
     if !engine.draws_clusters() {
         clusters = Some(vec![None; groups.len()]);
@@ -146,6 +166,6 @@ pub fn place(
     Placement {
         nodes,
         clusters,
-        sizes: None,
+        sizes,
     }
 }

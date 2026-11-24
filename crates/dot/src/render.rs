@@ -356,8 +356,9 @@ pub fn render(
         .map(|s| s.trim().to_ascii_lowercase())
         .unwrap_or_default();
     let ortho = splines == "ortho";
-    let draw_edges =
-        !matches!(splines.as_str(), "none" | "\"\"") && !(g.get("splines") == Some(""));
+    let draw_edges = !matches!(splines.as_str(), "none" | "\"\"")
+        && !(g.get("splines") == Some(""))
+        && engine.draws_edges();
     // dot 以外の既定（splines なし）は直線（Graphviz と同じ）
     let straight =
         matches!(splines.as_str(), "line" | "false" | "no") || (free && g.get("splines").is_none());
@@ -765,6 +766,17 @@ pub fn render(
     };
     let lay = if free {
         let placed = place_free(engine, model, &lnodes, &lclusters, &mut ctx);
+        if let Some(sizes) = &placed.sizes {
+            // patchwork: ノードは升いっぱいの箱
+            let boxed = shapes::spec("box", None, 0.0, 0.0, 0.0, false).kind;
+            for (v, &(w, h)) in views.iter_mut().zip(sizes) {
+                v.geom.kind = boxed.clone();
+                v.geom.w = w;
+                v.geom.h = h;
+                v.geom.peripheries = v.geom.peripheries.min(1);
+                v.inner_w = w;
+            }
+        }
         free_layout(model, &placed)
     } else {
         layout::layout(&lnodes, &ledges, &lclusters, &sets, &lopt)
