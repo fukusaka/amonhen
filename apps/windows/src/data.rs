@@ -447,8 +447,9 @@ pub struct FileShown {
     pub picture_view: crate::imagediff::View,
     /// 絵を読んだものを取っておく鍵（開くたびに新しい）。
     key: u64,
-    /// Markdown なら、整形して見せるブロック。
+    /// Markdown なら、整形して見せるブロックと、その中の図を絵にしたもの（出てくる順）。
     pub markdown: Option<Vec<amonhen_core::markdown::Block>>,
+    pub diagrams: Arc<Vec<Option<crate::markdownview::DiagramPicture>>>,
     /// SVG をモバイルで見ているなら、その確認。
     pub mobile: Option<Arc<MobileCheck>>,
 }
@@ -2127,6 +2128,9 @@ impl Data {
         };
         let (tx, wake) = (self.tx.clone(), self.wake.clone());
         let (svg_view, renderer) = (self.svg_view, self.mobile_renderer);
+        // Markdown の図に当てる色の元は、テーマを持つ UI のスレッドで取っておく。
+        let diagram_theme =
+            amonhen_core::markdown::is_markdown(&path).then(crate::markdownview::diagram_theme);
         std::thread::spawn(move || {
             // 画像は、その時点の中身を絵で見せる（読めなければ、ほかのファイルと同じく）。SVG はテキストでも
             // 見られる。
@@ -2153,6 +2157,13 @@ impl Data {
                 .map(|bytes| {
                     amonhen_core::markdown::parse(&String::from_utf8_lossy(bytes.as_slice()))
                 });
+            // 図は、ここ（裏）で色を当てて絵にしておく（大きな図は数十 ms かかる）。
+            let diagrams = match (&markdown, &diagram_theme) {
+                (Some(blocks), Some((theme, dark))) => {
+                    crate::markdownview::render_diagrams(blocks, theme, *dark)
+                }
+                _ => Vec::new(),
+            };
             let view = match &change {
                 Some(c) => repo.file_diff_with_context(c, u32::MAX, &PROFILE),
                 None => repo.tree_file(&commit, &path, &PROFILE),
@@ -2179,6 +2190,7 @@ impl Data {
                 picture_view: crate::imagediff::View::default(),
                 key: NEXT.fetch_add(1, std::sync::atomic::Ordering::Relaxed),
                 markdown,
+                diagrams: Arc::new(diagrams),
                 mobile,
             })));
             wake();
