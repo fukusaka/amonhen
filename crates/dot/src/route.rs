@@ -1182,6 +1182,31 @@ pub fn ortho(
             pts[i][at] = (s[s.len() - 1].0, c.1);
             stubs[i][k] = s;
         }
+        // 脇へ出る短い道は、向こうの端の縦の線がその脇の空きに入るなら、そこまでで止める（曲がりを減らす）。
+        // ノードからは尾で 8、頭で 12（矢じりの分）は離す
+        if n >= 2 {
+            for (k, v) in [(0usize, e.tail), (1, e.head)] {
+                let s = &stubs[i][k];
+                if s.len() < 2 {
+                    continue;
+                }
+                let (c, h) = (center(v), half(v));
+                let target = if k == 0 { pts[i][n - 1].0 } else { pts[i][0].0 };
+                let near = if k == 0 { 8.0 } else { 12.0 };
+                let sx = s[s.len() - 1].0;
+                let (lo, hi) = if sx > c.0 {
+                    (c.0 + h.0 + near, sx)
+                } else {
+                    (sx, c.0 - h.0 - near)
+                };
+                if target >= lo && target <= hi && (target - sx).abs() > 1e-6 {
+                    let last = s.len() - 1;
+                    stubs[i][k][last].0 = target;
+                    let at = if k == 0 { 0 } else { n - 1 };
+                    pts[i][at].0 = target;
+                }
+            }
+        }
         if !edges[i].keep {
             straighten(&mut pts[i], obstacles, &[e.tail, e.head]);
         }
