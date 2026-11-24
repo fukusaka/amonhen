@@ -23,6 +23,8 @@ pub struct Obstacles {
     stamp: u32,
     /// 残りの手間（線分と箱の判定の数）。尽きたらもう避けない。
     work: usize,
+    /// 直角の道で脇を回る形を試す残りの手間（格子の目の数）。
+    around: usize,
 }
 
 /// 格子の目の数の上限（片側）。
@@ -33,6 +35,8 @@ const MAX_SCAN: usize = 4096;
 const MAX_DETOURS: usize = 12;
 /// 図ぜんぶで、線分と箱を比べる回数の上限（込んだ大きなグラフの時間を抑える）。
 const WORK: usize = 4_000_000;
+/// 図ぜんぶで、直角の道の脇を回る形を試すときに引く格子の目の数の上限。
+const AROUND_WORK: usize = 50_000;
 
 fn contains(r: &Rect, p: P) -> bool {
     p.0 > r[0] && p.0 < r[2] && p.1 > r[1] && p.1 < r[3]
@@ -136,6 +140,7 @@ impl Obstacles {
                 seen: vec![],
                 stamp: 0,
                 work: 0,
+                around: 0,
             };
         }
         let span = (x1 - x0).max(y1 - y0).max(1.0);
@@ -167,7 +172,22 @@ impl Obstacles {
             seen: vec![0; n],
             stamp: 0,
             work: WORK,
+            around: AROUND_WORK,
         }
+    }
+
+    /// 箱 `b` が覆う格子の目の数。
+    fn cells(&self, b: Rect) -> usize {
+        if self.rects.is_empty() {
+            return 0;
+        }
+        let at = |v: f64, lo: f64, count: usize| -> usize {
+            (((v - lo) / self.cell)
+                .floor()
+                .clamp(0.0, (count - 1) as f64)) as usize
+        };
+        (at(b[2], self.x0, self.cols) - at(b[0], self.x0, self.cols) + 1)
+            * (at(b[3], self.y0, self.rows) - at(b[1], self.y0, self.rows) + 1)
     }
 
     pub fn is_empty(&self) -> bool {
@@ -321,8 +341,12 @@ impl Obstacles {
     }
 }
 
-/// dot 以外の配置の直角の道: 横・縦・横か縦・横・縦の Z、または L の形のうち、ほかのノードと題の箱に当たる数の
-/// いちばん少ないもの（同じなら Z を先に、長いほうの向きから出る）。両端の箱が縦か横に重なれば、その重なりの
+/// 脇を回る Z を試す、間の箱の数の上限と、箱から離す間。
+const AROUND: usize = 6;
+const AROUND_GAP: f64 = 6.0;
+
+/// dot 以外の配置の直角の道: 横・縦・横か縦・横・縦の Z、または L の形、それに真ん中の線を間の箱の脇へずらした Z
+/// のうち、ほかのノードと題の箱に当たる数のいちばん少ないもの（同じなら Z を先に、長いほうの向きから出る）。両端の箱が縦か横に重なれば、その重なりの
 /// 中ほどを通る 1 本の直線（端はノードの中から始まり、外形で切られる）。`ha`・`hb` は両端の箱の大きさの半分。
 pub fn ortho_free(a: P, b: P, ha: P, hb: P, obstacles: &mut Obstacles, skip: &[usize]) -> Vec<P> {
     let (dx, dy) = (b.0 - a.0, b.1 - a.1);
@@ -344,15 +368,13 @@ pub fn ortho_free(a: P, b: P, ha: P, hb: P, obstacles: &mut Obstacles, skip: &[u
     let vhv = vec![a, (a.0, my), (b.0, my), b];
     let l1 = vec![a, (b.0, a.1), b];
     let l2 = vec![a, (a.0, b.1), b];
-    let candidates = if dx.abs() >= dy.abs() {
-        [hvh, vhv, l1, l2]
+    let candidates: Vec<Vec<P>> = if dx.abs() >= dy.abs() {
+        vec![hvh, vhv, l1, l2]
     } else {
-        [vhv, hvh, l2, l1]
+        vec![vhv, hvh, l2, l1]
     };
-    let mut best: Option<(usize, Vec<P>)> = None;
-    for c in candidates {
-        let hits: usize = c
-            .windows(2)
+    let hits_of = |c: &[P], obstacles: &mut Obstacles| -> usize {
+        c.windows(2)
             .map(|w| {
                 let r = [
                     w[0].0.min(w[1].0),
@@ -360,11 +382,72 @@ pub fn ortho_free(a: P, b: P, ha: P, hb: P, obstacles: &mut Obstacles, skip: &[u
                     w[0].0.max(w[1].0),
                     w[0].1.max(w[1].1),
                 ];
-                obstacles.overlapping(r, skip).len()
+                let n = obstacles.overlapping(r, skip).len();
+                obstacles.work = obstacles.work.saturating_sub(n + 1);
+                n
             })
-            .sum();
+            .sum()
+    };
+    let mut best: Option<(usize, Vec<P>)> = None;
+    for c in candidates {
+        let hits = hits_of(&c, obstacles);
         if best.as_ref().is_none_or(|(h, _)| hits < *h) {
             best = Some((hits, c));
+        }
+        if hits == 0 {
+            break;
+        }
+    }
+    // どれも当たるなら、間のノード・題の脇を通る Z（真ん中の線を箱の外へずらしたもの）。両端のノードの外にある所
+    // だけ。手間の上限が尽きたら試さない
+    if best.as_ref().is_some_and(|(h, _)| *h > 0) && obstacles.work > 0 && obstacles.around > 0 {
+        let bb = [a.0.min(b.0), a.1.min(b.1), a.0.max(b.0), a.1.max(b.1)];
+        obstacles.around = obstacles.around.saturating_sub(obstacles.cells(bb));
+        let between = obstacles.overlapping(bb, skip);
+        obstacles.work = obstacles.work.saturating_sub(between.len() + 1);
+        let (gx0, gx1) = if a.0 < b.0 {
+            (a.0 + ha.0, b.0 - hb.0)
+        } else {
+            (b.0 + hb.0, a.0 - ha.0)
+        };
+        let (gy0, gy1) = if a.1 < b.1 {
+            (a.1 + ha.1, b.1 - hb.1)
+        } else {
+            (b.1 + hb.1, a.1 - ha.1)
+        };
+        let mut more: Vec<Vec<P>> = Vec::new();
+        for r in between.iter().take(AROUND) {
+            for x in [r[0] - AROUND_GAP, r[2] + AROUND_GAP] {
+                if x > gx0 && x < gx1 {
+                    more.push(vec![a, (x, a.1), (x, b.1), b]);
+                }
+            }
+            for y in [r[1] - AROUND_GAP, r[3] + AROUND_GAP] {
+                if y > gy0 && y < gy1 {
+                    more.push(vec![a, (a.0, y), (b.0, y), b]);
+                }
+            }
+        }
+        for c in more {
+            if obstacles.around == 0 {
+                break;
+            }
+            for w in c.windows(2) {
+                let r = [
+                    w[0].0.min(w[1].0),
+                    w[0].1.min(w[1].1),
+                    w[0].0.max(w[1].0),
+                    w[0].1.max(w[1].1),
+                ];
+                obstacles.around = obstacles.around.saturating_sub(obstacles.cells(r));
+            }
+            let hits = hits_of(&c, obstacles);
+            if best.as_ref().is_none_or(|(h, _)| hits < *h) {
+                best = Some((hits, c));
+            }
+            if hits == 0 {
+                break;
+            }
         }
     }
     best.map(|(_, c)| c).unwrap_or_else(|| vec![a, b])
@@ -577,6 +660,29 @@ fn c_along(c: P, vertical_side: bool) -> f64 {
 #[cfg(test)]
 mod free_tests {
     use super::*;
+
+    #[test]
+    fn goes_beside_a_node_in_the_way() {
+        // 0 から右下の 1 へ。真ん中に 2、左下に 3 があり、真ん中で曲がる Z も L も当たる
+        let rects = vec![
+            ([-27.0, -18.0, 27.0, 18.0], Some(0)),
+            ([273.0, 182.0, 327.0, 218.0], Some(1)),
+            ([110.0, -40.0, 190.0, 150.0], Some(2)),
+            ([60.0, 185.0, 100.0, 215.0], Some(3)),
+        ];
+        let mut obs = Obstacles::new(rects);
+        let p = ortho_free(
+            (0.0, 0.0),
+            (300.0, 200.0),
+            (27.0, 18.0),
+            (27.0, 18.0),
+            &mut obs,
+            &[0, 1],
+        );
+        for r in [[110.0, -40.0, 190.0, 150.0], [60.0, 185.0, 100.0, 215.0]] {
+            assert!(!p.windows(2).any(|w| segment_hits(w[0], w[1], &r)), "{p:?}");
+        }
+    }
 
     fn axis_aligned(p: &[P]) -> bool {
         p.windows(2)
