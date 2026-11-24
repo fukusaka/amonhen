@@ -3964,6 +3964,44 @@ fn file_headers_stick_and_fold() {
     assert!(opened.iter().any(|l| l.contains("+alpha")), "{opened:?}");
 }
 
+/// 詳細の差分: 生成物（lock ファイルなど）と、変更が 1000 行を超えるファイルは最初から畳む（アプリと同じ）
+#[test]
+fn generated_and_large_files_are_folded_at_first() {
+    let dir = tempfile::tempdir().unwrap();
+    let dir = dir.path();
+    git(dir, BASE, &["init", "-q", "-b", "main"]);
+    std::fs::write(dir.join("Cargo.lock"), "lock 1\n").unwrap();
+    std::fs::write(
+        dir.join("big.txt"),
+        (1..=1001).map(|n| format!("big {n}\n")).collect::<String>(),
+    )
+    .unwrap();
+    std::fs::write(dir.join("small.txt"), "small 1\n").unwrap();
+    git(dir, BASE, &["add", "."]);
+    git(dir, BASE, &["commit", "-q", "-m", "Start"]);
+    let text = amonhen_tui::snapshot(open(dir), 140, 40, clock(), "2\n").unwrap();
+    println!("{text}");
+    let side: Vec<String> = text
+        .lines()
+        .skip(1)
+        .filter_map(|l| column(l, 1))
+        .map(|l| l.trim_end().to_owned())
+        .collect();
+    for name in ["Cargo.lock", "big.txt"] {
+        assert!(
+            side.iter().any(|l| l.starts_with('▸') && l.contains(name)),
+            "{side:?}"
+        );
+    }
+    assert!(
+        !side
+            .iter()
+            .any(|l| l.contains("+lock 1") || l.contains("+big 1")),
+        "{side:?}"
+    );
+    assert!(side.iter().any(|l| l.contains("+small 1")), "{side:?}");
+}
+
 /// 詳細の `t`: 変わったファイルを木で出す（フォルダの下に名前だけ）。`z` でフォルダをたたみ、もう一度で開く
 #[test]
 fn changed_files_as_a_tree() {

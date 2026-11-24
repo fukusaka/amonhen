@@ -632,6 +632,8 @@ impl Session {
                     "added": d.added,
                     "removed": d.removed,
                     "binary": d.binary,
+                    // 生成物（`linguist-generated`、なければ lock ファイルなど）。FE は最初は畳む。
+                    "generated": stacked.generated(i),
                 })
             })
             .collect();
