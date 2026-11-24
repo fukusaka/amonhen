@@ -252,10 +252,256 @@ fn collect(list: &[Block], colors: &DiagramColors, out: &mut Vec<Option<DiagramP
     }
 }
 
-/// 組み立てる間の、次の図の絵（`render_diagrams` と同じ順に取る）。
+/// 組み立てる間の、次の図の絵（`render_diagrams` と同じ順に取る）と、読めた画像、外観。
 struct Pictures<'a> {
     list: &'a [Option<DiagramPicture>],
     next: Cell<usize>,
+    images: &'a MdImages,
+    dark: bool,
+    /// 次の `<details>` の番号（文書の中で出てくる順）。
+    details: Cell<usize>,
+}
+
+thread_local! {
+    /// 開け閉めした `<details>`（文書の鍵と、番号 → 開いているか）。WinUI の Expander は自分で開け閉めするが、
+    /// 組み直すたびに最初の状態を渡すと戻ってしまうので、押した後の状態を覚えて渡す。別の文書を開いたら忘れる。
+    static DETAILS: std::cell::RefCell<(u64, std::collections::HashMap<usize, bool>)> =
+        std::cell::RefCell::default();
+}
+
+/// Markdown の中の、このコミットから読めた画像（SVG は絵にしたもの）と、もとの大きさ（DIP）。
+pub struct MdImage {
+    data: EncodedImage,
+    width: f64,
+    height: f64,
+}
+
+/// 画像の場所（Markdown に書いたまま）→ 読めた画像。
+pub type MdImages = std::collections::HashMap<String, MdImage>;
+
+/// 画像の幅の上限（GTK4 版と同じ 640）。
+const MAX_IMAGE_WIDTH: f64 = 640.0;
+
+/// `from`（Markdown のファイルのパス）から見た `link` の、リポジトリの根からのパス（外の URL・`#` だけは None。
+/// GTK4 版の `resolve`）。
+pub fn resolve(link: &str, from: &str) -> Option<String> {
+    let target = link.split('#').next().unwrap_or(link);
+    if target.is_empty() || target.contains("://") || target.starts_with("data:") {
+        return None;
+    }
+    let mut parts: Vec<&str> = if target.starts_with('/') {
+        Vec::new()
+    } else {
+        from.rsplit_once('/')
+            .map(|(dir, _)| dir.split('/').filter(|p| !p.is_empty()).collect())
+            .unwrap_or_default()
+    };
+    for part in target.split('/').filter(|p| !p.is_empty()) {
+        match part {
+            ".." => {
+                parts.pop();
+            }
+            "." => {}
+            _ => parts.push(part),
+        }
+    }
+    (!parts.is_empty()).then(|| parts.join("/"))
+}
+
+/// `blocks` の中の画像の場所（重ならずに、出てくる順。GTK4 版の `image_sources`）。
+fn image_sources(blocks: &[Block]) -> Vec<String> {
+    fn runs(runs: &[Run], out: &mut Vec<String>) {
+        for run in runs {
+            for src in [&run.image, &run.image_dark, &run.image_light]
+                .into_iter()
+                .flatten()
+            {
+                if !out.contains(src) {
+                    out.push(src.clone());
+                }
+            }
+        }
+    }
+    fn walk(blocks: &[Block], out: &mut Vec<String>) {
+        for block in blocks {
+            match block {
+                Block::Heading { runs: r, .. } | Block::Paragraph { runs: r, .. } => runs(r, out),
+                Block::Quote { blocks, .. } | Block::Footnote { blocks, .. } => walk(blocks, out),
+                Block::Details {
+                    summary, blocks, ..
+                } => {
+                    runs(summary, out);
+                    walk(blocks, out);
+                }
+                Block::List { items, .. } => {
+                    for item in items {
+                        walk(&item.blocks, out);
+                    }
+                }
+                _ => {}
+            }
+        }
+    }
+    let mut out = Vec::new();
+    walk(blocks, &mut out);
+    out
+}
+
+/// PNG・GIF・JPEG・BMP の、頭から読める大きさ（画素）。
+fn raster_size(data: &[u8]) -> Option<(u32, u32)> {
+    let be32 = |at: usize| Some(u32::from_be_bytes(data.get(at..at + 4)?.try_into().ok()?));
+    let le16 = |at: usize| {
+        Some(u32::from(u16::from_le_bytes(
+            data.get(at..at + 2)?.try_into().ok()?,
+        )))
+    };
+    let le32 =
+        |at: usize| Some(i32::from_le_bytes(data.get(at..at + 4)?.try_into().ok()?).unsigned_abs());
+    if data.starts_with(b"\x89PNG\r\n\x1a\n") {
+        return Some((be32(16)?, be32(20)?));
+    }
+    if data.starts_with(b"GIF8") {
+        return Some((le16(6)?, le16(8)?));
+    }
+    if data.starts_with(b"BM") {
+        return Some((le32(18)?, le32(22)?));
+    }
+    if data.starts_with(&[0xff, 0xd8]) {
+        // JPEG: SOF（0xC0〜0xCF の、DHT・JPG・DAC を除く）の高さと幅。
+        let mut at = 2;
+        while at + 9 < data.len() {
+            if data[at] != 0xff {
+                return None;
+            }
+            let marker = data[at + 1];
+            let length = usize::from(u16::from_be_bytes([data[at + 2], data[at + 3]]));
+            if (0xc0..=0xcf).contains(&marker) && !matches!(marker, 0xc4 | 0xc8 | 0xcc) {
+                let h = u32::from(u16::from_be_bytes([data[at + 5], data[at + 6]]));
+                let w = u32::from(u16::from_be_bytes([data[at + 7], data[at + 8]]));
+                return Some((w, h));
+            }
+            at += 2 + length;
+        }
+    }
+    None
+}
+
+/// 画像を読んでおく（このコミットの中のものだけ。外へは読みに行かない）。SVG は 2 倍の画素の絵にする。裏の
+/// スレッドで呼ぶ。
+pub fn load_images(
+    blocks: &[Block],
+    from: &str,
+    read: &dyn Fn(&str) -> Option<Arc<Vec<u8>>>,
+) -> MdImages {
+    let mut out = MdImages::new();
+    for src in image_sources(blocks) {
+        let Some(data) = resolve(&src, from).and_then(|path| read(&path)) else {
+            continue;
+        };
+        let image = if src
+            .to_ascii_lowercase()
+            .split(['?', '#'])
+            .next()
+            .is_some_and(|p| p.ends_with(".svg"))
+            || data.windows(4).take(4096).any(|w| w == b"<svg")
+        {
+            let Some(picture) = render_svg(&data, 2.0) else {
+                continue;
+            };
+            picture
+        } else {
+            let Some((w, h)) = raster_size(&data) else {
+                continue;
+            };
+            MdImage {
+                data: EncodedImage::new(data.to_vec()),
+                width: f64::from(w),
+                height: f64::from(h),
+            }
+        };
+        out.insert(src, image);
+    }
+    out
+}
+
+/// SVG を `scale` 倍の画素で絵にする（大きさは SVG の大きさ）。
+fn render_svg(data: &[u8], scale: f32) -> Option<MdImage> {
+    let options = usvg::Options {
+        fontdb: fonts(),
+        ..Default::default()
+    };
+    let tree = usvg::Tree::from_data(data, &options).ok()?;
+    let size = tree.size();
+    // 大きすぎる絵は、幅の上限の 2 倍の画素までに収める。
+    let scale = scale
+        .min(2.0 * MAX_IMAGE_WIDTH as f32 / size.width().max(1.0))
+        .max(0.01);
+    let mut pixmap = tiny_skia::Pixmap::new(
+        (size.width() * scale).ceil().max(1.0) as u32,
+        (size.height() * scale).ceil().max(1.0) as u32,
+    )?;
+    resvg::render(
+        &tree,
+        tiny_skia::Transform::from_scale(scale, scale),
+        &mut pixmap.as_mut(),
+    );
+    Some(MdImage {
+        data: EncodedImage::new(pixmap.encode_png().ok()?),
+        width: f64::from(size.width()),
+        height: f64::from(size.height()),
+    })
+}
+
+impl Pictures<'_> {
+    /// 外観に合う画像の場所（`<picture>` の暗い・明るい外観のもの、なければ `image`）。
+    fn source<'r>(&self, run: &'r Run) -> Option<&'r String> {
+        let themed = if self.dark {
+            run.image_dark.as_ref()
+        } else {
+            run.image_light.as_ref()
+        };
+        themed.or(run.image.as_ref())
+    }
+
+    /// 読めた画像の、HTML の `width`・`height`（片方なら比を保つ）か、もとの大きさ（幅は 640 まで）で見せる絵。
+    /// リンクの中の画像は押せる。
+    fn image(&self, run: &Run) -> Option<View> {
+        let image = self.images.get(self.source(run)?)?;
+        let ratio = image.height / image.width.max(1.0);
+        let (w, h) = match (run.width, run.height) {
+            (Some(w), Some(h)) => (f64::from(w), f64::from(h)),
+            (Some(w), None) => (f64::from(w), f64::from(w) * ratio),
+            (None, Some(h)) => (f64::from(h) / ratio.max(0.0001), f64::from(h)),
+            (None, None) => (image.width, image.height),
+        };
+        let (w, h) = if w > MAX_IMAGE_WIDTH {
+            (MAX_IMAGE_WIDTH, h * MAX_IMAGE_WIDTH / w)
+        } else {
+            (w, h)
+        };
+        let picture: View = Image::new()
+            .source_data(image.data.clone())
+            .stretch(Stretch::Uniform)
+            .width(w)
+            .height(h)
+            .into();
+        let picture = if run.text.is_empty() {
+            picture
+        } else {
+            Border::new().content(picture).tooltip(run.text.clone())
+        };
+        Some(
+            match run
+                .link
+                .as_ref()
+                .filter(|u| u.starts_with("http://") || u.starts_with("https://"))
+                .and_then(|u| HyperlinkButton::new().navigate_uri(u.clone()).ok())
+            {
+                Some(button) => button.content(picture),
+                None => picture,
+            },
+        )
+    }
 }
 
 impl Pictures<'_> {
@@ -332,6 +578,60 @@ fn inlines(runs: &[Run], bold: bool) -> Vec<RichTextInline> {
         .collect()
 }
 
+/// 段落・見出し: 読めた画像は絵で、ほかの文字はそのまま。画像だけの段落（バッジの並びなど）は横に並べる。HTML の
+/// `align` でそろえる（短い行は真ん中・右に寄る。GTK4 版の `justify`）。
+fn paragraph(runs: &[Run], size: f64, bold: bool, align: Align, pictures: &Pictures) -> View {
+    let view = if runs.iter().any(|r| pictures.image(r).is_some()) {
+        let mut parts: Vec<View> = Vec::new();
+        let mut words: Vec<Run> = Vec::new();
+        let mut only_images = true;
+        let flush = |words: &mut Vec<Run>, parts: &mut Vec<View>, only_images: &mut bool| {
+            if words
+                .iter()
+                .any(|w| !w.text.trim().is_empty() || w.line_break)
+            {
+                *only_images = false;
+                parts.push(text(words, size, bold));
+            }
+            words.clear();
+        };
+        for run in runs {
+            match pictures.image(run) {
+                Some(picture) => {
+                    flush(&mut words, &mut parts, &mut only_images);
+                    parts.push(picture);
+                }
+                None => words.push(run.clone()),
+            }
+        }
+        flush(&mut words, &mut parts, &mut only_images);
+        StackPanel::new()
+            .orientation(if only_images {
+                Orientation::Horizontal
+            } else {
+                Orientation::Vertical
+            })
+            .spacing(4.0)
+            .children((View::keyed_fragment(
+                parts
+                    .into_iter()
+                    .enumerate()
+                    .map(|(i, v)| (i.to_string(), v)),
+            ),))
+    } else {
+        text(runs, size, bold)
+    };
+    match align {
+        Align::Center => Border::new()
+            .horizontal_alignment(HorizontalAlignment::Center)
+            .content(view),
+        Align::Right => Border::new()
+            .horizontal_alignment(HorizontalAlignment::Right)
+            .content(view),
+        _ => view,
+    }
+}
+
 fn text(runs: &[Run], size: f64, bold: bool) -> View {
     RichTextBlock::new()
         .paragraphs(RichText::single_paragraph(inlines(runs, bold)))
@@ -370,9 +670,9 @@ fn blocks(list: &[Block], pictures: &Pictures) -> View {
 
 fn block(b: &Block, pictures: &Pictures) -> View {
     match b {
-        Block::Heading { level, runs, .. } => {
+        Block::Heading { level, runs, align } => {
             let size = HEADINGS[(*level as usize).clamp(1, 6) - 1];
-            let heading = text(runs, size, true);
+            let heading = paragraph(runs, size, true, *align, pictures);
             // 大きな見出しは、下に細い線（GitHub と同じ）。
             if *level <= 2 {
                 Border::new()
@@ -384,7 +684,7 @@ fn block(b: &Block, pictures: &Pictures) -> View {
                 heading
             }
         }
-        Block::Paragraph { runs, .. } => text(runs, BODY, false),
+        Block::Paragraph { runs, align } => paragraph(runs, BODY, false, *align, pictures),
         // 図は絵にして、近いもので描いたならそのことを下に添える。描けなければコードとして見せ、理由を添える
         // （macOS 版・GTK4 版と同じ）。
         Block::Diagram {
@@ -497,20 +797,34 @@ fn block(b: &Block, pictures: &Pictures) -> View {
         }
         Block::Table { aligns, head, rows } => table(aligns, head, rows),
         Block::Rule => Border::new().height(1.0).background(shade()).into(),
-        // HTML の `<details>` は、まだ開いたままで見せる（見出しを太字で）。
+        // HTML の `<details>` は、見出しを押すと開く・閉じる（`open` なら開いて始める。GitHub・macOS 版・GTK4 版と
+        // 同じ）。
         Block::Details {
             summary,
+            open,
             blocks: inner,
-            ..
         } => {
             let head = if summary.is_empty() {
                 plain(&details_title(), BODY, false, None)
             } else {
                 text(summary, BODY, true)
             };
-            StackPanel::new()
-                .spacing(6.0)
-                .children((head, blocks(inner, pictures)))
+            let index = pictures.details.get();
+            pictures.details.set(index + 1);
+            let expanded = DETAILS
+                .with(|d| d.borrow().1.get(&index).copied())
+                .unwrap_or(*open);
+            Expander::new()
+                .is_expanded(expanded)
+                .on_is_expanded_changed(move |on: bool| {
+                    DETAILS.with(|d| d.borrow_mut().1.insert(index, on));
+                })
+                .horizontal_alignment(HorizontalAlignment::Stretch)
+                .horizontal_content_alignment(HorizontalAlignment::Left)
+                .slots([
+                    SlotView::new(ExpanderSlot::Header, head),
+                    SlotView::new(ExpanderSlot::Content, blocks(inner, pictures)),
+                ])
         }
         Block::HtmlTable {
             columns,
@@ -623,10 +937,24 @@ fn html_table(columns: u32, rows: u32, cells: &[amonhen_core::markdown::TableCel
 }
 
 /// Markdown の整形表示（スクロールする欄）。読めなければ「読めない」。
-pub fn view(parsed: Option<&[Block]>, diagrams: &[Option<DiagramPicture>]) -> View {
+pub fn view(
+    key: u64,
+    parsed: Option<&[Block]>,
+    diagrams: &[Option<DiagramPicture>],
+    images: &MdImages,
+) -> View {
+    DETAILS.with(|d| {
+        let mut d = d.borrow_mut();
+        if d.0 != key {
+            *d = (key, Default::default());
+        }
+    });
     let pictures = Pictures {
+        details: Cell::new(0),
         list: diagrams,
         next: Cell::new(0),
+        images,
+        dark: crate::palette::dark(),
     };
     let content = match parsed {
         Some(list) => blocks(list, &pictures),
