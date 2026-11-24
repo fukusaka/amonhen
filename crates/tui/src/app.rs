@@ -607,6 +607,12 @@ pub struct App {
     open_worktree: Option<String>,
     /// Quick Open で選んだリポジトリの場所（TUI を閉じて、そこで開き直す）。
     open_location: Option<String>,
+    /// 窓口（daemon とのつながりが切れたかを見る）。
+    front: Arc<dyn Front>,
+    /// daemon とのつながりが切れた理由（アプリの Lost connection の帯）。`R` で開き直す。
+    lost: Option<String>,
+    /// `R` で、同じ場所を開き直す。
+    reconnect: bool,
     quick_open: Option<QuickOpen>,
     /// ブランチの切り替え（`Ctrl-b`）。
     branch_pick: Option<BranchPick>,
@@ -824,7 +830,7 @@ const HISTORY_MIN: u16 = 60;
 impl App {
     pub fn new(front: Arc<dyn Front>, events: Sender<Event>, clock: Clock) -> Self {
         Self {
-            loader: Loader::start(front, events.clone()),
+            loader: Loader::start(front.clone(), events.clone()),
             events,
             history: History::default(),
             details: Details::default(),
@@ -948,6 +954,9 @@ impl App {
             open_file: None,
             open_worktree: None,
             open_location: None,
+            front: front.clone(),
+            lost: None,
+            reconnect: false,
             quick_open: None,
             branch_pick: None,
             fixup_pick: None,
@@ -1353,6 +1362,9 @@ impl App {
 
     /// 終わった後に開き直すもの（worktree か、Quick Open で選んだリポジトリ）。
     pub fn take_next(&mut self) -> Option<crate::Next> {
+        if std::mem::take(&mut self.reconnect) {
+            return Some(crate::Next::Reconnect);
+        }
         match self.open_location.take() {
             Some(location) => Some(crate::Next::Location(location)),
             None => self.open_worktree.take().map(crate::Next::Worktree),
@@ -1487,6 +1499,14 @@ impl App {
 
     pub fn handle(&mut self, event: Event) {
         self.handle_event(event);
+        // daemon とのつながりが切れたら、理由と開き直し方を一番下の行に出したままにする（アプリの帯）。
+        if let Some(reason) = self.front.closed() {
+            if self.lost.is_none() {
+                self.lost = Some(reason.clone());
+            }
+            self.error = Some(tr!("{reason}. R reconnects, q quits", reason = reason));
+            self.dirty = true;
+        }
         // 欄を離れていれば、書きかけのメッセージを覚える（打っている間は書かない）。
         if self.focus != Focus::Message {
             self.save_draft_if_changed();
@@ -1933,6 +1953,20 @@ impl App {
             return;
         }
         let control = key.modifiers.contains(KeyModifiers::CONTROL);
+        // つながりが切れていれば、`R` で同じ場所を開き直し、`q` で終える。ほかの操作はできない。
+        if self.lost.is_some() {
+            match key.code {
+                KeyCode::Char('R') => {
+                    self.reconnect = true;
+                    self.quit = true;
+                }
+                KeyCode::Char('q') => self.quit = true,
+                KeyCode::Char('c') if control => self.quit = true,
+                _ => {}
+            }
+            self.dirty = true;
+            return;
+        }
         // 画面が乱れたときに、どこからでもすべて書き直す（中身は読み直さない）。
         if control && key.code == KeyCode::Char('l') {
             self.redraw = true;
@@ -10953,6 +10987,74 @@ mod tests {
                 "pick Commit 2"
             ]
         );
+    }
+
+    /// つながりが切れる窓口（テスト用）: `cut` を立てると、切れた理由を返す。
+    struct Cuttable {
+        inner: InProcess,
+        cut: std::sync::atomic::AtomicBool,
+    }
+
+    impl Front for Cuttable {
+        fn call_until(
+            &self,
+            request: Value,
+            cancelled: &(dyn Fn() -> bool + Sync),
+        ) -> crate::Result<amonhen_front::Reply> {
+            match self.cut.load(std::sync::atomic::Ordering::Relaxed) {
+                true => Err("Lost connection to the daemon".into()),
+                false => self.inner.call_until(request, cancelled),
+            }
+        }
+
+        fn subscribe(&self, f: Box<dyn Fn(u32) + Send + Sync>) -> crate::Result<()> {
+            self.inner.subscribe(f)
+        }
+
+        fn closed(&self) -> Option<String> {
+            self.cut
+                .load(std::sync::atomic::Ordering::Relaxed)
+                .then(|| "Lost connection to the daemon".to_owned())
+        }
+    }
+
+    /// daemon とのつながりが切れたら、一番下の行に理由と開き直し方を出し、`R` で同じ場所を開き直す（アプリの
+    /// Lost connection と Reconnect）
+    #[test]
+    fn a_lost_connection_offers_to_reconnect() {
+        let (dir, _app, _rx) = app_with_history();
+        let front = Arc::new(Cuttable {
+            inner: InProcess::open(dir.path(), None).unwrap(),
+            cut: std::sync::atomic::AtomicBool::new(false),
+        });
+        let (tx, rx) = std::sync::mpsc::channel();
+        let clock = Clock {
+            now: 0,
+            local: |t| t.to_string(),
+        };
+        let mut app = App::new(front.clone(), tx, clock);
+        app.resize(100, 12);
+        app.start();
+        crate::settle(&mut app, &rx).unwrap();
+        front.cut.store(true, std::sync::atomic::Ordering::Relaxed);
+        let key = |ch: char| {
+            Event::Input(Input::Key(KeyEvent::new(
+                KeyCode::Char(ch),
+                KeyModifiers::NONE,
+            )))
+        };
+        // 何かすると、切れたことが分かる。ほかのキーは効かない。
+        app.handle(key('j'));
+        let line = bottom_line(&mut app);
+        assert!(
+            line.contains("Lost connection to the daemon. R reconnects, q quits"),
+            "{line}"
+        );
+        app.handle(key('f'));
+        assert!(!app.quit);
+        app.handle(key('R'));
+        assert!(app.quit);
+        assert_eq!(app.take_next(), Some(crate::Next::Reconnect));
     }
 
     /// ペインの区切りをドラッグすると、サイドバーとメインの画面の幅が変わる（アプリのドラッグできる区切り）

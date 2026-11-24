@@ -10,7 +10,7 @@ Status: stages T1 and T2 are built (History, the selected commit's details and d
 
 - Rust, with ratatui (the cell buffer and diffing of frames; `ratatui-core` and `ratatui-crossterm` only, since every screen is drawn by hand and the widgets crate isn't needed) and crossterm (input, colors, the alternate screen; Unix and Windows).
 - Part of the engine: `amonhen tui [<path> | ssh://host/path | daemon:<path>]`. No second executable, so a host that has the engine has the TUI.
-- It reaches the core only through the front API (`amonhen-front`, [front.md](front.md)), as the CLI does: in-process for a local path, the shared daemon for `daemon:` and `ssh://`. History uses the same persistent cache as the apps.
+- It reaches the core only through the front API (`amonhen-front`, [front.md](front.md)), as the CLI does: in-process for a local path, the shared daemon for `daemon:` and `ssh://`. When the connection to the daemon is lost, the bottom line says so and keeps saying it, as the apps' bar does, and `R` opens the same location again (the apps' Reconnect) while `q` quits. History uses the same persistent cache as the apps.
 - Keyboard first. The mouse is an addition (wheel, click to select, drag the dividers: the sidebar's right edge and, side by side, the main view's, for this run of the TUI).
 - Screens, names and wording follow [ux.md](ux.md). Where a terminal can't do what the apps do, the TUI has its own form, and [frontends.md](frontends.md) gets a TUI column that says so.
 

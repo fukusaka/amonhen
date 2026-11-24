@@ -10,7 +10,7 @@
 
 - Rust で、ratatui（セルのバッファとフレームの差分。`ratatui-core` と `ratatui-crossterm` だけ。画面はどれも自前で描くので、部品の crate は要らない）と crossterm（入力・色・代替画面。Unix と Windows）を使う。
 - エンジンの一部にする: `amonhen tui [<path> | ssh://host/path | daemon:<path>]`。実行ファイルは増やさないので、エンジンのあるホストには TUI がある。
-- コアへは FE 向けの窓口（`amonhen-front`、[front.md](front.md)）だけを通る。CLI と同じで、手元のパスは同じプロセス、`daemon:` と `ssh://` は共有の daemon。History はアプリと同じ永続キャッシュを使う。
+- コアへは FE 向けの窓口（`amonhen-front`、[front.md](front.md)）だけを通る。CLI と同じで、手元のパスは同じプロセス、`daemon:` と `ssh://` は共有の daemon。daemon とのつながりが切れたら、アプリの帯と同じく一番下の行にそう出したままにし、`R` で同じ場所を開き直す（アプリの Reconnect）。`q` で終える。History はアプリと同じ永続キャッシュを使う。
 - キーボードが主。マウスは補助（ホイール・クリックで選択・仕切りのドラッグ。サイドバーの右と、並べているときのメインの画面の右。幅はこの TUI を動かしている間だけ）。
 - 画面・名前・文言は [ux.md](ux.md) に従う。端末でアプリと同じにできない所は TUI なりの形にし、[frontends.md](frontends.md) に TUI の列を足してそこに書く。
 
