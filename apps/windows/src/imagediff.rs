@@ -201,7 +201,7 @@ pub fn decode(bytes: &[u8]) -> Option<Pixels> {
 }
 
 /// バイト数（「1.2 kB」。GTK4 版の `glib::format_size` と同じ 1000 区切り）。
-fn format_size(bytes: usize) -> String {
+pub fn format_size(bytes: usize) -> String {
     let b = bytes as f64;
     if b < 1000.0 {
         format!("{bytes} B")

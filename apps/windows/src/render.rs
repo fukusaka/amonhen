@@ -1668,7 +1668,10 @@ impl Renderer {
             let svg = || bytes.windows(4).any(|w| w == b"<svg");
             let pixels = image::decode(bytes)
                 .or_else(|| svg().then(|| self.rasterize_svg(bytes).ok()).flatten());
-            let caption = image::describe(Some(bytes), pixels.as_ref());
+            let caption = match content.picture_caption {
+                Some(caption) => caption.to_owned(),
+                None => image::describe(Some(bytes), pixels.as_ref()),
+            };
             let bitmap = pixels.as_ref().and_then(|p| self.bitmap(p).ok());
             self.images.insert(
                 key,

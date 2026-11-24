@@ -63,17 +63,20 @@ export function registerStashCommands(manager: RepositoryManager): vscode.Dispos
       }),
     ),
     // Working Copy のファイルの右クリック: そのファイルの変更だけを stash する（エンジンだけ）
-    vscode.commands.registerCommand('amonhen.stash.files', async (ctx?: { path?: string }) => {
+    // いくつも選んでいれば（paths）、選んだファイルすべて
+    vscode.commands.registerCommand('amonhen.stash.files', async (ctx?: { path?: string; paths?: string[] }) => {
       const repo = manager.current;
-      if (!repo || !ctx?.path) return;
-      const message = await vscode.window.showInputBox({ title: `Stash ${ctx.path}`, prompt: 'Message (optional)' });
+      const paths = ctx?.paths?.length ? ctx.paths : ctx?.path ? [ctx.path] : [];
+      if (!repo || paths.length === 0) return;
+      const what = paths.length === 1 ? paths[0]! : `${paths.length} files`;
+      const message = await vscode.window.showInputBox({ title: `Stash ${what}`, prompt: 'Message (optional)' });
       if (message === undefined) return;
-      const untracked = (repo.current.status?.entries ?? []).some((e) => e.path === ctx.path && e.kind === 'untracked');
+      const untracked = (repo.current.status?.entries ?? []).some((e) => paths.includes(e.path) && e.kind === 'untracked');
       try {
         await runEngine(
           repo,
-          { op: 'stashPush', message: message.trim() || null, includeUntracked: untracked, paths: [ctx.path] },
-          `Stash ${ctx.path}`,
+          { op: 'stashPush', message: message.trim() || null, includeUntracked: untracked, paths },
+          `Stash ${what}`,
         );
       } catch (err) {
         showError(err);

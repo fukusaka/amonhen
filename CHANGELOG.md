@@ -1307,6 +1307,8 @@ First release.
   git notes follow the message (with the engine), and History's search terms are marked.
 - The app menus' Commit, Commit and Push, Stage All, Set Upstream…, Rebase…, Go to HEAD and Find in History… are
   commands, so they can be bound to keys; Merge Branches… and Rebase… also offer the commit selected in History.
+- The Working Copy selects several files (⌘- or Ctrl-click, Shift-click, Shift+↑↓); Space, ⌫, the row buttons and
+  Stash… act on all of them.
 - Dropping a commit on another in History or in the edit mode squashes it into that one: the edit mode opens with it
   moved above that commit and marked squash (with the engine).
 - The commit details' right-click copies the ID, the short ID, the subject, the message or a git show command, and
@@ -1324,6 +1326,12 @@ First release.
 
 - History folds or shows any merge on its own (its context menu, ←/→), and the display menu has Fold All and Show
   All Merged Commits; the folds are kept per repository and shared with the apps and the TUI.
+
+#### Changed
+
+- A failure the app knows (sign-in, host key, network, rejected push, diverged branches, local changes, a lock, no
+  upstream, a branch in another worktree) is said in plain words with the app's next steps, such as Pull…, Set
+  Upstream… or Try Again; Details adds the advice.
 
 #### Fixed
 

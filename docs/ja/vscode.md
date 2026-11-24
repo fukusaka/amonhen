@@ -291,4 +291,6 @@ macOS アプリに追いつく（1 つの機能を 1 つの pull request で、�
 - [x] 77. コミットのメッセージの URL とコミット ID をリンクに、トレーラーを分けて並べ、git notes（エンジンがあれば）、History の検索の語に印
 - [x] 79. merge を 1 つずつ畳む・開く（右クリック・←/→）、すべて畳む・すべて開く。アプリ・TUI と同じファイルにリポジトリごとに覚える
 - [x] 80. History と編集モードで、コミットを別のコミットに重ねて落とすとそれにまとめる（その上へ動かして squash にした編集モードを開く）
+- [x] 81. Working Copy でいくつものファイルを選ぶ（⌘・Ctrl クリック、Shift クリック、Shift+↑↓）。Space・⌫・行のボタン・Stash… は選んだものすべてに効く
 - [x] 82. 途中の操作の行で、何をどこへしている途中か（何手目か）と、なぜ止まり次に何をするかを言う（エンジンがあれば。アプリの帯と同じ）。revert には Skip を出さない
+- [x] 83. 見分けられる失敗を分かる言葉で知らせ、アプリと同じ次の一手（Pull…・Open Working Copy・Set Upstream…・Open Worktree・Open in Terminal・Try Again）と、Details に助言を

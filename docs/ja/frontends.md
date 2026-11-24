@@ -175,7 +175,7 @@ GTK4 のアプリは macOS のアプリと同じふるまいをめざす。わ�
 | いくつもを 1 つにマージ（順番・コンフリクトの見込み） | ✓ | ✓ | ✓ | ✓ | △ | △ | CLI: `merge-check` で確かめ、マージは `amonhen run` から。<br>Windows: History の選択から。順（ドラッグ）、ぶつかる見込みと最後に回す、取り込み方、1 つずつ、メッセージ、前と後の絵、git が断ったら 1 つずつ Merge。<br>TUI: サイドバーの `v` で印をつけた ref で `m`。印をつけた順に、それぞれが持ち込むコミットの数とコンフリクトの見込みを添える。`l` でコンフリクトしそうな最初のものを最後に回す。ほかの並べ替えはない。 |
 | 前と後を描く Rebase のシート | ✓ | ✓ | ✓ | ✓ | △ | ✓ | VSCode: メインビューが開いていれば絵の付いたシート。なければダイアログに、今と rebase の後のコミットを文で並べる。<br>CLI: `rewrite-preview` が出し、rebase は `amonhen run` から。<br>TUI: サイドバーで `r`。絵は画面に重ねる。 |
 | Stash（メッセージ・未追跡を含める） | ✓ | ✓ | ✓ | ✓ | △ | ✓ | CLI: `amonhen run` から。<br>TUI: `s`。 |
-| Stash: stage した変更だけ・index を残す・選んだファイルだけ | ✓ | ✓ | ✓ | ✓ | △ | ✓ | VSCode: エンジンがあるとき、Stash の一覧に前の 2 つ、Working Copy のファイルの右クリックにそのファイルの Stash…。<br>CLI: `amonhen run`（`stashPush` の `staged`・`keepIndex`・`paths`）から。<br>TUI: `s` で `k` index を残す、`s` stage したものだけ、Working Copy では `f` 選んでいるファイルだけ。 |
+| Stash: stage した変更だけ・index を残す・選んだファイルだけ | ✓ | ✓ | ✓ | ✓ | △ | ✓ | VSCode: エンジンがあるとき、Stash の一覧に前の 2 つ、Working Copy のファイルの右クリックに、そのファイルか選んだファイルの Stash…。<br>CLI: `amonhen run`（`stashPush` の `staged`・`keepIndex`・`paths`）から。<br>TUI: `s` で `k` index を残す、`s` stage したものだけ、Working Copy では `f` 選んでいるファイルだけ。 |
 | ignore されたファイルを消す（先に一覧） | ✓ | ✓ | ✓ | ✓ | △ | ✓ | VSCode: コマンドパレットと Working Copy の右クリックから。一覧は選ぶもので、はじめはすべて選んである。<br>CLI: `amonhen run`（`ignoredFiles`・`deleteIgnored`）から。<br>TUI: 命令の一覧から。 |
 | 最新の stash を Pop（先に尋ねる） | ✓ | ✓ | ✓ | ✓ | △ | ✓ | VSCode: Stashes の見出しとコマンドパレットの Pop Latest Stash…。行の Pop も尋ねる。<br>CLI: `amonhen run` から。<br>TUI: `S`。stash の名前とメッセージを出して尋ねる。サイドバーの stash の `a`・`o` も同じ。 |
 | Activity のくるくると数 | ✓ | ✓ | ✓ | ✓ | n/a | ✓ | VSCode: VSCode の進み具合の知らせ。<br>TUI: 一番上の行に動いている操作の名前。 |
@@ -224,7 +224,7 @@ GTK4 のアプリは macOS のアプリと同じふるまいをめざす。わ�
 | List / Tree / File Name | ✓ | ✓ | ✓ | ✓ | n/a | ✓ | TUI: 一覧の `v` で順に切り替える。フォルダの行で中をまとめて stage し、Enter で畳む。 |
 | パスで絞り込む | ✓ | ✓ | ✓ | ✓ | n/a | ✓ | TUI: 一覧の `/`。 |
 | 行ごとの +/− の数と、ホバーで Discard | ✓ | ✓ | ✓ | ✓ | △ | ✓ | VSCode: 行数はエンジンがあるときだけ。<br>CLI: `diff --stat`。<br>Windows: ↶ はマウスを最後に載せた行に残る。<br>TUI: 数は各行の右の端に。ホバーの ↶ か `d` で捨てる。 |
-| Space で切り替え、⌫ で捨てる | ✓ | ✓ | ✓ | ✓ | n/a | ✓ | TUI: Space と `d`。 |
+| Space で切り替え、⌫ で捨てる | ✓ | ✓ | ✓ | ✓ | n/a | ✓ | VSCode: 選んだファイルすべてに効く（⌘・Ctrl クリック、Shift クリック、Shift+↑↓ でいくつも選べ、行のボタンと Stash… も選んだものに効く）。<br>TUI: Space と `d`。 |
 | 上のコミットの欄、50/72 の数と本文の目安の線 | ✓ | ✓ | ✓ | ✓ | n/a | ✓ | VSCode: 列が 72 文字より狭いので、目安の線の代わりに、72 を超える本文の行の長さを出す。<br>TUI: 見出しに件名の行の文字数（50 を超えると黄色）。件名の 50 文字・本文の行の 72 文字を超えた分は黄色。 |
 | リポジトリごとの下書き、テンプレートから始める | ✓ | ✓ | ✓ | ✓ | n/a | ✓ | VSCode: `commit.template` だけで、共有のテンプレートは使わない。<br>TUI: 下書きは `<git dir>/amonhen/commit-draft` に置く。テンプレートは `commit.template`（リポジトリ専用のものは SSH 先でも）で、共有のテンプレートは使わない。 |
 | 最近のメッセージ（⌥↑ / ⌥↓・一覧） | ✓ | ✓ | ✓ | ✓ | n/a | ✓ | TUI: メッセージの欄の Alt-↑ / Alt-↓。一覧は Working Copy の `R`。 |
@@ -281,8 +281,8 @@ GTK4 のアプリは macOS のアプリと同じふるまいをめざす。わ�
 | 画像を比べる（並べる・スワイプ・オニオンスキン・違うピクセル） | ✓ | ✓ | ✓ | ✓ | n/a | — | VSCode: 20 MB を超える画像は比べない。 |
 | 透けた絵の下の市松模様を明るく・暗く（既定は絵の色から） | ✓ | ✓ | — | — | n/a | — | |
 | すべてのファイル: その時点の木と、コミットの行に印を付けたファイルの中身 | ✓ | ✓ | ✓ | ✓ | n/a | ✓ | VSCode: エンジンがあれば。<br>TUI: History の `a`。画面に重ねる。プレビューはない（中身は文字で出す）。 |
-| すべてのファイルのプレビュー: 拡大縮小できる画像・SVG の絵とモバイル向けの確認・整形した Markdown・バイナリの Quick Look | ✓ | ✓ | △ | △ | n/a | — | VSCode: そのほかのバイナリは Quick Look の代わりに VSCode のエディタで開く。モバイル向けの確認はすべての部品をまとめて並べ、1 つを選んで元の絵と並べる切り替えはない。Mermaid の図はコードのまま。<br>GTK4: Quick Look の代わりに GNOME のプレビュー（か既定のアプリ）。SVG の絵は librsvg で描く。<br>Windows: 拡大縮小できる画像・SVG の絵とモバイル向けの確認・整形した Markdown とその中の Mermaid・DOT の図（Direct2D の SVG は文字を描かないので resvg で描く）。部品の切り替えはパスの帯にある。gantt の時間帯はまだ設定にない（UTC）。バイナリのプレビューはまだない。Markdown の中の HTML は読むが、`<details>` は開いたまま、`align`・画像の大きさ・`<picture>`・`<kbd>`・`<sub>`・`<sup>` はほかのアプリのようには描かない。 |
-| すべてのファイル: Android の VectorDrawable の絵（色はコミットの `res` から、animated-vector は動く前の絵） | ✓ | ✓ | — | — | n/a | — | Windows・VSCode: VectorDrawable の XML はテキストで出す。 |
+| すべてのファイルのプレビュー: 拡大縮小できる画像・SVG の絵とモバイル向けの確認・整形した Markdown・バイナリの Quick Look | ✓ | ✓ | △ | △ | n/a | — | VSCode: そのほかのバイナリは Quick Look の代わりに VSCode のエディタで開く。モバイル向けの確認はすべての部品をまとめて並べ、1 つを選んで元の絵と並べる切り替えはない。Mermaid の図はコードのまま。<br>GTK4: Quick Look の代わりに GNOME のプレビュー（か既定のアプリ）。SVG の絵は librsvg で描く。<br>Windows: 拡大縮小できる画像・SVG の絵とモバイル向けの確認・整形した Markdown とその中の Mermaid・DOT の図（Direct2D の SVG は文字を描かないので resvg で描く）。部品の切り替えはパスの帯にある。gantt の時間帯はまだ設定にない（UTC）。バイナリのプレビューはまだない。コミットの中の画像・`<picture>`・`align`・画像の大きさ・`<details>` を描き、DOT の画像ノードも絵を出す。文の途中の画像はそこで行が切れ、`<kbd>` はキーの札でなく等幅の文字、`<sub>`・`<sup>` は飾りのない文字。 |
+| すべてのファイル: Android の VectorDrawable の絵（色はコミットの `res` から、animated-vector は動く前の絵） | ✓ | ✓ | ✓ | — | n/a | — | VSCode: VectorDrawable の XML はテキストで出す。 |
 | ファイルの見出しのメニュー（Blame・File History・パスのコピー・開く） | ✓ | ✓ | ✓ | ✓ | n/a | ✓ | VSCode: 右クリックと ⋯ の Show Whole File・Blame・File History・この版／前の版に戻す・Copy Path（Copy Path 以外はエンジンがあれば）と、VSCode の差分のエディターで開く。この時点のファイルを開くはない。<br>TUI: 見ているファイルの `B`・`L`・`Y`（パスのコピー）・`e`（git のエディタで開く）。 |
 | 選んだものの差分（範囲をまとめる・A..B / A...B・飛び飛び） | ✓ | ✓ | ✓ | ✓ | △ | ✓ | VSCode: エンジンがあるとき。<br>CLI: `diff <rev> <rev>`。<br>TUI: `m` と Shift-↑↓（か Ctrl・Alt を押しながらクリック）で選ぶ。`x` で向きを入れ替え、`.` で merge-base から。 |
 | 選んだものの操作（cherry-pick・revert・squash・ID のコピー） | ✓ | ✓ | △ | ✓ | △ | ✓ | VSCode: エンジンがあるとき。<br>CLI: `amonhen run` から。<br>Windows: 続いたコミットをまとめるときは、ダイアログでメッセージを直してすぐ書き換える（編集モードはない）。<br>TUI: 印をつけたコミットに `y` `v`、`E` でまとめた形の編集モード、`Y` で ID のコピー、Save as Patch で保存。 |
@@ -368,7 +368,7 @@ GTK4 のアプリは macOS のアプリと同じふるまいをめざす。わ�
 | 機能 | macOS | GTK4 | Windows | VSCode | CLI | TUI | Notes |
 | --- | :-: | :-: | :-: | :-: | :-: | :-: | --- |
 | 進行中の操作と Continue / Skip / Abort | ✓ | ✓ | ✓ | ✓ | n/a | ✓ | VSCode: サイドバーの行。エンジンがあれば、アプリの帯と同じく何をどこへしている途中か（何手目か）と、なぜ止まったか（コミット・コンフリクト・exec・編集で止まった）と次にすることを言う。revert には Skip を出さない（アプリと同じ）。<br>TUI: 一番下の行に出し、`C` `K` `A`。 |
-| 失敗とその原因・Details | ✓ | ✓ | ✓ | ✓ | n/a | ✓ | VSCode: 知らせに原因（git の fatal:・error: の行）を出し、Details で全文と git の命令を出力パネルに出す。<br>TUI: 原因は一番下の行に。`!` で git のコマンドと答えの全部を出す。 |
+| 失敗とその原因・Details | ✓ | ✓ | ✓ | ✓ | n/a | ✓ | VSCode: 見分けられる失敗（認証・ホスト鍵・つながらない・断られた・分かれた・作業中の変更・ロック・上流なし・worktree）は知らせを分かる言葉にし、アプリと同じ次の一手（Pull…・Open Working Copy・Set Upstream…・Open Worktree・Open in Terminal・Try Again）を添える。そうでなければ git の fatal:・error: の行。Details で助言と全文と git の命令を出力パネルに出す。<br>TUI: 原因は一番下の行に。`!` で git のコマンドと答えの全部を出す。 |
 | 切れたつながりと Reconnect | ✓ | ✓ | ✓ | n/a | n/a | ✓ | TUI: 一番下の行に出し、`R` で同じ場所を開き直す。 |
 | 終わった操作が何をしたか、数秒 | ✓ | ✓ | ✓ | ✓ | n/a | ✓ | VSCode: ステータスバーの文か、Undo 付きの知らせ。<br>TUI: 一番下の行に。 |
 
