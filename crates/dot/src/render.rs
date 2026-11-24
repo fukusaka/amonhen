@@ -983,6 +983,37 @@ pub fn render(
         for r in &titles {
             rects.push((*r, None));
         }
+        // 配置が場所を空けた辺のラベル（仮のノードの脇と、隣どうしの同じランクの線の上）。ほかの辺はここを通らない
+        if !free {
+            for (ei, e) in model.edges.iter().enumerate() {
+                let Some(t) = eviews[ei].label.as_ref() else {
+                    continue;
+                };
+                let (lw, lh) = if dir.sideways() {
+                    (t.height, t.width)
+                } else {
+                    (t.width, t.height)
+                };
+                let at = match &lay.routes[ei] {
+                    Route::Path {
+                        points,
+                        label: Some(l),
+                    } if points.len() > 2 => Some(*l),
+                    Route::Flat {
+                        adjacent: true,
+                        lane: 0,
+                    } => {
+                        let (pa, pb) = (lay.nodes[e.tail], lay.nodes[e.head]);
+                        Some(((pa.0 + pb.0) / 2.0, pa.1 - lh / 2.0 - 2.0))
+                    }
+                    _ => None,
+                };
+                if let Some((x, y)) = at {
+                    let (w, h) = (lw / 2.0 + NODE_PAD, lh / 2.0 + NODE_PAD);
+                    rects.push(([x - w, y - h, x + w, y + h], None));
+                }
+            }
+        }
         route::Obstacles::new(rects)
     };
     // splines=ortho の道筋（配置の座標）
