@@ -60,12 +60,15 @@ pub fn colorize_for_coresvg(svg: &str, fg: &str) -> Option<String> {
     crate::svgcss::inline_slanted(svg, &[(COLOR_VAR, fg)])
 }
 
-/// 1 つの Markdown のファイルで描く式の数・原文の合計の大きさ・時間の上限。超えた分は描かずに原文を見せる（1 つの
+/// 1 つの Markdown のファイルで描く式の数・原文と SVG の合計の大きさ・時間の上限。超えた分は描かずに原文を見せる（1 つの
 /// ファイルで整形表示が止まらないように）。
 #[cfg(feature = "math")]
 const MAX_FILE_FORMULAS: usize = 2_000;
 #[cfg(feature = "math")]
 const MAX_FILE_SOURCE: usize = 512 * 1024;
+/// SVG の合計（FE は式ごとに色を当てて画像にするので、JSON とその手間が大きくなりすぎないように）。
+#[cfg(feature = "math")]
+const MAX_FILE_SVG: usize = 8 << 20;
 #[cfg(feature = "math")]
 const MAX_FILE_TIME: std::time::Duration = std::time::Duration::from_secs(2);
 /// 描くスレッドのスタック（RaTeX の入れ子の上限まで足りる大きさ。使った分だけ取られる）。
@@ -166,20 +169,25 @@ fn render_jobs(jobs: Vec<(String, bool)>) -> Vec<Result<MathPicture, String>> {
         .stack_size(STACK)
         .spawn(move || {
             let started = std::time::Instant::now();
-            let mut source = 0usize;
+            let (mut source, mut svg) = (0usize, 0usize);
             jobs.iter()
                 .enumerate()
                 .map(|(i, (tex, display))| {
                     source += tex.len();
                     if i >= MAX_FILE_FORMULAS
                         || source > MAX_FILE_SOURCE
+                        || svg > MAX_FILE_SVG
                         || started.elapsed() > MAX_FILE_TIME
                     {
                         return Err(amonhen_model::tr!(
                             "This file has too many formulas to draw them all"
                         ));
                     }
-                    render_one(tex, *display)
+                    let drawn = render_one(tex, *display);
+                    if let Ok(picture) = &drawn {
+                        svg += picture.svg.len();
+                    }
+                    drawn
                 })
                 .collect::<Vec<_>>()
         });
