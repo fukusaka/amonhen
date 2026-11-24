@@ -214,6 +214,20 @@ export class UndoLog {
     return true;
   }
 
+  /**
+   * ブランチの改名を記録する（Undo で逆向きに改名し、設定と reflog も戻る。コアの `record_rename` と同じ形）。
+   * 共有の daemon のコアが記録したなら書かない
+   */
+  async recordRename(from: string, to: string, fn: () => Promise<void>): Promise<void> {
+    const refs = [`refs/heads/${from}`, `refs/heads/${to}`];
+    const before = await this.snapshot(refs);
+    const { recorded } = await recordedElsewhere(fn);
+    if (recorded) {
+      return;
+    }
+    await this.push({ label: `Rename ${from} to ${to}`, time: Date.now(), mode: 'keep', before, rename: { from, to } }, await this.snapshot(refs));
+  }
+
   private async push(entry: Omit<UndoEntry, 'after'>, after: RefSnapshot): Promise<void> {
     if (sameSnapshot(entry.before, after)) {
       return;

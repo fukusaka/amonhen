@@ -436,9 +436,144 @@ pub fn parse_list(text: &str, scheme: Option<&str>) -> Vec<Stop> {
     out
 }
 
+/// 塗りのグラデーション（色の並びの塗り。`style=radial`・`gradientangle`）。
+#[derive(Clone, Debug, PartialEq)]
+pub struct Gradient {
+    /// 色と割合（`;0.3`）。読めない色は除き、`none` は透明な白。
+    pub stops: Vec<(Rgba, Option<f64>)>,
+    pub radial: bool,
+    /// 線のグラデーションの向き（度、反時計回り。0 は左から右）。
+    pub angle: f64,
+}
+
+/// 塗り（1 色かグラデーション）。
+#[derive(Clone, Debug, PartialEq)]
+pub enum Fill {
+    Solid(Color),
+    Gradient(Gradient),
+}
+
+impl Fill {
+    /// 色の並び `text` の塗り。読める色が 2 つ以上あればグラデーション、1 つならその色、なければ None。
+    pub fn parse(text: &str, scheme: Option<&str>, radial: bool, angle: f64) -> Option<Fill> {
+        let list = parse_list(text, scheme);
+        let stops: Vec<(Rgba, Option<f64>)> = list
+            .iter()
+            .filter_map(|s| match s.color {
+                Some(Color::Rgba(c)) => Some((c, s.fraction)),
+                Some(Color::None) => Some((
+                    Rgba {
+                        r: 255,
+                        g: 255,
+                        b: 255,
+                        a: 0,
+                    },
+                    s.fraction,
+                )),
+                None => None,
+            })
+            .collect();
+        if stops.len() >= 2 && text.contains(':') {
+            Some(Fill::Gradient(Gradient {
+                stops,
+                radial,
+                angle: if angle.is_finite() { angle } else { 0.0 },
+            }))
+        } else {
+            list.into_iter().find_map(|s| s.color).map(Fill::Solid)
+        }
+    }
+
+    /// 文字の色を決める塗り（グラデーションは最初の色）。
+    pub fn first(&self) -> Option<Color> {
+        match self {
+            Fill::Solid(c) => Some(*c),
+            Fill::Gradient(g) => g.stops.first().map(|s| Color::Rgba(s.0)),
+        }
+    }
+}
+
+impl Gradient {
+    /// `id` の `<linearGradient>`・`<radialGradient>`（箱に合わせる単位）。
+    pub fn element(&self, id: &str) -> String {
+        use amonhen_pele::svg::builder::num;
+        let mut body = String::new();
+        let n = self.stops.len();
+        let mut at = 0.0;
+        for (i, (c, f)) in self.stops.iter().enumerate() {
+            let offset = match f {
+                Some(f) => {
+                    let o = at + f;
+                    at = o;
+                    (o - f).clamp(0.0, 1.0)
+                }
+                None => i as f64 / (n.max(2) - 1) as f64,
+            };
+            body.push_str(&format!(
+                "<stop offset=\"{}\" stop-color=\"{}\"{}/>",
+                num(offset),
+                c.hex(),
+                c.opacity()
+                    .map_or(String::new(), |o| format!(" stop-opacity=\"{o}\""))
+            ));
+        }
+        if self.radial {
+            format!("<radialGradient id=\"{id}\">{body}</radialGradient>")
+        } else {
+            let r = self.angle.to_radians();
+            let (dx, dy) = (r.cos() / 2.0, -r.sin() / 2.0);
+            format!(
+                "<linearGradient id=\"{id}\" x1=\"{}\" y1=\"{}\" x2=\"{}\" y2=\"{}\">{body}</linearGradient>",
+                num(0.5 - dx),
+                num(0.5 - dy),
+                num(0.5 + dx),
+                num(0.5 + dy)
+            )
+        }
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn reads_fills() {
+        assert_eq!(
+            Fill::parse("red", None, false, 0.0),
+            Some(Fill::Solid(Color::Rgba(Rgba {
+                r: 255,
+                g: 0,
+                b: 0,
+                a: 255
+            })))
+        );
+        let Some(Fill::Gradient(g)) = Fill::parse("red;0.3:blue", None, true, 90.0) else {
+            panic!("no gradient");
+        };
+        assert!(g.radial && g.stops.len() == 2 && g.stops[0].1 == Some(0.3));
+        assert!(
+            g.element("x")
+                .starts_with("<radialGradient id=\"x\"><stop offset=\"0\"")
+        );
+        // 読める色が 1 つならその色、末尾の `:` だけでもグラデーションにしない
+        assert!(matches!(
+            Fill::parse("nosuch:blue", None, false, 0.0),
+            Some(Fill::Solid(_))
+        ));
+        assert!(matches!(
+            Fill::parse("red:", None, false, 0.0),
+            Some(Fill::Solid(_))
+        ));
+        assert_eq!(Fill::parse("nosuch", None, false, 0.0), None);
+        let Some(Fill::Gradient(up)) = Fill::parse("red:blue", None, false, 90.0) else {
+            panic!("no gradient");
+        };
+        assert!(
+            up.element("u")
+                .contains("x1=\"0.5\" y1=\"1\" x2=\"0.5\" y2=\"0\"")
+        );
+    }
 
     fn rgb(text: &str) -> Rgba {
         match parse(text, None) {

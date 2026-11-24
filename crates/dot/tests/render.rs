@@ -75,6 +75,14 @@ const SAMPLES: &[(&str, &str)] = &[
         "digraph { x -> a; a -> a [tailport=n, headport=n, label=n]; a:w -> a:w; a -> a; a -> {b c}; {rank=same; b -> c [label=\"next\\nto\"]} }",
     ),
     (
+        "gradients",
+        "digraph { bgcolor=\"white:lightgrey\"; gradientangle=90; node [shape=plain]; t [label=<<table bgcolor=\"yellow:blue\" gradientangle=\"90\" style=\"rounded\"><tr><td bgcolor=\"red:white\" style=\"radial\">radial</td><td bgcolor=\"green;0.3:white\">fraction</td></tr></table>>]; subgraph cluster_a { label=A; bgcolor=\"pink:white\"; style=radial; a } t -> a }",
+    ),
+    (
+        "lr_titles",
+        "digraph { rankdir=LR; subgraph cluster_a { label=\"A rather long cluster title\"; x } subgraph cluster_b { label=\"Another long title\"; subgraph cluster_c { label=\"The innermost title of all\"; y } y -> z } w -> x -> y }",
+    ),
+    (
         "ortho_free",
         "graph { layout=neato; splines=ortho; a -- b -- c -- a; c -- d }",
     ),
@@ -88,6 +96,280 @@ fn data(name: &str) -> std::path::PathBuf {
     Path::new(env!("CARGO_MANIFEST_DIR"))
         .join("tests/data")
         .join(format!("{name}.svg"))
+}
+
+/// 画像の見本の読み手: 96×48 画素の PNG（頭だけ）と 40×20 の SVG。
+fn sample_images(src: &str) -> Option<Vec<u8>> {
+    match src {
+        "img/a.png" => {
+            let mut png = b"\x89PNG\r\n\x1a\n\0\0\0\x0dIHDR".to_vec();
+            png.extend_from_slice(&96u32.to_be_bytes());
+            png.extend_from_slice(&48u32.to_be_bytes());
+            png.extend_from_slice(&[8, 2, 0, 0, 0]);
+            Some(png)
+        }
+        "b.svg" => Some(
+            b"<svg xmlns=\"http://www.w3.org/2000/svg\" viewBox=\"0 0 40 20\"><rect width=\"40\" height=\"20\" fill=\"teal\"/></svg>"
+                .to_vec(),
+        ),
+        _ => None,
+    }
+}
+
+const IMAGE_SAMPLE: &str = "digraph { a [image=\"img/a.png\", label=\"\"]; b [shape=box, image=\"b.svg\", imagescale=true, width=2, height=1, fixedsize=true, label=\"fit\"]; c [shape=box, image=\"img/a.png\", imagepos=tl, width=2.5, height=1, label=\"top left\"]; d [shape=plain, label=<<table><tr><td><img src=\"img/a.png\"/></td><td width=\"100\"><img src=\"b.svg\" scale=\"width\"/></td></tr></table>>]; a -> b -> c -> d }";
+
+#[test]
+fn matches_the_image_sample() {
+    let svg = amonhen_dot::render_with_images(
+        IMAGE_SAMPLE,
+        amonhen_dot::engines::Engine::Dot,
+        Some(&sample_images),
+    )
+    .unwrap();
+    assert!(svg.notes.is_empty(), "{:?}", svg.notes);
+    assert_eq!(svg.svg.matches("<image ").count(), 5);
+    let path = data("images");
+    if std::env::var_os("BLESS").is_some() {
+        std::fs::write(&path, &svg.svg).unwrap();
+        return;
+    }
+    let want = std::fs::read_to_string(&path).unwrap_or_default();
+    assert_eq!(svg.svg, want, "images changed (BLESS=1 to update)");
+    // 読み手がなければ注記して、画像は描かない
+    let plain = render(IMAGE_SAMPLE).unwrap();
+    assert_eq!(plain.notes, [Note::Images]);
+    assert!(!plain.svg.contains("<image "));
+}
+
+/// ノードの中のラベルの文字の y（ノードの `data-id` で）。
+fn label_y(svg: &str, id: &str) -> f64 {
+    let node = svg
+        .split(&format!("data-id=\"{id}\""))
+        .nth(1)
+        .unwrap()
+        .split("class=\"dot-label\"")
+        .nth(1)
+        .unwrap();
+    node.split("y=\"")
+        .nth(1)
+        .and_then(|r| r.split('"').next())
+        .and_then(|v| v.parse().ok())
+        .unwrap()
+}
+
+#[test]
+fn places_node_labels_by_labelloc() {
+    let svg = render("digraph { node [shape=box, height=1.5]; t [labelloc=t]; c; b [labelloc=b]; e [shape=ellipse, labelloc=top] }")
+        .unwrap()
+        .svg;
+    let (t, c, b, e) = (
+        label_y(&svg, "t"),
+        label_y(&svg, "c"),
+        label_y(&svg, "b"),
+        label_y(&svg, "e"),
+    );
+    // 高さ 108 の箱: 上下にそれぞれ (108 − 文字 16.8 − 余白 7.92) / 2 ずつ
+    assert!((c - t - 41.64).abs() < 0.1, "{t} {c}");
+    assert!((b - c - 41.64).abs() < 0.1, "{b} {c}");
+    // 楕円は内に収まる高さ（108 / √2）の中で上に
+    assert!(e < c && c - e < 41.64 && c - e > 20.0, "{e} {c}");
+}
+
+#[test]
+fn decorates_edge_labels() {
+    let svg = render(
+        "digraph { a -> b [label=\"dec\", decorate=true, color=red]; c -> d [label=\"plain\"] }",
+    )
+    .unwrap()
+    .svg;
+    let labels = svg.split("class=\"dot-labels\"").nth(1).unwrap();
+    assert_eq!(labels.matches("<path ").count(), 1, "{svg}");
+    assert!(labels.contains("fill=\"none\" stroke=\"#ff0000\""), "{svg}");
+}
+
+#[test]
+fn tapers_edges() {
+    let svg = render("digraph { a -> b [style=tapered, penwidth=7, color=blue]; c -> d [style=tapered, dir=none] }")
+        .unwrap()
+        .svg;
+    let edge = svg.split("data-id=\"a-&gt;b\"").nth(1).unwrap();
+    // 線ではなく塗った外形
+    assert!(edge.starts_with("><path d=\"M"), "{svg}");
+    assert!(
+        edge.contains("Z\" fill=\"#0000ff\" stroke=\"none\""),
+        "{svg}"
+    );
+    assert!(!svg.contains("fill=\"none\" stroke=\"#0000ff\""), "{svg}");
+}
+
+/// `data-id` の要素の中身（次の `data-id` まで）。
+fn part<'a>(svg: &'a str, id: &str) -> &'a str {
+    let rest = svg.split(&format!("data-id=\"{id}\"")).nth(1).unwrap();
+    rest.split("data-id=").next().unwrap()
+}
+
+#[test]
+fn defaults_stay_readable_on_given_grounds() {
+    let svg = render(
+        "digraph { subgraph cluster_a { bgcolor=\"#ffeeee:#eeeeff\"; node [shape=plain]; a -> b [label=\"e\"]; c [fontcolor=red]; d [shape=box]; b -> c [color=blue] } subgraph cluster_n { style=filled; fillcolor=navy; n [shape=none] } x [shape=plaintext]; x -> a; b -> n }",
+    )
+    .unwrap()
+    .svg;
+    // 明るい塗りの上の plain のノードの文字と、中の辺・矢じり・ラベルは黒に近い色
+    assert!(part(&svg, "a").contains("fill=\"#1f1f1f\""), "{svg}");
+    let edge = part(&svg, "a-&gt;b");
+    assert!(
+        edge.contains("stroke=\"#1f1f1f\"") && edge.contains("fill=\"#1f1f1f\""),
+        "{svg}"
+    );
+    assert!(!edge.contains("var(--_l)"), "{svg}");
+    let label = svg.split("class=\"dot-edge-label\"").nth(1).unwrap();
+    assert!(
+        label
+            .split('>')
+            .next()
+            .unwrap()
+            .contains("fill=\"#1f1f1f\""),
+        "{svg}"
+    );
+    // 文の色が勝ち、塗りのあるノードはそのまま
+    assert!(part(&svg, "c").contains("fill=\"#ff0000\""), "{svg}");
+    assert!(!part(&svg, "c").contains("#1f1f1f"), "{svg}");
+    assert!(!part(&svg, "d").contains("#1f1f1f"), "{svg}");
+    assert!(
+        part(&svg, "b-&gt;c").contains("stroke=\"#0000ff\""),
+        "{svg}"
+    );
+    // 濃い塗りの上は白、地をまたぐ辺・地のないノードはテーマの色
+    assert!(part(&svg, "n").contains("fill=\"#ffffff\""), "{svg}");
+    assert!(part(&svg, "b-&gt;n").contains("var(--_l)"), "{svg}");
+    assert!(part(&svg, "x-&gt;a").contains("var(--_l)"), "{svg}");
+    assert!(!part(&svg, "x").contains("#1f1f1f"), "{svg}");
+    // グラフの bgcolor の上も同じ（題も）
+    let dark = render("digraph { bgcolor=black; label=\"T\"; node [shape=plaintext]; p -> q }")
+        .unwrap()
+        .svg;
+    assert!(part(&dark, "p").contains("fill=\"#ffffff\""), "{dark}");
+    assert!(
+        part(&dark, "p-&gt;q").contains("stroke=\"#ffffff\""),
+        "{dark}"
+    );
+    let title = dark.split("class=\"dot-title\"").nth(1).unwrap();
+    assert!(
+        title.split('>').next().unwrap().contains("#ffffff"),
+        "{dark}"
+    );
+}
+
+/// 最初の `<rect`・`<ellipse` などの属性の数。
+fn attr_num(s: &str, name: &str) -> f64 {
+    s.split(&format!(" {name}=\""))
+        .nth(1)
+        .and_then(|r| r.split('"').next())
+        .and_then(|v| v.parse().ok())
+        .unwrap()
+}
+
+fn measured(text: &str) -> f64 {
+    amonhen_dot::text::plain_label(
+        text,
+        &amonhen_dot::text::Names::default(),
+        &amonhen_dot::text::Font::new(14.0),
+    )
+    .width
+}
+
+/// アプリの書体が測り（Arial）より 1 割広くても、クラスタの題・枠のあるノードの文字は線に触れない。
+#[test]
+fn leaves_room_for_wider_app_fonts() {
+    let title = "A rather long cluster title that is wider than its nodes";
+    let need = measured(title) * 1.1 + 16.0;
+    for (dir, layout) in [
+        ("TB", "dot"),
+        ("LR", "dot"),
+        ("RL", "dot"),
+        ("BT", "dot"),
+        ("TB", "fdp"),
+        ("TB", "osage"),
+        ("TB", "neato"),
+    ] {
+        let svg = render(&format!(
+            "digraph {{ rankdir={dir}; layout={layout}; subgraph cluster_a {{ label=\"{title}\"; x }} w -> x }}"
+        ))
+        .unwrap()
+        .svg;
+        let cluster = svg.split("class=\"dot-cluster\"").nth(1).unwrap();
+        let width = attr_num(cluster, "width");
+        assert!(width >= need - 0.01, "{dir} {layout}: {width} < {need}");
+    }
+    // 枠のあるノードと record の欄
+    let long = "a label long enough to set the width";
+    let svg = render(&format!(
+        "digraph {{ b [shape=box, label=\"{long}\"]; r [shape=record, label=\"{long}|x\"] }}"
+    ))
+    .unwrap()
+    .svg;
+    let w = measured(long) * 1.1;
+    let b = svg.split("data-id=\"b\"").nth(1).unwrap();
+    let bw = attr_num(b, "width");
+    assert!(bw >= w + 2.0 * 7.9, "box {bw} < {w}");
+    // record の欄: 長い方の欄の左右に 8 ずつ（欄の線は 2 本目の x）
+    let r = svg.split("data-id=\"r\"").nth(1).unwrap();
+    let left = attr_num(r, "x");
+    let sep: f64 = r
+        .split("<path d=\"M")
+        .nth(1)
+        .and_then(|p| p.split(',').next())
+        .and_then(|v| v.parse().ok())
+        .unwrap();
+    assert!(sep - left >= w + 16.0 - 0.01, "record {} < {w}", sep - left);
+}
+
+#[test]
+fn stripes_clusters() {
+    let svg = render(
+        "digraph { subgraph cluster_a { style=striped; fillcolor=\"red;0.5:green:blue\"; a; b } }",
+    )
+    .unwrap()
+    .svg;
+    let cluster = svg.split("class=\"dot-cluster\"").nth(1).unwrap();
+    for color in ["#ff0000", "#00ff00", "#0000ff"] {
+        assert!(
+            cluster.contains(&format!("fill=\"{color}\" stroke=\"none\"")),
+            "{svg}"
+        );
+    }
+    // 帯の上に枠。グラデーションは作らない
+    assert!(cluster.contains("fill=\"none\" stroke="), "{svg}");
+    assert!(!svg.contains("Gradient"), "{svg}");
+}
+
+/// LR・RL のクラスタの箱は題より広い（題が箱からはみ出さない）。
+#[test]
+fn sideways_clusters_fit_their_titles() {
+    for dir in ["LR", "RL"] {
+        let src = format!(
+            "digraph {{ rankdir={dir}; subgraph cluster_a {{ label=\"A very long title for one node\"; x }} subgraph cluster_b {{ label=\"Outer title that is longer still\"; subgraph cluster_c {{ label=\"Inner\"; y }} }} w -> x -> y }}"
+        );
+        let svg = render(&src).unwrap().svg;
+        for group in svg.split("<g class=\"dot-cluster\"").skip(1) {
+            let width: f64 = group
+                .split("width=\"")
+                .nth(1)
+                .and_then(|r| r.split('"').next())
+                .and_then(|w| w.parse().ok())
+                .unwrap();
+            let title = group.split("class=\"dot-cluster-label\"").nth(1).unwrap();
+            let text = title.split('>').nth(1).unwrap().split('<').next().unwrap();
+            let need = amonhen_dot::text::plain_label(
+                text,
+                &amonhen_dot::text::Names::default(),
+                &amonhen_dot::text::Font::new(14.0),
+            )
+            .width;
+            assert!(width >= need, "{dir}: {text}: {width} < {need}\n{svg}");
+        }
+    }
 }
 
 #[test]
