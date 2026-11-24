@@ -243,6 +243,8 @@ struct NodeView {
     inner_w: f64,
     /// `image` の画像と、合わせ方・置き場所（`imagepos` の縦と横: -1・0・1）。
     image: Option<(Arc<Picture>, Scale, (i8, i8))>,
+    /// ラベルの縦のずれ（`labelloc` の t・b。ノードがラベルより高いとき）。
+    label_dy: f64,
     pos: P,
 }
 
@@ -584,6 +586,19 @@ pub fn render(
             _ => None,
         };
         let inner_w = (w - 2.0 * mx).max(0.0);
+        // labelloc: 形の中のラベルの入る高さの上・下に寄せる
+        let label_dy = match a
+            .get("labelloc")
+            .and_then(|s| s.trim().chars().next())
+            .map(|c| c.to_ascii_lowercase())
+        {
+            Some(side @ ('t' | 'b')) if rec.is_none() && !point => {
+                let (_, ky) = shapes::fit(&spec.kind, 1.0, 1.0);
+                let room = (h / ky.max(1e-9) - lh).max(0.0) / 2.0;
+                if side == 't' { -room } else { room }
+            }
+            _ => 0.0,
+        };
         views.push(NodeView {
             geom: Geom {
                 kind: spec.kind.clone(),
@@ -611,6 +626,7 @@ pub fn render(
                     image_pos(a.get("imagepos")),
                 )
             }),
+            label_dy,
             pos: (0.0, 0.0),
         });
     }
@@ -1714,7 +1730,7 @@ pub fn render(
             body.push_str(&text_svg(
                 t,
                 x,
-                y,
+                y + v.label_dy,
                 v.inner_w,
                 &v.font,
                 &format!(" class=\"dot-label\"{}", font_attrs(&v.font)),

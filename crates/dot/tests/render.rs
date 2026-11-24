@@ -113,6 +113,40 @@ fn matches_the_image_sample() {
     assert!(!plain.svg.contains("<image "));
 }
 
+/// ノードの中のラベルの文字の y（ノードの `data-id` で）。
+fn label_y(svg: &str, id: &str) -> f64 {
+    let node = svg
+        .split(&format!("data-id=\"{id}\""))
+        .nth(1)
+        .unwrap()
+        .split("class=\"dot-label\"")
+        .nth(1)
+        .unwrap();
+    node.split("y=\"")
+        .nth(1)
+        .and_then(|r| r.split('"').next())
+        .and_then(|v| v.parse().ok())
+        .unwrap()
+}
+
+#[test]
+fn places_node_labels_by_labelloc() {
+    let svg = render("digraph { node [shape=box, height=1.5]; t [labelloc=t]; c; b [labelloc=b]; e [shape=ellipse, labelloc=top] }")
+        .unwrap()
+        .svg;
+    let (t, c, b, e) = (
+        label_y(&svg, "t"),
+        label_y(&svg, "c"),
+        label_y(&svg, "b"),
+        label_y(&svg, "e"),
+    );
+    // 高さ 108 の箱: 上下にそれぞれ (108 − 文字 16.8 − 余白 7.92) / 2 ずつ
+    assert!((c - t - 41.64).abs() < 0.1, "{t} {c}");
+    assert!((b - c - 41.64).abs() < 0.1, "{b} {c}");
+    // 楕円は内に収まる高さ（108 / √2）の中で上に
+    assert!(e < c && c - e < 41.64 && c - e > 20.0, "{e} {c}");
+}
+
 #[test]
 fn stripes_clusters() {
     let svg = render(
