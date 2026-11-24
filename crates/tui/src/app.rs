@@ -2009,6 +2009,14 @@ impl App {
                     self.choices = None;
                     self.start_clone(plan, ch);
                 }
+                (2, KeyCode::Char(ch @ '1'..='9'))
+                    if plan.branches.len() > usize::from(ch as u8 - b'1') =>
+                {
+                    plan.branch = Some(plan.branches[usize::from(ch as u8 - b'1')].clone());
+                    plan.stage = 1;
+                    self.choices = None;
+                    self.ask_clone_extras(plan);
+                }
                 _ => self.choices = None,
             }
             self.dirty = true;
@@ -3717,7 +3725,52 @@ impl App {
             dest: dest.to_owned(),
             stage: 0,
             download: 'y',
+            branches: Vec::new(),
+            branch: None,
         });
+        // bundle のファイルから: 取り方は選べない（git は中身をすべて写す）。HEAD がなければ取り出すブランチを選ぶ
+        // （アプリと同じ）。
+        if let Some(info) = amonhen_backend_cli::bundle_info(std::path::Path::new(url)) {
+            let mut plan = self.clone_plan.take().unwrap();
+            if info.prerequisites > 0 {
+                self.error = Some(tr!(
+                    "This bundle has only the commits after ones it doesn’t include, so it can’t be cloned."
+                ));
+                return;
+            }
+            plan.stage = 1;
+            if !info.head && !info.refs.is_empty() {
+                let first = amonhen_backend_cli::bundle_default_branch(&info);
+                let mut names: Vec<String> = info
+                    .refs
+                    .iter()
+                    .map(|r| {
+                        r.strip_prefix("refs/heads/")
+                            .or_else(|| r.strip_prefix("refs/tags/"))
+                            .unwrap_or(r)
+                            .to_owned()
+                    })
+                    .collect();
+                names.dedup();
+                if let Some(first) = first {
+                    names.retain(|n| *n != first);
+                    names.insert(0, first);
+                }
+                names.truncate(9);
+                plan.stage = 2;
+                plan.branches = names.clone();
+                self.clone_plan = Some(plan);
+                self.choices = Some((
+                    tr!("The bundle has no HEAD: check out which branch?"),
+                    (names.iter().enumerate())
+                        .map(|(i, n)| (char::from(b'1' + i as u8), n.clone(), Request::Status))
+                        .collect(),
+                ));
+                return;
+            }
+            self.ask_clone_extras(plan);
+            return;
+        }
         self.choices = Some((
             tr!(
                 "Clone {url} into {dest}: download what?",
@@ -3764,7 +3817,7 @@ impl App {
             filter: (plan.download == 'c').then(|| "blob:none".to_owned()),
             depth: (plan.download == 'r').then_some(1),
             sparse: matches!(extras, 'f' | 'a'),
-            branch: None,
+            branch: plan.branch.clone(),
             recurse_submodules: matches!(extras, 's' | 'a'),
         };
         self.running = Some(tr!("Cloning {url}…", url = plan.url));
@@ -10197,6 +10250,9 @@ struct ClonePlan {
     stage: u8,
     /// 取り方（`y` すべて、`c` 中身は必要なときに、`r` 最近の履歴だけ）。
     download: char,
+    /// HEAD のない bundle から: 選べるブランチ（短い名前。初めのものが既定）と、選んだもの。
+    branches: Vec<String>,
+    branch: Option<String>,
 }
 
 /// Quick Open に打ったものが clone できる場所か（URL、`user@host:path`、`.git`・`.bundle` で終わるもの）。
