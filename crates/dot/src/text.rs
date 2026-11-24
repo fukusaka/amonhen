@@ -461,7 +461,11 @@ pub(crate) fn inline_label(src: &str, base: &Font, scheme: Option<&str>) -> Text
                     if c.is_whitespace() {
                         space = true;
                     } else {
-                        if space && (!s.is_empty() || !line.spans.is_empty()) {
+                        // 前の span が空白で終わっていれば重ねない
+                        if space
+                            && (!s.is_empty()
+                                || line.spans.last().is_some_and(|l| !l.text.ends_with(' ')))
+                        {
                             s.push(' ');
                         }
                         space = false;
@@ -469,6 +473,13 @@ pub(crate) fn inline_label(src: &str, base: &Font, scheme: Option<&str>) -> Text
                     }
                 }
                 if space && !s.is_empty() {
+                    s.push(' ');
+                }
+                // 要素の間の空白だけの切れ端も 1 つの空白（`</u> <font>` など）
+                if s.is_empty()
+                    && space
+                    && line.spans.last().is_some_and(|l| !l.text.ends_with(' '))
+                {
                     s.push(' ');
                 }
                 let s = decode_entities(&s);
@@ -568,6 +579,22 @@ pub(crate) fn inline_label(src: &str, base: &Font, scheme: Option<&str>) -> Text
     if !line.spans.is_empty() || text.lines.is_empty() {
         text.lines.push(line);
     }
+    // 行の終わりの空白は描かない（幅にも入れない。`<td> a </td>` の後ろの空白など）
+    for line in &mut text.lines {
+        while let Some(last) = line.spans.last_mut() {
+            let trimmed = last.text.trim_end_matches(' ');
+            if trimmed.len() == last.text.len() {
+                break;
+            }
+            if trimmed.is_empty() {
+                line.spans.pop();
+            } else {
+                last.text.truncate(trimmed.len());
+                last.width = measure(&last.text, &last.font);
+                break;
+            }
+        }
+    }
     // 空の行を除く（表の区切りで生まれたもの）。ただし `<br/>` の空行は残す
     if text.table {
         text.lines.retain(|l| !l.spans.is_empty());
@@ -600,11 +627,17 @@ pub fn color_attr(name: &str, c: &Color) -> String {
     }
 }
 
-/// 空白を SVG で縮めてしまう文字（両端の空白・続く空白）か。そうなら `xml:space="preserve"` を付ける。
-fn needs_preserve(line: &Line) -> bool {
-    line.spans
-        .iter()
-        .any(|s| s.text.contains("  ") || s.text.starts_with(' ') || s.text.ends_with(' '))
+/// 空白を SVG で縮めてしまう文字（両端の空白・続く空白）か。そうなら `xml:space="preserve"` を付ける。span の
+/// 並ぶ行（`single` でない）は span の両端の空白を描かずに間の送りにするので、続く空白だけを見る。
+fn needs_preserve(line: &Line, single: bool) -> bool {
+    line.spans.iter().any(|s| {
+        let t = if single {
+            s.text.as_str()
+        } else {
+            s.text.trim_matches(' ')
+        };
+        t.contains("  ") || t.starts_with(' ') || t.ends_with(' ')
+    })
 }
 
 fn span_attrs(font: &Font, root: &Font, out: &mut String) {
@@ -698,7 +731,7 @@ pub fn text_svg(
         out.push_str(&format!(
             "<text{attrs}{}{} x=\"{}\" y=\"{}\" text-anchor=\"{anchor}\"",
             if own_color { "" } else { ink_attr.as_str() },
-            if needs_preserve(line) {
+            if needs_preserve(line, single) {
                 " xml:space=\"preserve\""
             } else {
                 ""
@@ -717,8 +750,21 @@ pub fn text_svg(
         let mut shifted = 0.0f64;
         let mut at = x;
         for span in &line.spans {
-            out.push_str(&format!("<tspan x=\"{}\"", num(at)));
+            // span の両端の空白は描かずに送りだけにする（分けた `<text>` の両端の空白は、描き手によって
+            // 縮めたり残したりするので、位置と描く文字がずれる）
+            let drawn = span.text.trim_matches(' ');
+            let lead = span.text.len() - span.text.trim_start_matches(' ').len();
+            let left = at;
             at += span.width;
+            if drawn.is_empty() {
+                continue;
+            }
+            let left = if lead > 0 {
+                left + measure(&" ".repeat(lead), &span.font)
+            } else {
+                left
+            };
+            out.push_str(&format!("<tspan x=\"{}\"", num(left)));
             span_attrs(&span.font, root, &mut out);
             let want = if span.font.sub {
                 span.font.size * 0.3
@@ -732,7 +778,7 @@ pub fn text_svg(
                 shifted = want;
             }
             out.push('>');
-            out.push_str(&esc(&span.text));
+            out.push_str(&esc(drawn));
             out.push_str("</tspan>");
         }
         out.push_str("</text>");

@@ -733,7 +733,55 @@ mod tests {
         assert!(with("bold").contains("font-weight=\"700\""));
         assert!(with("italic").contains("font-style=\"italic\""));
         assert!(!with("italic").contains("font-weight"));
-        assert!(!with(" and ").contains("font-weight") && !with(" and ").contains("font-style"));
+        assert!(!with("and").contains("font-weight") && !with("and").contains("font-style"));
+    }
+
+    #[cfg(feature = "diagrams")]
+    #[test]
+    fn dot_span_boundaries_keep_one_space() {
+        // 分けた `<text>` の両端の空白は描き手によって縮んだり残ったりするので、空白は描かずに位置の間に置く。
+        // どの `<text>` も空白で始まり・終わらず、間はちょうど空白 1 つ分
+        use amonhen_pele::text::measurer::{default_measurer, style};
+        let measure = |t: &str, st: u32| default_measurer().width(t, 14.0, st);
+        for (src, words) in [
+            (
+                "digraph { a [label=<<b>bold</b> and <i>italic</i>>] }",
+                [("bold", style::BOLD), ("and", 0), ("italic", 0)],
+            ),
+            (
+                "digraph { a [label=<plain <u>under</u> <font color=\"red\">red</font>>] }",
+                [("plain", 0), ("under", 0), ("red", 0)],
+            ),
+        ] {
+            let Some(Drawn::Svg(svg, None)) = draw("dot", src) else {
+                panic!("not drawn");
+            };
+            for flat in [
+                colorize(&svg, &palette(Scheme::Pele, false, &theme()), false).unwrap(),
+                colorize_for_coresvg(&svg, &palette(Scheme::Pele, false, &theme()), false).unwrap(),
+            ] {
+                assert!(!flat.contains("<tspan"), "{flat}");
+                let texts: Vec<(f64, &str)> = flat
+                    .split("<text")
+                    .skip(1)
+                    .map(|t| {
+                        let x = t.split("x=\"").nth(1).unwrap().split('"').next().unwrap();
+                        let body = t.split('>').nth(1).unwrap().split('<').next().unwrap();
+                        (x.parse().unwrap(), body)
+                    })
+                    .collect();
+                assert_eq!(
+                    texts.iter().map(|t| t.1).collect::<Vec<_>>(),
+                    words.iter().map(|w| w.0).collect::<Vec<_>>(),
+                    "{flat}"
+                );
+                for k in 1..texts.len() {
+                    let (word, st) = words[k - 1];
+                    let gap = texts[k].0 - texts[k - 1].0 - measure(word, st);
+                    assert!((gap - measure(" ", 0)).abs() < 0.05, "{gap} {flat}");
+                }
+            }
+        }
     }
 
     #[cfg(feature = "diagrams")]
