@@ -657,6 +657,10 @@ pub struct App {
     bundle_save: Option<String>,
     /// 署名を読んだタグの名前（変わったら読み直す）。
     tag_signature_names: Vec<String>,
+    /// 署名を確かめたタグ（`tagSignatures` の `tags`）。`i` で詳細を出す。
+    tag_signatures: Vec<Value>,
+    /// `!` の枠と同じ形で出すもの（題と中身）。タグの署名の詳細など。
+    info_box: Option<(String, String)>,
     /// ロックするかを聞いている worktree（`r` で理由を聞く）。
     worktree_lock: Option<String>,
     /// 詳細に出した stash（土台を読んだら、一番下の行に様子を書く）。
@@ -851,6 +855,8 @@ impl App {
             archive_folder: None,
             bundle_save: None,
             tag_signature_names: Vec::new(),
+            tag_signatures: Vec::new(),
+            info_box: None,
             worktree_lock: None,
             stash_about: None,
             naming: Naming::Branch,
@@ -2082,6 +2088,9 @@ impl App {
                 KeyCode::Char('k') | KeyCode::Up => Some(top.saturating_sub(1)),
                 _ => None,
             };
+            if self.showing_hooks.is_none() {
+                self.info_box = None;
+            }
             return;
         }
         // キーの一覧は、`j` `k`（と矢印）で動かせる。ほかのキーで閉じる。
@@ -3366,6 +3375,108 @@ impl App {
 
     /// 命令が済んだ。だめなら理由を出し、どちらでも状態・ref・History を読み直す。
     /// タグ `name` のリモートごとの様子（いつ読んだかも）。push・置き換えは `t` で。
+    /// 署名したタグ `name` の署名の詳細（アプリの署名の吹き出しと同じ項目）。署名がなければ None。
+    fn tag_signature_text(&self, name: &str) -> Option<String> {
+        let tag = self.tag_signatures.iter().find(|t| t["name"] == name)?;
+        let kind = tag["signed"].as_str()?;
+        let s = &tag["signature"];
+        let tagger = tag["taggerEmail"].as_str().unwrap_or("");
+        let mut check = s.clone();
+        check["committerEmail"] = json!(tagger);
+        let mut rows: Vec<(String, String)> = Vec::new();
+        let status = match s["status"].as_str() {
+            Some(status) => crate::details::signature_label(status, &check, kind),
+            None => tr!("{kind} (not verified)", kind = kind.to_uppercase()),
+        };
+        rows.push((tr!("Signature"), status));
+        if let Some(signer) = s["signer"].as_str().filter(|v| !v.is_empty()) {
+            rows.push((tr!("Signer"), signer.to_owned()));
+        }
+        let emails: Vec<(String, String)> = (s["emails"].as_array().into_iter().flatten())
+            .filter_map(|e| {
+                Some((
+                    e["email"].as_str()?.to_owned(),
+                    e["validity"].as_str().unwrap_or("").to_owned(),
+                ))
+            })
+            .collect();
+        // 鍵のメールアドレスとタガーを比べる（アプリの CommitterMatch と同じ: u・f・m なら一致、ほかの有効なもの
+        // だけなら言い切らない、失効・期限切れ・無効は数えない）。
+        if s.is_object() {
+            let same: Vec<&str> = (emails.iter())
+                .filter(|(e, _)| !tagger.is_empty() && e.eq_ignore_ascii_case(tagger))
+                .map(|(_, v)| v.as_str())
+                .collect();
+            let text = if emails.is_empty() || tagger.is_empty() {
+                (!tagger.is_empty())
+                    .then(|| tr!("Can’t check: the key’s email addresses can’t be read"))
+            } else if same.iter().any(|v| matches!(*v, "u" | "f" | "m")) {
+                Some(tr!("Listed on the key ({email})", email = tagger))
+            } else if same.iter().any(|v| !matches!(*v, "r" | "e" | "n")) {
+                Some(tr!(
+                    "Listed on the key ({email}), but that user ID isn’t confirmed",
+                    email = tagger
+                ))
+            } else {
+                Some(tr!("Not listed on the key ({email})", email = tagger))
+            };
+            if let Some(text) = text {
+                rows.push((tr!("Tagger email"), text));
+            }
+        }
+        let others: Vec<String> = emails
+            .iter()
+            .filter(|(e, _)| !e.eq_ignore_ascii_case(tagger))
+            .map(|(e, v)| match v.as_str() {
+                "r" => tr!("{email} (revoked)", email = e),
+                "e" => tr!("{email} (expired)", email = e),
+                _ => e.clone(),
+            })
+            .collect();
+        if kind != "ssh" && !others.is_empty() {
+            rows.push((tr!("Other IDs on the key"), others.join(", ")));
+        }
+        rows.push((
+            tr!("Format"),
+            match kind {
+                "ssh" => "SSH".to_owned(),
+                "x509" => tr!("X.509 (S/MIME)"),
+                _ => tr!("GPG (OpenPGP)"),
+            },
+        ));
+        let key = s["key"].as_str().unwrap_or("");
+        if !key.is_empty() {
+            let label = match kind {
+                "ssh" => tr!("Public Key"),
+                _ => tr!("Key ID"),
+            };
+            rows.push((label, key.to_owned()));
+        }
+        let fingerprint = s["fingerprint"].as_str().unwrap_or("");
+        if !fingerprint.is_empty() && fingerprint != key {
+            rows.push((tr!("Fingerprint"), fingerprint.to_owned()));
+        }
+        let trust = s["trust"].as_str().unwrap_or("");
+        if kind != "ssh" && !trust.is_empty() {
+            rows.push((tr!("Trust"), trust.to_lowercase()));
+        }
+        rows.push((tr!("Remotes"), self.tag_remote_text(name)));
+        let column = rows.iter().map(|(l, _)| l.width()).max().unwrap_or(0) + 2;
+        let mut lines: Vec<String> = rows
+            .into_iter()
+            .map(|(label, value)| {
+                let pad = " ".repeat(column - label.width());
+                format!("{label}{pad}{value}")
+            })
+            .collect();
+        let message = tag["message"].as_str().unwrap_or("").trim_end();
+        if !message.is_empty() {
+            lines.push(String::new());
+            lines.extend(message.lines().map(str::to_owned));
+        }
+        Some(lines.join("\n"))
+    }
+
     fn tag_remote_text(&self, name: &str) -> String {
         let info = &self.tag_remotes;
         let remotes: Vec<String> = (info["remotes"].as_array().into_iter().flatten())
@@ -4745,6 +4856,10 @@ impl App {
                 return;
             }
             "tagSignatures" => {
+                self.tag_signatures = reply["info"]["tags"]
+                    .as_array()
+                    .cloned()
+                    .unwrap_or_default();
                 let marks = (reply["info"]["tags"].as_array().into_iter().flatten())
                     .filter_map(|t| {
                         t["signed"].as_str()?;
@@ -7206,7 +7321,15 @@ impl App {
                     .picked_ref()
                     .map(|r| r.1.to_owned())
                     .unwrap_or_default();
-                self.notice = Some(self.tag_remote_text(&name));
+                // 署名したタグなら、署名の詳細もまとめて枠に（アプリの署名の吹き出し）。
+                match self.tag_signature_text(&name) {
+                    Some(text) => {
+                        self.info_box = Some((tr!(" Tag {name} ", name = name), text));
+                        self.showing_hooks = Some(0);
+                        self.dirty = true;
+                    }
+                    None => self.notice = Some(self.tag_remote_text(&name)),
+                }
                 true
             }
             // ブランチの行で: お気に入りにする・外す（★）、アーカイブする・戻す、お気に入りの順を上・下へ。
@@ -9194,9 +9317,10 @@ impl App {
                 }
             }
         }
-        let shown = match self.showing_failure {
-            true => self.failure_details.as_ref(),
-            false => self.hook_output.as_ref(),
+        let shown = match (&self.info_box, self.showing_failure) {
+            (Some((_, text)), _) => Some(text),
+            (None, true) => self.failure_details.as_ref(),
+            (None, false) => self.hook_output.as_ref(),
         };
         if let (Some(top), Some(output)) = (self.showing_hooks, shown) {
             cursor = None;
@@ -9211,6 +9335,11 @@ impl App {
                 height,
             );
             let title = match (self.showing_failure, self.details_are_output) {
+                _ if self.info_box.is_some() => self
+                    .info_box
+                    .as_ref()
+                    .map(|b| b.0.clone())
+                    .unwrap_or_default(),
                 (true, true) => tr!(" Output of the command "),
                 (true, false) => tr!(" Details of the failure "),
                 (false, _) => tr!(" Output of the hooks "),

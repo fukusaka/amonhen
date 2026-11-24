@@ -476,7 +476,7 @@ pub fn signature_mark(status: &str) -> (char, Color) {
 
 /// 署名の検証の結果（git の `%G?`）を、アプリと同じ短い言葉に。正しい署名でも、鍵の信用度が足りなければ
 /// Untrusted key、鍵のメールアドレスがどれもコミッターと違えば Unverified signer。
-fn signature_label(status: &str, check: &Value, kind: &str) -> String {
+pub(crate) fn signature_label(status: &str, check: &Value, kind: &str) -> String {
     match status {
         "G" | "U" => {
             let trust = check["trust"].as_str().unwrap_or("").to_lowercase();

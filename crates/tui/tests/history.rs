@@ -1163,6 +1163,18 @@ fn details_show_the_signature_check() {
         "{side:?}"
     );
     assert!(side.iter().any(|l| l.trim() == "plain"), "{side:?}");
+    // 署名したタグで `i`: 署名の詳細を枠に（アプリの署名の吹き出し）。
+    let info = amonhen_tui::snapshot(open(dir.path()), 160, 24, clock(), "0/v1\njjjjjji").unwrap();
+    println!("{info}");
+    assert!(info.contains(" Tag v1 "), "{info}");
+    let squeezed = info.split_whitespace().collect::<Vec<_>>().join(" ");
+    assert!(squeezed.contains("│ Signature Verified"), "{info}");
+    assert!(
+        squeezed.contains("Tagger email Listed on the key (ann@example.com)"),
+        "{info}"
+    );
+    assert!(squeezed.contains("│ Format SSH"), "{info}");
+    assert!(info.contains("Release"), "{info}");
 }
 
 /// History の `@` `]` `[`: HEAD・親（1 つ目の親）・すぐ上の子へ移る。
