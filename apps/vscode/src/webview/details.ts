@@ -16,6 +16,7 @@ import type {
   SelectionView,
   CommitSummaryView,
   DetailsStyle,
+  TagView,
   TreeEntry,
 } from '../history/protocol.ts';
 import { el, formatDate, getState, post, updateState } from './api.ts';
@@ -866,15 +867,33 @@ export function createDetailsPane(onParent?: (oid: string) => void, images = fal
       // アプリの署名の吹き出しの中身（言葉・説明・署名した人と鍵）
       const value = el('span', 'signature');
       value.append(signatureMark(s), ` ${s.label}`);
-      const note = el('span', 'recorded', [s.explanation, s.signer && `Signed by ${s.signer}`, s.key && `Key ${s.key}`].filter(Boolean).join(' · '));
+      const note = el('span', 'recorded', [s.explanation, s.signer && `Signed by ${s.signer}`, s.format, s.key && `Key ${s.key}`].filter(Boolean).join(' · '));
+      if (s.fingerprint) note.title = `Fingerprint ${s.fingerprint}`;
       value.append(note);
       add('Signature', value);
     }
+    // このコミットを指すタグと、この merge が取り込んだタグ（注釈付きならタガー・日時・件名と署名。アプリと同じ）
+    const tagLine = (t: TagView): Node => {
+      const span = el('span', 'tag-line');
+      span.append(el('span', 'ref tag', t.name));
+      const about = [t.tagger, t.time ? formatDate(t.time) : undefined].filter(Boolean).join(', ');
+      if (about || t.subject) span.append(el('span', 'recorded', [about, t.subject].filter(Boolean).join(' — ')));
+      if (t.signature) {
+        const sig = el('span', 'signature');
+        sig.append(signatureMark(t.signature), ` ${t.signature.label}`);
+        sig.title = [t.signature.explanation, t.signature.signer && `Signed by ${t.signature.signer}`, t.signature.format, t.signature.key && `Key ${t.signature.key}`]
+          .filter(Boolean)
+          .join('\n');
+        span.append(' ', sig);
+      }
+      return span;
+    };
+    for (const t of extras.tags ?? []) add('Tag', tagLine(t));
     // 詳細（Full）だけの項目（アプリの renderDetailed と同じ並び）
     const full = style === 'full' ? extras.full : undefined;
-    if (style === 'full' && extras.children.length > 0) add(extras.children.length > 1 ? 'Children' : 'Child', commitLinks(extras.children));
+    const text = (s: string) => document.createTextNode(s);
     if (full) {
-      const text = (s: string) => document.createTextNode(s);
+      if (extras.children.length > 0) add(extras.children.length > 1 ? 'Children' : 'Child', commitLinks(extras.children));
       if (full.headRev) add('Rev', el('code', '', full.headRev));
       if (full.branches.length > 0) add('Branches', text(full.branches.join(', ')));
       if (full.tagCount > 0) {
@@ -885,22 +904,28 @@ export function createDetailsPane(onParent?: (oid: string) => void, images = fal
       if (full.pushed) {
         add('Pushed', full.pushed.length > 0 ? text(full.pushed.join(', ')) : el('span', 'unpushed', 'Not pushed (not on any remote branch)'));
       }
-      const summary = (c: CommitSummaryView): Node => {
-        const line = el('div', 'summary-line');
-        line.append(commitLinks([c.oid]), c.subject, ...(c.author ? [el('span', 'recorded', ` — ${c.author}`)] : []));
-        return line;
-      };
-      if (full.mergedCount > 0) {
-        const value = el('div');
-        value.append(`${full.mergedCount} commit${full.mergedCount === 1 ? '' : 's'}`, ...full.merged.map(summary));
-        if (full.mergedCount > full.merged.length) value.append(el('div', 'recorded', `and ${full.mergedCount - full.merged.length} more`));
-        add('Merged', value);
+    }
+    for (const t of extras.mergedTags ?? []) add('Merged Tag', tagLine(t));
+    const summary = (c: CommitSummaryView): Node => {
+      const line = el('div', 'summary-line');
+      line.append(commitLinks([c.oid]), c.subject, ...(c.author ? [el('span', 'recorded', ` — ${c.author}`)] : []));
+      return line;
+    };
+    // 取り込んだコミット: 標準は数だけ、詳細は 20 まで並べる
+    const mergedCount = extras.mergedCount ?? extras.full?.mergedCount ?? 0;
+    if (mergedCount > 0) {
+      const value = el('div');
+      value.append(`${mergedCount} commit${mergedCount === 1 ? '' : 's'}`);
+      if (full) {
+        value.append(...full.merged.map(summary));
+        if (mergedCount > full.merged.length) value.append(el('div', 'recorded', `and ${mergedCount - full.merged.length} more`));
       }
-      for (const r of full.related) {
-        const value = el('span');
-        value.append(el('span', 'recorded', `${r.kind}  `), summary(r.commit));
-        add('Related', value);
-      }
+      add('Merged', value);
+    }
+    for (const r of full?.related ?? []) {
+      const value = el('span');
+      value.append(el('span', 'recorded', `${r.kind}  `), summary(r.commit));
+      add('Related', value);
     }
     // git notes（refs/notes/commits）は、メッセージの後に
     if (extras.notes) {

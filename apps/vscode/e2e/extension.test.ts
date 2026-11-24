@@ -1081,7 +1081,10 @@ async function historySignatureFlow(): Promise<void> {
     assert.deepEqual(extras.children, [after]);
     // 詳細（Full）の項目が届く（含むブランチなどは daemon の ref による）
     assert.ok(extras.full, JSON.stringify(extras));
-    if (ssh) assert.equal(extras.signature?.label, 'Verified');
+    if (ssh) {
+      assert.equal(extras.signature?.label, 'Verified');
+      assert.equal(extras.signature?.format, 'SSH');
+    }
 
     // 子・親・HEAD へ移る
     for (const [to, oid] of [
@@ -2171,6 +2174,32 @@ async function detailsCopyFlow(): Promise<void> {
   assert.equal(await copied('amonhen.details.copyMessage'), git('log', '-1', '--format=%B', oid).trim());
   assert.equal(await copied('amonhen.details.copyShortId'), oid.slice(0, 7));
   assert.equal(await copied('amonhen.details.copyShowCommand'), `git show ${oid}`);
+}
+
+/** コミットを指す注釈付きのタグは、詳細の残りに Tag の行（タガーと件名）として届く（エンジン） */
+async function tagRowsFlow(): Promise<void> {
+  const start = git('rev-parse', 'HEAD').trim();
+  // 詳細の残りは覚えておくので、まだ出していない新しいコミットで
+  git('commit', '-q', '--allow-empty', '-m', 'tag rows e2e');
+  const oid = git('rev-parse', 'HEAD').trim();
+  git('tag', '-a', 'tag-rows-e2e', '-m', 'Release for e2e', oid);
+  git('tag', 'tag-rows-light-e2e', oid);
+  await api.manager.current!.refresh();
+  try {
+    const panel = await showView('amonhen.showHistory');
+    const mark = posted.length;
+    await panel.history.handle({ type: 'select', oid });
+    const extras = (await waitPosted('detailsExtras', mark, (m) => m.extras.oid === oid)).extras;
+    const byName = (n: string) => extras.tags?.find((t) => t.name === n);
+    assert.equal(byName('tag-rows-e2e')?.subject, 'Release for e2e', JSON.stringify(extras.tags));
+    assert.ok(byName('tag-rows-e2e')?.tagger);
+    assert.ok(byName('tag-rows-light-e2e'), '軽量のタグも並ぶ');
+    assert.equal(byName('tag-rows-light-e2e')?.subject, undefined);
+  } finally {
+    git('tag', '-d', 'tag-rows-e2e', 'tag-rows-light-e2e');
+    git('reset', '-q', '--hard', start);
+    await api.manager.current!.refresh();
+  }
 }
 
 async function orphanFlow(): Promise<void> {
@@ -3488,6 +3517,17 @@ async function editFlow(label: string): Promise<void> {
       await undo('move');
 
       if (label === 'daemon') {
+        // 編集モードの範囲の境目を下へ引く: いちばん古い行より古いコミットが届く
+        const opened = await openedEditMode(() => vscode.commands.executeCommand('amonhen.history.edit', { oid: c }));
+        const oldest = opened.at(-1)!.oid;
+        const at = posted.length;
+        await panel.history.handle({ type: 'editExtend', oldest, count: 1 });
+        const more = await waitPosted('editMore', at);
+        assert.equal(more.rows.length, 1, JSON.stringify(more.rows.map((r) => r.oid)));
+        assert.equal(more.rows[0]!.oid, rev(`${oldest}~1`));
+      }
+
+      if (label === 'daemon') {
         // Webview で d を b に重ねて落とす: d を b の上へ動かして squash にした編集モードが開く（Apply まで何も変わらない）
         const rows = await openedEditMode(() => panel.history.handle({ type: 'squashOnto', oid: d, onto: b }));
         assert.deepEqual(
@@ -4593,6 +4633,10 @@ suite('Amon Hen in VSCode', () => {
 
   test('copies from the commit details’ right-click', async () => {
     await detailsCopyFlow();
+  });
+
+  test('shows the tags on a commit in the details through the daemon', async () => {
+    await tagRowsFlow();
   });
 
   test('creates an orphan branch, empty or keeping the files, through the daemon', async () => {

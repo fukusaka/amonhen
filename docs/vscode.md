@@ -299,9 +299,11 @@ left out for now: VSCode has its own extensions and settings for them.
 - [x] 75. The app menus' Commit, Commit and Push, Stage All, Set Upstream…, Rebase…, Go to HEAD and Find in History… as commands; Merge Branches… and Rebase… offer the commit selected in History
 - [x] 76. The commit details' right-click (copy the ID, short ID, subject, message or git show command; Edit Message…) and names that search History by that person
 - [x] 77. The commit message's URLs and commit IDs as links, trailers listed apart, git notes (with the engine) and History's search terms marked
+- [x] 78. Tag and Merged Tag rows in the commit details (tagger, subject and signature), the merged commits' count, and the signature's format and fingerprint
 - [x] 79. Fold or show any merge on its own (context menu, ←/→), Fold All / Show All Merged Commits, kept per repository in the file the apps and the TUI use
 - [x] 80. Drop a commit on another in History or the edit mode to squash it into that one (the edit mode opens with it moved above and marked squash)
 - [x] 81. Select several files in the Working Copy (⌘- or Ctrl-click, Shift-click, Shift+↑↓); Space, ⌫, the row buttons and Stash… act on all of them
 - [x] 82. The in-progress row says what is being done where and the step, and why it stopped with what to do next (with the engine), as the app's band; no Skip for a revert
 - [x] 83. Known failures said in plain words with the app's next steps (Pull…, Open Working Copy, Set Upstream…, Open Worktree, Open in Terminal, Try Again) and advice in Details
 - [x] 84. The details bar's View Options: Details Shown (Brief, Standard, Full), Fit Height Automatically, Show Only Commit Details and Wrap Long Lines, as in the app
+- [x] 85. In the edit mode, p, r, s, f, d and e choose a row's action, and the line under the rows is dragged to take in older commits or leave out the unchanged oldest ones

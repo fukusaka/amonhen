@@ -2174,7 +2174,7 @@ impl Data {
                 && amonhen_core::vectordrawable::is_vector_drawable(&path, &data)
             {
                 let drawn = (svg_view != SvgView::Text)
-                    .then(|| repo.vector_drawable(&commit, &path, &data));
+                    .then(|| repo.vector_drawable(&commit, &path, &data, None));
                 match drawn {
                     Some(Ok(drawn)) => {
                         let (w, h) = crate::imagediff::svg_size(drawn.svg.as_bytes());
