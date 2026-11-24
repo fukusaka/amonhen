@@ -45,23 +45,37 @@ pub fn draw_in_zone(language: &str, text: &str, zone: Option<Arc<dyn TimeZone>>)
     if language.eq_ignore_ascii_case("mermaid") {
         return draw_mermaid(text, zone);
     }
-    if ["dot", "graphviz", "gv"]
-        .iter()
-        .any(|l| language.eq_ignore_ascii_case(l))
-    {
-        return draw_dot(text);
+    // dot・graphviz・gv は `layout` の属性で配置を選ぶ。neato などの名前のフェンスはその配置が既定
+    if DOT_FENCES.iter().any(|l| language.eq_ignore_ascii_case(l)) {
+        return draw_dot(text, language);
     }
     None
 }
 
+/// Graphviz の DOT として描くフェンスの言葉。
+const DOT_FENCES: &[&str] = &[
+    "dot",
+    "graphviz",
+    "gv",
+    "neato",
+    "fdp",
+    "sfdp",
+    "twopi",
+    "circo",
+    "osage",
+    "patchwork",
+];
+
 /// Graphviz の DOT の図。Mermaid と同じく大きなスタックの別スレッドで描き、panic は図の誤りにする。
 #[cfg(feature = "diagrams")]
-fn draw_dot(text: &str) -> Option<Drawn> {
+fn draw_dot(text: &str, language: &str) -> Option<Drawn> {
     let source = text.to_owned();
+    let engine = amonhen_dot::engines::Engine::from_name(language)
+        .unwrap_or(amonhen_dot::engines::Engine::Dot);
     let drawn = std::thread::Builder::new()
         .name("dot".into())
         .stack_size(PELE_STACK)
-        .spawn(move || amonhen_dot::render(&source))
+        .spawn(move || amonhen_dot::render_with(&source, engine))
         .ok()?
         .join();
     Some(match drawn {
@@ -73,7 +87,7 @@ fn draw_dot(text: &str) -> Option<Drawn> {
 }
 
 #[cfg(not(feature = "diagrams"))]
-fn draw_dot(_text: &str) -> Option<Drawn> {
+fn draw_dot(_text: &str, _language: &str) -> Option<Drawn> {
     None
 }
 
@@ -914,12 +928,25 @@ mod tests {
         assert!(dark.contains("#d0d0d0") && dark.contains("#ff0000"));
         // 続く空白を保つ
         assert!(syntax.contains("xml:space=\"preserve\""), "{syntax}");
-        for language in ["graphviz", "Dot"] {
+        for language in ["graphviz", "Dot", "neato", "Circo"] {
             assert!(matches!(
-                draw(language, "digraph { a }"),
+                draw(language, "digraph { a -> b }"),
                 Some(Drawn::Svg(_, None))
             ));
         }
+        // フェンスの言葉は既定の配置で、`layout` が勝つ
+        let Some(Drawn::Svg(lr, _)) = draw("dot", "digraph { rankdir=LR; a -> b }") else {
+            panic!("not drawn");
+        };
+        let Some(Drawn::Svg(free, _)) = draw("neato", "digraph { rankdir=LR; a -> b }") else {
+            panic!("not drawn");
+        };
+        let Some(Drawn::Svg(back, _)) = draw("neato", "digraph { layout=dot; rankdir=LR; a -> b }")
+        else {
+            panic!("not drawn");
+        };
+        assert_ne!(lr, free);
+        assert_eq!(lr, back);
         assert!(matches!(draw("dot", "digraph {"), Some(Drawn::Error(_))));
         // グラデーションの塗りも残る
         let Some(Drawn::Svg(svg, _)) = draw(
