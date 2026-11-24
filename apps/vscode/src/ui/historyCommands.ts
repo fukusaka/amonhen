@@ -110,6 +110,22 @@ export function registerHistoryCommands(): vscode.Disposable {
       await vscode.env.clipboard.writeText(oid);
       vscode.window.setStatusBarMessage(`$(copy) ${oid.slice(0, 8)}`, 3000);
     }),
+    // 詳細の見出しの右クリック（History・Reflog・File History・Range Diff の詳細）
+    ...(
+      [
+        ['amonhen.details.copyShortId', async (oid: string) => oid.slice(0, 7)],
+        ['amonhen.details.copySubject', async (oid: string, repo: Repository) => (await fullMessage(repo, oid)).split('\n')[0] ?? ''],
+        ['amonhen.details.copyMessage', async (oid: string, repo: Repository) => (await fullMessage(repo, oid)).trim()],
+        ['amonhen.details.copyShowCommand', async (oid: string) => `git show ${oid}`],
+      ] as const
+    ).map(([id, text]) =>
+      vscode.commands.registerCommand(id, async (ctx?: CommitContext) => {
+        const repo = MainPanel.active?.repository;
+        if (!repo || !ctx?.oid) return;
+        await vscode.env.clipboard.writeText(await text(ctx.oid, repo));
+        vscode.window.setStatusBarMessage(`$(copy) Copied`, 3000);
+      }),
+    ),
     HistoryController.onDidReceiveEdit(async (message) => {
       const panel = MainPanel.active?.history;
       const repo = panel?.repository;
@@ -136,6 +152,8 @@ export function registerHistoryCommands(): vscode.Disposable {
         }
         const label = `${message.kind === 'reword' ? 'Reword' : 'Squash'} ${short(panel, message.oid)}`;
         await run(panel, repo, label, { kind: message.kind, oid: message.oid, message: message.message });
+      } else if (message.type === 'squashOnto') {
+        await squashOnto(panel, message.oid, message.onto);
       } else {
         await moveTo(panel, repo, message.oid, message.to);
       }
@@ -242,6 +260,16 @@ async function move(panel: HistoryController, repo: Repository, oid: string, del
 async function moveTo(panel: HistoryController, repo: Repository, oid: string, to: number): Promise<void> {
   if (await editMode(panel, oid, { kind: 'move', oid, to }, 0, [], to + 1)) return;
   await run(panel, repo, `Move ${short(panel, oid)}`, { kind: 'move', oid, to });
+}
+
+/**
+ * History で oid を onto に重ねて落とした: 2 つの古い方から HEAD までの編集モードを、oid を onto の上へ動かして
+ * squash にした状態で開く（アプリと同じ）。並べ替えて 1 回で書き換えるのはエンジンの編集モードだけ
+ */
+async function squashOnto(panel: HistoryController, oid: string, onto: string): Promise<void> {
+  const older = (panel.chainIndex(oid) ?? -1) > (panel.chainIndex(onto) ?? -1) ? oid : onto;
+  if (await editMode(panel, older, { kind: 'squashOnto', oid, onto }, 0, [oid, onto])) return;
+  void vscode.window.showWarningMessage('Dropping a commit on another to squash it needs the engine (Amon Hen’s daemon).');
 }
 
 /**

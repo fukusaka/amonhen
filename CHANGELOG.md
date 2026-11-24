@@ -13,6 +13,23 @@ becomes the GitHub Release notes.
 
 - History's All Files draws Android VectorDrawables (`.xml` with a `<vector>` or `<animated-vector>` root) as pictures,
   resolving `@color/…` from the commit's `res` folder and noting what's drawn in gray (macOS, GTK4).
+- DOT diagrams in Markdown previews draw images (a node's `image`, a table's `<IMG>`) from the same commit, by a path
+  relative to the Markdown file's folder.
+- DOT diagrams draw gradient fills in HTML-like tables, cells and cluster and graph backgrounds, striped clusters,
+  tapered edges, `decorate`, node `labelloc`, and dashed or dotted table borders.
+- Markdown previews draw the HTML GitHub renders: `align` for centered logos and badge rows, sized and linked images,
+  `<details>` that open and close, `<picture>` by appearance, tables spanning cells, `<kbd>`, `<sub>` and `<sup>`.
+  Comments, styles, scripts and forms are left out, as on GitHub.
+
+#### Fixed
+
+- DOT diagrams: in `rankdir=LR`/`RL`, a cluster is widened to fit a title longer than its box.
+
+#### Changed
+
+- DOT diagrams: `splines=ortho` edges leave from their ports' sides, spread across each side of a node and keep shared
+  runs apart; sfdp keeps small cycles open, fdp reads `pos`/`pin` inside clusters, self-loops go on their port's side
+  and same-rank edge labels get room.
 
 ### [0.2.14] - 2026-11-24
 
@@ -1283,6 +1300,27 @@ First release.
   hunks aren't staged or discarded meanwhile.
 - The commit details show the tags on the commit and the tags a merge took in, with their tagger, subject and
   signature, the number of commits a merge took in, and the signature's format and fingerprint (with the engine).
+- In the commit details, URLs and commit IDs in the message are links, the trailers are listed apart from the body,
+  git notes follow the message (with the engine), and History's search terms are marked.
+- The app menus' Commit, Commit and Push, Stage All, Set Upstream…, Rebase…, Go to HEAD and Find in History… are
+  commands, so they can be bound to keys; Merge Branches… and Rebase… also offer the commit selected in History.
+- Dropping a commit on another in History or in the edit mode squashes it into that one: the edit mode opens with it
+  moved above that commit and marked squash (with the engine).
+- The commit details' right-click copies the ID, the short ID, the subject, the message or a git show command, and
+  has Edit Message… for an editable commit. The author's and committer's names search History for that person.
+- Markdown in All Files draws the HTML GitHub renders, with the engine: `<details>`, tables spanning cells, `align`,
+  image sizes, `<picture>` by theme, `<kbd>`, `<sub>` and `<sup>`.
+
+#### Changed
+
+- The sidebar's in-progress row says what is being done where and the step, and why it stopped with what to do next
+  (the commit, conflicts, a failed exec, a stop to edit), as the app's band does (with the engine); a revert has no
+  Skip.
+
+#### Changed
+
+- History folds or shows any merge on its own (its context menu, ←/→), and the display menu has Fold All and Show
+  All Merged Commits; the folds are kept per repository and shared with the apps and the TUI.
 
 #### Fixed
 

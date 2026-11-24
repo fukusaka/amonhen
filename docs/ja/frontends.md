@@ -251,7 +251,7 @@ GTK4 のアプリは macOS のアプリと同じふるまいをめざす。わ�
 | ブランチ・タグのラベル付きのグラフ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | CLI: `log`。<br>TUI: 1 コミット 1 行。 |
 | 大きな履歴をかたまりで読み、永続キャッシュを使う | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ |  |
 | 一致の数・次 / 前・一致だけの検索 | ✓ | ✓ | ✓ | ✓ | △ | ✓ | VSCode: エンジンがあるとき。<br>CLI: `log <query>` が一致を並べる。<br>TUI: `/`・`n` `N`、一致だけは `&`。 |
-| 表示: 順・1 行・行の項目・マージ済みを畳む・祖先を目立たせる | ✓ | ✓ | ✓ | △ | △ | △ | macOS・GTK4: merge を 1 つずつたたむ（+N の札・右クリック・←/→）。リポジトリごとに覚える。<br>VSCode: 順・畳む・目立たせるはエンジンで。畳むのはすべての merge で 1 つの切り替え。オンの間は右クリックで 1 つずつ出せるが覚えず、←/→ は効かない。祖先を目立たせるは最初オフ（アプリはオン）。<br>CLI: `--topo-order`・`--fold`。<br>Windows: View に。<br>TUI: `o` で順（その回だけ）、`z` ですべて畳み `Z` で 1 つずつ（リポジトリごとに覚え、アプリと共有）。`I` で行の項目（その回だけ）。いつも 1 行。 |
+| 表示: 順・1 行・行の項目・マージ済みを畳む・祖先を目立たせる | ✓ | ✓ | ✓ | △ | △ | △ | macOS・GTK4: merge を 1 つずつたたむ（+N の札・右クリック・←/→）。リポジトリごとに覚える。<br>VSCode: 順・畳む・目立たせるはエンジンで。merge を 1 つずつたたむ（右クリック・←/→）。リポジトリごとに覚え、アプリと共有。祖先を目立たせるは最初オフ（アプリはオン）。<br>CLI: `--topo-order`・`--fold`。<br>Windows: View に。<br>TUI: `o` で順（その回だけ）、`z` ですべて畳み `Z` で 1 つずつ（リポジトリごとに覚え、アプリと共有）。`I` で行の項目（その回だけ）。いつも 1 行。 |
 | アバター | ✓ | ✓ | ✓ | — | n/a | — |  |
 | コミットの署名の印 | ✓ | ✓ | ✓ | ✓ | △ | ✓ | VSCode: エンジンがあるとき。<br>CLI: `show` に出る。<br>TUI: 件名の前の印。吹き出しはない。 |
 | コミットごとの CI の状態とポップオーバー | ✓ | ✓ | ✓ | — | — | — |  |
@@ -263,7 +263,7 @@ GTK4 のアプリは macOS のアプリと同じふるまいをめざす。わ�
 | コミットのメニュー: checkout・新しいブランチやタグ・cherry-pick・revert・ID のコピー | ✓ | ✓ | ✓ | ✓ | △ | ✓ | CLI: `amonhen run` から。<br>TUI: `c`・`b`・`T`・`y`・`v`・`Y`（OSC 52 で端末のクリップボードへ）。 |
 | 編集モード（pick・reword・squash・fixup・drop・edit、ドラッグで並べ替え） | ✓ | ✓ | ✓ | ✓ | △ | ✓ | VSCode: エンジンがあるとき。ないときは 1 つずつ。<br>CLI: `amonhen run` から。<br>TUI: `E` で画面に重ねる。`J` `K` で行を動かす。 |
 | 書き換えの見込み（積み重ね・push 済みのブランチ、コンフリクトの見込み） | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | VSCode: daemon 越し。ほかのブランチの rebase では、アプリと同じく代わりにコンフリクトの見込みを出す。<br>CLI: `rewrite-preview`。 |
-| 近道: Edit Message…・Squash into Previous…・Drop…・Combine N…・コミットのドラッグ | ✓ | ✓ | ✓ | △ | △ | ✓ | VSCode: エンジンがあれば編集モードを開く。ないときはすぐ書き換え、Combine N Commits はない。ドラッグは並べ替えだけで、別のコミットに重ねて squash、ビューの外へ出して drop はできない。<br>CLI: `amonhen run` から。<br>TUI: `e` でメッセージ、`F` で親にまとめる、`X` で Drop、選んだコミットの `E` で Combine N。merge と rebase はサイドバーの `m` `r`。コミットを別のコミットへドラッグすると、動かすかまとめるかを聞く。 |
+| 近道: Edit Message…・Squash into Previous…・Drop…・Combine N…・コミットのドラッグ | ✓ | ✓ | ✓ | ✓ | △ | ✓ | VSCode: エンジンがあれば編集モードを開く。ないときはすぐ書き換え、Combine N Commits はない。コミットを行の間に落とすと動かし、行に重ねて落とすとそのコミットにまとめる（エンジンがあれば。History と編集モードで）。Webview は外への落としを知れないので、外へ出して drop はない。<br>CLI: `amonhen run` から。<br>TUI: `e` でメッセージ、`F` で親にまとめる、`X` で Drop、選んだコミットの `E` で Combine N。merge と rebase はサイドバーの `m` `r`。コミットを別のコミットへドラッグすると、動かすかまとめるかを聞く。 |
 | コミットを分ける | ✓ | ✓ | ✓ | ✓ | △ | ✓ | CLI: `amonhen run` から。<br>TUI: History の `\|`（先に確かめる）。Working Copy で止まる。 |
 | 編集でマージを保つ（`--rebase-merges`） | ✓ | ✓ | ✓ | ✓ | △ | ✓ | VSCode: エンジンがあるとき。ないときは最初のマージで止まる。<br>CLI: `amonhen run` から。 |
 | shallow clone: 終わりの帯で取り足す、境界のコミットの印 | ✓ | ✓ | ✓ | ✓ | △ | ✓ | VSCode: エンジンがあるとき。<br>CLI: `log` が履歴の止まる所を添える。取り足すのは `amonhen run` から。<br>TUI: 最後の行の下に 1 行、境界のコミットの件名の前に ┄。History の `+` で取り足す（数・日付まで・すべて）。 |
@@ -272,7 +272,7 @@ GTK4 のアプリは macOS のアプリと同じふるまいをめざす。わ�
 
 | 機能 | macOS | GTK4 | Windows | VSCode | CLI | TUI | Notes |
 | --- | :-: | :-: | :-: | :-: | :-: | :-: | --- |
-| メッセージ全体・ドラッグできる境・⤢ で広げる | ✓ | ✓ | ✓ | ✓ | n/a | △ | TUI: 境はマウスでドラッグできる（動かしている間だけ）。⤢ はなく、狭い端末では詳細は History の代わりに開く。 |
+| メッセージ全体・ドラッグできる境・⤢ で広げる | ✓ | ✓ | ✓ | ✓ | n/a | △ | VSCode: メッセージの URL とコミット ID はリンク。トレーラーは分けて並べ、git notes は後に（エンジンがあれば）、History の検索の語に印。見出しの右クリックで ID・短い ID・件名・メッセージ・git show のコマンドをコピーし、編集できるコミットなら Edit Message…。作者とコミッターの名前を押すと History をその人で探す。<br>TUI: 境はマウスでドラッグできる（動かしている間だけ）。⤢ はなく、狭い端末では詳細は History の代わりに開く。 |
 | 詳細の中を探す | ✓ | ✓ | ✓ | ✓ | n/a | ✓ | VSCode: ⌘F でメインビュー全体を探す。まだ読んでいない差分は探さない。<br>TUI: 詳細で `/`、`n` `N` で次と前。 |
 | 変更ファイルを差分のファイルの見出しで兼ねる（最初は畳む・貼り付く・操作は帯 1 本） | ✓ | ✓ | ✓ | ✓ | ✓ | △ | CLI: `show`。<br>VSCode: 見出しの ⋯ で右クリックのメニューを開く。Open は VSCode の差分エディタで開く。<br>TUI: 見ているファイルの見出しが一番上に貼り付き、`o` か見出しのクリックでファイルを畳む。`[` `]` でファイルを移る。生成物と大きなファイルは最初から畳む。変更ファイルは差分の上の一覧にもある。 |
 | 変更ファイルをリストか、フォルダを畳めるツリーで | ✓ | ✓ | ✓ | ✓ | n/a | ✓ | TUI: 差分の上に。`t` で木に替え、クリックでフォルダを畳む（`z` ですべて）かファイルの差分へ。 |
@@ -280,7 +280,7 @@ GTK4 のアプリは macOS のアプリと同じふるまいをめざす。わ�
 | 空白を無視する（行末・量の違い・すべて） | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | VSCode: エンジンがあれば。<br>CLI: `show -w`・`-b`・`--ignore-space-at-eol`。<br>TUI: 詳細の `w` で順に替える。 |
 | 画像を比べる（並べる・スワイプ・オニオンスキン・違うピクセル） | ✓ | ✓ | ✓ | ✓ | n/a | — | VSCode: 20 MB を超える画像は比べない。 |
 | すべてのファイル: その時点の木と、コミットの行に印を付けたファイルの中身 | ✓ | ✓ | ✓ | ✓ | n/a | ✓ | VSCode: エンジンがあれば。<br>TUI: History の `a`。画面に重ねる。プレビューはない（中身は文字で出す）。 |
-| すべてのファイルのプレビュー: 拡大縮小できる画像・SVG の絵とモバイル向けの確認・整形した Markdown・バイナリの Quick Look | ✓ | ✓ | △ | △ | n/a | — | VSCode: そのほかのバイナリは Quick Look の代わりに VSCode のエディタで開く。モバイル向けの確認はすべての部品をまとめて並べ、1 つを選んで元の絵と並べる切り替えはない。Mermaid の図はコードのまま。<br>GTK4: Quick Look の代わりに GNOME のプレビュー（か既定のアプリ）。SVG の絵は librsvg で描く。<br>Windows: 拡大縮小できる画像・SVG の絵とモバイル向けの確認・整形した Markdown とその中の Mermaid・DOT の図（Direct2D の SVG は文字を描かないので resvg で描く）。部品の切り替えはパスの帯にある。gantt の時間帯はまだ設定にない（UTC）。バイナリのプレビューはまだない。 |
+| すべてのファイルのプレビュー: 拡大縮小できる画像・SVG の絵とモバイル向けの確認・整形した Markdown・バイナリの Quick Look | ✓ | ✓ | △ | △ | n/a | — | VSCode: そのほかのバイナリは Quick Look の代わりに VSCode のエディタで開く。モバイル向けの確認はすべての部品をまとめて並べ、1 つを選んで元の絵と並べる切り替えはない。Mermaid の図はコードのまま。<br>GTK4: Quick Look の代わりに GNOME のプレビュー（か既定のアプリ）。SVG の絵は librsvg で描く。<br>Windows: 拡大縮小できる画像・SVG の絵とモバイル向けの確認・整形した Markdown とその中の Mermaid・DOT の図（Direct2D の SVG は文字を描かないので resvg で描く）。部品の切り替えはパスの帯にある。gantt の時間帯はまだ設定にない（UTC）。バイナリのプレビューはまだない。Markdown の中の HTML は読むが、`<details>` は開いたまま、`align`・画像の大きさ・`<picture>`・`<kbd>`・`<sub>`・`<sup>` はほかのアプリのようには描かない。 |
 | すべてのファイル: Android の VectorDrawable の絵（色はコミットの `res` から、animated-vector は動く前の絵） | ✓ | ✓ | — | — | n/a | — | Windows・VSCode: VectorDrawable の XML はテキストで出す。 |
 | ファイルの見出しのメニュー（Blame・File History・パスのコピー・開く） | ✓ | ✓ | ✓ | ✓ | n/a | ✓ | VSCode: 右クリックと ⋯ の Show Whole File・Blame・File History・この版／前の版に戻す・Copy Path（Copy Path 以外はエンジンがあれば）と、VSCode の差分のエディターで開く。この時点のファイルを開くはない。<br>TUI: 見ているファイルの `B`・`L`・`Y`（パスのコピー）・`e`（git のエディタで開く）。 |
 | 選んだものの差分（範囲をまとめる・A..B / A...B・飛び飛び） | ✓ | ✓ | ✓ | ✓ | △ | ✓ | VSCode: エンジンがあるとき。<br>CLI: `diff <rev> <rev>`。<br>TUI: `m` と Shift-↑↓（か Ctrl・Alt を押しながらクリック）で選ぶ。`x` で向きを入れ替え、`.` で merge-base から。 |
@@ -357,8 +357,8 @@ GTK4 のアプリは macOS のアプリと同じふるまいをめざす。わ�
 | 機能 | macOS | GTK4 | Windows | VSCode | CLI | TUI | Notes |
 | --- | :-: | :-: | :-: | :-: | :-: | :-: | --- |
 | 共有の操作の表（`crates/commands`）から作るメニュー | ✓ | ✓ | ✓ | n/a | n/a | ✓ | VSCode: VSCode のコマンドパレットと右クリックのメニューが代わり。<br>TUI: 命令の一覧（`:`）の名前をここから取る。 |
-| メニューバーなしで全部の操作に届く（≡） | ✓ | ✓ | ✓ | △ | n/a | ✓ | GTK4: ≡ のメニューに、メニューバーの File・Edit・View・Navigate・Commit・Window を macOS と同じ項目と並びで置き（Edit の取り消す・カット・コピーなどはフォーカスのある欄に効く）、その後に設定…・Amon Hen について・終了。<br>Windows: タイトルバーの右の ≡ に、メニューバーのメニューをすべて同じ項目と並びで入れ子で置く。設定…（Ctrl+,）は Windows のアプリの習いどおり File の終わりの方に置く。窓にメニューバーの段はない。<br>VSCode: コマンドパレットとコンテキストメニュー。Commit・Commit and Push・Stage All は Working Copy のボタンだけ、Go to HEAD・Find in History は History の中だけ。Set Upstream… と（選んだ ref への）Rebase… はない。<br>TUI: `:` が TUI にあるすべての操作をキーと一緒に並べる。 |
-| キーボードの近道 | ✓ | ✓ | ✓ | n/a | n/a | ✓ | GTK4: Linux のデスクトップやほかの操作が使うキーは違う: サイドバーを表示は F9（GNOME のユーティリティの欄のキー）。ブランチを絞り込む・親へ・子へ・New Tag にはない（GNOME が Ctrl+Alt+矢印と Ctrl+Alt+T を使い、HIG では Alt+Up が別の意味）。マージエディターの前・次のコンフリクトは Alt+Up・Down。<br>VSCode: VSCode のキー割り当てが代わり。拡張が持つのは Alt+Z（長い行を折り返す）だけで、拡張のコマンドならどれにも割り当てられる（コマンドになっていない操作はできない）。<br>TUI: 独自の 1 文字のキー（表の近道は端末では打てない）。 |
+| メニューバーなしで全部の操作に届く（≡） | ✓ | ✓ | ✓ | ✓ | n/a | ✓ | GTK4: ≡ のメニューに、メニューバーの File・Edit・View・Navigate・Commit・Window を macOS と同じ項目と並びで置き（Edit の取り消す・カット・コピーなどはフォーカスのある欄に効く）、その後に設定…・Amon Hen について・終了。<br>Windows: タイトルバーの右の ≡ に、メニューバーのメニューをすべて同じ項目と並びで入れ子で置く。設定…（Ctrl+,）は Windows のアプリの習いどおり File の終わりの方に置く。窓にメニューバーの段はない。<br>VSCode: コマンドパレットとコンテキストメニュー。メニューの Commit・Commit and Push・Stage All・Set Upstream…・Rebase…・Go to HEAD・Find in History… もコマンドにある。Merge Branches… と Rebase… では History で選んでいるコミットも選べる。<br>TUI: `:` が TUI にあるすべての操作をキーと一緒に並べる。 |
+| キーボードの近道 | ✓ | ✓ | ✓ | n/a | n/a | ✓ | GTK4: Linux のデスクトップやほかの操作が使うキーは違う: サイドバーを表示は F9（GNOME のユーティリティの欄のキー）。ブランチを絞り込む・親へ・子へ・New Tag にはない（GNOME が Ctrl+Alt+矢印と Ctrl+Alt+T を使い、HIG では Alt+Up が別の意味）。マージエディターの前・次のコンフリクトは Alt+Up・Down。<br>VSCode: VSCode のキー割り当てが代わり。拡張が持つのは Alt+Z（長い行を折り返す）だけで、拡張のコマンドならどれにも割り当てられる。<br>TUI: 独自の 1 文字のキー（表の近道は端末では打てない）。 |
 | メニューと同じ名前のコンテキストメニュー | ✓ | ✓ | ✓ | ✓ | n/a | n/a | VSCode: VSCode のメニューの項目は決まった文なので、アプリが入れる名前を除いた同じ言葉（Checkout main… は Checkout…、Delete main… は Delete…）。<br>Windows: History とその変更ファイル・サイドバー・Working Copy・Stashes・File History・Blame。<br>TUI: 操作は選んでいる行へのキー。 |
 | キーボードの近道の窓 | — | ✓ | — | n/a | n/a | ✓ | macOS: 代わりに macOS の App Shortcuts で変える。<br>TUI: `?` でフォーカスのある所のキーを並べる。 |
 
@@ -366,7 +366,7 @@ GTK4 のアプリは macOS のアプリと同じふるまいをめざす。わ�
 
 | 機能 | macOS | GTK4 | Windows | VSCode | CLI | TUI | Notes |
 | --- | :-: | :-: | :-: | :-: | :-: | :-: | --- |
-| 進行中の操作と Continue / Skip / Abort | ✓ | ✓ | ✓ | ✓ | n/a | ✓ | VSCode: サイドバーの行。<br>TUI: 一番下の行に出し、`C` `K` `A`。 |
+| 進行中の操作と Continue / Skip / Abort | ✓ | ✓ | ✓ | ✓ | n/a | ✓ | VSCode: サイドバーの行。エンジンがあれば、アプリの帯と同じく何をどこへしている途中か（何手目か）と、なぜ止まったか（コミット・コンフリクト・exec・編集で止まった）と次にすることを言う。revert には Skip を出さない（アプリと同じ）。<br>TUI: 一番下の行に出し、`C` `K` `A`。 |
 | 失敗とその原因・Details | ✓ | ✓ | ✓ | ✓ | n/a | ✓ | VSCode: 知らせに原因（git の fatal:・error: の行）を出し、Details で全文と git の命令を出力パネルに出す。<br>TUI: 原因は一番下の行に。`!` で git のコマンドと答えの全部を出す。 |
 | 切れたつながりと Reconnect | ✓ | ✓ | ✓ | n/a | n/a | ✓ | TUI: 一番下の行に出し、`R` で同じ場所を開き直す。 |
 | 終わった操作が何をしたか、数秒 | ✓ | ✓ | ✓ | ✓ | n/a | ✓ | VSCode: ステータスバーの文か、Undo 付きの知らせ。<br>TUI: 一番下の行に。 |

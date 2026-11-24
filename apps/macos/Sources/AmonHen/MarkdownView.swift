@@ -4,7 +4,8 @@ import CAmonhen
 
 /// Markdown の整形表示（History の「すべてのファイル」）。コアが読んだブロックを、NSTextView の文字に自前で組み立てる
 /// （WebKit も JavaScript も使わない）。画像はそのコミットの中のものだけを読み、外へは何も読みに行かない。リンクは
-/// 押すとブラウザで開く（リポジトリの中のファイルへのリンクは、そのファイルを開く）。
+/// 押すとブラウザで開く（リポジトリの中のファイルへのリンクは、そのファイルを開く）。HTML の `<details>` は、
+/// 見出しを押すと開く・閉じる（組み直す）。`<picture>` は外観に合う画像を出し、外観が変わったら組み直す。
 final class MarkdownView: NSView, NSTextViewDelegate {
     private let scroll = NSScrollView()
     private let text: NSTextView
@@ -12,10 +13,21 @@ final class MarkdownView: NSView, NSTextViewDelegate {
     var onOpenPath: ((String) -> Void)?
     /// 押したリンクを開く前に、そのファイル（Markdown）の場所。
     private let path: String
+    private let blocks: [MarkdownBlock]
+    private let image: (String) -> NSImage?
+    /// 読んだ画像（組み直すたびに読み直さない。読めなかったものは nil）。
+    private var images: [String: NSImage?] = [:]
+    /// 開いている `<details>`（文書の中の順の番号）。
+    private var openDetails: Set<Int>
+    /// 組み立てたときの外観（暗いか）。
+    private var builtDark = false
 
     /// `blocks` を組み立てる。`image` はリンクの場所（Markdown のファイルからの相対パス）からそのコミットの画像を読む。
     init(blocks: [MarkdownBlock], path: String, image: @escaping (String) -> NSImage?) {
         self.path = path
+        self.blocks = blocks
+        self.image = image
+        openDetails = MarkdownBuilder.initiallyOpen(blocks)
         // 表（NSTextTable）は TextKit 1 で描く。
         text = NSTextView(usingTextLayoutManager: false)
         super.init(frame: NSRect(x: 0, y: 0, width: 600, height: 400))
@@ -27,14 +39,13 @@ final class MarkdownView: NSView, NSTextViewDelegate {
         text.autoresizingMask = .width
         text.textContainer?.widthTracksTextView = true
         text.delegate = self
-        text.linkTextAttributes = [.foregroundColor: NSColor.linkColor, .cursor: NSCursor.pointingHand]
+        // リンクの色は文字に付ける（`<details>` の見出しは押せるが色を変えない）。
+        text.linkTextAttributes = [.cursor: NSCursor.pointingHand]
         scroll.documentView = text
         scroll.hasVerticalScroller = true
         scroll.drawsBackground = false
         addSubview(scroll)
-        var builder = MarkdownBuilder(image: image)
-        builder.add(blocks, depth: 0)
-        text.textStorage?.setAttributedString(builder.out)
+        rebuild()
         // 図の配色・構文の色のテーマを変えたら描き直す（図は描くときに色を当てる）。
         NotificationCenter.default.addObserver(self, selector: #selector(themeChanged), name: .syntaxThemeChanged, object: nil)
     }
@@ -43,6 +54,34 @@ final class MarkdownView: NSView, NSTextViewDelegate {
     required init?(coder: NSCoder) { fatalError() }
 
     @objc private func themeChanged() { text.needsDisplay = true }
+
+    private var dark: Bool { effectiveAppearance.bestMatch(from: [.aqua, .darkAqua]) == .darkAqua }
+
+    /// 組み立て直す（スクロールの位置は保つ）。
+    private func rebuild() {
+        builtDark = dark
+        var builder = MarkdownBuilder(image: { [weak self] in self?.cachedImage($0) }, dark: builtDark, openDetails: openDetails)
+        builder.add(blocks, depth: 0)
+        let origin = scroll.contentView.bounds.origin
+        text.textStorage?.setAttributedString(builder.out)
+        fittedWidth = 0
+        fitAttachments()
+        scroll.contentView.scroll(to: origin)
+        scroll.reflectScrolledClipView(scroll.contentView)
+    }
+
+    private func cachedImage(_ src: String) -> NSImage? {
+        if let hit = images[src] { return hit }
+        let picture = image(src)
+        images[src] = picture
+        return picture
+    }
+
+    override func viewDidChangeEffectiveAppearance() {
+        super.viewDidChangeEffectiveAppearance()
+        // `<picture>` の画像は外観で選ぶ。
+        if dark != builtDark, MarkdownBuilder.hasPictures(blocks) { rebuild() }
+    }
 
     override func layout() {
         super.layout()
@@ -72,6 +111,12 @@ final class MarkdownView: NSView, NSTextViewDelegate {
 
     func textView(_ textView: NSTextView, clickedOnLink link: Any, at charIndex: Int) -> Bool {
         let target = (link as? URL)?.absoluteString ?? (link as? String) ?? ""
+        if let number = target.split(separator: ":").last.flatMap({ Int($0) }), target.hasPrefix(MarkdownBuilder.detailsLink) {
+            // `<details>` の見出し: 開く・閉じる。
+            if openDetails.remove(number) == nil { openDetails.insert(number) }
+            rebuild()
+            return true
+        }
         if let url = URL(string: target), let scheme = url.scheme, ["http", "https", "mailto"].contains(scheme) {
             NSWorkspace.shared.open(url)
         } else if !target.hasPrefix("#"), let resolved = Self.resolve(target, from: path) {
@@ -183,8 +228,15 @@ final class DiagramPicture {
 nonisolated final class FittingAttachment: NSTextAttachment {
     private let natural: NSSize
 
-    init(image: NSImage) {
-        natural = image.size
+    /// `width`・`height`（HTML の大きさ、pt）があればその大きさで（片方だけなら比を保つ）。
+    init(image: NSImage, width: Int? = nil, height: Int? = nil) {
+        let size = image.size
+        natural = switch (width, height) {
+        case let (w?, h?): NSSize(width: w, height: h)
+        case let (w?, nil): NSSize(width: CGFloat(w), height: size.width > 0 ? size.height * CGFloat(w) / size.width : size.height)
+        case let (nil, h?): NSSize(width: size.height > 0 ? size.width * CGFloat(h) / size.height : size.width, height: CGFloat(h))
+        case (nil, nil): size
+        }
         super.init(data: nil, ofType: nil)
         self.image = image
         bounds = NSRect(origin: .zero, size: fitting(640))
@@ -204,10 +256,118 @@ nonisolated final class FittingAttachment: NSTextAttachment {
 /// ブロックを文字に組み立てる。
 private struct MarkdownBuilder {
     let image: (String) -> NSImage?
+    /// 暗い外観か（`<picture>` の画像を選ぶ）。
+    let dark: Bool
+    /// 開いている `<details>` の番号。
+    let openDetails: Set<Int>
     let out = NSMutableAttributedString()
     private let bodySize: CGFloat = 14
+    /// 次の `<details>` の番号（文書の中の順。閉じたものの中のものも数える）。
+    private var detailsIndex = 0
+    /// `<details>` の見出しのリンク（後ろに番号）。
+    static let detailsLink = "amonhen-details:"
 
-    init(image: @escaping (String) -> NSImage?) { self.image = image }
+    init(image: @escaping (String) -> NSImage?, dark: Bool, openDetails: Set<Int>) {
+        self.image = image
+        self.dark = dark
+        self.openDetails = openDetails
+    }
+
+    /// `blocks` を、`<details>` の番号の順（入れ子は親の後）にたどる。
+    private static func walk(_ blocks: [MarkdownBlock], _ visit: (MarkdownBlock) -> Void) {
+        for block in blocks {
+            visit(block)
+            switch block {
+            case .quote(_, let inner), .footnote(_, let inner), .details(_, _, let inner): walk(inner, visit)
+            case .list(_, let items): for item in items { walk(item.blocks, visit) }
+            default: break
+            }
+        }
+    }
+
+    /// 最初から開いている `<details>`（`open` の付いたもの）の番号。
+    static func initiallyOpen(_ blocks: [MarkdownBlock]) -> Set<Int> {
+        var index = 0
+        var open: Set<Int> = []
+        walk(blocks) { block in
+            if case .details(_, let isOpen, _) = block {
+                if isOpen { open.insert(index) }
+                index += 1
+            }
+        }
+        return open
+    }
+
+    /// `blocks` の中の `<details>` の数。
+    private static func countDetails(_ blocks: [MarkdownBlock]) -> Int {
+        var count = 0
+        walk(blocks) { if case .details = $0 { count += 1 } }
+        return count
+    }
+
+    /// 外観で選ぶ画像（`<picture>`）があるか。
+    static func hasPictures(_ blocks: [MarkdownBlock]) -> Bool {
+        var found = false
+        func check(_ runs: [MarkdownBlock.Run]) {
+            if runs.contains(where: { $0.imageDark != nil || $0.imageLight != nil }) { found = true }
+        }
+        walk(blocks) { block in
+            switch block {
+            case .heading(_, let runs, _), .paragraph(let runs, _), .details(let runs, _, _): check(runs)
+            case .table(_, let head, let rows): (head + rows.flatMap { $0 }).forEach(check)
+            case .htmlTable(_, _, let cells): cells.forEach { check($0.runs) }
+            default: break
+            }
+        }
+        return found
+    }
+
+    /// HTML の `align` の値の、文字のそろえ方。
+    private static func alignment(_ align: String?) -> NSTextAlignment {
+        switch align {
+        case "center": .center
+        case "right": .right
+        default: .natural
+        }
+    }
+
+    /// 見出しのない `<details>` の見出し（GitHub と同じ「Details」。訳の鍵は「HTML details: 」を付けたもの）。
+    private static var detailsTitle: String {
+        let text = L("HTML details: Details")
+        return text.hasPrefix("HTML details: ") ? String(text.dropFirst("HTML details: ".count)) : text
+    }
+
+    /// `<kbd>` の札（角を丸めた枠の中に等幅の文字。色は描くときの外観で）。
+    private func keyCap(_ text: String, size: CGFloat, style: NSParagraphStyle, link: String?) -> NSAttributedString {
+        let font = NSFont.monospacedSystemFont(ofSize: size - 3, weight: .regular)
+        let measured = NSAttributedString(string: text, attributes: [.font: font]).size()
+        let padX: CGFloat = 5, padY: CGFloat = 2
+        let box = NSSize(width: ceil(measured.width) + padX * 2, height: ceil(measured.height) + padY * 2)
+        let picture = NSImage(size: box, flipped: false) { rect in
+            MainActor.assumeIsolated {
+                let frame = NSBezierPath(roundedRect: rect.insetBy(dx: 0.5, dy: 0.5), xRadius: 4, yRadius: 4)
+                NSColor.quaternaryLabelColor.withAlphaComponent(0.12).setFill()
+                frame.fill()
+                NSColor.tertiaryLabelColor.setStroke()
+                frame.lineWidth = 1
+                frame.stroke()
+                let label = NSFont.monospacedSystemFont(ofSize: size - 3, weight: .regular)
+                NSAttributedString(string: text, attributes: [.font: label, .foregroundColor: NSColor.labelColor])
+                    .draw(at: NSPoint(x: padX, y: padY))
+            }
+            return true
+        }
+        picture.cacheMode = .never
+        let attachment = NSTextAttachment()
+        attachment.image = picture
+        // 札の中の文字の基線を、外の文字の基線にそろえる。
+        attachment.bounds = NSRect(x: 0, y: font.descender - padY, width: box.width, height: box.height)
+        let result = NSMutableAttributedString(attachment: attachment)
+        var attributes: [NSAttributedString.Key: Any] = [.paragraphStyle: style, .toolTip: text]
+        if let link { attributes[.link] = link }
+        result.addAttributes(attributes, range: NSRange(location: 0, length: result.length))
+        return result
+    }
 
     private func paragraph(indent: CGFloat = 0, spacing: CGFloat = 10, blocks: [NSTextBlock] = []) -> NSMutableParagraphStyle {
         let style = NSMutableParagraphStyle()
@@ -227,20 +387,34 @@ private struct MarkdownBuilder {
                 result.append(NSAttributedString(string: "\u{2028}", attributes: [.paragraphStyle: style]))
                 continue
             }
-            if let src = run.image {
+            if let src = run.image(dark: dark) {
                 if let picture = image(src) {
-                    // 列より広い絵は縮める（MarkdownView.fitAttachments）。
-                    result.append(NSAttributedString(attachment: FittingAttachment(image: picture)))
+                    // 列より広い絵は縮める（MarkdownView.fitAttachments）。リンクの中の絵（バッジなど）は押せる。
+                    let piece = NSMutableAttributedString(attachment: FittingAttachment(image: picture, width: run.width, height: run.height))
+                    var attributes: [NSAttributedString.Key: Any] = [.paragraphStyle: style]
+                    if let link = run.link { attributes[.link] = link }
+                    if !run.text.isEmpty { attributes[.toolTip] = run.text }
+                    piece.addAttributes(attributes, range: NSRange(location: 0, length: piece.length))
+                    result.append(piece)
                 } else {
                     // 読めない画像（外の URL など）は代わりの文。
-                    result.append(NSAttributedString(string: "[\(run.text.isEmpty ? src : run.text)]", attributes: [
+                    var attributes: [NSAttributedString.Key: Any] = [
                         .font: NSFont.systemFont(ofSize: size), .foregroundColor: NSColor.secondaryLabelColor, .paragraphStyle: style,
-                    ]))
+                    ]
+                    if let link = run.link { attributes[.link] = link }
+                    result.append(NSAttributedString(string: "[\(run.text.isEmpty ? src : run.text)]", attributes: attributes))
                 }
                 continue
             }
-            var font: NSFont = run.code == true || run.html == true
-                ? .monospacedSystemFont(ofSize: size - 1.5, weight: .regular) : .systemFont(ofSize: size)
+            if run.kbd == true {
+                result.append(keyCap(run.text, size: size, style: style, link: run.link))
+                continue
+            }
+            // 下付き・上付きは小さく。
+            let small = run.sub == true || run.sup == true
+            let fontSize = small ? size * 0.75 : size
+            var font: NSFont = run.code == true
+                ? .monospacedSystemFont(ofSize: fontSize - 1.5, weight: .regular) : .systemFont(ofSize: fontSize)
             var traits: NSFontDescriptor.SymbolicTraits = []
             if bold || run.bold == true { traits.insert(.bold) }
             if run.italic == true { traits.insert(.italic) }
@@ -249,9 +423,14 @@ private struct MarkdownBuilder {
             }
             var attributes: [NSAttributedString.Key: Any] = [.font: font, .foregroundColor: NSColor.labelColor, .paragraphStyle: style]
             if run.code == true { attributes[.backgroundColor] = NSColor.quaternaryLabelColor.withAlphaComponent(0.18) }
-            if run.html == true { attributes[.foregroundColor] = NSColor.secondaryLabelColor }
             if run.strike == true { attributes[.strikethroughStyle] = NSUnderlineStyle.single.rawValue }
-            if let link = run.link { attributes[.link] = link }
+            if run.underline == true { attributes[.underlineStyle] = NSUnderlineStyle.single.rawValue }
+            if run.sub == true { attributes[.baselineOffset] = -size * 0.2 }
+            if run.sup == true { attributes[.baselineOffset] = size * 0.35 }
+            if let link = run.link {
+                attributes[.link] = link
+                attributes[.foregroundColor] = NSColor.linkColor
+            }
             if run.customEmoji != nil {
                 // GitHub 独自の絵文字は画像を持たないので、名前を薄い札で見せる。
                 attributes[.font] = NSFont.systemFont(ofSize: size - 2)
@@ -290,14 +469,16 @@ private struct MarkdownBuilder {
     mutating func add(_ blocks: [MarkdownBlock], depth: Int, outer: [NSTextBlock] = [], indent: CGFloat = 0) {
         for block in blocks {
             switch block {
-            case .heading(let level, let content):
+            case .heading(let level, let content, let align):
                 let sizes: [CGFloat] = [26, 21, 17, 15, 14, 13]
                 let style = paragraph(indent: indent, spacing: level <= 2 ? 12 : 8, blocks: outer)
+                style.alignment = Self.alignment(align)
                 style.paragraphSpacingBefore = out.length == 0 ? 0 : 10
                 out.append(runs(content, size: sizes[min(max(level, 1), 6) - 1], bold: true, style: style))
                 out.append(newline(style))
-            case .paragraph(let content):
+            case .paragraph(let content, let align):
                 let style = paragraph(indent: indent, blocks: outer)
+                style.alignment = Self.alignment(align)
                 out.append(runs(content, size: bodySize, style: style))
                 out.append(newline(style))
             case .code(let language, let code):
@@ -429,13 +610,55 @@ private struct MarkdownBuilder {
                 let style = paragraph(spacing: 12, blocks: outer + [line])
                 out.append(NSAttributedString(string: " ", attributes: [.paragraphStyle: style, .font: NSFont.systemFont(ofSize: 4)]))
                 out.append(newline(style))
-            case .html(let html):
-                let style = paragraph(indent: indent, blocks: outer)
-                out.append(NSAttributedString(string: html, attributes: [
-                    .font: NSFont.monospacedSystemFont(ofSize: 12, weight: .regular), .foregroundColor: NSColor.secondaryLabelColor,
-                    .paragraphStyle: style,
-                ]))
+            case .details(let summary, _, let inner):
+                let index = detailsIndex
+                detailsIndex += 1
+                let isOpen = openDetails.contains(index)
+                let style = paragraph(indent: indent, spacing: isOpen ? 6 : 10, blocks: outer)
+                // 開閉の三角と見出し。押すと開く・閉じる（見出しの中のリンクはそのまま）。
+                let line = NSMutableAttributedString(string: (isOpen ? "▼" : "▶") + "\u{2009}\u{2009}", attributes: [
+                    .font: NSFont.systemFont(ofSize: bodySize * 0.7), .foregroundColor: NSColor.secondaryLabelColor,
+                    .paragraphStyle: style, .baselineOffset: 1.5,
+                ])
+                line.append(summary.isEmpty
+                    ? NSAttributedString(string: Self.detailsTitle, attributes: [
+                        .font: NSFont.systemFont(ofSize: bodySize), .foregroundColor: NSColor.labelColor, .paragraphStyle: style,
+                    ])
+                    : runs(summary, size: bodySize, style: style))
+                let whole = NSRange(location: 0, length: line.length)
+                line.enumerateAttribute(.link, in: whole) { value, range, _ in
+                    if value == nil { line.addAttribute(.link, value: "\(Self.detailsLink)\(index)", range: range) }
+                }
+                out.append(line)
                 out.append(newline(style))
+                if isOpen {
+                    add(inner, depth: depth, outer: outer, indent: indent)
+                } else {
+                    detailsIndex += Self.countDetails(inner)
+                }
+            case .htmlTable(let columns, _, let cells):
+                let table = NSTextTable()
+                table.numberOfColumns = max(columns, 1)
+                table.setValue(100, type: .percentageValueType, for: .width)
+                table.collapsesBorders = true
+                table.hidesEmptyCells = false
+                for cell in cells {
+                    let block = NSTextTableBlock(
+                        table: table, startingRow: cell.row, rowSpan: max(cell.rowspan, 1), startingColumn: cell.column,
+                        columnSpan: max(cell.colspan, 1))
+                    block.setWidth(1, type: .absoluteValueType, for: .border)
+                    block.setBorderColor(NSColor.separatorColor)
+                    block.setWidth(6, type: .absoluteValueType, for: .padding)
+                    let header = cell.header == true
+                    if header { block.backgroundColor = NSColor.quaternaryLabelColor.withAlphaComponent(0.12) }
+                    let style = paragraph(spacing: 0, blocks: outer + [block])
+                    // 見出しのマスは、決めなければ中央（ブラウザの既定）。
+                    style.alignment = cell.align == nil && header ? .center : Self.alignment(cell.align)
+                    out.append(runs(cell.runs, size: bodySize - 1, bold: header, style: style))
+                    out.append(newline(style))
+                }
+                let after = paragraph(spacing: 10, blocks: outer)
+                out.append(NSAttributedString(string: "\n", attributes: [.paragraphStyle: after, .font: NSFont.systemFont(ofSize: 4)]))
             case .footnote(let label, let inner):
                 let style = paragraph(indent: indent, spacing: 2, blocks: outer)
                 out.append(NSAttributedString(string: "[\(label)]", attributes: [

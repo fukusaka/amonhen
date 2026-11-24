@@ -1200,65 +1200,104 @@ pub fn layout(
             0.0
         }
     };
-    let mut open_room = vec![0f64; rank_count];
-    let mut close_room = vec![0f64; rank_count];
-    for c in 0..k {
-        let (lo, hi) = crange[c];
-        if lo == usize::MAX {
-            continue;
+    // 同じランクの辺のラベルの分をランクの上に空ける（隣どうしの線のラベルはノードの上半分からはみ出る分、
+    // 間を越える弧のラベルは弧の上がりとラベルの高さ）
+    let mut flat_up = vec![0f64; rank_count];
+    for (ei, e) in input_edges.iter().enumerate() {
+        if let (Route::Flat { adjacent, .. }, Some((_, lh))) = (&routes[ei], e.label)
+            && e.tail != e.head
+        {
+            let r = nodes[e.tail].rank;
+            let room = if *adjacent {
+                (lh + 2.0 - rank_h[r] / 2.0).max(0.0)
+            } else {
+                lh + 20.0
+            };
+            flat_up[r] = flat_up[r].max(room);
         }
-        // c から上のクラスタのうち、同じランクで開く（閉じる）ものの分を足す
-        let mut room_open = 0.0;
-        let mut room_close = 0.0;
-        let mut p = Some(c);
-        while let Some(pi) = p {
-            if crange[pi].0 == lo {
-                room_open += clusters[pi].margin + top_label(pi);
-            }
-            if crange[pi].1 == hi {
-                room_close += clusters[pi].margin + bottom_label(pi);
-            }
-            p = parent[pi];
-        }
-        open_room[lo] = open_room[lo].max(room_open);
-        close_room[hi] = close_room[hi].max(room_close);
     }
+    // 題が横（LR・RL の絵の上下）のクラスタは、題の長さ（配置の縦）より箱が短ければ、両端のランクの外に場所を
+    // 足して箱を伸ばす（中のクラスタから。伸ばすとランクの間が開くので、収まるまで数回やり直す）
+    let mut stretch = vec![0f64; k];
     let mut rank_y = vec![0f64; rank_count];
-    let mut y =
-        open_room.first().copied().unwrap_or(0.0) + rank_h.first().copied().unwrap_or(0.0) / 2.0;
-    for r in 0..rank_count {
-        if r > 0 {
-            y +=
-                rank_h[r - 1] / 2.0 + base_gap + close_room[r - 1] + open_room[r] + rank_h[r] / 2.0;
-        }
-        rank_y[r] = y;
-    }
-    let mut height =
-        y + rank_h.last().copied().unwrap_or(0.0) / 2.0 + close_room.last().copied().unwrap_or(0.0);
-
-    // クラスタの箱（内から）
+    let mut height = 0.0;
     let mut boxes: Vec<Option<[f64; 4]>> = vec![None; k];
     let mut order: Vec<usize> = (0..k).collect();
     order.sort_by_key(|&c| std::cmp::Reverse(depth[c]));
-    let mut ys: Vec<(f64, f64)> = vec![(f64::MAX, f64::MIN); k];
-    for v in &nodes {
-        if let Some(c) = v.cluster {
-            let cy = rank_y[v.rank];
-            ys[c].0 = ys[c].0.min(cy - v.h / 2.0);
-            ys[c].1 = ys[c].1.max(cy + v.h / 2.0);
+    for _ in 0..4 {
+        let mut open_room = vec![0f64; rank_count];
+        let mut close_room = vec![0f64; rank_count];
+        for c in 0..k {
+            let (lo, hi) = crange[c];
+            if lo == usize::MAX {
+                continue;
+            }
+            // c から上のクラスタのうち、同じランクで開く（閉じる）ものの分を足す
+            let mut room_open = 0.0;
+            let mut room_close = 0.0;
+            let mut p = Some(c);
+            while let Some(pi) = p {
+                if crange[pi].0 == lo {
+                    room_open += clusters[pi].margin + top_label(pi) + stretch[pi];
+                }
+                if crange[pi].1 == hi {
+                    room_close += clusters[pi].margin + bottom_label(pi) + stretch[pi];
+                }
+                p = parent[pi];
+            }
+            open_room[lo] = open_room[lo].max(room_open);
+            close_room[hi] = close_room[hi].max(room_close);
         }
-    }
-    for &c in &order {
-        if crange[c].0 == usize::MAX {
-            continue;
+        let mut y = open_room.first().copied().unwrap_or(0.0)
+            + flat_up.first().copied().unwrap_or(0.0)
+            + rank_h.first().copied().unwrap_or(0.0) / 2.0;
+        for r in 0..rank_count {
+            if r > 0 {
+                y += rank_h[r - 1] / 2.0
+                    + base_gap
+                    + close_room[r - 1]
+                    + open_room[r]
+                    + flat_up[r]
+                    + rank_h[r] / 2.0;
+            }
+            rank_y[r] = y;
         }
-        let (t, b) = ys[c];
-        let top = t - clusters[c].margin - top_label(c);
-        let bottom = b + clusters[c].margin + bottom_label(c);
-        boxes[c] = Some([cl[c], top, cr[c], bottom]);
-        if let Some(p) = parent[c] {
-            ys[p].0 = ys[p].0.min(top);
-            ys[p].1 = ys[p].1.max(bottom);
+        height = y
+            + rank_h.last().copied().unwrap_or(0.0) / 2.0
+            + close_room.last().copied().unwrap_or(0.0);
+
+        // クラスタの箱（内から）
+        let mut ys: Vec<(f64, f64)> = vec![(f64::MAX, f64::MIN); k];
+        for v in &nodes {
+            if let Some(c) = v.cluster {
+                let cy = rank_y[v.rank];
+                ys[c].0 = ys[c].0.min(cy - v.h / 2.0);
+                ys[c].1 = ys[c].1.max(cy + v.h / 2.0);
+            }
+        }
+        let mut short = false;
+        for &c in &order {
+            if crange[c].0 == usize::MAX {
+                continue;
+            }
+            let (t, b) = ys[c];
+            let top = t - clusters[c].margin - top_label(c) - stretch[c];
+            let bottom = b + clusters[c].margin + bottom_label(c) + stretch[c];
+            boxes[c] = Some([cl[c], top, cr[c], bottom]);
+            if let Some(p) = parent[c] {
+                ys[p].0 = ys[p].0.min(top);
+                ys[p].1 = ys[p].1.max(bottom);
+            }
+            if matches!(clusters[c].side, LabelSide::Left | LabelSide::Right) {
+                let lack = clusters[c].label.1 - (bottom - top);
+                if lack > 0.5 {
+                    stretch[c] += lack / 2.0;
+                    short = true;
+                }
+            }
+        }
+        if !short {
+            break;
         }
     }
 

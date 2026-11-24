@@ -510,6 +510,58 @@
         "enablement": "amonhen.hasRepository"
       },
       {
+        "command": "amonhen.commit",
+        "title": "Commit",
+        "category": "Amon Hen"
+      },
+      {
+        "command": "amonhen.commitAndPush",
+        "title": "Commit and Push",
+        "category": "Amon Hen"
+      },
+      {
+        "command": "amonhen.stageAll",
+        "title": "Stage All",
+        "category": "Amon Hen"
+      },
+      {
+        "command": "amonhen.setUpstream",
+        "title": "Set Upstream…",
+        "category": "Amon Hen"
+      },
+      {
+        "command": "amonhen.rebase",
+        "title": "Rebase…",
+        "category": "Amon Hen"
+      },
+      {
+        "command": "amonhen.history.goToHead",
+        "title": "Go to HEAD",
+        "category": "Amon Hen"
+      },
+      {
+        "command": "amonhen.history.find",
+        "title": "Find in History…",
+        "command": "amonhen.details.copyShortId",
+        "title": "Copy Short ID",
+        "category": "Amon Hen"
+      },
+      {
+        "command": "amonhen.details.copySubject",
+        "title": "Copy Subject",
+        "category": "Amon Hen"
+      },
+      {
+        "command": "amonhen.details.copyMessage",
+        "title": "Copy Message",
+        "category": "Amon Hen"
+      },
+      {
+        "command": "amonhen.details.copyShowCommand",
+        "title": "Copy git show Command",
+        "category": "Amon Hen"
+      },
+      {
         "command": "amonhen.mergeBranches",
         "title": "Merge Branches…",
         "category": "Amon Hen",
@@ -1147,7 +1199,7 @@
         },
         {
           "command": "amonhen.skipSequence",
-          "when": "view == amonhen.sidebar && viewItem =~ /^sequence\\.(rebase|cherry-pick|revert|am)/",
+          "when": "view == amonhen.sidebar && viewItem =~ /^sequence\\.(rebase|cherry-pick|am)/",
           "group": "inline@2"
         },
         {
@@ -1423,6 +1475,50 @@
         },
         {
           "command": "amonhen.history.copyId",
+          "when": "false"
+        },
+        {
+          "command": "amonhen.commit",
+          "when": "amonhen.hasRepository"
+        },
+        {
+          "command": "amonhen.commitAndPush",
+          "when": "amonhen.hasRepository"
+        },
+        {
+          "command": "amonhen.stageAll",
+          "when": "amonhen.hasRepository"
+        },
+        {
+          "command": "amonhen.setUpstream",
+          "when": "amonhen.hasRepository"
+        },
+        {
+          "command": "amonhen.rebase",
+          "when": "amonhen.hasRepository"
+        },
+        {
+          "command": "amonhen.history.goToHead",
+          "when": "amonhen.hasRepository"
+        },
+        {
+          "command": "amonhen.history.find",
+          "when": "amonhen.hasRepository"
+        },
+        {
+          "command": "amonhen.details.copyShortId",
+          "when": "false"
+        },
+        {
+          "command": "amonhen.details.copySubject",
+          "when": "false"
+        },
+        {
+          "command": "amonhen.details.copyMessage",
+          "when": "false"
+        },
+        {
+          "command": "amonhen.details.copyShowCommand",
           "when": "false"
         },
         {
@@ -1950,8 +2046,33 @@
         },
         {
           "command": "amonhen.history.copyId",
-          "when": "webviewId == 'amonhen.main' && (webviewSection == 'commit' || webviewSection == 'reflog' || webviewSection == 'fileHistory' || webviewSection == 'blame')",
+          "when": "webviewId == 'amonhen.main' && (webviewSection == 'commit' || webviewSection == 'reflog' || webviewSection == 'fileHistory' || webviewSection == 'blame' || webviewSection == 'commitDetails')",
           "group": "9_copy@1"
+        },
+        {
+          "command": "amonhen.details.copyShortId",
+          "when": "webviewId == 'amonhen.main' && webviewSection == 'commitDetails'",
+          "group": "9_copy@2"
+        },
+        {
+          "command": "amonhen.details.copySubject",
+          "when": "webviewId == 'amonhen.main' && webviewSection == 'commitDetails'",
+          "group": "9_copy@3"
+        },
+        {
+          "command": "amonhen.details.copyMessage",
+          "when": "webviewId == 'amonhen.main' && webviewSection == 'commitDetails'",
+          "group": "9_copy@4"
+        },
+        {
+          "command": "amonhen.details.copyShowCommand",
+          "when": "webviewId == 'amonhen.main' && webviewSection == 'commitDetails'",
+          "group": "9_copy@5"
+        },
+        {
+          "command": "amonhen.history.reword",
+          "when": "webviewId == 'amonhen.main' && webviewSection == 'commitDetails' && commitEditable",
+          "group": "1_message@1"
         },
         {
           "command": "amonhen.newBranch",

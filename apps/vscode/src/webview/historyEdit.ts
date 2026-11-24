@@ -4,6 +4,7 @@
  * 変わらず、まとめて 1 回の rebase（コアの `plan`）で行う。Undo 1 回で全部戻る
  */
 import {
+  applyPreset,
   ACTION_TITLES,
   ACTION_TOOLTIPS,
   canReorder,
@@ -252,13 +253,14 @@ export function createEditMode(onClose: () => void, onSelect: (oid: string) => v
     }
   });
 
-  // ドラッグで並べ替える（merge がなければ）
+  // ドラッグで並べ替える（merge がなければ）。行の真ん中に落とすと、その行の上へ動かしてまとめる（squash。アプリと同じ）
   const clearDrop = () => {
-    for (const item of list.querySelectorAll('.drop-above, .drop-below')) item.classList.remove('drop-above', 'drop-below');
+    for (const item of list.querySelectorAll('.drop-above, .drop-below, .drop-on')) item.classList.remove('drop-above', 'drop-below', 'drop-on');
   };
-  const upper = (e: DragEvent, item: HTMLElement) => {
+  const zone = (e: DragEvent, item: HTMLElement): 'above' | 'on' | 'below' => {
     const rect = item.getBoundingClientRect();
-    return e.clientY < rect.top + rect.height / 2;
+    const y = (e.clientY - rect.top) / rect.height;
+    return y < 0.25 ? 'above' : y > 0.75 ? 'below' : 'on';
   };
   list.addEventListener('dragstart', (e) => {
     dragging = indexOf(e);
@@ -274,7 +276,7 @@ export function createEditMode(onClose: () => void, onSelect: (oid: string) => v
     if (dragging === undefined || !item) return;
     e.preventDefault();
     clearDrop();
-    item.classList.add(upper(e, item) ? 'drop-above' : 'drop-below');
+    item.classList.add(`drop-${zone(e, item)}`);
   });
   list.addEventListener('dragleave', clearDrop);
   list.addEventListener('drop', (e) => {
@@ -283,9 +285,18 @@ export function createEditMode(onClose: () => void, onSelect: (oid: string) => v
     clearDrop();
     if (dragging === undefined || !item) return;
     const target = Number(item.dataset.index);
-    const to = upper(e, item) ? target : target + 1;
+    const where = zone(e, item);
     const from = dragging;
     dragging = undefined;
+    if (where === 'on') {
+      if (target === from) return;
+      const oid = rows[from]!.oid;
+      rows = applyPreset(rows, { kind: 'squashOnto', oid, onto: rows[target]!.oid }).rows;
+      selected = rows.findIndex((r) => r.oid === oid);
+      update();
+      return;
+    }
+    const to = where === 'above' ? target : target + 1;
     if (to === from || to === from + 1) return;
     rows = moveRow(rows, from, to);
     selected = from < to ? to - 1 : to;

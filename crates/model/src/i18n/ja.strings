@@ -2421,6 +2421,7 @@
 "GitHub alert: Important" = "重要";
 "GitHub alert: Warning" = "警告";
 "GitHub alert: Caution" = "注意";
+"HTML details: Details" = "詳細情報";
 "This is a merge: the changes below are against its first parent ({id})." = "merge のコミット: 下の変更は最初の親（{id}）との差分。";
 "Fit Height Automatically" = "高さを自動で決める";
 "Size the commit details to each message. Dragging the divider keeps its position instead." = "コミット情報の高さを、メッセージごとに自動で決める。仕切りを動かすと、代わりにその高さを保つ。";
@@ -2497,7 +2498,7 @@
 "What {name} reports" = "{name} の報告";
 "This diagram couldn’t be drawn" = "この図は描けませんでした";
 "This picture is an approximation: {reasons}." = "この絵は近いもので描いています（{reasons}）。";
-"images are drawn as empty frames" = "画像は空の枠";
+"images that can’t be read are drawn as empty frames" = "読めない画像は空の枠";
 "unknown shapes are drawn as boxes" = "知らない形は箱";
 "orthogonal edges are drawn as polylines" = "直角の線（ortho）は折れ線";
 "unknown colors are drawn in the default color" = "読めない色は既定の色";

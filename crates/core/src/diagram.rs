@@ -42,14 +42,109 @@ pub fn draw(language: &str, text: &str) -> Option<Drawn> {
 
 /// `draw` の、gantt の日付をこの時間帯の地方時で数えるもの（None は UTC）。
 pub fn draw_in_zone(language: &str, text: &str, zone: Option<Arc<dyn TimeZone>>) -> Option<Drawn> {
+    draw_with(language, text, zone, None)
+}
+
+/// `draw_in_zone` の、DOT の図の画像（ノードの `image`・表の `<IMG>`）を `images` から読むもの。
+pub fn draw_with(
+    language: &str,
+    text: &str,
+    zone: Option<Arc<dyn TimeZone>>,
+    images: Option<&ImageSource>,
+) -> Option<Drawn> {
     if language.eq_ignore_ascii_case("mermaid") {
         return draw_mermaid(text, zone);
     }
     // dot・graphviz・gv は `layout` の属性で配置を選ぶ。neato などの名前のフェンスはその配置が既定
     if DOT_FENCES.iter().any(|l| language.eq_ignore_ascii_case(l)) {
-        return draw_dot(text, language);
+        return draw_dot(text, language, images);
     }
     None
+}
+
+/// Markdown のファイルの図が読む画像の出どころ: そのファイルのパス（リポジトリの根から、`docs/README.md`）と、
+/// リポジトリの根からのパスで、そのファイルと同じコミットの中身を読む読み手。読めなければ None。図の中の画像は
+/// `resolve_image` の決まりでパスにしてから読む（外へは読みに行かない）。
+#[derive(Clone)]
+pub struct ImageSource {
+    pub from: String,
+    pub read: Arc<ReadFile>,
+}
+
+/// リポジトリの根からのパスで、ファイルの中身を読む（読めなければ None）。
+pub type ReadFile = dyn Fn(&str) -> Option<Vec<u8>> + Send + Sync;
+
+impl ImageSource {
+    /// 1 つの Markdown のファイルで読むバイト数・回数の上限をつけたもの（図ごとの上限は `amonhen-dot`）。
+    pub(crate) fn bounded(&self) -> ImageSource {
+        use std::sync::atomic::{AtomicUsize, Ordering};
+        let read = self.read.clone();
+        let bytes = Arc::new(AtomicUsize::new(0));
+        let count = Arc::new(AtomicUsize::new(0));
+        ImageSource {
+            from: self.from.clone(),
+            read: Arc::new(move |path: &str| {
+                if count.fetch_add(1, Ordering::Relaxed) >= MAX_FILE_IMAGES
+                    || bytes.load(Ordering::Relaxed) >= MAX_FILE_IMAGE_BYTES
+                {
+                    return None;
+                }
+                let data = read(path)?;
+                bytes.fetch_add(data.len(), Ordering::Relaxed);
+                Some(data)
+            }),
+        }
+    }
+}
+
+/// 図に描く画像 1 枚のバイト数の上限（これより大きいものは読み手が渡さなくてよい）。
+pub const MAX_IMAGE_BYTES: usize = 1024 * 1024;
+#[cfg(feature = "diagrams")]
+const _: () = assert!(MAX_IMAGE_BYTES == amonhen_dot::image::MAX_BYTES);
+
+/// 1 つの Markdown のファイルの図が読む画像の回数とバイト数の上限。
+const MAX_FILE_IMAGES: usize = 128;
+const MAX_FILE_IMAGE_BYTES: usize = 16 * 1024 * 1024;
+
+/// 図の中の画像のパス `src`（`img/a.png`）を、Markdown のファイル `from`（リポジトリの根から）のフォルダからの
+/// 相対パスとして、リポジトリの根からのパスにする。読まないもの: 空・URL（`https://`・`file:`・`data:` など
+/// 名前と `:` で始まるもの、Windows のドライブも）・絶対パス（`/`・`\`）・`\` を含むもの・根より上（`..` で
+/// 出るもの）・制御文字を含むもの。
+pub fn resolve_image(src: &str, from: &str) -> Option<String> {
+    let src = src.trim();
+    if src.is_empty()
+        || src.starts_with('/')
+        || src.contains('\\')
+        || src.chars().any(char::is_control)
+    {
+        return None;
+    }
+    // `名前:` で始まるもの（URL の scheme・ドライブ）
+    if let Some(i) = src.find(':') {
+        let scheme = &src[..i];
+        if !scheme.is_empty()
+            && scheme.starts_with(|c: char| c.is_ascii_alphabetic())
+            && scheme
+                .chars()
+                .all(|c| c.is_ascii_alphanumeric() || matches!(c, '+' | '-' | '.'))
+        {
+            return None;
+        }
+    }
+    let mut parts: Vec<&str> = match from.rsplit_once('/') {
+        Some((dir, _)) => dir.split('/').filter(|p| !p.is_empty()).collect(),
+        None => Vec::new(),
+    };
+    for part in src.split('/') {
+        match part {
+            "" | "." => {}
+            ".." => {
+                parts.pop()?;
+            }
+            _ => parts.push(part),
+        }
+    }
+    (!parts.is_empty()).then(|| parts.join("/"))
 }
 
 /// Graphviz の DOT として描くフェンスの言葉。
@@ -68,14 +163,27 @@ const DOT_FENCES: &[&str] = &[
 
 /// Graphviz の DOT の図。Mermaid と同じく大きなスタックの別スレッドで描き、panic は図の誤りにする。
 #[cfg(feature = "diagrams")]
-fn draw_dot(text: &str, language: &str) -> Option<Drawn> {
+fn draw_dot(text: &str, language: &str, images: Option<&ImageSource>) -> Option<Drawn> {
     let source = text.to_owned();
     let engine = amonhen_dot::engines::Engine::from_name(language)
         .unwrap_or(amonhen_dot::engines::Engine::Dot);
+    let images = images.cloned();
     let drawn = std::thread::Builder::new()
         .name("dot".into())
         .stack_size(PELE_STACK)
-        .spawn(move || amonhen_dot::render_with(&source, engine))
+        .spawn(move || {
+            let loader = images.map(|images| {
+                move |src: &str| {
+                    let path = resolve_image(src, &images.from)?;
+                    (images.read)(&path)
+                }
+            });
+            amonhen_dot::render_with_images(
+                &source,
+                engine,
+                loader.as_ref().map(|l| l as &amonhen_dot::image::Loader),
+            )
+        })
         .ok()?
         .join();
     Some(match drawn {
@@ -87,7 +195,7 @@ fn draw_dot(text: &str, language: &str) -> Option<Drawn> {
 }
 
 #[cfg(not(feature = "diagrams"))]
-fn draw_dot(_text: &str, _language: &str) -> Option<Drawn> {
+fn draw_dot(_text: &str, _language: &str, _images: Option<&ImageSource>) -> Option<Drawn> {
     None
 }
 
@@ -98,7 +206,9 @@ fn approximation_note(notes: &[amonhen_dot::Note]) -> String {
     let reasons: Vec<String> = notes
         .iter()
         .map(|n| match n {
-            Note::Images => amonhen_model::tr!("images are drawn as empty frames"),
+            Note::Images => {
+                amonhen_model::tr!("images that can’t be read are drawn as empty frames")
+            }
             Note::UnknownShapes => amonhen_model::tr!("unknown shapes are drawn as boxes"),
             Note::Ortho => amonhen_model::tr!("orthogonal edges are drawn as polylines"),
             Note::UnknownColors => {
@@ -963,6 +1073,95 @@ mod tests {
             colored.contains("<linearGradient") && colored.contains("url(#"),
             "{colored}"
         );
+    }
+
+    #[test]
+    fn image_paths_stay_in_the_repository() {
+        let r = |src: &str, from: &str| resolve_image(src, from);
+        assert_eq!(
+            r("img/a.png", "docs/README.md").as_deref(),
+            Some("docs/img/a.png")
+        );
+        assert_eq!(r("./a.png", "README.md").as_deref(), Some("a.png"));
+        assert_eq!(
+            r("../x/a.png", "docs/README.md").as_deref(),
+            Some("x/a.png")
+        );
+        assert_eq!(r("a//b/./c.svg", "README.md").as_deref(), Some("a/b/c.svg"));
+        // 根より上・絶対パス・URL・ドライブ・\\・制御文字・空
+        assert_eq!(r("../a.png", "README.md"), None);
+        assert_eq!(r("docs/../../a.png", "README.md"), None);
+        assert_eq!(r("/etc/passwd", "README.md"), None);
+        assert_eq!(r("https://example.com/a.png", "README.md"), None);
+        assert_eq!(r("file:a.png", "README.md"), None);
+        assert_eq!(r("data:image/png;base64,AAAA", "README.md"), None);
+        assert_eq!(r("C:/a.png", "README.md"), None);
+        assert_eq!(r("img\\a.png", "README.md"), None);
+        assert_eq!(r("a\npng", "README.md"), None);
+        assert_eq!(r("  ", "README.md"), None);
+        assert_eq!(r(".", "README.md"), None);
+        // `:` が名前の後でなければパス
+        assert_eq!(
+            r("img/a:b.png", "README.md").as_deref(),
+            Some("img/a:b.png")
+        );
+    }
+
+    #[cfg(feature = "diagrams")]
+    #[test]
+    fn dot_images_come_from_the_markdown_files_commit() {
+        // 2×1 画素の PNG（頭だけ）
+        let mut png = b"\x89PNG\r\n\x1a\n\0\0\0\x0dIHDR".to_vec();
+        png.extend_from_slice(&2u32.to_be_bytes());
+        png.extend_from_slice(&1u32.to_be_bytes());
+        let asked = Arc::new(std::sync::Mutex::new(Vec::<String>::new()));
+        let seen = asked.clone();
+        let source = ImageSource {
+            from: "docs/README.md".into(),
+            read: Arc::new(move |path: &str| {
+                seen.lock().unwrap().push(path.to_owned());
+                (path == "docs/img/a.png").then(|| png.clone())
+            }),
+        };
+        let md = "```dot\ndigraph { a [image=\"img/a.png\", label=\"\"]; b [image=\"../../secret.png\"]; c [image=\"/abs.png\"] }\n```\n";
+        let blocks = crate::markdown::parse_with_images(md, None, None, Some(source.clone()));
+        let crate::markdown::Block::Diagram {
+            svg: Some(svg),
+            note: Some(note),
+            ..
+        } = &blocks[0]
+        else {
+            panic!("{blocks:?}");
+        };
+        // 根より上・絶対パスは読み手に渡さない
+        assert_eq!(*asked.lock().unwrap(), ["docs/img/a.png"]);
+        assert!(note.contains("images"), "{note}");
+        assert!(
+            svg.contains("href=\"data:image/png;base64,iVBORw0KGgo"),
+            "{svg}"
+        );
+        // 色を当てても残り、CoreSVG 向けには xlink:href も書く
+        let vars = palette(Scheme::Pele, false, &theme());
+        let colored = colorize(svg, &vars, false).unwrap();
+        assert!(colored.contains("<image ") && colored.contains("href=\"data:image/png"));
+        let core = colorize_for_coresvg(svg, &vars, false).unwrap();
+        assert!(core.contains("xlink:href=\"data:image/png"), "{core}");
+        // 読めれば注記はない。読み手がなければ今までどおり枠と注記
+        let ok = "```dot\ndigraph { a [image=\"img/a.png\"] }\n```\n";
+        let blocks = crate::markdown::parse_with_images(ok, None, None, Some(source));
+        assert!(matches!(
+            &blocks[0],
+            crate::markdown::Block::Diagram {
+                svg: Some(_),
+                note: None,
+                ..
+            }
+        ));
+        let blocks = crate::markdown::parse_in_zone(ok, None, None);
+        assert!(matches!(
+            &blocks[0],
+            crate::markdown::Block::Diagram { note: Some(_), .. }
+        ));
     }
 
     #[cfg(feature = "diagrams")]

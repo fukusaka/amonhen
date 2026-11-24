@@ -296,4 +296,10 @@ left out for now: VSCode has its own extensions and settings for them.
 - [x] 72. History's details: All Files (the tree at the commit and a file's contents with the commit's lines marked; zoomable images, SVG picture and mobile check, formatted Markdown, other binaries in the editor), with the engine
 - [x] 73. Wrap long lines (`amonhen.wrapLongLines`, Alt+Z, the ↩︎ above the diff), keep the dragged height of the commit details, and GitHub's image-only emoji as dim chips in Markdown
 - [x] 74. Ignore whitespace in the Working Copy diff (with the engine; lines and hunks aren't staged or discarded meanwhile)
+- [x] 75. The app menus' Commit, Commit and Push, Stage All, Set Upstream…, Rebase…, Go to HEAD and Find in History… as commands; Merge Branches… and Rebase… offer the commit selected in History
+- [x] 76. The commit details' right-click (copy the ID, short ID, subject, message or git show command; Edit Message…) and names that search History by that person
+- [x] 77. The commit message's URLs and commit IDs as links, trailers listed apart, git notes (with the engine) and History's search terms marked
 - [x] 78. Tag and Merged Tag rows in the commit details (tagger, subject and signature), the merged commits' count, and the signature's format and fingerprint
+- [x] 79. Fold or show any merge on its own (context menu, ←/→), Fold All / Show All Merged Commits, kept per repository in the file the apps and the TUI use
+- [x] 80. Drop a commit on another in History or the edit mode to squash it into that one (the edit mode opens with it moved above and marked squash)
+- [x] 82. The in-progress row says what is being done where and the step, and why it stopped with what to do next (with the engine), as the app's band; no Skip for a revert

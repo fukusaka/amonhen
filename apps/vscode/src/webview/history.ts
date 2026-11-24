@@ -11,6 +11,7 @@ import type { HostMessage } from '../view/protocol.ts';
 import { scopeRefs, scopeTitle } from '../history/scope.ts';
 import { el, formatDate, post, type View } from './api.ts';
 import { attachSplitter, createDetailsPane } from './details.ts';
+import { highlightTerms } from '../history/messageParts.ts';
 import { createEditMode } from './historyEdit.ts';
 import { openMessageEditor } from './messageEditor.ts';
 import { signatureMark } from './signature.ts';
@@ -148,10 +149,25 @@ export function createHistoryView(): View {
   list.append(spacer);
   const splitter = el('div', 'splitter');
   splitter.setAttribute('role', 'separator');
-  const details = createDetailsPane((oid) => {
-    const index = rows.findIndex((r) => r?.oid === oid);
-    if (index >= 0) select(index, true);
-  }, true);
+  const details = createDetailsPane(
+    (oid) => {
+      // 本文の短い ID も（読んである行のうち、その ID で始まるもの）
+      const index = rows.findIndex((r) => r?.oid.startsWith(oid));
+      if (index >= 0) select(index, true);
+    },
+    true,
+    {
+      // 検索の語を件名・本文で強調する（アプリと同じ）
+      highlight: () => (submitted ? highlightTerms(submitted) : []),
+      // 見出しの右クリックの Edit Message… は、行と同じく編集できるコミットだけ
+      context: (oid) => ({ commitEditable: rows.find((r) => r?.oid === oid)?.editable === true }),
+      // 名前を押すと、その人のコミットを探す（アプリと同じ author: の検索）
+      onPerson: (name) => {
+        searchInput.value = `author:"${name.replaceAll('"', '')}"`;
+        submitSearch(1);
+      },
+    },
+  );
   // 編集モード（開いている間は、一覧の代わりに出す）
   const editMode = createEditMode(
     () => {
@@ -625,6 +641,13 @@ export function createHistoryView(): View {
       } else {
         select(to, true);
       }
+    } else if ((e.key === 'ArrowLeft' || e.key === 'ArrowRight') && !e.altKey && !e.metaKey && !e.ctrlKey && !e.shiftKey && rows[selected]) {
+      // 選んだ merge を ← で畳み、→ で開く（ツリーの開閉と同じ。アプリと同じ）
+      const row = rows[selected]!;
+      if (e.key === 'ArrowLeft' ? row.expanded : row.hidden) {
+        e.preventDefault();
+        post({ type: 'toggleFold', oid: row.oid });
+      }
     } else if (e.key === 'Enter' && rows[selected]) {
       post({ type: 'open', oid: rows[selected]!.oid });
     } else if (e.key === 'F3' && searchState?.query) {
@@ -656,11 +679,12 @@ export function createHistoryView(): View {
     }
   });
 
-  // ドラッグでの並べ替え。編集できるコミットの上にだけ落とせる
+  // ドラッグでの並べ替え。編集できるコミットの上にだけ落とせる。行の真ん中に落とすと、そのコミットにまとめる
+  // （squash。アプリと同じ）
   let dragging: RowData | undefined;
   let dropTarget: HTMLElement | undefined;
   const clearDropTarget = () => {
-    dropTarget?.classList.remove('drop-above', 'drop-below');
+    dropTarget?.classList.remove('drop-above', 'drop-below', 'drop-on');
     dropTarget = undefined;
   };
   list.addEventListener('dragstart', (e) => {
@@ -682,10 +706,9 @@ export function createHistoryView(): View {
     }
     e.preventDefault();
     const el = (e.target as HTMLElement).closest<HTMLElement>('.row')!;
-    const above = isUpperHalf(e, el);
     clearDropTarget();
     dropTarget = el;
-    el.classList.add(above ? 'drop-above' : 'drop-below');
+    el.classList.add(`drop-${dropZone(e, el)}`);
   });
   list.addEventListener('dragleave', clearDropTarget);
   list.addEventListener('drop', (e) => {
@@ -697,9 +720,14 @@ export function createHistoryView(): View {
     if (!dragging || dragging.chain === undefined || target?.chain === undefined || !el) {
       return;
     }
-    // 上半分なら target の上（より新しい側）、下半分なら下に置く
-    const above = isUpperHalf(e, el);
-    let to = above ? target.chain : target.chain + 1;
+    const zone = dropZone(e, el);
+    if (zone === 'on') {
+      post({ type: 'squashOnto', oid: dragging.oid, onto: target.oid });
+      dragging = undefined;
+      return;
+    }
+    // 上の端なら target の上（より新しい側）、下の端なら下に置く
+    let to = zone === 'above' ? target.chain : target.chain + 1;
     // 自分より下に動かすときは、自分が抜けた分だけ詰まる
     if (to > dragging.chain) to -= 1;
     if (to !== dragging.chain) {
@@ -711,6 +739,13 @@ export function createHistoryView(): View {
     dragging = undefined;
     clearDropTarget();
   });
+
+  /** 行のどこに落とすか: 上と下の 4 分の 1 は行の間（並べ替え）、真ん中はその行に重ねる（squash） */
+  function dropZone(e: MouseEvent, el: HTMLElement): 'above' | 'on' | 'below' {
+    const rect = el.getBoundingClientRect();
+    const y = (e.clientY - rect.top) / rect.height;
+    return y < 0.25 ? 'above' : y > 0.75 ? 'below' : 'on';
+  }
 
   function isUpperHalf(e: MouseEvent, el: HTMLElement): boolean {
     const rect = el.getBoundingClientRect();
@@ -744,6 +779,10 @@ export function createHistoryView(): View {
         render();
         break;
       }
+      case 'focusSearch':
+        searchInput.focus();
+        searchInput.select();
+        break;
       case 'reset':
         lineage = null;
         lineageEdges = null;
