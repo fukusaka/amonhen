@@ -2968,3 +2968,9 @@ body.wrap-lines .line .code {
   background: var(--vscode-badge-background, rgba(128, 128, 128, 0.25));
   background: color-mix(in srgb, var(--vscode-descriptionForeground) 18%, transparent);
 }
+
+/* コミットを行に重ねて落とす（そのコミットにまとめる） */
+.row.drop-on,
+.edit-row.drop-on {
+  box-shadow: inset 0 0 0 2px var(--vscode-focusBorder);
+}

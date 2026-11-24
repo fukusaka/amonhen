@@ -1291,6 +1291,8 @@ First release.
   hunks aren't staged or discarded meanwhile.
 - The app menus' Commit, Commit and Push, Stage All, Set Upstream…, Rebase…, Go to HEAD and Find in History… are
   commands, so they can be bound to keys; Merge Branches… and Rebase… also offer the commit selected in History.
+- Dropping a commit on another in History or in the edit mode squashes it into that one: the edit mode opens with it
+  moved above that commit and marked squash (with the engine).
 
 #### Fixed
 
