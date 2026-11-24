@@ -2171,17 +2171,17 @@
         },
         {
           "command": "amonhen.blame",
-          "when": "webviewId == 'amonhen.main' && (webviewSection == 'commitFile' || webviewSection == 'wcFile' || webviewSection == 'fileHistory') && amonhen.engine",
+          "when": "webviewId == 'amonhen.main' && (webviewSection == 'commitFile' || (webviewSection == 'wcFile' && !wcMulti) || webviewSection == 'fileHistory') && amonhen.engine",
           "group": "1_file@2"
         },
         {
           "command": "amonhen.fileHistory.copyPath",
-          "when": "webviewId == 'amonhen.main' && (webviewSection == 'fileHistory' || webviewSection == 'commitFile' || webviewSection == 'wcFile')",
+          "when": "webviewId == 'amonhen.main' && (webviewSection == 'fileHistory' || webviewSection == 'commitFile' || (webviewSection == 'wcFile' && !wcMulti))",
           "group": "9_copy@2"
         },
         {
           "command": "amonhen.fileHistory",
-          "when": "webviewId == 'amonhen.main' && (webviewSection == 'commitFile' || webviewSection == 'wcFile' || webviewSection == 'blame') && amonhen.engine",
+          "when": "webviewId == 'amonhen.main' && (webviewSection == 'commitFile' || (webviewSection == 'wcFile' && !wcMulti) || webviewSection == 'blame') && amonhen.engine",
           "group": "1_file@1"
         },
         {
@@ -2226,7 +2226,7 @@
         },
         {
           "command": "amonhen.addToGitignore",
-          "when": "webviewId == 'amonhen.main' && webviewSection == 'wcFile' && wcUntracked && amonhen.engine",
+          "when": "webviewId == 'amonhen.main' && (webviewSection == 'wcFile' && !wcMulti) && wcUntracked && amonhen.engine",
           "group": "3_ignore@1"
         },
         {
@@ -2236,7 +2236,7 @@
         },
         {
           "command": "amonhen.forgetResolution",
-          "when": "webviewId == 'amonhen.main' && webviewSection == 'wcFile' && wcRerere && amonhen.engine",
+          "when": "webviewId == 'amonhen.main' && (webviewSection == 'wcFile' && !wcMulti) && wcRerere && amonhen.engine",
           "group": "2_conflict@1"
         },
         {

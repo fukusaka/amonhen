@@ -98,6 +98,16 @@ export function createWorkingCopyView(): View {
   let files: Change[] = [];
   let lastMessage = '';
   let selected: { group: ChangeGroup; path: string } | undefined;
+  /**
+   * いくつも選んだファイル（⌘・Ctrl クリックで足し引き、Shift で範囲。アプリと同じ）。1 つだけのときは selected だけ。
+   * 差分は最後に押したもの（selected）
+   */
+  let marked = new Set<string>();
+  let fileAnchor: string | undefined;
+  const fileKey = (f: { group: ChangeGroup; path: string }) => `${f.group}\0${f.path}`;
+  /** 操作の相手: いくつも選んでいて f がその中なら、選んだものすべて。でなければ f だけ */
+  const targetsOf = (f: Change): Change[] =>
+    marked.size > 1 && marked.has(fileKey(f)) ? listed.filter((x) => marked.has(fileKey(x))) : [f];
   let diff: FileDiff | undefined;
   /** diff のファイルが今あるグループ */
   let diffGroup: ChangeGroup | undefined;
@@ -196,11 +206,15 @@ export function createWorkingCopyView(): View {
     const row = el('div', 'wc-file');
     if (depth > 0) row.style.paddingLeft = `${12 + depth * 14}px`;
     if (selected?.group === f.group && selected.path === f.path) row.classList.add('selected');
+    const many = marked.size > 1 && marked.has(fileKey(f));
+    if (many) row.classList.add('marked');
     row.title = f.origPath ? `${f.origPath} → ${f.path}` : f.path;
     // Webview の右クリックメニュー（package.json の webview/context）に渡す情報
     row.dataset.vscodeContext = JSON.stringify({
       webviewSection: 'wcFile',
       path: f.path,
+      // いくつも選んでいれば、その中で使えるもの（Stash…）だけを、選んだものすべてに
+      ...(many ? { wcMulti: true, paths: [...new Set(targetsOf(f).map((x) => x.path))] } : {}),
       // コンフリクトのファイル（Stash… を出さない）
       ...(f.group === 'conflicts' ? { wcConflict: true } : {}),
       // まだ履歴のないファイル（.gitignore に足せる）
@@ -235,7 +249,7 @@ export function createWorkingCopyView(): View {
       button.title = f.group === 'staged' ? 'Unstage' : 'Stage';
       button.addEventListener('click', (e) => {
         e.stopPropagation();
-        stageFiles(op, [f]);
+        stageFiles(op, targetsOf(f).filter((x) => x.group === f.group));
       });
       row.append(button);
     }
@@ -244,19 +258,45 @@ export function createWorkingCopyView(): View {
       discard.title = 'Discard Changes';
       discard.addEventListener('click', (e) => {
         e.stopPropagation();
-        post({ type: 'wcDiscardFiles', paths: [f.path] });
+        post({ type: 'wcDiscardFiles', paths: targetsOf(f).filter((x) => x.group === 'unstaged').map((x) => x.path) });
       });
       row.insertBefore(discard, row.lastElementChild);
     }
-    row.addEventListener('click', () => select(f));
+    row.addEventListener('click', (e) => {
+      if (e.metaKey || e.ctrlKey) toggleMark(f);
+      else if (e.shiftKey) markRange(f);
+      else select(f);
+    });
     row.addEventListener('dblclick', () => post({ type: 'wcOpenFile', path: f.path }));
     return row;
   }
 
-  function select(f: Change): void {
+  function select(f: Change, keepMarks = false): void {
     selected = { group: f.group, path: f.path };
+    if (!keepMarks) {
+      marked = new Set([fileKey(f)]);
+      fileAnchor = fileKey(f);
+    }
     renderFiles();
     post({ type: 'wcSelect', group: f.group, path: f.path });
+  }
+
+  /** ⌘・Ctrl クリック: 選んだものに足す・外す（差分は押したもの） */
+  function toggleMark(f: Change): void {
+    const k = fileKey(f);
+    if (marked.has(k) && marked.size > 1) marked.delete(k);
+    else marked.add(k);
+    fileAnchor = k;
+    select(f, true);
+  }
+
+  /** Shift: 前に押したものから f までを選ぶ（一覧の並びで） */
+  function markRange(f: Change): void {
+    const from = listed.findIndex((x) => fileKey(x) === fileAnchor);
+    const to = listed.indexOf(f);
+    if (from < 0 || to < 0) return select(f);
+    marked = new Set(listed.slice(Math.min(from, to), Math.max(from, to) + 1).map(fileKey));
+    select(f, true);
   }
 
   function stageFiles(op: 'stage' | 'unstage', items: Change[]): void {
@@ -269,14 +309,18 @@ export function createWorkingCopyView(): View {
     if (e.key === 'ArrowDown' || e.key === 'ArrowUp') {
       e.preventDefault();
       const next = order[Math.min(order.length - 1, Math.max(0, index + (e.key === 'ArrowDown' ? 1 : -1)))];
-      if (next) select(next);
+      if (next && e.shiftKey) markRange(next);
+      else if (next) select(next);
     } else if ((e.key === ' ' || e.key === 'Enter') && order[index]) {
       e.preventDefault();
-      const f = order[index]!;
-      if (f.group !== 'conflicts') stageFiles(f.group === 'staged' ? 'unstage' : 'stage', [f]);
-    } else if ((e.key === 'Backspace' || e.key === 'Delete') && order[index]?.group === 'unstaged') {
+      // 選んだものすべて: どれかが stage されていなければ stage し、すべて stage 済みなら外す（アプリと同じ）
+      const targets = targetsOf(order[index]!).filter((x) => x.group !== 'conflicts');
+      if (targets.some((x) => x.group === 'unstaged')) stageFiles('stage', targets.filter((x) => x.group === 'unstaged'));
+      else if (targets.length > 0) stageFiles('unstage', targets);
+    } else if ((e.key === 'Backspace' || e.key === 'Delete') && order[index]) {
       e.preventDefault();
-      post({ type: 'wcDiscardFiles', paths: [order[index]!.path] });
+      const paths = targetsOf(order[index]!).filter((x) => x.group === 'unstaged').map((x) => x.path);
+      if (paths.length > 0) post({ type: 'wcDiscardFiles', paths });
     }
   });
 
@@ -724,7 +768,9 @@ export function createWorkingCopyView(): View {
         files = m.files;
         lastMessage = m.lastMessage ?? '';
         layout = m.layout;
+        // 消えたファイルは選びから外す（stage してグループが変わったものも。差分の 1 つは選んだまま）
         renderFiles();
+        marked = new Set([...marked].filter((k) => listed.some((x) => fileKey(x) === k)));
         if (!selected && listed[0]) select(listed[0]);
         break;
       case 'wcDiff':
