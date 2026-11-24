@@ -510,6 +510,41 @@
         "enablement": "amonhen.hasRepository"
       },
       {
+        "command": "amonhen.commit",
+        "title": "Commit",
+        "category": "Amon Hen"
+      },
+      {
+        "command": "amonhen.commitAndPush",
+        "title": "Commit and Push",
+        "category": "Amon Hen"
+      },
+      {
+        "command": "amonhen.stageAll",
+        "title": "Stage All",
+        "category": "Amon Hen"
+      },
+      {
+        "command": "amonhen.setUpstream",
+        "title": "Set Upstream…",
+        "category": "Amon Hen"
+      },
+      {
+        "command": "amonhen.rebase",
+        "title": "Rebase…",
+        "category": "Amon Hen"
+      },
+      {
+        "command": "amonhen.history.goToHead",
+        "title": "Go to HEAD",
+        "category": "Amon Hen"
+      },
+      {
+        "command": "amonhen.history.find",
+        "title": "Find in History…",
+        "category": "Amon Hen"
+      },
+      {
         "command": "amonhen.mergeBranches",
         "title": "Merge Branches…",
         "category": "Amon Hen",
@@ -1424,6 +1459,34 @@
         {
           "command": "amonhen.history.copyId",
           "when": "false"
+        },
+        {
+          "command": "amonhen.commit",
+          "when": "amonhen.hasRepository"
+        },
+        {
+          "command": "amonhen.commitAndPush",
+          "when": "amonhen.hasRepository"
+        },
+        {
+          "command": "amonhen.stageAll",
+          "when": "amonhen.hasRepository"
+        },
+        {
+          "command": "amonhen.setUpstream",
+          "when": "amonhen.hasRepository"
+        },
+        {
+          "command": "amonhen.rebase",
+          "when": "amonhen.hasRepository"
+        },
+        {
+          "command": "amonhen.history.goToHead",
+          "when": "amonhen.hasRepository"
+        },
+        {
+          "command": "amonhen.history.find",
+          "when": "amonhen.hasRepository"
         },
         {
           "command": "amonhen.history.goToParent",

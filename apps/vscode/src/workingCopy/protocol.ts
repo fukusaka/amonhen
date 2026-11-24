@@ -40,6 +40,8 @@ export type WorkingCopyHostMessage =
   /** 一部のフォルダだけ取り出しているときの知らせ（ふつうは null） */
   | { type: 'wcSparse'; sparse: { cone: boolean; folders: string[] } | null }
   | { type: 'wcCommitted' }
+  /** コマンド（Commit・Commit and Push）から、コミット欄の中身でコミットする。押せなければわけを返す */
+  | { type: 'wcCommitNow'; push: boolean }
   /** コミットを始めた・終えた（成り行きによらず。その間は Commit を押せない） */
   | { type: 'wcCommitting'; committing: boolean };
 
@@ -69,4 +71,6 @@ export type WorkingCopyWebviewMessage =
   | { type: 'wcOpenFile'; path: string }
   /** 差分で行を比べるときに無視する空白を選び直した（覚えない。無視している間は行・hunk を stage・破棄しない） */
   | { type: 'wcWhitespace'; whitespace: DiffWhitespace }
+  /** コマンドからのコミットを、押せないので断った（reason は Commit のツールチップと同じ） */
+  | { type: 'wcCommitRefused'; reason: string }
   | { type: 'wcResolve'; path: string; action: 'merge' | 'current' | 'incoming' };
