@@ -111,10 +111,15 @@ function errorMessage(err: unknown): string {
 async function confirmContentsSearch(count: number, more: boolean): Promise<boolean> {
   const n = count.toLocaleString();
   if (more) {
-    await vscode.window.showWarningMessage('Too Many Contents to Fetch', {
-      modal: true,
-      detail: `This search needs more than ${n} file contents not fetched yet. Narrow it with path:, after: or before:.`,
-    });
+    const open = await vscode.window.showWarningMessage(
+      'Too Many Contents to Fetch',
+      {
+        modal: true,
+        detail: `This search needs more than ${n} file contents not fetched yet. Narrow it with path:, after: or before:, or fetch all contents in Fetching and Folders.`,
+      },
+      'Open Fetching and Folders',
+    );
+    if (open) await vscode.commands.executeCommand('amonhen.showRepositorySettings');
     return false;
   }
   const answer = await vscode.window.showWarningMessage(
@@ -169,7 +174,8 @@ export class HistoryController implements vscode.Disposable {
   readonly post: (message: HistoryHostMessage) => void;
   private repoListener: vscode.Disposable | undefined;
   private repo: Repository | undefined;
-  private scope: Scope = 'head';
+  /** History の範囲。最初はすべてのブランチ（アプリと同じ） */
+  private scope: Scope = 'all';
 
   private commits: Commit[] = [];
   /** 読み込んだコミット（daemon の History は飛び飛びに読むので、ID から） */
@@ -274,10 +280,10 @@ export class HistoryController implements vscode.Disposable {
 
   /**
    * サイドバーから History を開いたときの範囲。ref を選んだならその ref、そうでなければ
-   * ref の履歴を出していたときだけ現在のブランチに戻す（All Branches は保つ）
+   * ref の履歴を出していたときだけすべてのブランチに戻す（Current Branch は保つ）
    */
   showScope(scope: Scope | undefined): void {
-    const next = scope ?? (scopeRefs(this.scope) ? 'head' : this.scope);
+    const next = scope ?? (scopeRefs(this.scope) ? 'all' : this.scope);
     if (next !== this.scope) {
       this.scope = next;
       void this.reset();
@@ -1448,10 +1454,13 @@ export class HistoryController implements vscode.Disposable {
     } else {
       const refs = scopeRefs(this.scope);
       if (refs) {
+        // ブランチを 1 つ選んだら、その上流も一緒に辿る（手元と上流の分かれ方が見える。アプリと同じ）
+        const upstream = refs.length === 1 ? this.repo?.current.branches?.find((b) => b.name === refs[0])?.upstream : undefined;
+        const revs = upstream ? [...refs, upstream] : refs;
         const resolved = await Promise.all(
-          refs.map((rev) => client.call({ op: 'run', command: { op: 'resolveCommit', rev } })),
+          revs.map((rev) => client.call({ op: 'run', command: { op: 'resolveCommit', rev } }).catch(() => undefined)),
         );
-        tips = resolved.map((r) => String(r.json['text']));
+        tips = resolved.flatMap((r) => (r && r.json['ok'] !== false && r.json['text'] ? [String(r.json['text'])] : []));
       }
     }
     await client.call({ op: 'historyOrder', order: historyOrder() });
