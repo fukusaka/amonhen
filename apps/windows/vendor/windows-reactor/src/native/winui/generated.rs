@@ -2311,6 +2311,20 @@ pub fn set_property(
             control.SetIsExpanded(*value).map_err(native_error)
         }
         (
+            Handle::Expander(control),
+            PropertyId::ExpanderHorizontalContentAlignment,
+            PropertyValue::HorizontalAlignment(value),
+        ) => control
+            .cast::<IControl>()
+            .map_err(native_error)?
+            .SetHorizontalContentAlignment(match value {
+                crate::HorizontalAlignment::Left => bindings::HorizontalAlignment::Left,
+                crate::HorizontalAlignment::Center => bindings::HorizontalAlignment::Center,
+                crate::HorizontalAlignment::Right => bindings::HorizontalAlignment::Right,
+                crate::HorizontalAlignment::Stretch => bindings::HorizontalAlignment::Stretch,
+            })
+            .map_err(native_error),
+        (
             Handle::ComboBox(control),
             PropertyId::ComboBoxItemsSource,
             PropertyValue::StrList(value),
@@ -3542,6 +3556,11 @@ pub fn clear_property(handle: &Handle, property: PropertyId) -> Result<(), Runti
             .map_err(native_error),
         (Handle::Expander(_), PropertyId::ExpanderIsExpanded) => dependency_object
             .ClearValue(&bindings::Expander::IsExpandedProperty().map_err(native_error)?)
+            .map_err(native_error),
+        (Handle::Expander(_), PropertyId::ExpanderHorizontalContentAlignment) => dependency_object
+            .ClearValue(
+                &bindings::Control::HorizontalContentAlignmentProperty().map_err(native_error)?,
+            )
             .map_err(native_error),
         (Handle::ComboBox(_), PropertyId::ComboBoxItemsSource) => dependency_object
             .ClearValue(&bindings::ItemsControl::ItemsSourceProperty().map_err(native_error)?)

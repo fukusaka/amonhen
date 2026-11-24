@@ -1,0 +1,508 @@
+//! Markdown の数式（GitHub と同じ書き方: ```` ```math ````・`$$…$$` のブロックと、文中の `$…$`・`` $`…`$ ``）を描く
+//! （History の「すべてのファイル」の整形表示）。描くのは `amonhen-math`（RaTeX）で、`math` フィーチャーのときだけ入る
+//! （アプリ（FFI・GTK4）だけが入れ、エンジン（CLI・daemon）には入れない）。入れないときも書き方は読み、FE は原文を
+//! コードとして見せる。
+//!
+//! 形と位置（SVG）は Markdown を読むときに一度だけ作る。色は CSS の変数 `--math-fg` のままなので、FE は描くときに
+//! `colorize` で文字の色を当てる（図と同じ `svgcss` の道。テーマや明るい・暗いを切り替えても、色だけを当て直せばよい）。
+//! 大きさは em で、FE は本文の字の大きさ × `FONT_SCALE` を掛けて描く。
+
+use serde::{Serialize, Serializer};
+
+use crate::markdown::Block;
+#[cfg(feature = "math")]
+use crate::markdown::Run;
+
+/// 数式の色の CSS の変数（FE が文字の色を当てる。`amonhen_math::COLOR_VAR` と同じ）。
+pub const COLOR_VAR: &str = "--math-fg";
+
+/// 本文の字の大きさに対する、数式の 1 em の大きさ（KaTeX と同じ 1.21 倍。KaTeX のフォントは字が小さめなので、
+/// 本文の字とそろえるために大きくする）。
+pub const FONT_SCALE: f64 = 1.21;
+
+/// 描いた数式。大きさは em（本文の字の大きさ × `FONT_SCALE` を 1 とする）。
+#[derive(Clone, Debug, Serialize)]
+pub struct MathPicture {
+    /// SVG（色は `--math-fg` の変数のまま。`colorize` で色を当てる）。
+    pub svg: String,
+    #[serde(serialize_with = "rounded")]
+    pub width: f64,
+    /// 基線から上の高さ。
+    #[serde(serialize_with = "rounded")]
+    pub height: f64,
+    /// 基線から下の深さ（文中の式は、これだけ基線より下に出す）。
+    #[serde(serialize_with = "rounded")]
+    pub depth: f64,
+}
+
+impl PartialEq for MathPicture {
+    fn eq(&self, other: &Self) -> bool {
+        self.svg == other.svg
+            && self.width.to_bits() == other.width.to_bits()
+            && self.height.to_bits() == other.height.to_bits()
+            && self.depth.to_bits() == other.depth.to_bits()
+    }
+}
+
+impl Eq for MathPicture {}
+
+fn rounded<S: Serializer>(value: &f64, s: S) -> Result<S::Ok, S::Error> {
+    s.serialize_f64((value * 1e4).round() / 1e4)
+}
+
+/// 数式の SVG `svg` に文字の色 `fg`（`#rrggbb`）を当て、librsvg で描ける SVG にする。読めなければ `None`。
+pub fn colorize(svg: &str, fg: &str) -> Option<String> {
+    crate::svgcss::inline_with(svg, &[(COLOR_VAR, fg)])
+}
+
+/// `colorize` と同じで、CoreSVG（macOS）に渡すとき（`diagram::colorize_for_coresvg` と同じ道）。
+pub fn colorize_for_coresvg(svg: &str, fg: &str) -> Option<String> {
+    crate::svgcss::inline_slanted(svg, &[(COLOR_VAR, fg)])
+}
+
+/// 1 つの Markdown のファイルで描く式の数・原文と SVG の合計の大きさ・時間の上限。超えた分は描かずに原文を見せる（1 つの
+/// ファイルで整形表示が止まらないように）。
+#[cfg(feature = "math")]
+const MAX_FILE_FORMULAS: usize = 2_000;
+#[cfg(feature = "math")]
+const MAX_FILE_SOURCE: usize = 512 * 1024;
+/// SVG の合計（FE は式ごとに色を当てて画像にするので、JSON とその手間が大きくなりすぎないように）。
+#[cfg(feature = "math")]
+const MAX_FILE_SVG: usize = 8 << 20;
+#[cfg(feature = "math")]
+const MAX_FILE_TIME: std::time::Duration = std::time::Duration::from_secs(2);
+/// 描くスレッドのスタック（RaTeX の入れ子の上限まで足りる大きさ。使った分だけ取られる）。
+#[cfg(feature = "math")]
+const STACK: usize = 64 << 20;
+
+/// 描く式 1 つの在りか。
+#[cfg(feature = "math")]
+enum Slot<'a> {
+    Block {
+        text: &'a str,
+        math: &'a mut Option<MathPicture>,
+        error: &'a mut Option<String>,
+    },
+    Run(&'a mut Run),
+}
+
+/// `blocks` の中の式を、出てくる順にたどる。
+#[cfg(feature = "math")]
+fn each(blocks: &mut [Block], f: &mut dyn FnMut(Slot<'_>)) {
+    let runs = |runs: &mut [Run], f: &mut dyn FnMut(Slot<'_>)| {
+        for run in runs.iter_mut().filter(|r| r.math_tex.is_some()) {
+            f(Slot::Run(run));
+        }
+    };
+    for block in blocks {
+        match block {
+            Block::Math { text, math, error } => f(Slot::Block { text, math, error }),
+            Block::Heading { runs: r, .. } | Block::Paragraph { runs: r, .. } => runs(r, f),
+            Block::Quote { blocks, .. } | Block::Footnote { blocks, .. } => each(blocks, f),
+            Block::Details {
+                summary, blocks, ..
+            } => {
+                runs(summary, f);
+                each(blocks, f);
+            }
+            Block::List { items, .. } => {
+                for item in items {
+                    each(&mut item.blocks, f);
+                }
+            }
+            Block::Table { head, rows, .. } => {
+                for cell in head.iter_mut().chain(rows.iter_mut().flatten()) {
+                    runs(cell, f);
+                }
+            }
+            Block::HtmlTable { cells, .. } => {
+                for cell in cells {
+                    runs(&mut cell.runs, f);
+                }
+            }
+            Block::Code { .. } | Block::Diagram { .. } | Block::Rule => {}
+        }
+    }
+}
+
+/// `blocks` の中の式をすべて描いて、絵（描けなければ理由）を入れる。`math` フィーチャーがなければ何もしない
+/// （FE は原文をコードとして見せる）。
+pub(crate) fn render_all(blocks: &mut [Block]) {
+    #[cfg(feature = "math")]
+    {
+        let mut jobs: Vec<(String, bool)> = Vec::new();
+        each(blocks, &mut |slot| match slot {
+            Slot::Block { text, .. } => jobs.push((text.to_owned(), true)),
+            Slot::Run(run) => {
+                if let Some(tex) = &run.math_tex {
+                    jobs.push((tex.clone(), run.math_display));
+                }
+            }
+        });
+        if jobs.is_empty() {
+            return;
+        }
+        let results = render_jobs(jobs);
+        let mut results = results.into_iter();
+        each(blocks, &mut |slot| {
+            let Some(result) = results.next() else {
+                return;
+            };
+            match (slot, result) {
+                (Slot::Block { math, .. }, Ok(picture)) => *math = Some(picture),
+                (Slot::Block { error, .. }, Err(e)) => *error = Some(e),
+                (Slot::Run(run), Ok(picture)) => run.math = Some(picture),
+                (Slot::Run(run), Err(e)) => run.math_error = Some(e),
+            }
+        });
+    }
+    #[cfg(not(feature = "math"))]
+    let _ = blocks;
+}
+
+/// 式を順に描く（大きなスタックの別スレッドで。上限を超えた分は描かない）。
+#[cfg(feature = "math")]
+fn render_jobs(jobs: Vec<(String, bool)>) -> Vec<Result<MathPicture, String>> {
+    let count = jobs.len();
+    let worker = std::thread::Builder::new()
+        .name("math".into())
+        .stack_size(STACK)
+        .spawn(move || {
+            let started = std::time::Instant::now();
+            let (mut source, mut svg) = (0usize, 0usize);
+            jobs.iter()
+                .enumerate()
+                .map(|(i, (tex, display))| {
+                    source += tex.len();
+                    if i >= MAX_FILE_FORMULAS
+                        || source > MAX_FILE_SOURCE
+                        || svg > MAX_FILE_SVG
+                        || started.elapsed() > MAX_FILE_TIME
+                    {
+                        return Err(amonhen_model::tr!(
+                            "This file has too many formulas to draw them all"
+                        ));
+                    }
+                    let drawn = render_one(tex, *display);
+                    if let Ok(picture) = &drawn {
+                        svg += picture.svg.len();
+                    }
+                    drawn
+                })
+                .collect::<Vec<_>>()
+        });
+    match worker.map(|w| w.join()) {
+        Ok(Ok(results)) => results,
+        _ => vec![Err(amonhen_model::tr!("This formula couldn’t be drawn")); count],
+    }
+}
+
+#[cfg(feature = "math")]
+fn render_one(tex: &str, display: bool) -> Result<MathPicture, String> {
+    use amonhen_math::Error;
+    match amonhen_math::render(tex, display) {
+        Ok(f) => Ok(MathPicture {
+            svg: f.svg.clone(),
+            width: f.width,
+            height: f.height,
+            depth: f.depth,
+        }),
+        // 原文は FE が見せるので、理由と位置だけ
+        Err(e @ Error::Parse { .. }) => {
+            let message = e.message().unwrap_or_default();
+            Err(match e.position(tex) {
+                Some((line, column)) if tex.contains('\n') => amonhen_model::tr!(
+                    "{message} (line {line}, column {column})",
+                    message = message,
+                    line = line,
+                    column = column
+                ),
+                Some((_, column)) => amonhen_model::tr!(
+                    "{message} (column {column})",
+                    message = message,
+                    column = column
+                ),
+                None => message.to_owned(),
+            })
+        }
+        Err(Error::TooLong) => Err(amonhen_model::tr!(
+            "This formula is too long to draw ({limit} bytes at most)",
+            limit = amonhen_math::MAX_SOURCE
+        )),
+        Err(Error::TooLarge) => Err(amonhen_model::tr!("This formula is too large to draw")),
+        Err(Error::Failed) => Err(amonhen_model::tr!("This formula couldn’t be drawn")),
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::markdown::{Item, Run, parse};
+
+    /// 段落の文字（数式は `[tex]`、コードは `` `text` ``）。
+    fn line(runs: &[Run]) -> String {
+        runs.iter()
+            .map(|r| match &r.math_tex {
+                Some(tex) => format!("[{tex}]"),
+                None if r.code => format!("`{}`", r.text),
+                None => r.text.clone(),
+            })
+            .collect()
+    }
+
+    fn paragraphs(md: &str) -> Vec<String> {
+        parse(md)
+            .iter()
+            .map(|b| match b {
+                Block::Paragraph { runs, .. } => line(runs),
+                Block::Math { text, .. } => format!("MATH[{text}]"),
+                other => format!("{other:?}"),
+            })
+            .collect()
+    }
+
+    #[test]
+    fn inline_math_follows_github() {
+        assert_eq!(paragraphs("a $x^2$ b"), ["a [x^2] b"]);
+        assert_eq!(
+            paragraphs("$a$$b$ and foo$y=x$bar"),
+            ["[a][b] and foo[y=x]bar"]
+        );
+        // GitHub の $`…`$（中は文字どおり。pulldown-cmark は中の $ で閉じるので、中に $ は書けない）
+        assert_eq!(paragraphs("a $`x+y`$ b"), ["a [x+y] b"]);
+        assert_eq!(paragraphs("a $`` x`y ``$ b"), ["a [x`y] b"]);
+        // 原文は書いたまま・コードの印つき（描けない FE はそれを見せる）
+        let blocks = parse("a $x^2$ b");
+        let Block::Paragraph { runs, .. } = &blocks[0] else {
+            panic!("{blocks:?}")
+        };
+        assert_eq!(runs[1].text, "$x^2$");
+        assert!(runs[1].code && !runs[1].math_display);
+    }
+
+    #[test]
+    fn dollars_that_are_not_math() {
+        // 値段
+        assert_eq!(paragraphs("It costs $5 and $6."), ["It costs $5 and $6."]);
+        assert_eq!(paragraphs("$20,000 and $30,000"), ["$20,000 and $30,000"]);
+        assert_eq!(paragraphs("price: $3.50 or $4"), ["price: $3.50 or $4"]);
+        // 閉じの $ の後が数字
+        assert_eq!(paragraphs("$5/$10 each"), ["$5/$10 each"]);
+        // 開きの後・閉じの前が空白
+        assert_eq!(paragraphs("$ x$ and $x $"), ["$ x$ and $x $"]);
+        // \$ は文字
+        assert_eq!(paragraphs(r"pay \$5 and \$6"), ["pay $5 and $6"]);
+        assert_eq!(paragraphs(r"\$x$ and $x\$"), ["$x$ and $x$"]);
+        // コードの中
+        assert_eq!(paragraphs("`$x$` code"), ["`$x$` code"]);
+        // 閉じない
+        assert_eq!(paragraphs("Hello $world."), ["Hello $world."]);
+    }
+
+    #[test]
+    fn block_math() {
+        assert_eq!(paragraphs("$$\nx^2\n$$"), ["MATH[x^2]"]);
+        assert_eq!(
+            paragraphs("```math\n\\frac{a}{b}\n```"),
+            ["MATH[\\frac{a}{b}]"]
+        );
+        assert_eq!(paragraphs("```MATH\nx\n```"), ["MATH[x]"]);
+        // 段落の中の $$…$$ は段落を分ける
+        assert_eq!(
+            paragraphs("text\n$$\nx\n$$\nmore"),
+            ["text", "MATH[x]", "more"]
+        );
+        assert_eq!(
+            paragraphs("before $$y$$ after"),
+            ["before", "MATH[y]", "after"]
+        );
+        // 空の $$ は文字
+        assert_eq!(
+            paragraphs("Oops empty $$ expression."),
+            ["Oops empty $$ expression."]
+        );
+        // 引用・リストの中
+        let blocks = parse("> $$a$$\n\n- $$b$$\n- c $d$");
+        let Block::Quote { blocks: inner, .. } = &blocks[0] else {
+            panic!("{blocks:?}")
+        };
+        assert!(matches!(&inner[0], Block::Math { text, .. } if text == "a"));
+        let Block::List { items, .. } = &blocks[1] else {
+            panic!("{blocks:?}")
+        };
+        let Item { blocks: first, .. } = &items[0];
+        assert!(
+            matches!(&first[0], Block::Math { text, .. } if text == "b"),
+            "{first:?}"
+        );
+        let Block::Paragraph { runs, .. } = &items[1].blocks[0] else {
+            panic!("{items:?}")
+        };
+        assert_eq!(line(runs), "c [d]");
+    }
+
+    #[test]
+    fn display_math_in_headings_and_cells_stays_inline() {
+        let blocks = parse("# Title $$x$$\n\n| a | b |\n|-|-|\n| $y$ | $$z$$ |\n");
+        let Block::Heading { runs, .. } = &blocks[0] else {
+            panic!("{blocks:?}")
+        };
+        assert_eq!(line(runs), "Title [x]");
+        assert!(runs[1].math_display);
+        let Block::Table { rows, .. } = &blocks[1] else {
+            panic!("{blocks:?}")
+        };
+        assert_eq!(line(&rows[0][0]), "[y]");
+        assert_eq!(line(&rows[0][1]), "[z]");
+        assert!(rows[0][1][0].math_display && !rows[0][0][0].math_display);
+    }
+
+    #[test]
+    fn math_runs_do_not_merge_with_code() {
+        let blocks = parse("$x$`code`");
+        let Block::Paragraph { runs, .. } = &blocks[0] else {
+            panic!("{blocks:?}")
+        };
+        assert_eq!(line(runs), "[x]`code`");
+    }
+
+    /// `$`・`` ` ``・`\\`・数字・表・リスト・引用を混ぜた文で止まらず、どの式にも絵か理由のどちらかが入る。
+    #[test]
+    fn mixed_dollars_never_panic() {
+        const PIECES: [&str; 16] = [
+            "$", "$$", "`", "\\", "5", "x", " ", "\n", "| ", "- ", "> ", "{", "}", "\\frac", "# ",
+            "\n\n",
+        ];
+        let mut seed = 0x2545_f491_4f6c_dd1d_u64;
+        for _ in 0..400 {
+            let mut md = String::new();
+            for _ in 0..40 {
+                seed ^= seed << 13;
+                seed ^= seed >> 7;
+                seed ^= seed << 17;
+                md.push_str(PIECES[(seed % PIECES.len() as u64) as usize]);
+            }
+            let mut blocks = parse(&md);
+            #[cfg(feature = "math")]
+            each(&mut blocks, &mut |slot| match slot {
+                Slot::Block { math, error, .. } => {
+                    assert!(math.is_some() != error.is_some(), "{md:?}")
+                }
+                Slot::Run(run) => assert!(run.math.is_some() != run.math_error.is_some(), "{md:?}"),
+            });
+            blocks.clear();
+        }
+    }
+
+    #[cfg(not(feature = "math"))]
+    #[test]
+    fn without_the_feature_math_is_left_as_source() {
+        let json = crate::markdown::parse_json("a $x$ b\n\n$$y$$", None);
+        assert!(json.contains(r#""text":"$x$","code":true"#), "{json}");
+        assert!(json.contains(r#"{"kind":"math","text":"y"}"#), "{json}");
+    }
+
+    #[cfg(feature = "math")]
+    #[test]
+    fn draws_inline_and_block_math() {
+        let blocks = parse("Euler: $e^{i\\pi}+1=0$.\n\n$$\n\\sum_{i=1}^n i\n$$\n");
+        let Block::Paragraph { runs, .. } = &blocks[0] else {
+            panic!("{blocks:?}")
+        };
+        let math = runs[1].math.as_ref().expect("inline picture");
+        assert!(math.svg.contains("var(--math-fg"), "{}", math.svg);
+        assert!(
+            math.width > 1.0 && math.height > 0.5 && math.depth >= 0.0,
+            "{math:?}"
+        );
+        let Block::Math { math, error, .. } = &blocks[1] else {
+            panic!("{blocks:?}")
+        };
+        assert!(error.is_none());
+        let math = math.as_ref().expect("block picture");
+        // 大きな演算子の上下の添え字（ブロックの組み方）で、文中より背が高い
+        assert!(math.height + math.depth > 2.0, "{math:?}");
+        let json = crate::markdown::parse_json("$$x$$\n\na $y$", None);
+        assert!(
+            json.contains(r#""kind":"math","text":"x","svg":"<svg"#),
+            "{json}"
+        );
+        assert!(json.contains(r#""math":{"svg":"<svg"#), "{json}");
+        assert!(json.contains(r#""depth":"#), "{json}");
+    }
+
+    #[cfg(feature = "math")]
+    #[test]
+    fn errors_show_the_source() {
+        let blocks = parse("bad $\\nope{x}$ here\n\n```math\n\\frac{1}{2\n```\n");
+        let Block::Paragraph { runs, .. } = &blocks[0] else {
+            panic!("{blocks:?}")
+        };
+        assert!(runs[1].math.is_none() && runs[1].code);
+        assert_eq!(runs[1].text, "$\\nope{x}$");
+        let inline = runs[1].math_error.as_deref().unwrap();
+        assert!(
+            inline.contains("nope") && inline.ends_with("(column 1)"),
+            "{inline}"
+        );
+        let Block::Math { text, math, error } = &blocks[1] else {
+            panic!("{blocks:?}")
+        };
+        assert_eq!(text, "\\frac{1}{2");
+        assert!(math.is_none());
+        let error = error.as_deref().unwrap();
+        // 原文はもう一度見せない（FE がコードとして見せる）
+        assert!(
+            !error.contains("\\frac") && !error.contains('\n'),
+            "{error}"
+        );
+        // 長すぎる式
+        let long = format!("$$\n{}\n$$", "x+".repeat(amonhen_math::MAX_SOURCE));
+        let blocks = parse(&long);
+        assert!(
+            matches!(&blocks[0], Block::Math { error: Some(e), .. } if e.contains("8192")),
+            "{:?}",
+            blocks[0]
+        );
+    }
+
+    #[cfg(feature = "math")]
+    #[test]
+    fn a_file_has_a_limit() {
+        let md: String = (0..MAX_FILE_FORMULAS + 5)
+            .map(|i| format!("$x_{{{i}}}$ "))
+            .collect();
+        let blocks = parse(&md);
+        let Block::Paragraph { runs, .. } = &blocks[0] else {
+            panic!("{blocks:?}")
+        };
+        let maths: Vec<&Run> = runs.iter().filter(|r| r.math_tex.is_some()).collect();
+        assert_eq!(maths.len(), MAX_FILE_FORMULAS + 5);
+        assert!(maths[..MAX_FILE_FORMULAS].iter().all(|r| r.math.is_some()));
+        assert!(
+            maths[MAX_FILE_FORMULAS..]
+                .iter()
+                .all(|r| r.math.is_none() && r.math_error.is_some())
+        );
+    }
+
+    #[cfg(feature = "math")]
+    #[test]
+    fn colorize_sets_the_text_color_and_keeps_explicit_ones() {
+        let blocks = parse("$x + {\\color{red} y}$");
+        let Block::Paragraph { runs, .. } = &blocks[0] else {
+            panic!("{blocks:?}")
+        };
+        let svg = &runs[0].math.as_ref().unwrap().svg;
+        for out in [
+            colorize(svg, "#123456").unwrap(),
+            colorize_for_coresvg(svg, "#123456").unwrap(),
+        ] {
+            assert!(!out.contains("var("), "{out}");
+            assert!(out.contains("#123456"), "{out}");
+            assert!(out.contains("#ff0000"), "{out}");
+            assert!(out.contains("<use ") && out.contains("<defs>"), "{out}");
+        }
+        assert_eq!(COLOR_VAR, amonhen_math::COLOR_VAR);
+    }
+}

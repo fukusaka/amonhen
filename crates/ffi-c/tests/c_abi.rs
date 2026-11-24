@@ -291,3 +291,26 @@ fn null_arguments_fail_instead_of_crashing() {
         assert!(!amonhen_commit(null_repo, std::ptr::null(), false));
     }
 }
+
+/// Markdown の数式を描き（アプリの作りは `math` フィーチャーを入れる）、文字の色を当てられる。
+#[test]
+fn draws_markdown_math_and_colors_it() {
+    let md = "a $x^2$ b\n\n$$\\frac{1}{2}$$\n";
+    unsafe {
+        let raw = amonhen_markdown_parse(md.as_ptr(), md.len(), std::ptr::null());
+        let json = CStr::from_ptr(raw).to_str().unwrap().to_owned();
+        amonhen_string_free(raw);
+        let blocks: serde_json::Value = serde_json::from_str(&json).unwrap();
+        let svg = blocks[1]["svg"].as_str().expect("block math svg");
+        assert_eq!(blocks[1]["kind"], "math");
+        assert!(blocks[0]["runs"][1]["math"]["svg"].is_string(), "{json}");
+        let svg = CString::new(svg).unwrap();
+        let fg = CString::new("#abcdef").unwrap();
+        let colored = amonhen_math_colorize(svg.as_ptr(), fg.as_ptr());
+        assert!(!colored.is_null());
+        let out = CStr::from_ptr(colored).to_str().unwrap().to_owned();
+        amonhen_string_free(colored);
+        assert!(out.contains("#abcdef") && !out.contains("var("), "{out}");
+        assert!(amonhen_math_colorize(std::ptr::null(), fg.as_ptr()).is_null());
+    }
+}
