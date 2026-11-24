@@ -377,6 +377,29 @@ impl Session {
             // MARK: 差分
             "commitDiff" => self.commit_diff(request)?,
             "workingDiff" => self.working_diff(request)?,
+            // daemon 越しのリポジトリ（SSH 先）のコミットの署名を、この機械の鍵で確かめるか（false なら SSH 先の git と
+            // 鍵で。アプリの SSH Hosts の選択と同じ）。手元のリポジトリには効かない（いつも手元で）。`remote` は効いたか。
+            "setSignatureCheck" => {
+                static VERIFIER: std::sync::OnceLock<Arc<amonhen_backend_cli::LocalVerifier>> =
+                    std::sync::OnceLock::new();
+                let local = request["local"] == true;
+                let remote = repo.connection_state().is_some();
+                if remote {
+                    let verifier = local.then(|| {
+                        VERIFIER
+                            .get_or_init(|| {
+                                // コミットのオブジェクトだけを書く作業用のリポジトリ（アプリと同じ）。
+                                Arc::new(amonhen_backend_cli::LocalVerifier::new(
+                                    std::env::temp_dir().join("amonhen-verify.git"),
+                                ))
+                            })
+                            .clone()
+                            as Arc<dyn amonhen_model::SignatureVerifier>
+                    });
+                    repo.set_signature_verifier(verifier);
+                }
+                Reply::json(json!({"remote": remote}))
+            }
             // コミット `oid` の時点のファイル `path` の中身（History の All Files）。そのコミットで変わったファイルなら、
             // 変わった行に印をつけたファイル全体（前後の行をすべて出した差分）。
             "treeFile" => {
