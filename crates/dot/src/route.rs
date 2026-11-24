@@ -220,6 +220,23 @@ impl Obstacles {
             .collect()
     }
 
+    /// 箱 `b` にほかの箱（`skip` のノードのものを除く）が重なるか。調べきれないとき・手間が尽きたときも重なると
+    /// 答える（変えずにおく側に倒す）。
+    pub fn blocked(&mut self, b: Rect, skip: &[usize]) -> bool {
+        if self.rects.is_empty() {
+            return false;
+        }
+        if self.work == 0 {
+            return true;
+        }
+        let Some(ids) = self.query(b) else {
+            return true;
+        };
+        self.work = self.work.saturating_sub(ids.len() + 1);
+        ids.into_iter()
+            .any(|i| !self.owner[i].is_some_and(|o| skip.contains(&o)))
+    }
+
     /// 線 `c` が最初に入る箱（端の点を含む箱と、`skip` のノードの箱を除く）。
     fn first_obstacle(&mut self, c: &Cubic, skip: &[usize]) -> Option<usize> {
         let xs = [c.0.0, c.1.0, c.2.0, c.3.0];
@@ -594,6 +611,58 @@ pub fn ortho_flat(
     tidy(out)
 }
 
+/// 仮のノードの位置の都合の回り道を減らす: 点の列 `p`（尾から頭、ランクごとに 1 点）の中の点を、尾の x の縦の線と
+/// 頭の x の縦の線に寄せ、曲がるのを 1 か所にする。曲がる所は、もとの道のいちばん大きな横の動きにいちばん近い
+/// ランクの間で、縦の線がほかのノード・題の箱に当たらないもの。どこも当たるなら変えない。
+fn straighten(p: &mut [P], obstacles: &mut Obstacles, skip: &[usize]) {
+    let n = p.len();
+    if n <= 2 {
+        return;
+    }
+    let (xs, xe) = (p[0].0, p[n - 1].0);
+    let mut clear = |x: f64, y0: f64, y1: f64| {
+        !obstacles.blocked([x - 0.5, y0.min(y1), x + 0.5, y0.max(y1)], skip)
+    };
+    // ok_s[k]: 尾から k 番目の点まで xs の縦で通れる。ok_e[k]: k 番目から頭まで xe の縦で通れる
+    let mut ok_s = vec![false; n];
+    ok_s[0] = true;
+    for k in 1..n - 1 {
+        if !clear(xs, p[k - 1].1, p[k].1) {
+            break;
+        }
+        ok_s[k] = true;
+    }
+    let mut ok_e = vec![false; n];
+    ok_e[n - 1] = true;
+    for k in (1..n - 1).rev() {
+        if !clear(xe, p[k].1, p[k + 1].1) {
+            break;
+        }
+        ok_e[k] = true;
+    }
+    let widest = (0..n - 1)
+        .max_by(|&a, &b| {
+            let da = (p[a + 1].0 - p[a].0).abs();
+            let db = (p[b + 1].0 - p[b].0).abs();
+            da.total_cmp(&db).then(b.cmp(&a))
+        })
+        .unwrap_or(0);
+    let mut order: Vec<usize> = (0..n - 1).filter(|&g| ok_s[g] && ok_e[g + 1]).collect();
+    order.sort_by_key(|&g| (g.abs_diff(widest), g));
+    for g in order {
+        let mid = (p[g].1 + p[g + 1].1) / 2.0;
+        if clear(xs, p[g].1, mid) && clear(xe, mid, p[g + 1].1) {
+            for q in &mut p[1..=g] {
+                q.0 = xs;
+            }
+            for q in &mut p[g + 1..n - 1] {
+                q.0 = xe;
+            }
+            return;
+        }
+    }
+}
+
 /// 直角の道筋（`splines=ortho`）。点の列はランクを 1 つずつ下る（上る）ので、ランクの間の空き（ノードのない帯）
 /// で横に動き、ランクの行は仮のノードの位置（ノードのない列）を縦に通る。同じ空きで横の線が重なるときは高さを
 /// 分け、クラスタの題を避ける高さを選ぶ。
@@ -601,6 +670,7 @@ pub fn ortho_flat(
 /// 端: ポートがあればその側（向きのあるポートはその向き、升・欄はノードの外形に触れる辺）の、その位置から出る。
 /// 行き先と別の側なら、ノードの脇を回ってから進む。ポートのない端は、行き先の側（上か下）に出入りする同じノードの
 /// ほかの端と、ノードの幅の中に等しい間で並べる（向こうの x の順。samehead・sametail の組は 1 つの席を分け合う）。
+/// 中の点は、ほかのノードに当たらなければ尾と頭の縦の線に寄せる（`straighten`）。
 ///
 /// `nodes` はノードの中心と幅・高さ、`titles` は題の箱、`obstacles` はほかのノードと題の箱。2 つ以上のランクを
 /// 一度にまたぐ線（仮のノードの上限を超えたもの）は直角にしない（None）。
@@ -608,7 +678,7 @@ pub fn ortho(
     edges: &[OrthoEdge],
     nodes: &[(P, f64, f64)],
     titles: &[Rect],
-    _obstacles: &mut Obstacles,
+    obstacles: &mut Obstacles,
 ) -> Vec<Option<Vec<P>>> {
     use std::collections::HashMap;
     let key = |y: f64| (y * 64.0).round() as i64;
@@ -730,6 +800,9 @@ pub fn ortho(
             let at = if k == 0 { 0 } else { n - 1 };
             pts[i][at] = (s[s.len() - 1].0, c.1);
             stubs[i][k] = s;
+        }
+        if !edges[i].keep {
+            straighten(&mut pts[i], obstacles, &[e.tail, e.head]);
         }
     }
 
@@ -1008,5 +1081,47 @@ mod ortho_tests {
         assert!(n[1].1 < -18.0 && n[1].0 == 0.0, "{n:?}");
         assert!(n[2].0 < -30.0, "{n:?}");
         assert_eq!(n[n.len() - 1], nodes[2].0);
+    }
+
+    #[test]
+    fn straightens_past_virtual_nodes() {
+        // 0 から 3 ランク下の 1 へ。仮のノードは左右に揺れるが、間にノードはない
+        let nodes = vec![
+            ((0.0, 0.0), 54.0, 36.0),
+            ((0.0, 300.0), 54.0, 36.0),
+            ((200.0, 100.0), 54.0, 36.0),
+            ((200.0, 200.0), 54.0, 36.0),
+        ];
+        let e = free(
+            vec![(0.0, 0.0), (40.0, 100.0), (-30.0, 200.0), (0.0, 300.0)],
+            0,
+            1,
+        );
+        let mut obstacles = Obstacles::new(
+            nodes
+                .iter()
+                .enumerate()
+                .map(|(i, n)| {
+                    let (x, y) = n.0;
+                    ([x - 31.0, y - 22.0, x + 31.0, y + 22.0], Some(i))
+                })
+                .collect(),
+        );
+        let p = ortho(&[e], &nodes, &[], &mut obstacles)[0].clone().unwrap();
+        assert_eq!(p, vec![(0.0, 0.0), (0.0, 300.0)]);
+        // 真ん中にノードがあれば回る（まっすぐにしない）
+        let mut nodes2 = nodes.clone();
+        nodes2[2].0 = (0.0, 100.0);
+        let mut obstacles = Obstacles::new(vec![([-31.0, 78.0, 31.0, 122.0], Some(2))]);
+        let e = free(
+            vec![(0.0, 0.0), (60.0, 100.0), (60.0, 200.0), (0.0, 300.0)],
+            0,
+            1,
+        );
+        let p = ortho(&[e], &nodes2, &[], &mut obstacles)[0]
+            .clone()
+            .unwrap();
+        assert!(p.iter().any(|q| q.0 > 40.0), "{p:?}");
+        assert!(axis_aligned(&p));
     }
 }
