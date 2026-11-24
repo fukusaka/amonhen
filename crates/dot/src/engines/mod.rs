@@ -12,6 +12,7 @@
 //! 座標は点（pt）で y が下向き。どれも乱数を使わないか、決まった種の乱数だけを使い、同じ文からはいつも同じ絵になる
 //! （繰り返しの計算は四則と平方根だけにし、OS の数学関数の差で結果が変わらないようにする）。
 
+mod circular;
 mod common;
 mod force;
 mod radial;
@@ -34,6 +35,7 @@ pub enum Engine {
     Fdp,
     Sfdp,
     Twopi,
+    Circo,
 }
 
 impl Engine {
@@ -46,13 +48,14 @@ impl Engine {
             "fdp" => Engine::Fdp,
             "sfdp" => Engine::Sfdp,
             "twopi" => Engine::Twopi,
+            "circo" => Engine::Circo,
             _ => return None,
         })
     }
 
-    /// クラスタの箱を描くか（twopi・sfdp は Graphviz でも描かない）。
+    /// クラスタの箱を描くか（twopi・circo・sfdp は Graphviz でも描かない）。
     pub fn draws_clusters(self) -> bool {
-        !matches!(self, Engine::Twopi | Engine::Sfdp)
+        !matches!(self, Engine::Twopi | Engine::Circo | Engine::Sfdp)
     }
 }
 
@@ -125,6 +128,7 @@ pub fn place(
             (nodes, Some(boxes))
         }
         Engine::Twopi => (radial::layout(items, links, g), None),
+        Engine::Circo => (circular::layout(items, links, g), None),
     };
     if !engine.draws_clusters() {
         clusters = Some(vec![None; groups.len()]);
