@@ -865,14 +865,20 @@ final class CommitFilesBrowser: NSView, NSOutlineViewDataSource, NSOutlineViewDe
     /// Markdown の中の画像（Markdown のファイル `from` からの相対パス）を、このコミットの中から読む。外の URL は読まない。
     private func image(_ link: String, from: String) -> NSImage? {
         guard !link.contains("://"), let path = MarkdownView.resolve(link, from: from) else { return nil }
-        if let index = changedFiles[path] {
-            return changes?.blob(at: index, after: true).flatMap(NSImage.init(data:))
+        return fileReader()(path).flatMap(NSImage.init(data:))
+    }
+
+    /// このコミットのファイルの中身を、リポジトリの根からのパスで読む（変えたファイルは変更後）。どのスレッドからでも。
+    private func fileReader() -> @Sendable (String) -> Data? {
+        let changed = changedFiles, source = changes, store = repository, commit = self.commit
+        return { path in
+            if let index = changed[path] { return source?.blob(at: index, after: true) }
+            let folder = (path as NSString).deletingLastPathComponent, name = (path as NSString).lastPathComponent
+            guard let entry = (try? store.treeEntries(commit: commit, path: folder))?.first(where: { $0.name == name }) else {
+                return nil
+            }
+            return store.blob(oid: entry.oid)
         }
-        let folder = (path as NSString).deletingLastPathComponent, name = (path as NSString).lastPathComponent
-        guard let entry = (try? repository.treeEntries(commit: commit, path: folder))?.first(where: { $0.name == name }) else {
-            return nil
-        }
-        return repository.blob(oid: entry.oid).flatMap(NSImage.init(data:))
     }
 
     @objc private func rendererChanged() {
@@ -969,7 +975,10 @@ final class CommitFilesBrowser: NSView, NSOutlineViewDataSource, NSOutlineViewDe
                 let text = String(decoding: data, as: UTF8.self)
                 let gitHub = self.gitHub
                 let zone = Settings.ganttZone
-                let blocks = await Task.detached { MarkdownBlock.parse(text, gitHub: gitHub, timeZone: zone) }.value
+                let read = self.fileReader()
+                let blocks = await Task.detached {
+                    MarkdownBlock.parse(text, gitHub: gitHub, timeZone: zone, path: path, image: read)
+                }.value
                 guard request == self.request else { return }
                 let view = MarkdownView(blocks: blocks, path: path) { [weak self] link in self?.image(link, from: path) }
                 view.onOpenPath = { [weak self] target in self?.open(path: target, line: nil) }

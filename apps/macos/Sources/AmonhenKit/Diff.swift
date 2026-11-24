@@ -583,13 +583,19 @@ public indirect enum MarkdownBlock: Decodable, Sendable {
     }
 
     /// `text` を読む。`gitHub`（`https://github.com/owner/repo`）があれば `#123`・`@user`・コミットの ID もリンクにする。
-    /// 図（gantt）の日付は `timeZone` で数える（nil なら UTC）。
-    public static func parse(_ text: String, gitHub: String? = nil, timeZone: TimeZone? = nil) -> [MarkdownBlock] {
+    /// 図（gantt）の日付は `timeZone` で数える（nil なら UTC）。DOT の図の画像は、`path`（Markdown のファイルの
+    /// リポジトリの根からのパス）のフォルダからの相対パスを、`image`（リポジトリの根からのパスで、同じコミットの
+    /// 中身を読む）で読む。図を描くスレッドから呼ばれる。
+    public static func parse(
+        _ text: String, gitHub: String? = nil, timeZone: TimeZone? = nil, path: String? = nil,
+        image: (@Sendable (String) -> Data?)? = nil
+    ) -> [MarkdownBlock] {
         var text = text
         let box = timeZone.map(ZoneBox.init)
-        let raw = withExtendedLifetime(box) {
+        let reader = path == nil ? nil : image.map(ImageBox.init)
+        let raw = withExtendedLifetime((box, reader)) {
             text.withUTF8 { buffer in
-                amonhen_markdown_parse_in_zone(
+                amonhen_markdown_parse_with_images(
                     buffer.baseAddress, UInt(buffer.count), gitHub,
                     box.map { UnsafeRawPointer(Unmanaged.passUnretained($0).toOpaque()) },
                     box == nil ? nil : { context, utc in
@@ -597,6 +603,17 @@ public indirect enum MarkdownBlock: Decodable, Sendable {
                         guard let context, utc.isFinite else { return 0 }
                         let zone = Unmanaged<ZoneBox>.fromOpaque(context).takeUnretainedValue().zone
                         return Double(zone.secondsFromGMT(for: Date(timeIntervalSince1970: utc / 1000))) * 1000
+                    },
+                    reader == nil ? nil : path,
+                    reader.map { UnsafeRawPointer(Unmanaged.passUnretained($0).toOpaque()) },
+                    reader == nil ? nil : { context, path, sink, sinkContext in
+                        // DOT の図を描くスレッドから呼ばれる。読めたときだけ sink に渡す。
+                        guard let context, let path, let sink else { return }
+                        let read = Unmanaged<ImageBox>.fromOpaque(context).takeUnretainedValue().read
+                        guard let data = read(String(cString: path)) else { return }
+                        data.withUnsafeBytes { bytes in
+                            sink(sinkContext, bytes.bindMemory(to: UInt8.self).baseAddress, UInt(bytes.count))
+                        }
                     })
             }
         }
@@ -604,6 +621,12 @@ public indirect enum MarkdownBlock: Decodable, Sendable {
         defer { amonhen_string_free(raw) }
         return (try? JSONDecoder().decode([MarkdownBlock].self, from: Data(String(cString: raw).utf8))) ?? []
     }
+}
+
+/// FFI の画像の読み手に渡す箱。
+private final class ImageBox: @unchecked Sendable {
+    let read: @Sendable (String) -> Data?
+    init(_ read: @escaping @Sendable (String) -> Data?) { self.read = read }
 }
 
 /// FFI の時間帯の呼び出しに渡す箱。
