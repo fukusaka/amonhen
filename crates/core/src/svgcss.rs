@@ -26,13 +26,16 @@ pub fn inline_with(svg: &str, vars: &[(&str, &str)]) -> Option<String> {
     inline_impl(svg, vars, false)
 }
 
-/// `inline_with` と同じで、斜体（`font-style` の `italic`・`oblique`）の文字を `skewX` で傾ける。CoreSVG は
-/// `font-style` を読まず、斜体の書体も選ばないので、macOS に渡すときに使う。
+/// `inline_with` と同じで、CoreSVG（macOS）に渡すときに使う。CoreSVG は `font-style` を読まず、斜体の書体も
+/// 選ばないので、斜体（`font-style` の `italic`・`oblique`）の文字を `skewX` で傾ける。また、描き手の手がかり
+/// （DOT の図が添える）を使う: `<tspan>` の `data-x`（測った左端）で span ごとの `<text>` に分け、
+/// `data-coresvg-only` の `<g>`（`text-decoration` の代わりの線）を残し、`text-decoration` を除く。CoreSVG で
+/// ないとき（`inline_with`）は、その `<g>` を除き、文字は流れるまま描き手に任せる。
 pub fn inline_slanted(svg: &str, vars: &[(&str, &str)]) -> Option<String> {
     inline_impl(svg, vars, true)
 }
 
-fn inline_impl(svg: &str, vars: &[(&str, &str)], slant: bool) -> Option<String> {
+fn inline_impl(svg: &str, vars: &[(&str, &str)], coresvg: bool) -> Option<String> {
     let doc = roxmltree::Document::parse(svg).ok()?;
     let mut css = String::new();
     for node in doc.descendants() {
@@ -48,7 +51,7 @@ fn inline_impl(svg: &str, vars: &[(&str, &str)], slant: bool) -> Option<String> 
     let rules = parse_css(&css);
     let mut writer = Writer {
         rules: &rules,
-        slant,
+        coresvg,
         markers: HashMap::new(),
         vars: Default::default(),
         seed: std::rc::Rc::new(
@@ -544,8 +547,8 @@ fn cascade<'a>(rules: &'a [Rule], node: roxmltree::Node) -> HashMap<String, Stri
 
 struct Writer<'a, 'input> {
     rules: &'a [Rule],
-    /// 斜体を `skewX` で傾けるか（`inline_slanted`）。
-    slant: bool,
+    /// CoreSVG 向けに書くか（`inline_slanted`。斜体を `skewX` で傾け、手がかりで span を分ける）。
+    coresvg: bool,
     markers: HashMap<&'a str, roxmltree::Node<'a, 'input>>,
     /// 要素ごとの CSS の変数（`--x`。祖先から継いだものを含め、値の中の var() は解いてある）。
     vars: std::cell::RefCell<HashMap<roxmltree::NodeId, std::rc::Rc<HashMap<String, String>>>>,
@@ -619,7 +622,7 @@ impl<'a, 'input> Writer<'a, 'input> {
 
     /// `attrs` を持つ `node`（`<text>`）が斜体なら、`y` の行を軸に傾ける `transform` を足す。
     fn slant(&self, node: roxmltree::Node, attrs: &mut Vec<(String, String)>) {
-        if !self.slant {
+        if !self.coresvg {
             return;
         }
         let style = match attrs.iter().find(|(k, _)| k == "font-style") {
@@ -694,10 +697,21 @@ impl<'a, 'input> Writer<'a, 'input> {
         None
     }
 
+    /// 書き出す属性か。描き手の手がかり（`data-x`・`data-coresvg-only`）は書かず、CoreSVG には
+    /// `text-decoration` も書かない（読まないので、`data-coresvg-only` の線で描く）。
+    fn kept(&self, name: &str) -> bool {
+        name != "data-x"
+            && name != "data-coresvg-only"
+            && !(self.coresvg && name == "text-decoration")
+    }
+
     fn write(&self, node: roxmltree::Node, out: &mut String, root: bool) {
         let tag = node.tag_name().name();
         if tag == "style" || tag == "marker" {
             // marker は使う所に図形として置く（CoreSVG は marker を描かない）
+            return;
+        }
+        if !self.coresvg && node.attribute("data-coresvg-only").is_some() {
             return;
         }
         let name = qualified(node.tag_name().namespace(), tag);
@@ -711,6 +725,7 @@ impl<'a, 'input> Writer<'a, 'input> {
             // 入れ子の svg（merman の文字の枠）は、文字が見込みより広くても切らない
             set(&mut attrs, "overflow", "visible");
         }
+        attrs.retain(|(n, _)| self.kept(n));
         let mut markers = Vec::new();
         attrs.retain(|(n, v)| {
             let kind = match n.as_str() {
@@ -774,11 +789,21 @@ impl<'a, 'input> Writer<'a, 'input> {
                 return false;
             }
         }
-        if spans.is_empty()
-            || spans
-                .iter()
-                .skip(1)
-                .any(|s| s.attribute("x").is_none() && s.attribute("y").is_none())
+        if spans.is_empty() {
+            return false;
+        }
+        // DOT の図の手がかり: どの `<tspan>` にも `data-x`（測った左端）があれば、流れる文を CoreSVG のときだけ
+        // その位置で分ける（ほかの描き手には流れるまま渡す）。分けた `<text>` は両端の空白を描かない（描き手に
+        // よって縮んだり残ったりするので、位置と描く文字がずれる。間の空白は位置の差にある）
+        let hinted = spans.iter().all(|s| s.attribute("data-x").is_some());
+        if hinted {
+            if !self.coresvg {
+                return false;
+            }
+        } else if spans
+            .iter()
+            .skip(1)
+            .any(|s| s.attribute("x").is_none() && s.attribute("y").is_none())
         {
             return false;
         }
@@ -804,7 +829,7 @@ impl<'a, 'input> Writer<'a, 'input> {
                 .collect();
             for (k, v) in own
                 .iter()
-                .filter(|(k, _)| !positional.contains(&k.as_str()))
+                .filter(|(k, _)| !positional.contains(&k.as_str()) && self.kept(k))
             {
                 set(&mut merged, k, v);
             }
@@ -825,7 +850,17 @@ impl<'a, 'input> Writer<'a, 'input> {
                     }
                 }
             }
-            let x = get(&own, "x").unwrap_or_else(|| text_x.clone());
+            let content: String = span.children().filter_map(|c| c.text()).collect();
+            let (x, content) = match span.attribute("data-x") {
+                Some(left) if hinted => {
+                    set(&mut merged, "text-anchor", "start");
+                    (left.to_owned(), content.trim_matches(' ').to_owned())
+                }
+                _ => (get(&own, "x").unwrap_or_else(|| text_x.clone()), content),
+            };
+            if hinted && content.is_empty() {
+                continue;
+            }
             let _ = write!(parts, "<text x=\"{}\" y=\"{}\"", escape(&x, true), fmt(y));
             set(&mut merged, "y", &fmt(y));
             self.slant(node, &mut merged);
@@ -833,7 +868,6 @@ impl<'a, 'input> Writer<'a, 'input> {
             for (k, v) in &merged {
                 let _ = write!(parts, " {k}=\"{}\"", escape(v, true));
             }
-            let content: String = span.children().filter_map(|c| c.text()).collect();
             let _ = write!(parts, ">{}</text>", escape(&content, false));
         }
         out.push_str(&parts);
@@ -1388,6 +1422,23 @@ mod tests {
         assert!(out.contains(r#"<text x="0" y="40" font-style="italic" transform="translate(8.502 0) skewX(-12)">b</text>"#), "{out}");
     }
     use super::*;
+
+    #[test]
+    fn hinted_spans_split_only_for_coresvg() {
+        // `data-x` のある `<tspan>` は CoreSVG のときだけ分け（両端の空白は描かない）、`data-coresvg-only` の線も
+        // CoreSVG のときだけ残す。ほかの描き手には流れる文と text-decoration をそのまま渡す
+        let svg = r#"<svg xmlns="http://www.w3.org/2000/svg"><text x="50" y="10" text-anchor="middle"><tspan data-x="20">plain </tspan><tspan data-x="45" text-decoration="underline">under</tspan><tspan data-x="70"> </tspan><tspan data-x="70" font-weight="bold">red</tspan></text><g data-coresvg-only="1"><path d="M45,12h20"/></g></svg>"#;
+        let flow = inline(svg).unwrap();
+        assert_eq!(
+            flow,
+            r#"<svg xmlns="http://www.w3.org/2000/svg" xmlns:xlink="http://www.w3.org/1999/xlink"><text x="50" y="10" text-anchor="middle"><tspan>plain </tspan><tspan text-decoration="underline">under</tspan><tspan> </tspan><tspan font-weight="700">red</tspan></text></svg>"#
+        );
+        let split = inline_slanted(svg, &[]).unwrap();
+        assert_eq!(
+            split,
+            r#"<svg xmlns="http://www.w3.org/2000/svg" xmlns:xlink="http://www.w3.org/1999/xlink"><text x="20" y="10" text-anchor="start">plain</text><text x="45" y="10" text-anchor="start">under</text><text x="70" y="10" text-anchor="start" font-weight="700">red</text><g><path d="M45,12h20"/></g></svg>"#
+        );
+    }
 
     #[test]
     fn rules_become_attributes_in_cascade_order() {

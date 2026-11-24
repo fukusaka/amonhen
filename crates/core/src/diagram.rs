@@ -529,7 +529,8 @@ pub fn colorize(svg: &str, vars: &[(String, String)], backdrop: bool) -> Option<
     colorize_impl(svg, vars, backdrop, false)
 }
 
-/// `colorize` と同じで、CoreSVG（macOS）向けに斜体の文字を傾けて描く（CoreSVG は `font-style` を読まない）。
+/// `colorize` と同じで、CoreSVG（macOS）向けに書く: 斜体の文字を傾け（CoreSVG は `font-style` を読まない）、
+/// DOT の図の飾りの混ざる行を span ごとの `<text>` に分け、飾りの線を描く（`svgcss::inline_slanted`）。
 pub fn colorize_for_coresvg(
     svg: &str,
     vars: &[(String, String)],
@@ -542,10 +543,10 @@ fn colorize_impl(
     svg: &str,
     vars: &[(String, String)],
     backdrop: bool,
-    slant: bool,
+    coresvg: bool,
 ) -> Option<String> {
     let vars: Vec<(&str, &str)> = vars.iter().map(|(k, v)| (k.as_str(), v.as_str())).collect();
-    let inline = if slant {
+    let inline = if coresvg {
         crate::svgcss::inline_slanted
     } else {
         crate::svgcss::inline_with
