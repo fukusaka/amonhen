@@ -57,6 +57,8 @@ pub enum Event {
     RescanRepositories,
     /// 探したフォルダの見張り（裏で作る）。
     WatchingRepositories(amonhen_watch::DirsWatch),
+    /// リポジトリのページの Fetch が終わった（だめなら理由）。
+    Fetched(String, Option<String>),
 }
 
 /// 描き直す所。一番上と一番下の行は、どれかを描き直すたびに描き直す。
@@ -792,6 +794,8 @@ pub struct App {
     repos: Option<crate::repos::Repos>,
     /// リポジトリのページを開いている間、手元の探すフォルダを見張る（アプリと同じく、増えたリポジトリを足す）。
     repo_watch: Option<amonhen_watch::DirsWatch>,
+    /// 端末を渡して、このフォルダでシェルを開く（リポジトリのページの `t`）。
+    open_shell: Option<String>,
     /// 探し直しを待っている（見張りの知らせをまとめる）。
     rescan_queued: bool,
     /// 端末のクリップボードに入れる文字（OSC 52。描くループが書く）。
@@ -952,6 +956,7 @@ impl App {
             all_files: None,
             repos: None,
             repo_watch: None,
+            open_shell: None,
             rescan_queued: false,
             copy: None,
             edit_discard: false,
@@ -1918,6 +1923,20 @@ impl App {
                     });
                 }
             }
+            Event::Fetched(path, error) => {
+                if let Some(repos) = &mut self.repos {
+                    repos.fetched(&path, error.clone());
+                    self.dirty = true;
+                }
+                if let Some(error) = error {
+                    self.error = Some(tr!(
+                        "Couldn’t fetch {path}: {error}",
+                        path = path,
+                        error = error
+                    ));
+                }
+                self.peek_repositories(vec![path]);
+            }
             Event::WatchingRepositories(watch) => {
                 if self.repos.is_some() {
                     self.repo_watch = Some(watch);
@@ -2142,6 +2161,46 @@ impl App {
                 KeyCode::Char('r') if repos.focus_categories => {
                     self.scan_repositories();
                     self.notice = Some(tr!("Scanning the folders again"));
+                }
+                // 選んだリポジトリで: 印をつける、Fetch（印をつけたものすべて）、シェル・エディタ・ファイルの窓で開く
+                // （アプリの行のメニューの Fetch・Open in Terminal・Open in Editor・Show in Finder）。
+                KeyCode::Char('v') if !repos.focus_categories => {
+                    repos.toggle_mark();
+                    repos.move_selection(1);
+                }
+                KeyCode::Char('f') if !repos.focus_categories => {
+                    let paths: Vec<String> = repos
+                        .to_fetch()
+                        .into_iter()
+                        .filter(|p| !p.starts_with("ssh://") && !p.starts_with("daemon:"))
+                        .collect();
+                    if paths.is_empty() {
+                        self.error = Some(tr!(
+                            "Repositories on SSH hosts are fetched when they are open"
+                        ));
+                    } else {
+                        repos.fetch_started(&paths);
+                        self.fetch_repositories(paths);
+                    }
+                }
+                KeyCode::Char('t' | 'e' | 'o') if !repos.focus_categories => {
+                    match repos.selected_entry() {
+                        Some(entry) if entry.is_local() => match key.code {
+                            KeyCode::Char('t') => self.open_shell = Some(entry.path),
+                            KeyCode::Char('e') => self.open_file = Some(entry.path),
+                            _ => {
+                                if let Err(error) = reveal(&entry.path) {
+                                    self.error = Some(error.to_string());
+                                }
+                            }
+                        },
+                        Some(_) => {
+                            self.error = Some(tr!(
+                                "The files are on another machine; open them in a terminal there"
+                            ))
+                        }
+                        None => {}
+                    }
                 }
                 // 登録の編集（アプリの行の右クリックと同じもの）。
                 KeyCode::Char('*') if !repos.focus_categories => {
@@ -3682,6 +3741,46 @@ impl App {
             self.error = Some(error.to_string());
         }
         self.reload_repositories();
+    }
+
+    /// 手元のリポジトリ `paths` を裏で Fetch する（4 つずつ。終わるごとに `Event::Fetched`）。
+    fn fetch_repositories(&mut self, paths: Vec<String>) {
+        let queue = Arc::new(std::sync::Mutex::new(std::collections::VecDeque::from(
+            paths,
+        )));
+        for _ in 0..4 {
+            let (queue, events) = (queue.clone(), self.events.clone());
+            std::thread::spawn(move || {
+                loop {
+                    let Some(path) = queue.lock().unwrap().pop_front() else {
+                        return;
+                    };
+                    // その場で開いて fetch するだけ（アプリと同じ。History のキャッシュは持たない）。
+                    let error =
+                        match amonhen_front::InProcess::open(std::path::Path::new(&path), None) {
+                            Ok(front) => {
+                                let request = json!({"op": "run", "command": {"op": "fetch"}});
+                                match front.call(request) {
+                                    Ok(reply) if reply.json["ok"] == true => None,
+                                    Ok(reply) => {
+                                        Some(reply.json["error"].as_str().unwrap_or("").to_owned())
+                                    }
+                                    Err(e) => Some(e.to_string()),
+                                }
+                            }
+                            Err(e) => Some(e.to_string()),
+                        };
+                    if events.send(Event::Fetched(path, error)).is_err() {
+                        return;
+                    }
+                }
+            });
+        }
+    }
+
+    /// 端末を渡してシェルを開くフォルダ（聞いたら、なかったことにする）。
+    pub fn take_open_shell(&mut self) -> Option<String> {
+        self.open_shell.take()
     }
 
     /// 手元のリポジトリ `paths` の状態を裏で読む（4 つずつ。アプリの peekQueue と同じ）。
@@ -11064,6 +11163,24 @@ fn scanned_dirs(root: &amonhen_model::bookmarks::ScanRoot) -> Vec<std::path::Pat
     dirs
 }
 
+/// フォルダを、この機械のファイルの窓で開く（Finder・Files・Explorer）。待たない。
+fn reveal(path: &str) -> std::io::Result<()> {
+    let program = if cfg!(target_os = "macos") {
+        "open"
+    } else if cfg!(windows) {
+        "explorer"
+    } else {
+        "xdg-open"
+    };
+    amonhen_model::process::command(program)
+        .arg(path)
+        .stdin(std::process::Stdio::null())
+        .stdout(std::process::Stdio::null())
+        .stderr(std::process::Stdio::null())
+        .spawn()
+        .map(|_| ())
+}
+
 /// 打った場所: この機械のパスは、~ を広げて絶対パスに（アプリと同じく、リンクは解かない）。`ssh://`・`daemon:`
 /// はそのまま。
 fn local_location(location: &str) -> String {
@@ -11683,6 +11800,90 @@ mod tests {
                 "{roots:?}"
             );
         });
+    }
+
+    /// リポジトリのページの `v` 印・`f` Fetch（印をつけたものすべて、裏で）・`t` シェル・`e` エディタ
+    #[test]
+    fn the_repository_page_fetches_and_opens_repositories() {
+        let (dir, mut app, rx) = app_with_history();
+        let git = |cwd: &std::path::Path, args: &[&str]| {
+            let out = amonhen_model::process::command("git")
+                .args(["-c", "user.name=Ann", "-c", "user.email=ann@example.com"])
+                .args(["-c", "commit.gpgsign=false"])
+                .args(args)
+                .current_dir(cwd)
+                .output()
+                .unwrap();
+            assert!(out.status.success(), "git {args:?}");
+        };
+        let work = tempfile::tempdir().unwrap();
+        let clone = work.path().join("clone");
+        git(
+            work.path(),
+            &[
+                "clone",
+                "-q",
+                dir.path().to_str().unwrap(),
+                clone.to_str().unwrap(),
+            ],
+        );
+        // 元のリポジトリが進む: Fetch すれば ↓1。
+        git(
+            dir.path(),
+            &["commit", "-q", "--allow-empty", "-m", "Later"],
+        );
+        let config = tempfile::tempdir().unwrap();
+        let vars = amonhen_model::settings::config_vars(config.path().to_str().unwrap());
+        let env = amonhen_model::process::ClientEnv::from_vars(vars);
+        let clone_path = clone.to_string_lossy().into_owned();
+        let key = |app: &mut App, ch: char| {
+            app.handle(Event::Input(Input::Key(KeyEvent::new(
+                KeyCode::Char(ch),
+                KeyModifiers::NONE,
+            ))));
+        };
+        amonhen_model::process::with_client_env(&env, || {
+            let folder = config.path().join("amonhen");
+            std::fs::create_dir_all(&folder).unwrap();
+            let bookmarks = serde_json::json!({"items": [{"path": clone_path}]});
+            std::fs::write(folder.join("bookmarks.json"), bookmarks.to_string()).unwrap();
+            app.handle(Event::Input(Input::Key(KeyEvent::new(
+                KeyCode::Char('o'),
+                KeyModifiers::CONTROL,
+            ))));
+        });
+        key(&mut app, 'v');
+        assert_eq!(
+            app.repos.as_ref().unwrap().to_fetch(),
+            std::slice::from_ref(&clone_path)
+        );
+        key(&mut app, 'f');
+        loop {
+            match rx.recv_timeout(std::time::Duration::from_secs(30)) {
+                Ok(Event::Fetched(path, error)) => {
+                    assert_eq!(error, None);
+                    app.handle(Event::Fetched(path, None));
+                    break;
+                }
+                Ok(other) => app.handle(other),
+                Err(e) => panic!("not fetched: {e}"),
+            }
+        }
+        // 読み直した状態で、上流より 1 つ遅れている。
+        loop {
+            match rx.recv_timeout(std::time::Duration::from_secs(30)) {
+                Ok(Event::Peeked(path, peek)) if path == clone_path => {
+                    assert_eq!(peek.as_ref().map(|p| p.behind), Some(1), "{peek:?}");
+                    break;
+                }
+                Ok(other) => app.handle(other),
+                Err(e) => panic!("no status: {e}"),
+            }
+        }
+        key(&mut app, 't');
+        assert_eq!(app.take_open_shell(), Some(clone_path.clone()));
+        key(&mut app, 'e');
+        assert_eq!(app.take_open_file().map(|f| f.0), Some(clone_path));
     }
 
     #[test]

@@ -168,6 +168,16 @@ fn run_with(
             app.resize(cols, rows);
             app.message_edited(edited);
         }
+        // リポジトリのページの `t`: そのフォルダでシェルを開く。終えるまで端末を渡す。
+        if let Some(dir) = app.take_open_shell() {
+            input_paused.store(true, Ordering::Relaxed);
+            std::thread::sleep(terminal::INPUT_POLL * 2);
+            let opened = screen.outside(app.mouse_captured(), || open_shell(&dir))?;
+            input_paused.store(false, Ordering::Relaxed);
+            let (cols, rows) = terminal::size()?;
+            app.resize(cols, rows);
+            app.file_opened(opened);
+        }
         // 作業ツリーのファイルを、エディタで開く。閉じるまで端末を渡す。
         if let Some((file, workdir)) = app.take_open_file() {
             input_paused.store(true, Ordering::Relaxed);
@@ -187,6 +197,28 @@ fn run_with(
         let _ = front.call(serde_json::json!({"op": "run", "command": command}));
     }
     Ok(app.take_next())
+}
+
+/// `dir` で利用者のシェルを開き、終えるまで待つ（`SHELL`。なければ sh、Windows は `COMSPEC`）。
+fn open_shell(dir: &str) -> Result<()> {
+    let shell = match cfg!(windows) {
+        true => std::env::var("COMSPEC").unwrap_or_else(|_| "cmd.exe".into()),
+        false => std::env::var("SHELL").unwrap_or_else(|_| "sh".into()),
+    };
+    eprintln!(
+        "{}",
+        amonhen_model::tr!("A shell in {dir} (exit to go back)", dir = dir)
+    );
+    let mut command = amonhen_model::process::command(&shell);
+    command.current_dir(dir);
+    // 対話するシェルは、この端末を受け継ぐ（窓なしの印を外す）。
+    #[cfg(windows)]
+    {
+        use std::os::windows::process::CommandExt;
+        command.creation_flags(0);
+    }
+    command.status()?;
+    Ok(())
 }
 
 /// git のエディタ（`git var GIT_EDITOR`: `GIT_EDITOR`・`core.editor`・`VISUAL`・`EDITOR` の順）。`dir` は、その

@@ -94,8 +94,8 @@ GTK4 のアプリは macOS のアプリと同じふるまいをめざす。わ�
 | 手で作るグループ・行を Favorites やグループへドラッグ | △ | △ | ✓ | n/a | n/a | △ | macOS: グループそのものはドラッグで並べ替えられない。<br>GTK4: グループそのものはドラッグで並べ替えられない。<br>TUI: `g` でグループを打つ。ドラッグはない。 |
 | 状態の列（ブランチ・変更・ahead/behind・最後のコミット・開いた時）、並べ替え、列の順の入れ替え | ✓ | ✓ | ✓ | n/a | n/a | △ | TUI: `s` で並べる列を替える。列は並べ替えられない。 |
 | お気に入り・表示名・色のラベル | ✓ | ✓ | ✓ | n/a | n/a | ✓ | TUI: リポジトリのページの `*`・`n`・`c`。 |
-| タブ・窓で開く、Finder（ファイル）・Terminal・エディタ | ✓ | ✓ | ✓ | n/a | n/a | — | GTK4: 知っているコードエディタと「その他…」で選んだプログラム以外は、inode/directory を宣言しているアプリだけがフォルダを開く。<br>Windows: エクスプローラー・Windows Terminal（なければ cmd）・Settings で選んだエディタ。 |
-| 選んだリポジトリを Fetch | ✓ | ✓ | ✓ | n/a | n/a | — | Windows: Ctrl・Shift で行を選び、選んだ行のメニューの Fetch で、選んだものすべてを fetch する。 |
+| タブ・窓で開く、Finder（ファイル）・Terminal・エディタ | ✓ | ✓ | ✓ | n/a | n/a | ✓ | GTK4: 知っているコードエディタと「その他…」で選んだプログラム以外は、inode/directory を宣言しているアプリだけがフォルダを開く。<br>Windows: エクスプローラー・Windows Terminal（なければ cmd）・Settings で選んだエディタ。<br>TUI: Enter でそこで開き直す。`t` でそのフォルダのシェル（端末を渡す）、`e` で git のエディタ、`o` でファイルの窓。 |
+| 選んだリポジトリを Fetch | ✓ | ✓ | ✓ | n/a | n/a | △ | Windows: Ctrl・Shift で行を選び、選んだ行のメニューの Fetch で、選んだものすべてを fetch する。<br>TUI: `v` で行に印をつけ、`f` で裏で Fetch。SSH 先のリポジトリはページからは Fetch しない。 |
 | Quick Open（あいまい検索） | ✓ | ✓ | ✓ | n/a | n/a | ✓ | TUI: 命令の一覧の Quick Open が、アプリと同じものを並べる: 共有のブックマーク（`bookmarks.json`。お気に入りを先に）、最近開いたもの（`recent.json`）、手元の探すフォルダの下で見つけたもの（裏で探す。SSH 先のフォルダは探さない）。Enter で TUI をそこで開き直す。 |
 | ツールバーのリポジトリ名で切り替える | ✓ | ✓ | ✓ | ✓ | n/a | n/a | VSCode: Select Repository でワークスペースのリポジトリから選ぶ。<br>TUI: Quick Open が代わり。 |
 | Clone（自分の GitHub のリポジトリから選ぶ） | ✓ | ✓ | ✓ | n/a | △ | △ | VSCode: VSCode 自身の Git: Clone。<br>CLI: `clone <url>` だけ。<br>Windows: clone したものは新しいタブで開く。<br>TUI: Quick Open に URL を打つ。GitHub はない。 |

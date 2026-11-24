@@ -127,6 +127,11 @@ pub struct Repos {
     roots: Vec<amonhen_model::bookmarks::ScanRoot>,
     /// 左の分類の一番上に見えているもの。
     category_top: usize,
+    /// 印をつけた行（`v`。Fetch をまとめてする）。
+    marked: std::collections::HashSet<String>,
+    /// Fetch している行と、失敗した行の理由。
+    fetching: std::collections::HashSet<String>,
+    fetch_errors: HashMap<String, String>,
 }
 
 impl Repos {
@@ -145,6 +150,9 @@ impl Repos {
             prompt: None,
             roots: Vec::new(),
             category_top: 0,
+            marked: Default::default(),
+            fetching: Default::default(),
+            fetch_errors: HashMap::new(),
         };
         repos.add(entries);
         repos
@@ -161,6 +169,45 @@ impl Repos {
         self.add(scanned);
         let last = self.rows().len().saturating_sub(1);
         self.selected = self.selected.min(last);
+    }
+
+    /// 選んでいる行に印をつける・外す（`v`）。
+    pub fn toggle_mark(&mut self) {
+        if let Some(path) = self.selected_path()
+            && !self.marked.remove(&path)
+        {
+            self.marked.insert(path);
+        }
+    }
+
+    /// Fetch するもの: 印をつけた行（なければ選んでいる行）。
+    pub fn to_fetch(&self) -> Vec<String> {
+        match self.marked.is_empty() {
+            true => self.selected_path().into_iter().collect(),
+            false => {
+                let mut paths: Vec<String> = self.marked.iter().cloned().collect();
+                paths.sort();
+                paths
+            }
+        }
+    }
+
+    /// Fetch を始めた（印は外す）。
+    pub fn fetch_started(&mut self, paths: &[String]) {
+        for path in paths {
+            self.fetching.insert(path.clone());
+            self.fetch_errors.remove(path);
+        }
+        self.marked.clear();
+    }
+
+    /// Fetch が終わった。行の状態は読み直す（呼ぶ側）。
+    pub fn fetched(&mut self, path: &str, error: Option<String>) {
+        self.fetching.remove(path);
+        self.peeks.remove(path);
+        if let Some(error) = error {
+            self.fetch_errors.insert(path.to_owned(), error);
+        }
     }
 
     /// 選んでいる行。
@@ -400,6 +447,12 @@ impl Repos {
 
     /// 状態の列の文字（アプリと同じ: 変更の数、上流との差、何もなければ ✓。SSH 先は SSH）。
     fn status(&self, entry: &Entry) -> (String, Style) {
+        if self.fetching.contains(&entry.path) {
+            return (tr!("fetching…"), Style::new().fg(Color::Cyan));
+        }
+        if self.fetch_errors.contains_key(&entry.path) {
+            return (tr!("fetch failed"), Style::new().fg(Color::Red));
+        }
         if !entry.is_local() {
             return ("SSH".to_owned(), Style::new().fg(DIM));
         }
@@ -617,10 +670,18 @@ impl Repos {
             let opened = entry.opened.map_or("—".to_owned(), |t| ago(now, t));
             let pad = 4u16.saturating_sub(opened.width() as u16);
             put(x_opened + pad, opened_w, &opened, Style::new().fg(DIM));
+            // 印をつけた行（History の印と同じ色）。
+            if self.marked.contains(&entry.path) {
+                buf.set_style(
+                    Rect::new(list.x, y, list.width, 1),
+                    Style::new().bg(Color::Indexed(24)),
+                );
+            }
             if i == self.selected {
-                let bg = match self.focus_categories {
-                    true => Color::Indexed(236),
-                    false => Color::Indexed(238),
+                let bg = match (self.focus_categories, self.marked.contains(&entry.path)) {
+                    (_, true) => Color::Indexed(31),
+                    (true, false) => Color::Indexed(236),
+                    (false, false) => Color::Indexed(238),
                 };
                 buf.set_style(Rect::new(list.x, y, list.width, 1), Style::new().bg(bg));
             }
@@ -655,7 +716,7 @@ impl Repos {
                 "j/k move   Enter list   a add a folder to scan   on 🔍: d depth  r rescan  x stop   Esc close"
             ),
             (None, false) => tr!(
-                "j/k move   Enter open   * favorite   n name   c color   g group   a add   x remove   / filter   s sort   Esc close"
+                "j/k move   Enter open   v mark   f fetch   t shell   e editor   o files   * favorite   n name   c color   g group   a add   x remove   / filter   s sort   Esc close"
             ),
         };
         buf.set_stringn(
