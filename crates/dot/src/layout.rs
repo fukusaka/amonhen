@@ -194,9 +194,10 @@ fn components(units: usize, out: &[Vec<usize>], cons: &[Con]) -> Vec<usize> {
 /// 単位（`units` 個、番号は 0 から）のランクを解く。`cons` は閉路を作るものを逆にし、`fixed` はそのまま足す
 /// （`total` は `fixed` のノードを含めた数）。`first` があれば閉路を探す深さ優先をそこから始める。
 ///
-/// `rigid` はクラスタをまとめた単位。それを含む閉路（強連結成分）の中の辺は、向きを強いずに
+/// `rigid` はクラスタをまとめた単位。それを含む閉路（強連結成分）に入る単位に触れる辺は、向きを強いずに
 /// `weight * |長さ - minlen|` を小さくする（クラスタの中のずれで成り立つ閉路は並べ、成り立たなければ重みの軽い辺が
-/// 逆を向く。Graphviz の `newrank=false` の絵と同じ）。ほかの閉路は深さ優先で逆にする（Gansner ほか 1993）。
+/// 逆を向き、外のノードへの辺も得なら横や上を向く。Graphviz の `newrank=false` の絵と同じで、説明書の「head が
+/// tail より上のランクになることがある」にあたる）。ほかの閉路は深さ優先で逆にする（Gansner ほか 1993）。
 fn solve_ranks(
     total: usize,
     units: usize,
@@ -210,7 +211,7 @@ fn solve_ranks(
     for (i, c) in cons.iter().enumerate() {
         out[c.tail].push(i);
     }
-    // クラスタを含む閉路の中の辺（向きを強いない）
+    // クラスタを含む閉路（強連結成分）に入る単位に触れる辺（向きを強いない）
     let soft: Vec<bool> = if rigid.iter().any(|&r| r) {
         let comp = components(units, &out, cons);
         let mut size = vec![0usize; units];
@@ -219,11 +220,9 @@ fn solve_ranks(
             size[comp[u]] += 1;
             has_rigid[comp[u]] |= rigid.get(u).copied().unwrap_or(false);
         }
+        let cyclic = |u: usize| size[comp[u]] > 1 && has_rigid[comp[u]];
         cons.iter()
-            .map(|c| {
-                let k = comp[c.tail];
-                k == comp[c.head] && size[k] > 1 && has_rigid[k]
-            })
+            .map(|c| cyclic(c.tail) || cyclic(c.head))
             .collect()
     } else {
         vec![false; cons.len()]
@@ -258,14 +257,14 @@ fn solve_ranks(
     }
     let mut edges: Vec<NsEdge> = Vec::with_capacity(cons.len() + fixed.len());
     // 向きを強いない辺は補助のノード z で |x_h - (x_t + d)| にする（z → t は c - d、z → h は c、c = max(d, 0)。
-    // z → t の重みは短すぎる（上を向く）分、z → h は長すぎる分）。同じ値の形がいくつもあれば、書いた順で先の単位から
-    // 後の単位への辺を下に向ける（短すぎる分をわずかに重く）
+    // z → t の重みは短すぎる（上を向く）分、z → h は長すぎる分）。同じ値の形がいくつもあれば、辺が下を向くほうを選び
+    // （短すぎる分をわずかに重く）、それでも同じなら書いた順で先の単位から後の単位への辺を下に向ける
     let mut aux = total;
     for ((c, &r), &s) in cons.iter().zip(&reverse).zip(&soft) {
         if s {
             let d = c.fwd;
             let m = d.max(0);
-            let short = if c.tail < c.head { 1.001 } else { 1.0 };
+            let short = if c.tail < c.head { 1.00101 } else { 1.001 };
             edges.push(NsEdge {
                 tail: aux,
                 head: c.tail,
@@ -1962,6 +1961,24 @@ mod tests {
         let tie = [chain[0].clone(), chain[1].clone(), edge(2, 3), edge(3, 0)];
         let l = layout(&nodes, &tie, &clusters, &[], &opts());
         assert_eq!(l.ranks, [0, 1, 2, 3]);
+        // A and B in a cycle that fits; x → a1, and b1 → x (heavier) pulls x below b1: x → a1 turns up
+        let nodes = vec![
+            node(Some(0)),
+            node(Some(0)),
+            node(Some(1)),
+            node(Some(1)),
+            node(None),
+        ];
+        let edges = vec![
+            edge(0, 1),
+            edge(2, 3),
+            edge(0, 3),
+            edge(2, 1),
+            edge(4, 0),
+            weighted(2, 4, 3.0),
+        ];
+        let l = layout(&nodes, &edges, &clusters, &[], &opts());
+        assert_eq!(l.ranks, [0, 1, 0, 1, 1]);
     }
 
     #[test]
