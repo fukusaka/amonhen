@@ -658,24 +658,56 @@ fn span_attrs(font: &Font, root: &Font, out: &mut String) {
     if font.mono && !root.mono {
         out.push_str(" font-family=\"var(--_fm)\"");
     }
-    let mut deco = Vec::new();
-    if font.underline {
-        deco.push("underline");
-    }
-    if font.strike {
-        deco.push("line-through");
-    }
-    if font.overline {
-        deco.push("overline");
-    }
-    if !deco.is_empty() {
-        out.push_str(&format!(" text-decoration=\"{}\"", deco.join(" ")));
-    }
     if font.color != root.color
         && let Some(c) = &font.color
     {
         out.push_str(&color_attr("fill", c));
     }
+}
+
+/// 下線・上線・打ち消し線を、文字（左 `left`・幅 `w`・基線 `base`）に添える線で描く（CoreSVG は
+/// `text-decoration` を読まない）。色は文字と同じ。
+fn decorations(
+    out: &mut String,
+    left: f64,
+    w: f64,
+    base: f64,
+    font: &Font,
+    root: &Font,
+    ink: Option<&str>,
+) {
+    if !(font.underline || font.strike || font.overline) || w <= 0.0 {
+        return;
+    }
+    let size = if font.sub || font.sup {
+        font.size / 1.2
+    } else {
+        font.size
+    };
+    let mut d = String::new();
+    for (on, dy) in [
+        (font.underline, 0.15),
+        (font.strike, -0.3),
+        (font.overline, -0.85),
+    ] {
+        if on {
+            d.push_str(&format!(
+                "M{},{}h{}",
+                num(left),
+                num(base + dy * size),
+                num(w)
+            ));
+        }
+    }
+    let stroke = match (&font.color, &root.color, ink) {
+        (Some(c), _, _) | (None, Some(c), _) => color_attr("stroke", c),
+        (None, None, Some(c)) => format!(" stroke=\"{c}\""),
+        (None, None, None) => " stroke=\"var(--_fg)\"".to_owned(),
+    };
+    out.push_str(&format!(
+        "<path d=\"{d}\" fill=\"none\"{stroke} stroke-width=\"{}\"/>",
+        num((size / 14.0).max(0.5))
+    ));
 }
 
 /// 文字を (cx, cy) を中心に書く。`box_w` は寄せの幅（ラベルより広い枠の中で左・右に寄せる）。`root` はまわりの
@@ -740,13 +772,31 @@ pub fn text_svg(
             num(base)
         ));
         if single {
-            span_attrs(&line.spans[0].font, root, &mut out);
+            let span = &line.spans[0];
+            span_attrs(&span.font, root, &mut out);
             out.push('>');
-            out.push_str(&esc(&line.spans[0].text));
+            out.push_str(&esc(&span.text));
             out.push_str("</text>");
+            let start = match anchor {
+                "middle" => x - span.width / 2.0,
+                "end" => x - span.width,
+                _ => x,
+            };
+            let lead = span.text.len() - span.text.trim_start_matches(' ').len();
+            let drawn = span.text.trim_matches(' ');
+            decorations(
+                &mut out,
+                start + measure(&" ".repeat(lead), &span.font),
+                measure(drawn, &span.font),
+                base,
+                &span.font,
+                root,
+                ink,
+            );
             continue;
         }
         out.push('>');
+        let mut lines = String::new();
         let mut shifted = 0.0f64;
         let mut at = x;
         for span in &line.spans {
@@ -780,8 +830,18 @@ pub fn text_svg(
             out.push('>');
             out.push_str(&esc(drawn));
             out.push_str("</tspan>");
+            decorations(
+                &mut lines,
+                left,
+                measure(drawn, &span.font),
+                base + want,
+                &span.font,
+                root,
+                ink,
+            );
         }
         out.push_str("</text>");
+        out.push_str(&lines);
     }
     out
 }
@@ -876,6 +936,31 @@ mod tests {
         ] {
             let _ = html_label(src, &font, None);
         }
+    }
+
+    #[test]
+    fn draws_decorations_as_lines() {
+        // CoreSVG は text-decoration を読まないので、線を添える（色は文字の色）
+        let font = Font::new(14.0);
+        let t = html_label(
+            "plain <u>under</u> <font color=\"red\"><s>gone</s></font>",
+            &font,
+            None,
+        );
+        let svg = text_svg(&t, 0.0, 0.0, 0.0, &font, "", Some("#1f1f1f"));
+        assert!(!svg.contains("text-decoration"), "{svg}");
+        let paths: Vec<&str> = svg.split("<path").skip(1).collect();
+        assert_eq!(paths.len(), 2, "{svg}");
+        assert!(paths[0].contains("stroke=\"#1f1f1f\""), "{svg}");
+        assert!(paths[1].contains("stroke=\"#ff0000\""), "{svg}");
+        // 下線は文字の幅だけ（span の両端の空白は含めない）
+        let w = measure("under", &font);
+        assert!(paths[0].contains(&format!("h{}", num(w))), "{svg}");
+        let t = html_label("<o>top</o>", &font, None);
+        let svg = text_svg(&t, 10.0, 0.0, 0.0, &font, "", None);
+        assert!(svg.contains("stroke=\"var(--_fg)\""), "{svg}");
+        let w = measure("top", &font);
+        assert!(svg.contains(&format!("M{},", num(10.0 - w / 2.0))), "{svg}");
     }
 
     #[test]
