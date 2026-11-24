@@ -1062,8 +1062,8 @@ pub fn render(model: &Model, budget: Budget, notes: &mut BTreeSet<Note>) -> Stri
         };
         let tv = &views[e.tail];
         let hv = &views[e.head];
-        let tail_port = port_of(tv, a.get("tailport").or(e.tail_port.as_deref()));
-        let head_port = port_of(hv, a.get("headport").or(e.head_port.as_deref()));
+        let mut tail_port = port_of(tv, a.get("tailport").or(e.tail_port.as_deref()));
+        let mut head_port = port_of(hv, a.get("headport").or(e.head_port.as_deref()));
         let head_clip = a.flag("headclip").unwrap_or(true);
         let tail_clip = a.flag("tailclip").unwrap_or(true);
         let mut path: Vec<Cubic>;
@@ -1187,6 +1187,13 @@ pub fn render(model: &Model, budget: Budget, notes: &mut BTreeSet<Note>) -> Stri
         let _ = vertical_flow;
         if path.is_empty() {
             continue;
+        }
+        // 内側の升・欄のポートは、外形に触れる辺から出入りする
+        if !ortho && e.tail != e.head {
+            let toward = path[0].3;
+            outer_side(tv, &mut tail_port, toward);
+            let toward = path[path.len() - 1].0;
+            outer_side(hv, &mut head_port, toward);
         }
         // 端の点をポートに
         let reach = {
@@ -1675,6 +1682,54 @@ fn clip_fn<'a>(view: &'a NodeView, port: &Option<Port>) -> Option<Box<dyn Fn(P) 
             }))
         }
         None => Some(Box::new(move |p: P| view.geom.inside(p.0 - x, p.1 - y))),
+    }
+}
+
+/// 升（record の欄・HTML の表の升）のポートから `toward`（絵の座標）へまっすぐ出ると、同じノードのほかの升の
+/// 上を通るなら、外形に触れる升の辺のうち `toward` に向くものの中ほどから、その向きに出すポートに替える。
+fn outer_side(view: &NodeView, port: &mut Option<Port>, toward: P) {
+    let Some(Port {
+        clip: Some(b),
+        dir: None,
+        ..
+    }) = port
+    else {
+        return;
+    };
+    let b = *b;
+    let (w, h) = view.geom.outer();
+    let o = [-w / 2.0, -h / 2.0, w / 2.0, h / 2.0];
+    let c = ((b[0] + b[2]) / 2.0, (b[1] + b[3]) / 2.0);
+    let t = (toward.0 - view.pos.0 - c.0, toward.1 - view.pos.1 - c.1);
+    if t.0.hypot(t.1) < 1e-9 {
+        return;
+    }
+    // 升の中心から t の向きに出る升の縁の点
+    let (hw, hh) = ((b[2] - b[0]) / 2.0, (b[3] - b[1]) / 2.0);
+    let s = (hw / t.0.abs().max(1e-12)).min(hh / t.1.abs().max(1e-12));
+    let exit = (c.0 + t.0 * s, c.1 + t.1 * s);
+    let near = |a: f64, b: f64| (a - b).abs() < 1.0;
+    if near(exit.0, o[0]) || near(exit.0, o[2]) || near(exit.1, o[1]) || near(exit.1, o[3]) {
+        return;
+    }
+    let u = unit(t);
+    let sides = [
+        (near(b[0], o[0]), (-1.0, 0.0), (b[0], c.1)),
+        (near(b[2], o[2]), (1.0, 0.0), (b[2], c.1)),
+        (near(b[1], o[1]), (0.0, -1.0), (c.0, b[1])),
+        (near(b[3], o[3]), (0.0, 1.0), (c.0, b[3])),
+    ];
+    let best = sides.iter().filter(|s| s.0).max_by(|x, y| {
+        let dx = x.1.0 * u.0 + x.1.1 * u.1;
+        let dy = y.1.0 * u.0 + y.1.1 * u.1;
+        dx.total_cmp(&dy)
+    });
+    if let Some(&(_, d, at)) = best {
+        *port = Some(Port {
+            at,
+            clip: None,
+            dir: Some(d),
+        });
     }
 }
 
