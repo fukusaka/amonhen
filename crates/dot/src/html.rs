@@ -22,6 +22,10 @@ const MAX_SPAN: usize = 200;
 const MAX_SIZE: f64 = 20_000.0;
 /// 画像の代わりの枠の大きさ。
 const IMAGE: (f64, f64) = (36.0, 24.0);
+/// 升の文字の幅のゆとり。幅は Arial の送りで見積もるが、アプリの書体（macOS の sans-serif、Linux の DejaVu Sans・
+/// Noto Sans など）は 1 割ほど広いことがあり、升の余白（`cellpadding`）が小さいと枠からはみ出る。ノードの
+/// ラベルは周りの余白が吸うが、升は詰まっているので見積もりを広げておく。
+const TEXT_SLACK: f64 = 1.1;
 /// 既定の線の色（ノードの枠と同じ）。
 const BORDER: &str = "var(--_b)";
 
@@ -473,7 +477,7 @@ impl Cell {
     fn content_size(&self) -> (f64, f64) {
         match &self.content {
             Content::Empty => (0.0, 0.0),
-            Content::Text(t) => (t.width, t.height),
+            Content::Text(t) => (t.width * TEXT_SLACK, t.height),
             Content::Table(t) => (t.w, t.h),
             Content::Image => IMAGE,
         }
@@ -879,6 +883,17 @@ mod tests {
         let t = table("<table width=\"200\"><tr><td>a</td><td>b</td></tr></table>");
         assert_eq!(t.w, 200.0);
         assert!((t.cells[0].w - t.cells[1].w).abs() < 1e-6);
+        // 升は文字の見積もりより 1 割広く（アプリの書体が Arial より広くても余白の内に収まる）
+        let t = table("<table cellpadding=\"2\"><tr><td>user_id</td></tr></table>");
+        let Content::Text(text) = &t.cells[0].content else {
+            panic!("no text");
+        };
+        let inner = t.cells[0].w - 2.0 * (2.0 + 1.0);
+        assert!(
+            (inner - text.width * TEXT_SLACK).abs() < 1e-6,
+            "{inner} {}",
+            text.width
+        );
     }
 
     #[test]
