@@ -1998,9 +1998,16 @@ fn merge_and_delete_the_marked_refs() {
     let asked = amonhen_tui::snapshot(open(dir.path()), 220, 12, clock(), "0jjjvjvm").unwrap();
     println!("{asked}");
     assert!(
-        asked.contains("Merge a1 (1), a2 (1) into main as one merge commit (octopus)? Undo brings it back.   y merge   n cancel"),
+        asked.contains("Merge a1 (1), a2 (1) into main as one merge commit (octopus)?"),
         "{asked}"
     );
+    assert!(
+        asked.contains("Undo brings it back.   y merge   n cancel"),
+        "{asked}"
+    );
+    if predicts_conflicts(dir.path()) {
+        assert!(asked.contains("No conflicts are expected."), "{asked}");
+    }
     amonhen_tui::snapshot(open(dir.path()), 220, 12, clock(), "0jjjvjvmy").unwrap();
     let parents = git_out(dir.path(), &["log", "-1", "--format=%P"]);
     assert_eq!(parents.split_whitespace().count(), 3, "{parents}");
@@ -2012,6 +2019,52 @@ fn merge_and_delete_the_marked_refs() {
         git_out(dir.path(), &["branch", "--format=%(refname:short)"]),
         "main\n"
     );
+}
+
+/// octopus merge の確認に、それぞれがコンフリクトしそうなファイル。最後でなければ `l` で最後に回す
+#[test]
+fn octopus_merge_names_conflicts_and_puts_them_last() {
+    let dir = tempfile::tempdir().unwrap();
+    if !predicts_conflicts(dir.path()) {
+        return;
+    }
+    git(dir.path(), BASE, &["init", "-q", "-b", "main"]);
+    std::fs::write(dir.path().join("shared.txt"), "start\n").unwrap();
+    git(dir.path(), BASE, &["add", "."]);
+    git(dir.path(), BASE, &["commit", "-q", "-m", "Start"]);
+    // a1 は main と同じ所を変える（コンフリクトする）、a2 はほかのファイル。
+    git(dir.path(), BASE, &["switch", "-q", "-c", "a1", "main"]);
+    std::fs::write(dir.path().join("shared.txt"), "a1\n").unwrap();
+    git(dir.path(), BASE + DAY, &["commit", "-q", "-am", "On a1"]);
+    git(dir.path(), BASE, &["switch", "-q", "-c", "a2", "main"]);
+    std::fs::write(dir.path().join("a2.txt"), "a2\n").unwrap();
+    git(dir.path(), BASE, &["add", "."]);
+    git(dir.path(), BASE + DAY, &["commit", "-q", "-m", "On a2"]);
+    git(dir.path(), BASE, &["switch", "-q", "main"]);
+    std::fs::write(dir.path().join("shared.txt"), "main\n").unwrap();
+    git(
+        dir.path(),
+        BASE + DAY * 2,
+        &["commit", "-q", "-am", "On main"],
+    );
+    let asked = amonhen_tui::snapshot(open(dir.path()), 260, 12, clock(), "0jjjvjvm").unwrap();
+    println!("{asked}");
+    assert!(
+        asked.contains(
+            "Merge a1 (1, conflicts in shared.txt), a2 (1) into main as one merge commit (octopus)?"
+        ),
+        "{asked}"
+    );
+    assert!(asked.contains("y merge   l put a1 last"), "{asked}");
+    // 最後に回すと、その順で見直す。
+    let last = amonhen_tui::snapshot(open(dir.path()), 260, 12, clock(), "0jjjvjvml").unwrap();
+    assert!(
+        last.contains(
+            "Merge a2 (1), a1 (1, conflicts in shared.txt) into main as one merge commit (octopus)?"
+        ),
+        "{last}"
+    );
+    assert!(last.contains("y merge   n cancel"), "{last}");
 }
 
 /// Branches はアプリと同じく並ぶ: 今のブランチ、動いているもの（新しい順）、積んだものは土台の下に ↳、

@@ -727,6 +727,10 @@ pub struct App {
     operations: Option<Operations>,
     /// clone の途中で聞いていること（URL、場所、取り方）。選ぶ前に横取りして、次を聞く。
     clone_plan: Option<ClonePlan>,
+    /// octopus merge で取り込む順と、その見通し（`octopusPreview` の `info`）。コンフリクトの見込みを読む間も持つ。
+    octopus: Option<(Vec<String>, Value)>,
+    /// octopus merge を確かめている間の `l`: この順（コンフリクトしそうなものを最後に回した）で見直す。
+    octopus_last: Option<Vec<String>>,
     /// Export JSON で書き出す Operations の記録（場所を打っている間）。
     export_records: Option<Value>,
     /// Activity の History Cache（`historyCache` の info。キャッシュがなければ null）。
@@ -886,6 +890,8 @@ impl App {
             showing_performance: false,
             export_records: None,
             clone_plan: None,
+            octopus: None,
+            octopus_last: None,
             edit_mode: None,
             combining: Vec::new(),
             copy: None,
@@ -1925,6 +1931,16 @@ impl App {
             self.patch_version = Some(pending);
             self.naming = Naming::PatchVersion;
             self.typing_branch = Some((String::new(), String::new(), "2".to_owned()));
+            self.dirty = true;
+            return;
+        }
+        // octopus merge を確かめている間の `l`: コンフリクトしそうなものを最後に回して見直す（アプリの Put Last）。
+        if self.choices.is_some()
+            && let Some(order) = self.octopus_last.take()
+            && key.code == KeyCode::Char('l')
+        {
+            self.choices = None;
+            self.preview_octopus(order);
             self.dirty = true;
             return;
         }
@@ -4092,6 +4108,13 @@ impl App {
             // 下書きが読めなくても、欄はそのまま使える（覚えるのをやめる）。
             Err(_) if name == "draftOrTemplate" => return,
             // 変更の数が読めなくても、消すかは聞く（変更があれば git が断る）。
+            // コンフリクトの見込みが読めなくても、octopus merge は確かめる（見込みなしで）。
+            Err(_) if name == "octopusConflicts" => {
+                if let Some((order, info)) = self.octopus.take() {
+                    self.ask_octopus_with(&order, &info, None);
+                }
+                return;
+            }
             Err(_) if name == "worktreeChangesForRemove" => {
                 self.ask_remove_worktree(0);
                 return;
@@ -4671,9 +4694,30 @@ impl App {
                 self.dirty = true;
                 return;
             }
+            // octopus merge の見通しが分かった: 取り込むものがあれば、コンフリクトの見込みも（同じ順に重ねて）読む。
             "octopusPreview" => {
                 let info = reply["info"].clone();
-                self.ask_octopus_with(&info);
+                let Some((order, _)) = self.octopus.take() else {
+                    return;
+                };
+                if info["upToDate"] == true {
+                    let branch = self.branch.clone().unwrap_or_default();
+                    self.notice = Some(tr!("{branch} already has all of them", branch = branch));
+                    return;
+                }
+                self.octopus = Some((order.clone(), info));
+                self.run(
+                    "octopusConflicts",
+                    tr!("Looking ahead…"),
+                    json!({"op": "predictMerge", "ours": null, "theirs": order}),
+                );
+                return;
+            }
+            "octopusConflicts" => {
+                if let Some((order, info)) = self.octopus.take() {
+                    let steps = reply["info"]["steps"].as_array().cloned();
+                    self.ask_octopus_with(&order, &info, steps.as_deref());
+                }
                 return;
             }
             "fetchConfig" => {
@@ -6447,42 +6491,83 @@ impl App {
             return true;
         }
         let theirs = self.sidebar.marked_names();
-        self.run(
-            "octopusPreview",
-            tr!("Looking ahead…"),
-            json!({"op": "octopusPreview", "theirs": theirs}),
-        );
+        self.preview_octopus(theirs);
         true
     }
 
-    /// octopus merge の見通しから、それぞれが持ち込むコミットの数を書いて確かめる（アプリの octopus merge の
-    /// シートの代わり）。
-    fn ask_octopus_with(&mut self, info: &Value) {
-        let theirs = self.sidebar.marked_names();
+    /// `order` の順に取り込む octopus merge の見通しを読む（答えは `octopusPreview`）。
+    fn preview_octopus(&mut self, order: Vec<String>) {
+        self.octopus = Some((order.clone(), Value::Null));
+        self.run(
+            "octopusPreview",
+            tr!("Looking ahead…"),
+            json!({"op": "octopusPreview", "theirs": order}),
+        );
+    }
+
+    /// octopus merge の見通しから、それぞれが持ち込むコミットの数と、重ねたときにコンフリクトしそうなファイル
+    /// （`steps`。分からなければ None）を書いて確かめる（アプリの octopus merge のシートの代わり）。コンフリクト
+    /// しそうなものが最後でなければ、`l` で最後に回せる（アプリの Put Last）。
+    fn ask_octopus_with(&mut self, order: &[String], info: &Value, steps: Option<&[Value]>) {
         let branch = self.branch.clone().unwrap_or_default();
-        if info["upToDate"] == true {
-            self.notice = Some(tr!("{branch} already has all of them", branch = branch));
-            return;
-        }
+        let conflicts_of = |rev: &str| -> Vec<String> {
+            (steps.into_iter().flatten())
+                .find(|s| s["rev"] == rev)
+                .and_then(|s| conflict_files(&s["conflicts"]))
+                .unwrap_or_default()
+        };
         let sides: Vec<String> = (info["drawing"]["sides"].as_array().into_iter().flatten())
             .filter_map(|s| {
                 let rev = s["rev"].as_str()?;
                 let count = u64::from(!s["tip"].is_null()) + s["more"].as_u64().unwrap_or(0);
-                Some(format!("{rev} ({count})"))
+                let files = conflicts_of(rev);
+                Some(match files.len() {
+                    0 => format!("{rev} ({count})"),
+                    _ => tr!(
+                        "{rev} ({count}, conflicts in {files})",
+                        rev = rev,
+                        count = count,
+                        files = amonhen_model::i18n::list(
+                            &files.iter().map(String::as_str).collect::<Vec<_>>()
+                        )
+                    ),
+                })
             })
             .collect();
-        self.confirm = Some((
-            tr!(
-                "Merge {sides} into {branch} as one merge commit (octopus)? Undo brings it back.",
-                sides = sides.join(", "),
-                branch = branch
-            ),
-            tr!("merge"),
-            Request::Run {
-                name: "merge",
-                command: json!({"op": "merge", "rev": theirs}),
-            },
-        ));
+        let expected = match steps {
+            Some(_) if order.iter().all(|r| conflicts_of(r).is_empty()) => {
+                tr!(" No conflicts are expected.")
+            }
+            _ => String::new(),
+        };
+        let ask = tr!(
+            "Merge {sides} into {branch} as one merge commit (octopus)?{expected} Undo brings it back.",
+            sides = sides.join(", "),
+            branch = branch,
+            expected = expected
+        );
+        let merge = Request::Run {
+            name: "merge",
+            command: json!({"op": "merge", "rev": order}),
+        };
+        // コンフリクトしそうなもののうち最初のものが最後でなければ、最後に回す順を勧める。
+        let first = order.iter().position(|r| !conflicts_of(r).is_empty());
+        match first {
+            Some(at) if at + 1 < order.len() => {
+                let mut last = order.to_vec();
+                let moved = last.remove(at);
+                last.push(moved.clone());
+                self.octopus_last = Some(last);
+                self.choices = Some((
+                    ask,
+                    vec![
+                        ('y', tr!("merge"), merge),
+                        ('l', tr!("put {rev} last", rev = moved), Request::Status),
+                    ],
+                ));
+            }
+            _ => self.confirm = Some((ask, tr!("merge"), merge)),
+        }
         self.dirty = true;
     }
 
