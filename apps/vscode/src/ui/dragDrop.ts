@@ -180,7 +180,8 @@ export async function runAction(repo: Repository, action: Action): Promise<void>
       action.run(),
     );
   } catch (err) {
-    showError(err);
+    // つながらない・ロックなら、確かめ直さずに同じ操作をもう一度（アプリの帯の Try Again）
+    showError(err, { retry: () => runAction(repo, { ...action, confirm: undefined }), cwd: repo.root });
   } finally {
     await repo.refresh();
   }

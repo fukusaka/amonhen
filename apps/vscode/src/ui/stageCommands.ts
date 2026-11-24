@@ -3,6 +3,7 @@ import { readFile, stat } from 'node:fs/promises';
 import { join } from 'node:path';
 import * as vscode from 'vscode';
 import { failureCause, hasMoreThan } from '../failure/cause.ts';
+import { classifyFailure, failureAdvice, failureRemedies, failureSummary, type Failure, type Remedy } from '../failure/kind.ts';
 import { GitError } from '../git/exec.ts';
 import type { Change } from '../state/changes.ts';
 import { predictStage, predictUnstage } from '../state/predict.ts';
@@ -97,22 +98,77 @@ let failures: vscode.OutputChannel | undefined;
  * 失敗を知らせる。原因の行（git の `fatal:`・`error:`）だけを出し、それで言い尽くさなければ Details で全文（git の
  * 命令も）を出力パネルに出す（アプリの帯の原因と Details）
  */
-export function showError(err: unknown): void {
+/** showError の付け足し */
+export interface ShowErrorOptions {
+  /** 「もう一度」で同じ操作をやり直す（つながらない・ロックのとき） */
+  retry?: () => unknown;
+  /** 端末を開く場所（認証・ホスト鍵のとき） */
+  cwd?: string;
+}
+
+const REMEDY_TITLES: Record<Remedy, string> = {
+  openWorktree: 'Open Worktree',
+  openTerminal: 'Open in Terminal',
+  retry: 'Try Again',
+  pull: 'Pull…',
+  workingCopy: 'Open Working Copy',
+  setUpstream: 'Set Upstream…',
+};
+
+/**
+ * 失敗を知らせる。git の文から失敗の種類が分かれば、アプリの帯と同じく言い直し、次の一手のボタン（Pull…・Working
+ * Copy・Set Upstream…・worktree・端末・もう一度）を添える。全文と助言は Details で
+ */
+export function showError(err: unknown, options: ShowErrorOptions = {}): void {
   const message = err instanceof GitError || err instanceof Error ? err.message : String(err);
   const cause = failureCause(message);
-  if (!hasMoreThan(cause, message) && !(err instanceof GitError)) {
+  const failure = classifyFailure(err instanceof GitError ? `${err.stderr}\n${message}` : message);
+  const summary = failure && failureSummary(failure);
+  const remedies = failure ? failureRemedies(failure, options.retry !== undefined) : [];
+  if (!summary && !hasMoreThan(cause, message) && !(err instanceof GitError)) {
     void vscode.window.showErrorMessage(message);
     return;
   }
-  void vscode.window.showErrorMessage(cause, 'Details').then((choice) => {
+  const buttons = [...remedies.map((r) => REMEDY_TITLES[r]), 'Details'];
+  void vscode.window.showErrorMessage(summary ?? cause, ...buttons).then((choice) => {
+    const remedy = remedies.find((r) => REMEDY_TITLES[r] === choice);
+    if (remedy) {
+      runRemedy(remedy, failure!, options);
+      return;
+    }
     if (choice !== 'Details') return;
     failures ??= vscode.window.createOutputChannel('Amon Hen Failures');
     const command = err instanceof GitError ? `git ${err.args.join(' ')}\n${err.exitCode === null ? '' : `exit code ${err.exitCode}\n`}` : '';
-    failures.appendLine(`[${new Date().toLocaleString()}] ${cause}`);
+    const advice = failure && failureAdvice(failure);
+    failures.appendLine(`[${new Date().toLocaleString()}] ${summary ?? cause}`);
+    if (advice) failures.appendLine(advice);
     failures.appendLine(`${command}${(err instanceof GitError ? err.stderr : message).trimEnd()}`);
     failures.appendLine('');
     failures.show(true);
   });
+}
+
+function runRemedy(remedy: Remedy, failure: Failure, options: ShowErrorOptions): void {
+  switch (remedy) {
+    case 'retry':
+      void Promise.resolve(options.retry?.()).catch((err) => showError(err, options));
+      break;
+    case 'pull':
+      void vscode.commands.executeCommand('amonhen.pull');
+      break;
+    case 'workingCopy':
+      void vscode.commands.executeCommand('amonhen.showWorkingCopy');
+      break;
+    case 'setUpstream':
+      void vscode.commands.executeCommand('amonhen.setUpstream');
+      break;
+    case 'openWorktree':
+      if (failure.path) void vscode.commands.executeCommand('vscode.openFolder', vscode.Uri.file(failure.path), { forceNewWindow: true });
+      break;
+    case 'openTerminal':
+      vscode.window.createTerminal({ name: 'Amon Hen', ...(options.cwd ? { cwd: options.cwd } : {}) }).show();
+      break;
+  }
 }
 
 /** index にあればそのモード、無ければ実ファイルの実行ビットから決める */

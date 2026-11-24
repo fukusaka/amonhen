@@ -44,16 +44,19 @@ export function registerFetchCommand(manager: RepositoryManager, fetched?: () =>
     }
     const chosen = await chooseRemote(repo);
     if (!chosen) return;
-    try {
-      await vscode.window.withProgress(
-        { location: vscode.ProgressLocation.Window, title: chosen.remote ? `Fetch from ${chosen.remote}` : 'Fetch' },
-        () => repo.backend.fetch(chosen.remote),
-      );
-    } catch (err) {
-      showError(err);
-    } finally {
-      await repo.refresh();
-      await fetched?.();
-    }
+    const run = async (): Promise<void> => {
+      try {
+        await vscode.window.withProgress(
+          { location: vscode.ProgressLocation.Window, title: chosen.remote ? `Fetch from ${chosen.remote}` : 'Fetch' },
+          () => repo.backend.fetch(chosen.remote),
+        );
+      } catch (err) {
+        showError(err, { retry: run, cwd: repo.root });
+      } finally {
+        await repo.refresh();
+        await fetched?.();
+      }
+    };
+    await run();
   });
 }
