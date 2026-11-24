@@ -92,6 +92,7 @@ pub struct Cell {
     bg: Option<Fill>,
     sides: Sides,
     rounded: bool,
+    dash: Dash,
     align: Align,
     valign: VAlign,
     pub port: Option<String>,
@@ -115,6 +116,7 @@ pub struct Table {
     bg: Option<Fill>,
     sides: Sides,
     rounded: bool,
+    dash: Dash,
     pub port: Option<String>,
     pub cells: Vec<Cell>,
     /// 間の線（表の左上から、両端）。
@@ -173,6 +175,34 @@ fn style_has(attrs: &[(String, String)], name: &str) -> bool {
         s.split(|c: char| c == ',' || c.is_whitespace())
             .any(|p| p.trim().eq_ignore_ascii_case(name))
     })
+}
+
+/// 枠の線の種類（`style` の `dashed`・`dotted`）。
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum Dash {
+    Solid,
+    Dashed,
+    Dotted,
+}
+
+impl Dash {
+    fn of(attrs: &[(String, String)]) -> Dash {
+        if style_has(attrs, "dashed") {
+            Dash::Dashed
+        } else if style_has(attrs, "dotted") {
+            Dash::Dotted
+        } else {
+            Dash::Solid
+        }
+    }
+
+    fn attr(self) -> &'static str {
+        match self {
+            Dash::Solid => "",
+            Dash::Dashed => " stroke-dasharray=\"5,2\"",
+            Dash::Dotted => " stroke-dasharray=\"1,5\"",
+        }
+    }
 }
 
 /// `bgcolor` の塗り（色の並びはグラデーション。`style="radial"`・`gradientangle`）。
@@ -379,6 +409,7 @@ impl Parser<'_> {
                                     bg: fill(&a, self.scheme),
                                     sides: Sides::parse(attr(&a, "sides")),
                                     rounded: style_has(&a, "rounded"),
+                                    dash: Dash::of(&a),
                                     align: align_of(&a),
                                     valign: valign_of(&a),
                                     port: attr(&a, "port").map(str::to_owned),
@@ -409,6 +440,7 @@ impl Parser<'_> {
             bg: fill(&attrs, self.scheme),
             sides: Sides::parse(attr(&attrs, "sides")),
             rounded: style_has(&attrs, "rounded"),
+            dash: Dash::of(&attrs),
             port: attr(&attrs, "port").map(str::to_owned),
             cells,
             rules: vec![],
@@ -776,6 +808,7 @@ fn frame(
     stroke: Option<Color>,
     fill: Option<&Fill>,
     rounded: bool,
+    dash: Dash,
 ) {
     if let Some(f) = fill {
         let paint = match f {
@@ -805,9 +838,9 @@ fn frame(
     }
     let stroke = paint("stroke", stroke, BORDER);
     let width = if (b - 1.0).abs() > 1e-9 {
-        format!(" stroke-width=\"{}\"", num(b))
+        format!(" stroke-width=\"{}\"{}", num(b), dash.attr())
     } else {
-        String::new()
+        dash.attr().to_owned()
     };
     let (x0, y0, x1, y1) = (x + b / 2.0, y + b / 2.0, x + w - b / 2.0, y + h - b / 2.0);
     if sides == Sides::ALL {
@@ -873,6 +906,7 @@ pub fn draw(
         t.color,
         t.bg.as_ref(),
         t.rounded,
+        t.dash,
     );
     let ink =
         t.bg.as_ref()
@@ -897,6 +931,7 @@ pub fn draw(
             c.color,
             c.bg.as_ref(),
             c.rounded,
+            c.dash,
         );
         let inset = c.border + c.padding;
         let (iw, ih) = ((c.w - 2.0 * inset).max(0.0), (c.h - 2.0 * inset).max(0.0));
@@ -1096,6 +1131,16 @@ mod tests {
         let mut again = String::new();
         draw(&t, 0.0, 0.0, &Font::new(14.0), "", None, &mut again);
         assert_eq!(out, again);
+    }
+
+    #[test]
+    fn draws_dashed_and_dotted_borders() {
+        let t =
+            table("<table style=\"dashed\"><tr><td style=\"dotted\">a</td><td>b</td></tr></table>");
+        let mut out = String::new();
+        draw(&t, 0.0, 0.0, &Font::new(14.0), "", None, &mut out);
+        assert_eq!(out.matches("stroke-dasharray=\"5,2\"").count(), 1, "{out}");
+        assert_eq!(out.matches("stroke-dasharray=\"1,5\"").count(), 1, "{out}");
     }
 
     #[test]
