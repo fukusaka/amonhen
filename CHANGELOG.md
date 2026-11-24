@@ -7,7 +7,9 @@ becomes the GitHub Release notes.
 
 ## App and engine
 
-### Unreleased
+### [0.2.14] - 2026-11-24
+
+On macOS, Show Only Commit Details can be undone again, with a button at the top right of the commit details.
 
 #### Fixed
 
