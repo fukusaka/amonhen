@@ -244,7 +244,19 @@ pub fn parse_in_zone(
     github: Option<&str>,
     zone: Option<std::sync::Arc<dyn crate::diagram::TimeZone>>,
 ) -> Vec<Block> {
-    let mut blocks = parse_blocks(text, zone);
+    parse_with_images(text, github, zone, None)
+}
+
+/// `parse_in_zone` の、DOT の図の画像（ノードの `image`・表の `<IMG>`）を `images` から読むもの（Markdown の
+/// ファイルと同じコミットの中のファイルを、そのファイルのフォルダからの相対パスで）。
+pub fn parse_with_images(
+    text: &str,
+    github: Option<&str>,
+    zone: Option<std::sync::Arc<dyn crate::diagram::TimeZone>>,
+    images: Option<crate::diagram::ImageSource>,
+) -> Vec<Block> {
+    let images = images.map(|i| i.bounded());
+    let mut blocks = parse_blocks(text, zone, images.as_ref());
     for block in &mut blocks {
         linkify_block(block, github);
     }
@@ -254,6 +266,7 @@ pub fn parse_in_zone(
 fn parse_blocks(
     text: &str,
     zone: Option<std::sync::Arc<dyn crate::diagram::TimeZone>>,
+    images: Option<&crate::diagram::ImageSource>,
 ) -> Vec<Block> {
     let options = Options::ENABLE_GFM
         | Options::ENABLE_TABLES
@@ -385,7 +398,8 @@ fn parse_blocks(
                             text.pop();
                         }
                         let block =
-                            match crate::diagram::draw_in_zone(&language, &text, zone.clone()) {
+                            match crate::diagram::draw_with(&language, &text, zone.clone(), images)
+                            {
                                 None => Block::Code { language, text },
                                 Some(crate::diagram::Drawn::Svg(svg, config)) => Block::Diagram {
                                     language,
@@ -522,7 +536,18 @@ pub fn parse_json_in_zone(
     github: Option<&str>,
     zone: Option<std::sync::Arc<dyn crate::diagram::TimeZone>>,
 ) -> String {
-    serde_json::to_string(&parse_in_zone(text, github, zone)).unwrap_or_else(|_| "[]".to_owned())
+    parse_json_with_images(text, github, zone, None)
+}
+
+/// `parse_with_images` の結果の JSON（FE 向け）。
+pub fn parse_json_with_images(
+    text: &str,
+    github: Option<&str>,
+    zone: Option<std::sync::Arc<dyn crate::diagram::TimeZone>>,
+    images: Option<crate::diagram::ImageSource>,
+) -> String {
+    serde_json::to_string(&parse_with_images(text, github, zone, images))
+        .unwrap_or_else(|_| "[]".to_owned())
 }
 
 fn linkify_block(block: &mut Block, github: Option<&str>) {

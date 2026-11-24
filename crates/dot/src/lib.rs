@@ -71,7 +71,7 @@ impl Note {
     /// 英語の理由（FE は翻訳して見せる）。
     pub fn reason(self) -> &'static str {
         match self {
-            Note::Images => "images are drawn as empty frames",
+            Note::Images => "images that can’t be read are drawn as empty frames",
             Note::UnknownShapes => "unknown shapes are drawn as boxes",
             Note::Ortho => "orthogonal edges are drawn as polylines",
             Note::UnknownColors => "unknown colors are drawn in the default color",
