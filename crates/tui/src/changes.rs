@@ -100,6 +100,8 @@ pub struct Changes {
     sparse_note: Option<String>,
     /// ファイルごとの追加・削除の行数（`workingStats`。HEAD と作業ツリー、バイナリは None）。行の右に出す。
     stats: std::collections::HashMap<String, Option<(u64, u64)>>,
+    /// ポインタを重ねているファイルの行（行の右端に ↶ を出す。アプリの行のホバーのボタン）。
+    hovered: Option<usize>,
     selected: usize,
     top: usize,
     height: u16,
@@ -567,6 +569,35 @@ impl Changes {
         changed
     }
 
+    /// ポインタを一覧の `line` 行目（見えている中で。None は一覧の外）に重ねた。変わったら true。
+    pub fn hover(&mut self, line: Option<u16>) -> bool {
+        let index = line
+            .and_then(|l| l.checked_sub(u16::from(self.sparse_note.is_some())))
+            .map(|l| self.top + usize::from(l))
+            .filter(|&i| matches!(self.rows.get(i), Some(Row::File { .. })));
+        let changed = index != self.hovered;
+        self.hovered = index;
+        changed
+    }
+
+    /// ポインタを重ねている行の ↶（右端の列）を押したか。押していれば、その行を選ぶ。
+    pub fn click_discard(&mut self, line: u16, column: u16, right: u16) -> bool {
+        if column + 2 < right {
+            return false;
+        }
+        let Some(index) = line
+            .checked_sub(u16::from(self.sparse_note.is_some()))
+            .map(|l| self.top + usize::from(l))
+        else {
+            return false;
+        };
+        if Some(index) != self.hovered {
+            return false;
+        }
+        self.select(index);
+        true
+    }
+
     /// 一覧の `line` 行目（見えている中で）を選ぶ。
     pub fn click(&mut self, line: u16) -> bool {
         let Some(line) = line.checked_sub(u16::from(self.sparse_note.is_some())) else {
@@ -776,6 +807,10 @@ impl Changes {
                         }
                     }
                 }
+            }
+            // ポインタを重ねたファイルには、右端に変更を捨てる ↶（アプリの行のホバーのボタン）。
+            if Some(index) == self.hovered && area.width > 12 {
+                buf.set_string(area.right() - 2, y, "↶ ", Style::new().fg(Color::Yellow));
             }
             if index == self.selected {
                 buf.set_style(
