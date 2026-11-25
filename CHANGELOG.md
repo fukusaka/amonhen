@@ -21,7 +21,8 @@ becomes the GitHub Release notes.
 - Fences named after a Graphviz engine, such as ` ```neato `, stay code, as on GitHub; ` ```dot `, ` ```graphviz `
   and ` ```gv ` are drawn, and `layout` still picks the engine.
 - DOT diagrams follow Graphviz's defaults: nodes and clusters without a fill are transparent, cluster titles are in the
-  text color, and the margin is `pad` (4 points by default).
+  text color, and the margin is `pad` (4 points by default). `fontname` picks the typeface, falling back to the
+  renderer's sans-serif, serif or monospace.
 
 ### [0.2.15] - 2026-11-25
 

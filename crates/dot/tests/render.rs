@@ -424,6 +424,29 @@ fn uses_theme_variables_and_given_colors() {
 }
 
 #[test]
+fn fontname_picks_the_typeface() {
+    let svg = render(
+        "digraph { node [fontname=\"Helvetica,Arial,sans-serif\"]; a; b [fontname=\"Courier-Bold\"]; c [label=<x <font face=\"Times\">y</font>>] }",
+    )
+    .unwrap()
+    .svg;
+    assert!(
+        text_tag(&svg, "a").contains("font-family=\"Helvetica, Arial, sans-serif\""),
+        "{svg}"
+    );
+    let b = text_tag(&svg, "b");
+    assert!(
+        b.contains("font-weight=\"bold\"")
+            && b.contains("font-family=\"Courier, 'Courier New', var(--_fm)\""),
+        "{svg}"
+    );
+    assert!(
+        svg.contains("font-family=\"Times, 'Times New Roman', serif\">y</tspan>"),
+        "{svg}"
+    );
+}
+
+#[test]
 fn pads_the_drawing_as_graphviz_does() {
     // 既定は 4 点、`pad` はインチ（x,y か 1 つ）
     let size = |src: &str| {

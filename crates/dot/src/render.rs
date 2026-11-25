@@ -2460,8 +2460,8 @@ fn font_attrs(f: &Font) -> String {
     if f.italic {
         s.push_str(" font-style=\"italic\"");
     }
-    if f.mono {
-        s.push_str(" font-family=\"var(--_fm)\"");
+    if let Some(css) = f.family_css() {
+        s.push_str(&format!(" font-family=\"{}\"", esc(css)));
     }
     if let Some(c) = &f.color {
         s.push_str(&color_attr("fill", c));
