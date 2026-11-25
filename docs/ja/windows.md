@@ -42,8 +42,8 @@ New-ItemProperty -Path HKLM:\SYSTEM\CurrentControlSet\Control\FileSystem -Name L
 git config --global core.longpaths true
 ```
 
-- PowerShell 7 は MSI 版にする（`--installer-type wix`）。Microsoft Store 版は利用者の `WindowsApps` の下に入り、ssh の
-  既定のシェルにできない。`Test-Path "C:\Program Files\PowerShell\7\pwsh.exe"` で確かめる。
+- PowerShell 7 は MSI 版にする（`--installer-type wix`。MSI は 7.6 までで、7.7 にはない）。Store（MSIX）版は利用者の
+  `WindowsApps` の別名から起動するもので、ssh の既定のシェルにできない。`Test-Path "C:\Program Files\PowerShell\7\pwsh.exe"` で確かめる。
 - `Microsoft.VisualStudio.BuildTools` は Build Tools 2026（2022 は `Microsoft.VisualStudio.2022.BuildTools`）。
   `x86_64-pc-windows-msvc` に要るのは C++ のワークロードだけ。
 - Node は CI と同じ 24（`node -v`）。
@@ -54,7 +54,7 @@ git config --global core.longpaths true
 
 `Add-WindowsCapability` は Windows Update から取ってくるので、先に待っている更新（と、求められる再起動）を済ませる。
 それでも失敗するときは `winget install --id Microsoft.OpenSSH.Preview -e` で、GitHub で配っている同じ OpenSSH を
-入れる（`C:\Program Files\OpenSSH` に入り、ファイアウォールの規則は入らないことがある）。
+入れる（`C:\Program Files\OpenSSH` に入り、ファイアウォールの規則は Private のネットワークにだけ 22 番を開ける）。
 
 ```powershell
 Add-WindowsCapability -Online -Name OpenSSH.Server~~~~0.0.1.0
@@ -142,10 +142,11 @@ Host windows-pc
 ssh windows-pc "powershell -NoProfile -NonInteractive -EncodedCommand $(iconv -f UTF-8 -t UTF-16LE check.ps1 | base64)"
 ```
 
-- `powershell -Command -`（スクリプトを標準入力から読む）は ssh 越しでは止まる。
+- `powershell -Command -`（スクリプトを標準入力から読む）は 1 行ずつ実行する。複数行にわたるブロック（関数など）は
+  黙って実行されず、終了コードは 0 のまま。
 - スクリプトの最初に `[Console]::OutputEncoding = [Text.Encoding]::UTF8` を置くと、日本語の出力を Mac で読める。
-- Windows PowerShell 5.1 で `npm` は `npm.ps1` になり、テストが失敗しても `$LASTEXITCODE` が 0 のまま。`npm.cmd` を
-  呼ぶ。`r` は別名（Invoke-History）なので、関数の名前にしない。
+- Windows PowerShell 5.1 で `npm` は `npm.ps1` になり、既定の実行ポリシー（Restricted）で実行を断られる。何も
+  動かず、`$LASTEXITCODE` は前の値のまま（0 のことが多い）。`npm.cmd` を呼ぶ。`r` は別名（Invoke-History）なので、関数の名前にしない。
 - ssh のセッションにはデスクトップがない。そこから起動した窓は画面に出ず、撮れない。画面は実機かリモート デスクトップで
   見る。
 
