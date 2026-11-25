@@ -534,25 +534,25 @@ fn push_tooltip(t: Tracking) -> String {
 }
 
 /// ツールバーのボタンの字形（Segoe Fluent Icons。macOS 版の SF Symbols に近いもの）。
+/// ツールバーのアイコンの大きさ（Segoe Fluent Icons の既定のアイコンと同じ 20）。
+const TOOLBAR_ICON_SIZE: f32 = 20.0;
+
+/// ツールバーのボタンのアイコン（`id` は `publish` も）。どの FE でも同じ形の共通のアイコン（`crates/icons`、
+/// `docs/icons.md`）を、塗る形にして `PathIcon` で出す（`PathIcon` は線を引けない）。Files は Explorer の
+/// フォルダ（Segoe）のまま。
+fn toolbar_icon(id: &str) -> View {
+    match amonhen_icons::get(id).filter(|_| id != "files") {
+        Some(icon) => PathIcon::new()
+            .data(format!("F1 {}", icon.outline(TOOLBAR_ICON_SIZE)))
+            .width(f64::from(TOOLBAR_ICON_SIZE))
+            .height(f64::from(TOOLBAR_ICON_SIZE))
+            .into(),
+        None => FontIcon::new().glyph(glyph_of(id)).into(),
+    }
+}
+
 fn glyph_of(id: &str) -> &'static str {
     match id {
-        "sidebar" => "\u{E8A0}",
-        "repositories" => "\u{F0E2}",
-        "branch" => "\u{E8AB}",
-        "fetch" => "\u{E896}",
-        "pull" => "\u{E74B}",
-        "push" => "\u{E74A}",
-        "merge" => "\u{E8B1}",
-        "rebase" => "\u{E8CB}",
-        "stash" => "\u{E7B8}",
-        "pop" => "\u{EDE1}",
-        "activity" => "\u{E95E}",
-        "refresh" => "\u{E72C}",
-        "undo" => "\u{E7A7}",
-        "search" => "\u{E721}",
-        "new-branch" => "\u{E710}",
-        "terminal" => "\u{E756}",
-        "editor" => "\u{E943}",
         "files" => "\u{E8B7}",
         _ => "\u{E712}",
     }
@@ -618,7 +618,14 @@ pub fn toolbar(on_click: Callback<String>, tracking: Tracking) -> View {
                     .horizontal_alignment(HorizontalAlignment::Center)
                     .children((
                         spinner,
-                        Grid::new().children((FontIcon::new().glyph(glyph_of(&id)), badge)),
+                        Grid::new().children((
+                            toolbar_icon(if id == "push" && !tracking.published {
+                                "publish"
+                            } else {
+                                id.as_str()
+                            }),
+                            badge,
+                        )),
                     ));
                 let click = on_click.clone();
                 let key = command.clone();
@@ -670,12 +677,12 @@ pub fn toolbar(on_click: Callback<String>, tracking: Tracking) -> View {
 
 /// カスタマイズの帯とパレットのタイル（アイコンと名前。スペースは枠だけ）。
 fn tile(entry: &ToolbarEntry) -> View {
-    let (glyph, name, width) = match entry {
-        ToolbarEntry::Item(id, _) => (glyph_of(id), toolbar_name(id), None),
+    let (id, name, width) = match entry {
+        ToolbarEntry::Item(id, _) => (id.as_str(), toolbar_name(id), None),
         ToolbarEntry::Space => ("", amonhen_model::tr!("Space"), Some(64.0)),
         ToolbarEntry::Flex => ("", amonhen_model::tr!("Flexible Space"), Some(120.0)),
     };
-    let icon: View = if glyph.is_empty() {
+    let icon: View = if id.is_empty() {
         Border::new()
             .height(16.0)
             .border_thickness(Thickness::uniform(1.0))
@@ -683,7 +690,7 @@ fn tile(entry: &ToolbarEntry) -> View {
             .corner_radius(3.0)
             .into()
     } else {
-        FontIcon::new().glyph(glyph).into()
+        toolbar_icon(id)
     };
     let tile = StackPanel::new()
         .spacing(2.0)
