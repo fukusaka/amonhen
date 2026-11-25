@@ -7,7 +7,7 @@ import type { Change, ChangeGroup } from '../state/changes.ts';
 import type { HostMessage } from '../view/protocol.ts';
 import type { DiffHunk, DiffLine, FileDiff, SelectedLine } from '../diff/fileDiff.ts';
 import type { Eol, LineEndings } from '../git/eol.ts';
-import { addTrailer, commitDisabledReason, lengthLevel, longestLine, messageLength, splitMessage, withType } from '../workingCopy/commitMessage.ts';
+import { addTrailer, commitDisabledReason, composeMessage, lengthLevel, longestLine, messageLength, splitMessage, withType } from '../workingCopy/commitMessage.ts';
 import { filesUnder, filterByPath, makeFileTree, type FileDir, type FileLayout } from '../workingCopy/fileList.ts';
 import { el, post, type View } from './api.ts';
 import { lineKey, renderDiffBody, whitespaceSelect, wrapButton } from './diffView.ts';
@@ -640,12 +640,12 @@ export function createWorkingCopyView(): View {
 
   function updateCommitButton(): void {
     const staged = stagedCount();
-    const reason = commitDisabledReason({ staged, amend: amend.checked, summary: subject.value, committing });
+    const reason = commitDisabledReason({ staged, amend: amend.checked, message: message(), committing });
     commitButton.disabled = reason !== undefined;
     // 押せないときは、ツールチップでわけを言う（アプリと同じ）
     commitButton.title = reason ?? 'Commit the checked files (⌘↩)';
     commitButton.textContent = amend.checked
-      ? 'Amend'
+      ? 'Amend Commit'
       : staged > 0
         ? `Commit ${staged} File${staged > 1 ? 's' : ''}`
         : 'Commit';
@@ -662,9 +662,9 @@ export function createWorkingCopyView(): View {
     lengthLabel.title = 'Length of the summary (yellow over 50, orange over 72), and of a description line over 72';
   }
 
+  /** Summary と Description をつないだメッセージ（どちらかだけでもコミットできる。アプリと同じ） */
   function message(): string {
-    const b = body.value.trim();
-    return b ? `${subject.value.trim()}\n\n${b}\n` : `${subject.value.trim()}\n`;
+    return composeMessage({ summary: subject.value, body: body.value });
   }
 
   function commit(push = false): void {
