@@ -87,6 +87,8 @@ pub struct Args {
     pub place: Option<[i32; 4]>,
     /// 開いたら Working Copy の画面を出す。
     pub working_copy: bool,
+    /// 開いたら History でこのコミットを選ぶ（書き込む先の worktree を替えたタブ）。
+    pub select: Option<String>,
     /// 開いたら、このファイルの File History を出す（File History のタブ）。
     pub file_history: Option<String>,
     /// マージエディタを別の窓に出した: このファイルを開き、`merge_text` があれば Result をその中身にする。
@@ -117,6 +119,7 @@ fn parse() -> Result<Args, String> {
         repo_given: false,
         place: None,
         working_copy: false,
+        select: None,
         file_history: None,
         merge: None,
         merge_text: None,
@@ -427,6 +430,14 @@ impl Session {
     }
 
     /// 行を選び、見える所までスクロールする（複数選んでいれば、1 つに戻す）。
+    /// History が届いたら、コミット `id` を選ぶ（まだ読んでいないとき。届いたら `poll` が選び直す）。
+    pub fn select_when_read(&mut self, id: amonhen_model::Oid) {
+        self.selected_id = Some(id);
+        if let Some(row) = self.data.row_of(&id) {
+            self.reveal(row);
+        }
+    }
+
     pub fn select(&mut self, row: u32) {
         self.data.multi.clear();
         let row = row.min(self.data.row_count().saturating_sub(1));
