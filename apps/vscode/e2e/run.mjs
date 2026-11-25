@@ -9,7 +9,7 @@
 import { execFileSync, spawn, spawnSync } from 'node:child_process';
 import { cpSync, existsSync, mkdirSync, mkdtempSync, readFileSync, realpathSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
-import { join } from 'node:path';
+import { dirname, join } from 'node:path';
 import * as esbuild from 'esbuild';
 import { platformName } from '../src/daemon/engine.ts';
 import { layout, testEnv } from './env.mjs';
@@ -41,6 +41,11 @@ for (const p of ['package.json', 'dist', 'media']) {
 }
 mkdirSync(join(paths.ext, 'bin'));
 cpSync(engine, join(paths.ext, 'bin', `amonhen-${name}${exe}`));
+// 絵の手伝い（ルートで cargo build -p amonhen-render したもの）。なければ、拡張は図・数式をコードのまま見せる
+const render = join(dirname(engine), `amonhen-render${exe}`);
+if (existsSync(render)) {
+  cpSync(render, join(paths.ext, 'bin', `amonhen-render-${name}${exe}`));
+}
 await esbuild.build({
   entryPoints: [join(root, 'e2e', '*.test.ts')],
   outdir: join(paths.ext, 'e2e'),
