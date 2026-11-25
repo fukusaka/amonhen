@@ -36,6 +36,8 @@ export interface RepositoryState {
   remoteBranches?: Ref[];
   remotes?: Remote[];
   tags?: Ref[];
+  /** タグが 1 つでもあるか（タグの一覧は開くまで読まないが、Tags の節はタグがあるときだけ出す） */
+  hasTags?: boolean;
   stashes?: Stash[];
   submodules?: Submodule[];
   /** 途中で止まっている merge や rebase */
@@ -201,6 +203,9 @@ export class Repository implements vscode.Disposable {
           if (this.replace('branches', branches)) changed.add('branches');
           if (this.replace('remoteBranches', remoteBranches)) changed.add('remotes');
           this.stamps.refs = refs;
+        }),
+        this.backend.hasRefs('refs/tags').then((hasTags) => {
+          if (this.replace('hasTags', hasTags)) changed.add('tags');
         }),
       );
     }

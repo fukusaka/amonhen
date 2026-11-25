@@ -125,6 +125,8 @@ export interface RepositoryBackend {
   updateCommitGraph(): Promise<boolean>;
   /** `refs/heads` などのパターンに一致する ref */
   refs(patterns: readonly string[]): Promise<Ref[]>;
+  /** `prefix` の下に ref が 1 つでもあるか（一覧を読まずに。サイドバーの空の節を出さないため） */
+  hasRefs(prefix: string): Promise<boolean>;
   remotes(): Promise<Remote[]>;
   stashes(): Promise<Stash[]>;
   submodules(): Promise<SubmoduleConfig[]>;
@@ -375,6 +377,10 @@ export class CliBackend implements RepositoryBackend {
 
   async refs(patterns: readonly string[]): Promise<Ref[]> {
     return parseRefs(await this.read(forEachRefArgs(patterns)));
+  }
+
+  async hasRefs(prefix: string): Promise<boolean> {
+    return (await this.read(['for-each-ref', '--count=1', '--format=%(refname)', prefix])).trim() !== '';
   }
 
   async remotes(): Promise<Remote[]> {
