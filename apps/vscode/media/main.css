@@ -2565,10 +2565,10 @@ body.vscode-high-contrast-light [class^='syn-'] {
 .checker {
   background-color: #fff;
   background-image:
-    linear-gradient(45deg, #ccc 25%, transparent 25%),
-    linear-gradient(-45deg, #ccc 25%, transparent 25%),
-    linear-gradient(45deg, transparent 75%, #ccc 75%),
-    linear-gradient(-45deg, transparent 75%, #ccc 75%);
+    linear-gradient(45deg, #dbdbdb 25%, transparent 25%),
+    linear-gradient(-45deg, #dbdbdb 25%, transparent 25%),
+    linear-gradient(45deg, transparent 75%, #dbdbdb 75%),
+    linear-gradient(-45deg, transparent 75%, #dbdbdb 75%);
   background-size: 16px 16px;
   background-position: 0 0, 0 8px, 8px -8px, -8px 0;
   border: 1px solid var(--vscode-panel-border);
@@ -3213,4 +3213,107 @@ body.monospace-message .details-head pre.body {
 
 .details-head .parent.missing {
   opacity: 0.6;
+}
+
+/* 市松模様を暗く（既定は絵の色から。アプリと同じ 0.16・0.24 の灰） */
+.checker-dark .checker {
+  background-color: #292929;
+  background-image:
+    linear-gradient(45deg, #3d3d3d 25%, transparent 25%),
+    linear-gradient(-45deg, #3d3d3d 25%, transparent 25%),
+    linear-gradient(45deg, transparent 75%, #3d3d3d 75%),
+    linear-gradient(-45deg, transparent 75%, #3d3d3d 75%);
+}
+
+.checker-slot {
+  display: none;
+}
+
+.bar-button.checker-toggle {
+  display: inline-flex;
+  align-items: center;
+}
+
+.bar-button.checker-toggle[hidden] {
+  display: none;
+}
+
+.bar-button.checker-toggle.on {
+  color: var(--vscode-button-foreground);
+  background: var(--vscode-button-background);
+}
+
+.svg-check-bar {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.svg-check-bar .bar-button {
+  padding: 1px 8px;
+  color: var(--vscode-foreground);
+  background: transparent;
+}
+
+.svg-check-bar .bar-button.on {
+  color: var(--vscode-button-foreground);
+  background: var(--vscode-button-background);
+}
+
+/* 整形した Markdown の検索の帯（⌘F）。中身の上に留める */
+.markdown-view:focus {
+  outline: none;
+}
+
+.md-find-bar {
+  position: sticky;
+  top: 0;
+  z-index: 2;
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  padding: 4px 12px;
+  background: var(--vscode-editor-background);
+  border-bottom: 1px solid var(--vscode-panel-border);
+}
+
+.md-find-bar[hidden] {
+  display: none;
+}
+
+.md-find-bar input[type='search'] {
+  flex: 0 1 240px;
+  min-width: 120px;
+  padding: 2px 6px;
+  color: var(--vscode-input-foreground);
+  background: var(--vscode-input-background);
+  border: 1px solid var(--vscode-input-border, transparent);
+  outline: none;
+}
+
+.md-find-bar input[type='search']:focus {
+  border-color: var(--vscode-focusBorder);
+}
+
+.md-find-bar .icon-button {
+  visibility: visible;
+}
+
+.md-find-bar .bar-button {
+  padding: 1px 8px;
+  color: var(--vscode-foreground);
+  background: transparent;
+}
+
+.md-find-bar .bar-button:hover {
+  background: var(--vscode-toolbar-hoverBackground, var(--vscode-list-hoverBackground));
+}
+
+/* 一致の地（エディタの検索と同じ色。今の一致は濃く） */
+::highlight(amonhen-md-find) {
+  background-color: var(--vscode-editor-findMatchHighlightBackground, rgba(255, 204, 0, 0.35));
+}
+
+::highlight(amonhen-md-find-current) {
+  background-color: var(--vscode-editor-findMatchBackground, rgba(255, 149, 0, 0.7));
 }

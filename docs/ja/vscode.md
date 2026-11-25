@@ -307,3 +307,4 @@ macOS アプリに追いつく（1 つの機能を 1 つの pull request で、�
 - [x] 93. Stashes・Restore・File History・進行中の操作の小さな差: Stash の選び方を組み合わせる、stash の行のいつ・元の ID・Copy Name、File History の Restore This Version… と Copy Short ID、Skip・Abort は尋ねない（revert に Skip なし）
 - [x] 94. サイドバーの小さな差: Copy Branch / Tag Name と Copy Names、いくつものタグの Push・Replace・削除、タグのフォルダ、中身のある節だけをアプリと同じ組み方で（Remotes はリモートのブランチから）、絞り込みは平らに、ほかで checkout しているブランチの Open Worktree、ブランチの印、先に聞く Prune、リモートの Edit Push URL… と Check Connection、取り出してある submodule だけの Open in New Window、ドラッグでの push の確認とアプリと同じ upstream の設定
 - [x] 95. 同期とブランチの操作の小さな差: メインビューなしでも Fast-Forward を尋ねる、いくつも消すときは未マージのコミットを添えて 1 度だけ尋ねる、上流のないブランチの Force Push は Publish、今のブランチの Rename Branch…、octopus merge の Change the Order…
+- [x] 97. 絵の下の市松模様と整形した Markdown の検索: 絵の色から選ぶ明るい・暗い市松模様と切り替えのボタン、すべてのファイルの Markdown のプレビューの ⌘F（キーの札・表のマスも）

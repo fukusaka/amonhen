@@ -1343,6 +1343,8 @@ First release.
 - In the edit mode, p, r, s, f, d and e choose the selected row's action, and dragging the line under the rows takes in
   older commits or leaves out the oldest unchanged ones, as in the app.
 - Markdown math (` ```math `, `$$…$$`, `$…$`) shows as its TeX code, with the engine.
+- Transparent pictures get a light or dark checkerboard chosen from their colors, with a button to switch it, and ⌘F
+  (Ctrl+F) finds in All Files' formatted Markdown, key caps and table cells included, as in the app.
 
 #### Changed
 
