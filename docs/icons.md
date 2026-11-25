@@ -37,12 +37,12 @@ Two directions were weighed: a shared, original set drawn by every front end, or
 
 ## Implementation
 
-`amonhen-icons` (`crates/icons`) reads `svg/*.svg` at build time and keeps each icon as strokes: SVG path data (circles and rectangles turned into paths) with an optional dash pattern, and the same path as a list of moves, lines, cubic Béziers and closes (arcs approximated by Béziers) for renderers without SVG arcs. It reads only the elements and attributes our own files use (`path`, `circle`, `rect`; `d`, `cx`, `cy`, `r`, `x`, `y`, `width`, `height`, `rx`, `stroke-dasharray`) and stops the build on anything else. Front ends stroke the paths with `STROKE_WIDTH` and round caps and joins; a dash of length 0 with round caps makes a dot.
+`amonhen-icons` (`crates/icons`) reads `svg/*.svg` at build time and keeps each icon as strokes: SVG path data (circles and rectangles turned into paths) with an optional dash pattern, and the same path as a list of moves, lines, cubic Béziers and closes (arcs approximated by Béziers) for renderers without SVG arcs. For renderers that can only fill, `Icon::outline(size)` turns the strokes into a filled shape at the drawing size: each piece of line (curves split into short lines) becomes a bar 1.5 wide with a circle at each end, all turning the same way, so filling them with the nonzero rule joins them into what the stroke would have drawn. It reads only the elements and attributes our own files use (`path`, `circle`, `rect`; `d`, `cx`, `cy`, `r`, `x`, `y`, `width`, `height`, `rx`, `stroke-dasharray`) and stops the build on anything else. Front ends stroke the paths with `STROKE_WIDTH` and round caps and joins; a dash of length 0 with round caps makes a dot.
 
 - GTK4: `gsk::Path::parse` reads the path data; `apps/gtk4/src/icon.rs` strokes it (parsed once per shape) for the kinds the shared set covers. A test checks that GSK parses every shape.
 - macOS: the C ABI hands over the move/line/Bézier lists (`amonhen_icon_shape`); `SharedIcons` in AmonhenKit turns them into `CGPath`s and `AppIcons` in the app strokes them into template images, so the toolbar and sidebar tint them like SF Symbols. `NSImage` reads SVG on current macOS, but whether it does on 14.4, the oldest supported version, has not been checked, so the app doesn't depend on it. The toolbar's sidebar toggle and search field are AppKit's own items and keep their system look, and Finder keeps Finder's folder.
-- Windows (planned): WinUI's `PathIcon` takes path data; windows-reactor's toolbar buttons take only a `Symbol` today and need widening.
-- VSCode (planned): `package.json` icons can be SVG files for light and dark themes, or a font registered with `contributes.icons` (which follows the theme's colors but needs a tool to build the font). Not decided.
+- Windows: WinUI's `PathIcon` only fills, so the toolbar and its customization palette show `outline(20)` with `F1` (nonzero) in front. Files keeps Explorer's folder from Segoe Fluent Icons. Stroking directly would need XAML's `Path` shape, which windows-reactor doesn't have.
+- VSCode (planned): `package.json` icons can be SVG files for light and dark themes, or a font registered with `contributes.icons` (which follows the theme's colors but needs a tool to build the font; the filled outlines would be its glyphs). Not decided.
 
 The figures on this page come from `crates/icons/tools/figures.swift` (on macOS) with the data next to it; the drafts are kept in `crates/icons/tools/alternatives`:
 
@@ -57,6 +57,7 @@ swift figures.swift alternatives alternatives.en.tsv alternatives ../../../docs/
 - [x] The rules and the toolbar's 19 icons
 - [x] GTK4: the toolbar (and the same kinds elsewhere, such as Branch in the sidebar)
 - [x] macOS: the toolbar and the sidebar's branches
+- [x] Windows: the toolbar
 - [ ] The other icons (about 55: sidebar sections, states, signature marks, …)
-- [ ] Windows, VSCode
+- [ ] VSCode
 - Not decided: whether the app icon is redrawn too, the VSCode format, and whether the terminal front end gets anything (it shows text).

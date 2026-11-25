@@ -37,12 +37,12 @@
 
 ## 作り
 
-`amonhen-icons`（`crates/icons`）が、ビルドのときに `svg/*.svg` を読み、各アイコンを線として持つ。線は SVG のパス（円と四角はパスに直す）と、あれば破線の長さ。SVG の弧を描けない描画のために、同じ線を移動・直線・3 次ベジェ・閉じるの列（弧はベジェで近づける）にしたものも持つ。自分で描いたファイルが使う要素と属性（`path`・`circle`・`rect`、`d`・`cx`・`cy`・`r`・`x`・`y`・`width`・`height`・`rx`・`stroke-dasharray`）だけを読み、ほかがあればビルドを止める。FE はパスを `STROKE_WIDTH` の太さ、丸い端と角で引く。長さ 0 の破線と丸い端で点になる。
+`amonhen-icons`（`crates/icons`）が、ビルドのときに `svg/*.svg` を読み、各アイコンを線として持つ。線は SVG のパス（円と四角はパスに直す）と、あれば破線の長さ。SVG の弧を描けない描画のために、同じ線を移動・直線・3 次ベジェ・閉じるの列（弧はベジェで近づける）にしたものも持つ。塗ることしかできない描画のために、`Icon::outline(size)` が線を描く大きさの塗る形にする。線の 1 本ずつ（曲線は短い直線に分ける）を幅 1.5 の長方形と両端の円にし、どれも同じ向きに回すので、nonzero で塗ると線を引いたときと同じ形にまとまる。自分で描いたファイルが使う要素と属性（`path`・`circle`・`rect`、`d`・`cx`・`cy`・`r`・`x`・`y`・`width`・`height`・`rx`・`stroke-dasharray`）だけを読み、ほかがあればビルドを止める。FE はパスを `STROKE_WIDTH` の太さ、丸い端と角で引く。長さ 0 の破線と丸い端で点になる。
 
 - GTK4: `gsk::Path::parse` でパスを読み、`apps/gtk4/src/icon.rs` が共通のセットにある種類を線で引く（形ごとに 1 度だけ読む）。GSK がすべての形を読めることをテストで確かめる。
 - macOS: C ABI（`amonhen_icon_shape`）で移動・直線・ベジェの列を渡し、AmonhenKit の `SharedIcons` が `CGPath` にし、アプリの `AppIcons` が線を引いてテンプレート画像にする。ツールバーとサイドバーが SF Symbols と同じように色を付ける。今の macOS の `NSImage` は SVG を読めるが、対応する最も古い 14.4 で読めるかは確かめていないので、それには頼らない。ツールバーのサイドバーの切り替えと検索欄は AppKit の部品なのでシステムの見た目のまま、Finder は Finder のフォルダのまま。
-- Windows（これから）: WinUI の `PathIcon` がパスを受け取る。windows-reactor のツールバーのボタンは今 `Symbol` しか受け取らないので広げる。
-- VSCode（これから）: `package.json` のアイコンは、明るいテーマと暗いテーマの SVG のファイルか、`contributes.icons` で登録するフォント（テーマの色に追従するが、フォントを作る道具が要る）。未決。
+- Windows: WinUI の `PathIcon` は塗るだけなので、ツールバーとそのカスタマイズのパレットに、`outline(20)` の頭に `F1`（nonzero）を付けて出す。Files は Segoe Fluent Icons の Explorer のフォルダのまま。線のまま描くには XAML の `Path` の図形が要るが、windows-reactor にはない。
+- VSCode（これから）: `package.json` のアイコンは、明るいテーマと暗いテーマの SVG のファイルか、`contributes.icons` で登録するフォント（テーマの色に追従するが、フォントを作る道具が要る。字形には塗る形を使える）。未決。
 
 このページの図は `crates/icons/tools/figures.swift`（macOS で）と、その横のデータから作る。描いた案は `crates/icons/tools/alternatives` に残す。
 
@@ -57,6 +57,7 @@ swift figures.swift alternatives alternatives.ja.tsv alternatives ../../../docs/
 - [x] 決まりと、ツールバーの 19 種
 - [x] GTK4: ツールバー（と、サイドバーの Branch など、ほかの所の同じ種類）
 - [x] macOS: ツールバーと、サイドバーのブランチ
+- [x] Windows: ツールバー
 - [ ] 残りのアイコン（約 55 種: サイドバーの節、状態、署名の印など）
-- [ ] Windows・VSCode
+- [ ] VSCode
 - 未決: アプリのアイコンも描き直すか、VSCode の形式、端末の FE に何かするか（文字で表している）。
