@@ -587,6 +587,9 @@
       {
         "command": "amonhen.history.find",
         "title": "Find in History…",
+        "category": "Amon Hen"
+      },
+      {
         "command": "amonhen.details.copyShortId",
         "title": "Copy Short ID",
         "category": "Amon Hen"

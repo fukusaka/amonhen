@@ -1343,6 +1343,7 @@ First release.
 
 #### Changed
 
+- Copy Short ID copies 8 characters, as the app does.
 - The sidebar's in-progress row says what is being done where and the step, and why it stopped with what to do next
   (the commit, conflicts, a failed exec, a stop to edit), as the app's band does (with the engine); a revert has no
   Skip.

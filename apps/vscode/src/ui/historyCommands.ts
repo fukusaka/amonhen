@@ -113,7 +113,7 @@ export function registerHistoryCommands(): vscode.Disposable {
       vscode.window.setStatusBarMessage(`$(copy) ${commits.length} commit IDs`, 3000);
     }),
     selected('amonhen.history.selection.copyShortIds', async (_panel, _repo, commits) => {
-      await vscode.env.clipboard.writeText(commits.map((c) => c.oid.slice(0, 7)).join('\n'));
+      await vscode.env.clipboard.writeText(commits.map((c) => c.oid.slice(0, 8)).join('\n'));
       vscode.window.setStatusBarMessage(`$(copy) ${commits.length} short IDs`, 3000);
     }),
     // このコミットを指すブランチ・タグの名前（1 つならそのまま、いくつもなら選ぶ。リモートブランチは origin/ を付けたまま）
@@ -139,7 +139,7 @@ export function registerHistoryCommands(): vscode.Disposable {
     // 詳細の見出しの右クリック（History・Reflog・File History・Range Diff の詳細）
     ...(
       [
-        ['amonhen.details.copyShortId', async (oid: string) => oid.slice(0, 7)],
+        ['amonhen.details.copyShortId', async (oid: string) => oid.slice(0, 8)],
         ['amonhen.details.copySubject', async (oid: string, repo: Repository) => (await fullMessage(repo, oid)).split('\n')[0] ?? ''],
         ['amonhen.details.copyMessage', async (oid: string, repo: Repository) => (await fullMessage(repo, oid)).trim()],
         ['amonhen.details.copyShowCommand', async (oid: string) => `git show ${oid}`],
