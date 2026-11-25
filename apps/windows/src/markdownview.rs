@@ -265,9 +265,9 @@ struct Pictures<'a> {
 /// 読めた画像を見せる大きさ: HTML の `width`・`height`（片方なら比を保つ）か、もとの大きさ（幅は 640 まで）。
 fn shown_size(image: &MdImage, run: &Run) -> (f64, f64) {
     let ratio = image.height / image.width.max(1.0);
-    let (w, h) = match (run.width, run.height) {
-        (Some(w), Some(h)) => (f64::from(w), f64::from(h)),
-        (Some(w), None) => (f64::from(w), f64::from(w) * ratio),
+    let (w, h) = match (width(run), run.height) {
+        (Some(w), Some(h)) => (w, f64::from(h)),
+        (Some(w), None) => (w, w * ratio),
         (None, Some(h)) => (f64::from(h) / ratio.max(0.0001), f64::from(h)),
         (None, None) => (image.width, image.height),
     };
@@ -278,15 +278,32 @@ fn shown_size(image: &MdImage, run: &Run) -> (f64, f64) {
     }
 }
 
+/// 画像の HTML の幅（DIP）。幅の割合（`width="50%"`）は本文の欄の幅に対して決める（図と同じく欄の幅は決まった値）。
+fn width(run: &Run) -> Option<f64> {
+    run.width.map(f64::from).or_else(|| {
+        run.width_percent
+            .map(|p| percent_width(p, f64::from(TEXT_WIDTH)))
+    })
+}
+
+/// 幅と高さを両方決めた画像は、GitHub（ブラウザ）と同じく比を保たずにその大きさへ伸ばす。
+fn fills(run: &Run) -> bool {
+    width(run).is_some() && run.height.is_some()
+}
+
+/// 文の中に置く画像の一時ファイル、見せる大きさ、伸ばすか、代わりの文。
+type InlineImage = (std::path::PathBuf, f64, f64, bool, String);
+
 thread_local! {
-    /// 文の中に置く画像（鍵 → 一時ファイル、見せる大きさ、代わりの文）。段落を組むときに入れ、部品を作るときに引く。
-    static INLINE_IMAGES: std::cell::RefCell<std::collections::HashMap<String, (std::path::PathBuf, f64, f64, String)>> =
+    /// 文の中に置く画像（鍵 → `InlineImage`）。段落を組むときに入れ、部品を作るときに引く。
+    static INLINE_IMAGES: std::cell::RefCell<std::collections::HashMap<String, InlineImage>> =
         std::cell::RefCell::default();
 }
 
 /// 文の中に置く画像の部品（InlineUIContainer の中の Image。鍵は `Pictures::inline_key` が作ったもの）。
 pub fn inline_image(key: &str) -> Option<windows_core_reactor::IInspectable> {
-    let (file, w, h, alt) = INLINE_IMAGES.with(|m| m.borrow().get(key).cloned())?;
+    let (file, w, h, fill, alt) = INLINE_IMAGES.with(|m| m.borrow().get(key).cloned())?;
+    let stretch = if fill { "Fill" } else { "Uniform" };
     let uri = url_of(&file);
     let escape = |s: &str| {
         s.replace('&', "&amp;")
@@ -300,7 +317,7 @@ pub fn inline_image(key: &str) -> Option<windows_core_reactor::IInspectable> {
         format!(r#" ToolTipService.ToolTip="{}""#, escape(&alt))
     };
     let xaml = format!(
-        r#"<InlineUIContainer xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"><Image Source="{}" Width="{w}" Height="{h}" Stretch="Uniform"{tip}/></InlineUIContainer>"#,
+        r#"<InlineUIContainer xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"><Image Source="{}" Width="{w}" Height="{h}" Stretch="{stretch}"{tip}/></InlineUIContainer>"#,
         escape(&uri)
     );
     amonhen_win_xaml::XamlReader::Load(&windows_core_reactor::HSTRING::from(xaml)).ok()
@@ -342,6 +359,11 @@ pub type MdImages = std::collections::HashMap<String, MdImage>;
 
 /// 画像の幅の上限（GTK4 版と同じ 640）。
 const MAX_IMAGE_WIDTH: f64 = 640.0;
+
+/// 幅の割合（1〜100）を、`column` の幅に対する DIP にする。
+fn percent_width(percent: u32, column: f64) -> f64 {
+    (column * f64::from(percent.clamp(1, 100)) / 100.0).round()
+}
 
 /// `from`（Markdown のファイルのパス）から見た `link` の、リポジトリの根からのパス（外の URL・`#` だけは None。
 /// GTK4 版の `resolve`）。
@@ -524,14 +546,20 @@ impl Pictures<'_> {
         themed.or(run.image.as_ref())
     }
 
-    /// 読めた画像の、HTML の `width`・`height`（片方なら比を保つ）か、もとの大きさ（幅は 640 まで）で見せる絵。
-    /// リンクの中の画像は押せる。
+    /// 読めた画像の、HTML の `width`・`height`（片方なら比を保ち、両方なら比を保たずに伸ばす）か、もとの大きさ（幅は 640 まで）で見せる絵。
+    /// 幅の割合（`width="50%"`）は本文の欄の幅に対して決める（図と同じく欄の幅は決まった値）。リンクの中の画像は
+    /// 押せる。
     fn image(&self, run: &Run) -> Option<View> {
         let image = self.images.get(self.source(run)?)?;
         let (w, h) = shown_size(image, run);
+        let stretch = if fills(run) {
+            Stretch::Fill
+        } else {
+            Stretch::Uniform
+        };
         let picture: View = Image::new()
             .source_data(image.data.clone())
-            .stretch(Stretch::Uniform)
+            .stretch(stretch)
             .width(w)
             .height(h)
             .into();
@@ -572,13 +600,14 @@ impl Pictures<'_> {
             std::fs::create_dir_all(&dir).ok()?;
             std::fs::write(&file, bytes).ok()?;
         }
-        let key = format!("{hash:016x}:{w}:{h}");
+        let fill = fills(run);
+        let key = format!("{hash:016x}:{w}:{h}:{fill}");
         INLINE_IMAGES.with(|m| {
             let mut m = m.borrow_mut();
             if m.len() > 512 {
                 m.clear();
             }
-            m.insert(key.clone(), (file, w, h, run.text.clone()));
+            m.insert(key.clone(), (file, w, h, fill, run.text.clone()));
         });
         Some(key)
     }
@@ -1083,4 +1112,19 @@ pub fn view(
             .padding(Thickness::new(24.0, 16.0, 24.0, 24.0))
             .content(content),
     )
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn percent_widths_follow_the_column() {
+        assert_eq!(percent_width(50, 852.0), 426.0);
+        assert_eq!(percent_width(25, 852.0), 213.0);
+        assert_eq!(percent_width(100, 852.0), 852.0);
+        // 範囲の外は 1〜100 に収める（コアも 100 で止める）
+        assert_eq!(percent_width(250, 852.0), 852.0);
+        assert_eq!(percent_width(0, 852.0), 9.0);
+    }
 }

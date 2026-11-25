@@ -27,7 +27,7 @@ becomes the GitHub Release notes.
 - Markdown previews no longer turn bare URLs inside HTML into links; as on GitHub, only those in Markdown text are.
 - Markdown previews leave one space where an HTML comment is dropped between words, as browsers do, instead of two.
 - Markdown previews size `<img width="50%">` as a share of the column's width (of the cell's, in tables) instead of the
-  picture's own size (macOS, GTK4).
+  picture's own size (macOS, GTK4, Windows).
 - Markdown previews decode all of HTML5's named character references (such as `&rarr;` or `&NotEqualTilde;`), and
   the old names without `;` (`&copy`, `&amp`) by HTML's rules, where they were limited to 27 common ones.
 - The toolbar draws new icons shared by every front end, also used for branches in the sidebar (macOS, GTK4; see `docs/icons.md`).
