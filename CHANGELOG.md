@@ -1355,6 +1355,10 @@ First release.
 - All Files follows the app: a list or a tree, changed folders open at first, a deleted file shows its version before,
   the path reads "@ commit", Show This Change goes to the file's diff, any file opens in the editor, relative Markdown
   links open that file, the SVG and Markdown views are remembered, and the mobile check switches between renderers.
+- History's details follow the app in the small things: a file header's menu has Expand / Collapse, Open File at
+  This Commit and Show Changes Only, selected commits' headers have File History and Copy Path, parents not fetched are
+  marked, the bar reads Expand All Folders / Diffs, and the display menu has Monospaced Commit Message (off at first,
+  as in the app) and Changed Files as Tree.
 
 #### Changed
 

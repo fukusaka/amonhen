@@ -312,3 +312,4 @@ left out for now: VSCode has its own extensions and settings for them.
 - [x] 88. History's labels as the app's (three, +N, middle-cut names, the names on a click) and the commit frequency and branch activity strip beside the list
 - [x] 89. Image comparison as the app's: 2-Up, zoom (−, %, +, Fit, ⌘-scroll), the differing pixels' share, and an SVG as a picture with Show as Text
 - [x] 90. All Files as the app's: a list or a tree, changed folders open, a deleted file's version before, "@ commit", Show This Change, Open in Editor for any file, remembered views, the mobile check's renderer switch, and relative Markdown links
+- [x] 91. The details' small differences: a file header's Expand / Collapse, Open File at This Commit and Show Changes Only, the selection's file menu, parents not fetched, the bar's "All Folders" / "All Diffs", the empty text, and the display menu's Monospaced Commit Message and Changed Files as Tree

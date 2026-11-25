@@ -56,6 +56,8 @@ export interface CommitDetails {
   /** subject と本文 */
   message: string;
   refs: RefLabel[];
+  /** 取っていない親（shallow clone の境目） */
+  missingParents?: string[];
   /** 最初の親との差分 */
   files: FileChange[];
 }
@@ -170,6 +172,8 @@ export interface SearchState {
 }
 
 export type HistoryHostMessage =
+  /** コミットのメッセージを等幅で出すか（表示のメニューの Monospaced Commit Message。すべての詳細の欄） */
+  | { type: 'messageFont'; monospace: boolean }
   /** 密度の帯: 区間ごとの頻度と動き（0〜1）を交互に並べた f32 の base64 */
   | { type: 'density'; values: string }
   /** コマンド（Find in History…）から、検索の欄にフォーカスを移す */
@@ -212,6 +216,8 @@ export type HistoryHostMessage =
   | { type: 'treeFile'; oid: string; path: string; view: FileView & FileViewNote }
   /** ファイルの右クリックの Show Whole File（その詳細を出している欄が、ファイル全体を頼む） */
   | { type: 'wholeFile'; oid: string; path: string }
+  /** ファイルの見出しのメニュー: 開く・畳む（toggle）、ファイル全体をやめて変えたところだけに戻す（changesOnly） */
+  | { type: 'fileAction'; oid: string; path: string; action: 'toggle' | 'changesOnly' }
   /** コミットの中の 1 ファイルの差分（最初の親との差分） */
   | { type: 'commitDiff'; oid: string; path: string; diff: FileDiff }
   /** `last` はまとめる範囲のいちばん新しいコミット（combine のとき。`oid` がいちばん古い） */

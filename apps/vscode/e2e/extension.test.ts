@@ -2209,6 +2209,17 @@ async function tagRowsFlow(): Promise<void> {
   }
 }
 
+/** ファイルの見出しのメニュー: Open File at This Commit はその時点の中身を開く */
+async function fileHeaderMenuFlow(): Promise<void> {
+  await showView('amonhen.showHistory');
+  const oid = git('rev-parse', 'HEAD').trim();
+  const path = git('diff-tree', '--no-commit-id', '--name-only', '-r', '--root', oid).trim().split('\n')[0]!;
+  if (!path) return;
+  await vscode.commands.executeCommand('amonhen.commitFile.openAtCommit', { webviewSection: 'commitFile', oid, path });
+  await until('その時点のファイルが開く', () => vscode.window.activeTextEditor?.document.uri.path.endsWith(path) ? true : undefined);
+  await vscode.commands.executeCommand('workbench.action.closeActiveEditor');
+}
+
 async function orphanFlow(): Promise<void> {
   const repo = api.manager.current!;
   const branch = git('symbolic-ref', '--short', 'HEAD').trim();
@@ -4664,6 +4675,10 @@ suite('Amon Hen in VSCode', () => {
 
   test('shows the tags on a commit in the details through the daemon', async () => {
     await tagRowsFlow();
+  });
+
+  test('opens a changed file at the commit from its header menu', async () => {
+    await fileHeaderMenuFlow();
   });
 
   test('creates an orphan branch, empty or keeping the files, through the daemon', async () => {

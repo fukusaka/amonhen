@@ -95,6 +95,20 @@ export function registerFileToolCommands(
     vscode.commands.registerCommand('amonhen.commitFile.showWholeFile', (ctx?: FileContext) => {
       if (ctx?.oid && ctx.path) MainPanel.active?.post({ type: 'wholeFile', oid: ctx.oid, path: ctx.path });
     }),
+    // ⋯ の最初の項目（開く・畳む）と、ファイル全体から変えたところだけに戻す（アプリと同じ）
+    ...(['amonhen.commitFile.expand', 'amonhen.commitFile.collapse'] as const).map((id) =>
+      vscode.commands.registerCommand(id, (ctx?: FileContext) => {
+        if (ctx?.oid && ctx.path) MainPanel.active?.post({ type: 'fileAction', oid: ctx.oid, path: ctx.path, action: 'toggle' });
+      }),
+    ),
+    vscode.commands.registerCommand('amonhen.commitFile.changesOnly', (ctx?: FileContext) => {
+      if (ctx?.oid && ctx.path) MainPanel.active?.post({ type: 'fileAction', oid: ctx.oid, path: ctx.path, action: 'changesOnly' });
+    }),
+    // このコミットの時点のファイルをエディタで開く（アプリの Open File at This Commit）
+    vscode.commands.registerCommand('amonhen.commitFile.openAtCommit', async (ctx?: FileContext) => {
+      const panel = MainPanel.active;
+      if (ctx?.oid && ctx.path && panel) await panel.history.handle({ type: 'openTreeFile', oid: ctx.oid, path: ctx.path });
+    }),
     vscode.commands.registerCommand('amonhen.fileHistory.copyPath', async (ctx?: FileContext) => {
       if (!ctx?.path) return;
       await vscode.env.clipboard.writeText(ctx.path);
