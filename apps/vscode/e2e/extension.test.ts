@@ -3416,7 +3416,7 @@ async function conflictsWithoutMarkersFlow(): Promise<void> {
     assert.ok(conflictsRow, 'Conflicts の行');
     assert.equal((api.sidebar.getTreeItem(conflictsRow) as vscode.TreeItem).description, '3');
 
-    // Accept は、解決した内容が失われると確かめる（ここでは断る）
+    // Take Current File は、マーカーのないファイルでは解決した内容が失われると確かめる（ここでは断る）
     let detail: string | undefined;
     const showWarningMessage = async (_: string, options: { detail?: string }) => {
       detail = options.detail;

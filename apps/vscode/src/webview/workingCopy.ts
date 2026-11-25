@@ -565,8 +565,8 @@ export function createWorkingCopyView(): View {
     if (clean) buttons.append(resolved);
     for (const [action, label] of [
       ['merge', 'Open in Merge Editor'],
-      ['current', 'Accept Current'],
-      ['incoming', 'Accept Incoming'],
+      ['current', 'Take Current File'],
+      ['incoming', 'Take Incoming File'],
     ] as const) {
       const b = el('button', action === 'merge' && !clean ? undefined : 'secondary', label);
       b.addEventListener('click', () => post({ type: 'wcResolve', path: d.path, action }));
