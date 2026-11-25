@@ -532,19 +532,28 @@ impl MermaidConfig {
 }
 
 /// 図の配色（設定の「図の配色」）。
-#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Scheme {
-    /// 構文の色と同じテーマから（既定）。
-    #[default]
+    /// 構文の色と同じテーマから。
     Syntax,
     /// pele の既定の色（灰色を主にした色）。
     Pele,
-    /// Mermaid 本家のテーマ。`None` は外観に合わせる（明るい表示は default、暗い表示は dark）。名前つきは外観に
+    /// Mermaid 本家のテーマ。`None` は外観に合わせる（明るい表示は default、暗い表示は dark。既定）。名前つきは外観に
     /// 関係なくそのテーマ（地も塗る）。
     Mermaid(Option<MermaidTheme>),
     /// 読み込んだ Mermaid のテーマ（設定の鍵は `mermaid-import:名前`、中身は FE が覚えている）。
     Imported,
 }
+
+impl Default for Scheme {
+    /// GitHub の見た目に近い、外観に合わせた Mermaid のテーマ。
+    fn default() -> Self {
+        Self::Mermaid(None)
+    }
+}
+
+/// 既定の配色の設定の鍵。
+pub const DEFAULT_KEY: &str = "mermaid";
 
 /// 読み込んだ Mermaid のテーマを指す設定の鍵の接頭辞。
 pub const IMPORTED_PREFIX: &str = "mermaid-import:";
@@ -600,13 +609,14 @@ impl Scheme {
     /// 設定の名前から（知らない名前は既定）。
     pub fn from_key(key: &str) -> Self {
         match key {
+            "syntax" => Self::Syntax,
             "pele" => Self::Pele,
             "mermaid" => Self::Mermaid(None),
             _ if key.starts_with(IMPORTED_PREFIX) => Self::Imported,
             _ => key
                 .strip_prefix("mermaid-")
                 .and_then(|name| MermaidTheme::ALL.into_iter().find(|t| t.name() == name))
-                .map_or(Self::Syntax, |t| Self::Mermaid(Some(t))),
+                .map_or(Self::default(), |t| Self::Mermaid(Some(t))),
         }
     }
 
@@ -942,7 +952,10 @@ mod tests {
         for scheme in Scheme::all() {
             assert_eq!(Scheme::from_key(&scheme.key()), scheme);
         }
-        assert_eq!(Scheme::from_key("?"), Scheme::Syntax);
+        assert_eq!(Scheme::from_key("?"), Scheme::Mermaid(None));
+        assert_eq!(Scheme::from_key(""), Scheme::default());
+        assert_eq!(Scheme::default().key(), DEFAULT_KEY);
+        assert_eq!(Scheme::from_key("syntax"), Scheme::Syntax);
     }
 
     #[cfg(feature = "diagrams")]

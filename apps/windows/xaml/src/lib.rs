@@ -28,3 +28,5 @@ pub use list::{
 };
 pub use tabview::on_tab_moves;
 pub use textbox::{is_text_box, scroll_to_fraction, select_all, set_caret};
+/// 文字の段落・飾り（`BlockCollection`・`InlineCollection`）を番号で読むときの型。
+pub use windows_collections::IVector;

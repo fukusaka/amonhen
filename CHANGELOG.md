@@ -18,8 +18,10 @@ becomes the GitHub Release notes.
 
 - Markdown math finds `$…$` by GitHub's rules: only at the start, after a space or after `(`, and not before a letter,
   digit or `_`, nor in italics, links or footnotes. So `a$x$b` and `日本語の$x$` stay text, as on GitHub.
-- Why a Markdown diagram can't be drawn is shown in Japanese too: every DOT error, and Mermaid's common ones (syntax
+  Theme > Diagrams, and pele's colors are now called the Obsidian style.
   errors, unknown diagram types, limits).
+- Diagrams take Mermaid's colors for the appearance by default, closer to GitHub. The setting moved to Settings >
+- Why a Markdown diagram can't be drawn is shown in Japanese too: every DOT error, and Mermaid's common ones (syntax
 
 ### [0.2.15] - 2026-11-25
 
