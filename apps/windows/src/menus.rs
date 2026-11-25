@@ -612,21 +612,18 @@ pub fn toolbar(on_click: Callback<String>, tracking: Tracking) -> View {
                 } else {
                     View::empty()
                 };
+                // 上流がなければ Push は Publish（送り先を選んで初めて送る）。名前もアイコンも変わる（macOS 版の
+                // `setTracking` と同じ）。
+                let shown = if id == "push" && !tracking.published {
+                    "publish"
+                } else {
+                    id.as_str()
+                };
                 let icon = StackPanel::new()
                     .orientation(Orientation::Horizontal)
                     .spacing(4.0)
                     .horizontal_alignment(HorizontalAlignment::Center)
-                    .children((
-                        spinner,
-                        Grid::new().children((
-                            toolbar_icon(if id == "push" && !tracking.published {
-                                "publish"
-                            } else {
-                                id.as_str()
-                            }),
-                            badge,
-                        )),
-                    ));
+                    .children((spinner, Grid::new().children((toolbar_icon(shown), badge))));
                 let click = on_click.clone();
                 let key = command.clone();
                 let button = Button::new()
@@ -644,7 +641,7 @@ pub fn toolbar(on_click: Callback<String>, tracking: Tracking) -> View {
                             .children((
                                 icon,
                                 TextBlock::new()
-                                    .text(toolbar_name(&id))
+                                    .text(toolbar_name(shown))
                                     .font_size(11.0)
                                     .horizontal_alignment(HorizontalAlignment::Center),
                             )),
