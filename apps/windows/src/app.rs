@@ -516,6 +516,9 @@ struct Root {
     /// 帯を開いた回数（開くたびに欄にフォーカスを入れる）。
     diff_find_opened: u64,
     diff_find_box: ElementRef<TextBox>,
+    /// 整形した Markdown の根（帯の検索を、その中の文字に向ける）と、今の一致・一致の数。
+    markdown_root: ElementRef<Grid>,
+    markdown_find: (usize, usize),
     /// マージエディタの Result の欄（Ctrl+Z・Ctrl+Y を付ける）。
     merge_result_box: ElementRef<TextBox>,
     /// マージエディタの左右と Base の欄の、選んでいるコンフリクトの所。
@@ -1499,6 +1502,8 @@ enum Message {
     SearchSubmit(bool),
     /// 差分の中を探す帯を開く・閉じる、探す文字、前・次へ、件数の文字。
     DiffFindOpen(bool),
+    /// 整形した Markdown の中を探した（今の一致、一致の数）。
+    MarkdownFound(usize, usize),
     DiffFindQuery(String),
     DiffFindStep(i32),
     /// 差分が替わって数え直した、差分の中の一致の数（メッセージの一致と合わせて出す）。
@@ -1754,6 +1759,8 @@ impl Component for Root {
             diff_find_open: false,
             diff_find_opened: 0,
             diff_find_box: ElementRef::new(),
+            markdown_root: ElementRef::new(),
+            markdown_find: (0, 0),
             merge_result_box: ElementRef::new(),
             merge_chosen: std::array::from_fn(|_| ElementRef::new()),
             diff_find_query: String::new(),
@@ -3318,6 +3325,9 @@ impl Root {
                     self.diff_find_opened += 1;
                 }
                 if !open {
+                    if self.markdown_shown() {
+                        self.find_in_markdown(String::new(), 0);
+                    }
                     self.diff_find_query.clear();
                     self.diff_find_status.clear();
                     self.diff_find_message = None;
@@ -3325,6 +3335,29 @@ impl Root {
                         h.find_in_diff(String::new(), Some(0));
                     });
                 }
+            }
+            // 整形した Markdown を出している間は、その中を探す（GTK4 版の `markdownfind`）。
+            Message::DiffFindQuery(query) if self.markdown_shown() => {
+                self.diff_find_query = query.clone();
+                self.find_in_markdown(query, 0);
+            }
+            Message::DiffFindStep(step) if self.markdown_shown() => {
+                let (now, total) = self.markdown_find;
+                if total == 0 {
+                    return beep();
+                }
+                let next = (now as i64 + i64::from(step)).rem_euclid(total as i64) as usize;
+                self.find_in_markdown(self.diff_find_query.clone(), next);
+            }
+            Message::MarkdownFound(now, total) => {
+                self.markdown_find = (now, total);
+                self.diff_find_status = if self.diff_find_query.trim().is_empty() {
+                    String::new()
+                } else if total == 0 {
+                    tr!("No Matches")
+                } else {
+                    format!("{} / {total}", now + 1)
+                };
             }
             Message::DiffFindQuery(query) => {
                 self.diff_find_query = query.clone();
@@ -17711,14 +17744,15 @@ impl Root {
                     images = f.images.clone();
                 }
             });
-            return Border::new()
+            return Grid::new()
+                .element_ref(&self.markdown_root)
                 .background(Brush::Solid(crate::palette::background()))
-                .content(crate::markdownview::view(
+                .children((crate::markdownview::view(
                     key,
                     parsed.as_deref(),
                     &diagrams,
                     &images,
-                ));
+                ),));
         }
         let flat = !crate::prefs::bool(crate::prefs::HISTORY_FILE_TREE);
         Border::new()
@@ -17729,6 +17763,35 @@ impl Root {
                 &browser.expanded,
                 context.callback(Message::AllFilesRow),
             ))
+    }
+
+    /// 整形した Markdown を出しているか（すべてのファイルで Markdown を開き、テキストにしていない）。
+    fn markdown_shown(&self) -> bool {
+        self.files_mode
+            && self.page != Page::WorkingCopy
+            && !self.markdown_text
+            && self
+                .browser
+                .as_ref()
+                .and_then(|b| b.open.as_deref())
+                .is_some_and(amonhen_core::markdown::is_markdown)
+    }
+
+    /// 整形した Markdown の中で `query` を探し、`now` 番目の一致へ寄せる（並んだ部品の文字を読むので、描き終えて
+    /// から。数は `MarkdownFound` で返る）。
+    fn find_in_markdown(&self, query: String, now: usize) {
+        let _ = self.markdown_root.request_native_element(move |result| {
+            let Ok(root) = result else {
+                return;
+            };
+            let total = crate::markdownfind::find(&root, &query, now);
+            with_history(|h| {
+                h.sender.send(Message::MarkdownFound(
+                    now.min(total.saturating_sub(1)),
+                    total,
+                ));
+            });
+        });
     }
 
     /// 少し後に、コミット情報の中身の高さを測って欄の高さを合わせる（描き終えて大きさが決まってから）。
