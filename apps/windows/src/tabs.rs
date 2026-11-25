@@ -18,6 +18,8 @@ pub struct Tab {
     pub repositories: bool,
     /// Working Copy から出す（前に出していたとき Working Copy だった）。
     pub working_copy: bool,
+    /// 開いたら History でこのコミットを選ぶ（書き込む先の worktree を替えたとき、前に選んでいたもの）。
+    pub select: Option<String>,
     /// File History のタブ（そのファイルのパス。macOS 版・GTK4 版と同じく、リポジトリのタブの隣に開く）。
     pub file_history: Option<String>,
     /// 別の窓に出したマージエディタ（そのファイルと、打ちかけの Result を入れた一時ファイル）。
@@ -251,6 +253,7 @@ fn tab(location: &str, repositories: bool, working_copy: bool) -> Tab {
         location: location.to_owned(),
         repositories,
         working_copy,
+        select: None,
         file_history: None,
         merge: None,
         merge_text: None,
@@ -519,7 +522,7 @@ fn select_open(location: &str) -> bool {
 }
 
 /// 今のタブのリポジトリを替える（Repositories の Open、worktree の切り替え）。
-pub fn replace(location: &str, working_copy: bool) -> Result<(), String> {
+pub fn replace(location: &str, working_copy: bool, select: Option<String>) -> Result<(), String> {
     check(location)?;
     // もう開いているリポジトリなら、そのタブに移る（このタブはそのまま。macOS 版と同じ）。
     if select_open(location) {
@@ -529,6 +532,7 @@ pub fn replace(location: &str, working_copy: bool) -> Result<(), String> {
     TABS.with(|t| {
         if let Some(tab) = t.borrow_mut().get_mut(index) {
             *tab = self::tab(location, false, working_copy);
+            tab.select = select;
         }
     });
     activate(index);
