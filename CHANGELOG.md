@@ -16,6 +16,8 @@ becomes the GitHub Release notes.
 
 #### Changed
 
+- Android VectorDrawables take their colors from `values-night*/` (and `color-night*/`, `drawable-night*/`) in the dark
+  appearance, picking qualified folders in Android's order.
 - Markdown math finds `$…$` by GitHub's rules: only at the start, after a space or after `(`, and not before a letter,
   digit or `_`, nor in italics, links or footnotes. So `a$x$b` and `日本語の$x$` stay text, as on GitHub.
 - Diagrams take Mermaid's colors for the appearance by default, closer to GitHub. The setting moved to Settings >

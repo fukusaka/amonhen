@@ -45,12 +45,15 @@ enum Request {
         formulas: Vec<Formula>,
         color: String,
     },
-    /// VectorDrawable のファイル `path`（中身 `data` は base64）。引けない色は `fallback` で描く。
+    /// VectorDrawable のファイル `path`（中身 `data` は base64）。引けない色は `fallback` で描く。`dark` なら暗い外観
+    /// の資源（`values-night` など）を先に引く。
     VectorDrawable {
         path: String,
         data: String,
         #[serde(default)]
         fallback: Option<String>,
+        #[serde(default)]
+        dark: bool,
     },
     /// SVG（`data` は base64）の、モバイル向けの描画部品で崩れる機能と、部品ごとの崩れ方の近似。
     SvgCheck { data: String },
@@ -286,15 +289,21 @@ fn handle(
             path,
             data,
             fallback,
+            dark,
         } => {
             let xml = decode_base64(&data).ok_or("The data isn’t base64")?;
             let files = LinkFiles {
                 link,
                 folders: RefCell::default(),
             };
-            let picture =
-                vectordrawable::picture(path.trim_matches('/'), &xml, &files, fallback.as_deref())
-                    .map_err(|e| e.to_string())?;
+            let picture = vectordrawable::picture(
+                path.trim_matches('/'),
+                &xml,
+                &files,
+                fallback.as_deref(),
+                dark,
+            )
+            .map_err(|e| e.to_string())?;
             Ok(json!({ "svg": picture.svg, "notes": picture.notes }))
         }
         Request::SvgCheck { data } => {
