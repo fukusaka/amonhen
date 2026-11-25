@@ -5734,6 +5734,16 @@ impl Root {
                             .find(|e| &e.path == p)
                             .map(|e| e.kind == amonhen_model::StatusKind::Unmerged)
                     });
+                    // マージエディタを出している間に別のファイルを選んだ: 直しかけなら離れない（Close と同じく
+                    // 確かめる）。でなければ閉じて、そのファイルの差分（コンフリクトならそのマージエディタ）へ。
+                    if changed && self.merge_embedded() {
+                        if self.merge.as_ref().is_some_and(crate::merge::State::dirty) {
+                            self.dialog = Some(Dialog::CloseMerge);
+                            return;
+                        }
+                        self.merge = None;
+                        self.page = Page::WorkingCopy;
+                    }
                     if changed {
                         self.working_staged = false;
                     }
@@ -16805,11 +16815,18 @@ impl Root {
                 option: context.callback(Message::Command),
             },
         );
+        // Working Copy に埋め込むなら右の列だけ（別の窓なら全体）。
+        let embedded = self.merge_embedded();
         Border::new()
             .background(Brush::Solid(crate::palette::background()))
-            .grid_column(1)
-            .grid_column_span(2)
+            .grid_column(if embedded { 2 } else { 1 })
+            .grid_column_span(if embedded { 1 } else { 2 })
             .content(view)
+    }
+
+    /// マージエディタを Working Copy の右の列に埋め込んで出している（別の窓に出していない）。
+    fn merge_embedded(&self) -> bool {
+        self.page == Page::Merge && self.merge.as_ref().is_some_and(|m| !m.separate)
     }
 
     fn blame_view(&self, context: &ViewContext<Self>) -> View {
@@ -18259,7 +18276,8 @@ impl Root {
     }
 
     fn working_copy_view(&self, context: &mut ViewContext<Self>) -> View {
-        if self.page != Page::WorkingCopy {
+        // マージエディタは Working Copy の右の列に埋め込む（一覧は左に残す。macOS 版・GTK4 版と同じ）。
+        if self.page != Page::WorkingCopy && !self.merge_embedded() {
             return View::empty();
         }
         let callbacks = crate::workcopy::Callbacks {
