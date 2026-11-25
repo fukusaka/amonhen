@@ -136,6 +136,7 @@ fn args_for(tab: &crate::tabs::Tab) -> (Args, Instant) {
     args.repo = tab.location.clone().into();
     args.repositories = tab.repositories;
     args.working_copy = tab.working_copy;
+    args.select = tab.select.clone();
     args.file_history = tab.file_history.clone();
     args.merge = tab.merge.clone();
     args.merge_text = tab.merge_text.clone().map(Into::into);
@@ -3755,13 +3756,14 @@ impl Root {
                 {
                     return;
                 }
-                if let Err(e) = crate::tabs::replace(&location, false) {
+                if let Err(e) = crate::tabs::replace(&location, false, None) {
                     self.error = Some(e);
                 }
             }
             Message::Command(id) if id == "try-again" => {
                 if let Some(tab) = self.current_tab()
-                    && let Err(e) = crate::tabs::replace(&tab.location, tab.working_copy)
+                    && let Err(e) =
+                        crate::tabs::replace(&tab.location, tab.working_copy, tab.select.clone())
                 {
                     self.error = Some(e);
                 }
@@ -9159,7 +9161,18 @@ impl Root {
                 PENDING_PLACE.with(|p| p.set(Some((place, 0))));
             }
             let session = match Session::new(&args, "app", started, Arc::new(|| {})) {
-                Ok(s) => s,
+                // 書き込む先の worktree を替えたタブは、前に選んでいたコミットを選び直す（macOS 版と同じく選んだ
+                // ものを保つ）。
+                Ok(mut s) => {
+                    if let Some(id) = args
+                        .select
+                        .as_deref()
+                        .and_then(amonhen_model::Oid::from_hex)
+                    {
+                        s.select_when_read(id);
+                    }
+                    s
+                }
                 Err(e) => {
                     sender.send(Message::Failed(e));
                     return None;
@@ -16246,7 +16259,8 @@ impl Root {
         if self.running > 0 || self.busy.is_some() {
             return beep();
         }
-        if let Err(message) = crate::tabs::replace(path, self.page == Page::WorkingCopy) {
+        let selected = self.selected.as_ref().map(|(id, _)| id.clone());
+        if let Err(message) = crate::tabs::replace(path, self.page == Page::WorkingCopy, selected) {
             self.dialog = Some(Dialog::Failed {
                 title: tr!("Can’t open the worktree"),
                 message,

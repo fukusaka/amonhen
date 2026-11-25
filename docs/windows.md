@@ -43,8 +43,8 @@ New-ItemProperty -Path HKLM:\SYSTEM\CurrentControlSet\Control\FileSystem -Name L
 git config --global core.longpaths true
 ```
 
-- PowerShell 7 has to be the MSI (`--installer-type wix`): the Microsoft Store version lives under the user's
-  `WindowsApps` and can't be ssh's default shell. Check with `Test-Path "C:\Program Files\PowerShell\7\pwsh.exe"`.
+- PowerShell 7 has to be the MSI (`--installer-type wix`), which exists only up to 7.6 (7.7 has no MSI): the Store
+  (MSIX) version is reached through an alias in the user's `WindowsApps` and can't be ssh's default shell. Check with `Test-Path "C:\Program Files\PowerShell\7\pwsh.exe"`.
 - `Microsoft.VisualStudio.BuildTools` is Build Tools 2026 (`Microsoft.VisualStudio.2022.BuildTools` is 2022). Its C++
   workload is all `x86_64-pc-windows-msvc` needs.
 - Node should be 24, like CI (`node -v`).
@@ -54,7 +54,7 @@ git config --global core.longpaths true
 
 `Add-WindowsCapability` downloads from Windows Update, so finish pending updates (and the restart they ask for) first.
 If it still fails, `winget install --id Microsoft.OpenSSH.Preview -e` installs the same OpenSSH from GitHub (into
-`C:\Program Files\OpenSSH`, possibly without the firewall rule).
+`C:\Program Files\OpenSSH`; its firewall rule opens port 22 to Private networks only).
 
 ```powershell
 Add-WindowsCapability -Online -Name OpenSSH.Server~~~~0.0.1.0
@@ -142,10 +142,11 @@ A script with quotes and pipes survives ssh unchanged when it is sent as `-Encod
 ssh windows-pc "powershell -NoProfile -NonInteractive -EncodedCommand $(iconv -f UTF-8 -t UTF-16LE check.ps1 | base64)"
 ```
 
-- `powershell -Command -` (reading the script from standard input) hangs over ssh.
+- `powershell -Command -` (reading the script from standard input) runs it line by line: a block spread over several
+  lines (such as a function) silently doesn't run, and the exit code is still 0.
 - Start a script with `[Console]::OutputEncoding = [Text.Encoding]::UTF8` to read Japanese output on the Mac.
-- In Windows PowerShell 5.1, `npm` runs `npm.ps1`, which leaves `$LASTEXITCODE` at 0 even when tests fail. Call
-  `npm.cmd`. `r` is an alias (Invoke-History), so don't name a function `r`.
+- In Windows PowerShell 5.1, `npm` resolves to `npm.ps1`, which the default execution policy (Restricted)
+  refuses to run: nothing runs and `$LASTEXITCODE` keeps its earlier value, often 0. Call `npm.cmd`. `r` is an alias (Invoke-History), so don't name a function `r`.
 - An ssh session has no desktop: windows started from it don't appear on the screen and can't be captured. Look at the
   screen in person or through Remote Desktop.
 

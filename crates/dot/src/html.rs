@@ -2,7 +2,7 @@
 //!
 //! 属性は Graphviz の説明のとおり: 表の `border`（既定 1）・`cellborder`（既定は `border`）・`cellspacing`
 //! （既定 2）・`cellpadding`（既定 2）・`bgcolor`（色の並びはグラデーション）・`gradientangle`・`color`・`width`・
-//! `height`・`fixedsize`・`sides`・`style`（rounded・radial・dashed・dotted）・`columns`・`rows`（`*` で間の線）・
+//! `height`・`fixedsize`・`sides`・`style`（rounded・radial・dashed・dotted・invis）・`columns`・`rows`（`*` で間の線）・
 //! `port`・`align`・`valign`。升の `colspan`・`rowspan`・`border`・`cellpadding`・`bgcolor`・`gradientangle`・
 //! `style`・`color`・`align`（`text` も）・`valign`・`balign`・`width`・`height`・`fixedsize`・`sides`・`port`。`<HR/>`・`<VR/>` は行・升の間の線。中の文字は `text` の HTML（`<font>`・`<b>`・`<br/>` など）、
 //! 升の中の表は入れ子にする。`<IMG>` は `SRC` を呼ぶ側の読み手で読み、`SCALE` で升に合わせて描く（読めなければ
@@ -94,6 +94,8 @@ pub struct Cell {
     sides: Sides,
     rounded: bool,
     dash: Dash,
+    /// `style="invis"`: 場所は取るが、何も描かない（塗り・枠・中身。Graphviz と同じ）。
+    invis: bool,
     align: Align,
     valign: VAlign,
     pub port: Option<String>,
@@ -118,6 +120,8 @@ pub struct Table {
     sides: Sides,
     rounded: bool,
     dash: Dash,
+    /// `style="invis"`: 場所は取るが、何も描かない（塗り・枠・升・間の線。Graphviz と同じ）。
+    invis: bool,
     pub port: Option<String>,
     pub cells: Vec<Cell>,
     /// 間の線（表の左上から、両端）。
@@ -176,6 +180,11 @@ fn style_has(attrs: &[(String, String)], name: &str) -> bool {
         s.split(|c: char| c == ',' || c.is_whitespace())
             .any(|p| p.trim().eq_ignore_ascii_case(name))
     })
+}
+
+/// `style` の `invis`（`invisible` も）。
+fn invisible(attrs: &[(String, String)]) -> bool {
+    style_has(attrs, "invis") || style_has(attrs, "invisible")
 }
 
 /// 枠の線の種類（`style` の `dashed`・`dotted`）。
@@ -411,6 +420,7 @@ impl Parser<'_> {
                                     sides: Sides::parse(attr(&a, "sides")),
                                     rounded: style_has(&a, "rounded"),
                                     dash: Dash::of(&a),
+                                    invis: invisible(&a),
                                     align: align_of(&a),
                                     valign: valign_of(&a),
                                     port: attr(&a, "port").map(str::to_owned),
@@ -442,6 +452,7 @@ impl Parser<'_> {
             sides: Sides::parse(attr(&attrs, "sides")),
             rounded: style_has(&attrs, "rounded"),
             dash: Dash::of(&attrs),
+            invis: invisible(&attrs),
             port: attr(&attrs, "port").map(str::to_owned),
             cells,
             rules: vec![],
@@ -899,6 +910,9 @@ pub fn draw(
     ink: Option<&str>,
     out: &mut String,
 ) {
+    if t.invis {
+        return;
+    }
     let ink =
         t.bg.as_ref()
             .and_then(Fill::first)
@@ -918,7 +932,7 @@ pub fn draw(
         t.rounded,
         t.dash,
     );
-    for c in &t.cells {
+    for c in t.cells.iter().filter(|c| !c.invis) {
         let ink =
             c.bg.as_ref()
                 .and_then(Fill::first)
@@ -1148,6 +1162,30 @@ mod tests {
         draw(&t, 0.0, 0.0, &Font::new(14.0), "", None, &mut out);
         assert_eq!(out.matches("stroke-dasharray=\"5,2\"").count(), 1, "{out}");
         assert_eq!(out.matches("stroke-dasharray=\"1,5\"").count(), 1, "{out}");
+    }
+
+    #[test]
+    fn invisible_tables_and_cells_draw_nothing() {
+        let draw_of = |src: &str| {
+            let t = table(src);
+            let mut out = String::new();
+            draw(&t, 0.0, 0.0, &Font::new(14.0), "", None, &mut out);
+            (t, out)
+        };
+        // 升の invis: その升の塗り・枠・中身を描かず、場所は取る
+        let (t, out) =
+            draw_of("<table><tr><td style=\"invis\" bgcolor=\"red\">a</td><td>b</td></tr></table>");
+        let (shown, _) = draw_of("<table><tr><td bgcolor=\"red\">a</td><td>b</td></tr></table>");
+        assert_eq!((t.w, t.h), (shown.w, shown.h));
+        assert!(!out.contains(">a<") && !out.contains("#ff0000"), "{out}");
+        assert!(out.contains(">b<"), "{out}");
+        // 表の invis（invisible も）: 何も描かない
+        for style in ["invis", "INVISIBLE", "rounded, invis"] {
+            let (t, out) = draw_of(&format!(
+                "<table style=\"{style}\"><tr><td>a</td></tr></table>"
+            ));
+            assert!(t.w > 0.0 && out.is_empty(), "{style}: {out}");
+        }
     }
 
     #[test]

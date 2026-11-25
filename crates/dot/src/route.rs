@@ -11,7 +11,8 @@ pub type Rect = [f64; 4];
 /// 避ける箱と、引くための格子。
 pub struct Obstacles {
     rects: Vec<Rect>,
-    /// 箱の持ち主のノード（題なら None）。辺の端のノードは避けない。
+    /// 箱の持ち主（ノードの番号、クラスタの題はノードの数 + クラスタの番号、辺のラベルは None）。辺は `skip` の
+    /// 持ち主の箱（端のノードと、そのクラスタの題）を避けない。
     owner: Vec<Option<usize>>,
     x0: f64,
     y0: f64,
@@ -255,6 +256,7 @@ impl Obstacles {
             return false;
         }
         if self.work == 0 {
+            crate::cut_short();
             return true;
         }
         let Some(ids) = self.query(b) else {
@@ -346,6 +348,9 @@ impl Obstacles {
                 _ => i += 1,
             }
         }
+        if self.work == 0 && i + 1 < points.len() {
+            crate::cut_short();
+        }
     }
 }
 
@@ -412,7 +417,11 @@ pub fn ortho_free(a: P, b: P, ha: P, hb: P, obstacles: &mut Obstacles, skip: &[u
     }
     // どれも当たるなら、間のノード・題の脇を通る Z（真ん中の線を箱の外へずらしたもの）。両端のノードの外にある所
     // だけ。手間の上限が尽きたら試さない
-    if best.as_ref().is_some_and(|(h, _)| *h > 0) && obstacles.work > 0 && obstacles.around > 0 {
+    let blocked = best.as_ref().is_some_and(|(h, _)| *h > 0);
+    if blocked && (obstacles.work == 0 || obstacles.around == 0) {
+        crate::cut_short();
+    }
+    if blocked && obstacles.work > 0 && obstacles.around > 0 {
         let bb = [a.0.min(b.0), a.1.min(b.1), a.0.max(b.0), a.1.max(b.1)];
         obstacles.around = obstacles.around.saturating_sub(obstacles.cells(bb));
         let between = obstacles.overlapping(bb, skip);
@@ -442,6 +451,7 @@ pub fn ortho_free(a: P, b: P, ha: P, hb: P, obstacles: &mut Obstacles, skip: &[u
         }
         for c in more {
             if obstacles.around == 0 {
+                crate::cut_short();
                 break;
             }
             for w in c.windows(2) {
@@ -473,6 +483,8 @@ pub struct FreeEdge {
     pub hb: P,
     pub tail: usize,
     pub head: usize,
+    /// 避けない箱の持ち主（両端のノードと、そのクラスタの題）。
+    pub skip: Vec<usize>,
 }
 
 /// 同じ溝（同じ向きで、この距離より近い平行な線）とみなす間。
@@ -496,7 +508,7 @@ pub fn ortho_free_all(edges: &[FreeEdge], obstacles: &mut Obstacles) -> Vec<Vec<
     let mut routes: Vec<Vec<P>> = edges
         .iter()
         .map(|e| {
-            let p = ortho_free(e.a, e.b, e.ha, e.hb, obstacles, &[e.tail, e.head]);
+            let p = ortho_free(e.a, e.b, e.ha, e.hb, obstacles, &e.skip);
             match p.len() {
                 2 => {
                     let m = ((p[0].0 + p[1].0) / 2.0, (p[0].1 + p[1].1) / 2.0);
@@ -618,10 +630,11 @@ pub fn ortho_free_all(edges: &[FreeEdge], obstacles: &mut Obstacles) -> Vec<Vec<
     let mut work = NUDGE_WORK;
     for i in 0..mids.len() {
         for j in i + 1..mids.len() {
-            if mids[j].vertical != mids[i].vertical
-                || mids[j].at - mids[i].at >= CHANNEL
-                || work == 0
-            {
+            if mids[j].vertical != mids[i].vertical || mids[j].at - mids[i].at >= CHANNEL {
+                break;
+            }
+            if work == 0 {
+                crate::cut_short();
                 break;
             }
             work -= 1;
@@ -719,6 +732,7 @@ mod free_tests {
                 hb: half,
                 tail: 0,
                 head: [1, 2, 3, 2][i],
+                skip: vec![0, [1, 2, 3, 2][i]],
             })
             .collect();
         let out = ortho_free_all(&edges, &mut Obstacles::new(vec![]));
@@ -851,6 +865,8 @@ pub struct OrthoEdge {
     pub head_end: OrthoEnd,
     /// 仮のノードの位置を動かさない（ラベルが仮のノードの脇にある線）。
     pub keep: bool,
+    /// 避けない箱の持ち主（両端のノードと、そのクラスタの題）。
+    pub skip: Vec<usize>,
 }
 
 fn opposite(s: Side) -> Side {
@@ -1057,12 +1073,12 @@ fn straighten(p: &mut [P], obstacles: &mut Obstacles, skip: &[usize]) {
 /// ほかの端と、ノードの幅の中に等しい間で並べる（向こうの x の順。samehead・sametail の組は 1 つの席を分け合う）。
 /// 中の点は、ほかのノードに当たらなければ尾と頭の縦の線に寄せる（`straighten`）。
 ///
-/// `nodes` はノードの中心と幅・高さ、`titles` は題の箱、`obstacles` はほかのノードと題の箱。2 つ以上のランクを
+/// `nodes` はノードの中心と幅・高さ、`titles` は題の箱とその持ち主、`obstacles` はほかのノードと題の箱。2 つ以上のランクを
 /// 一度にまたぐ線（仮のノードの上限を超えたもの）は直角にしない（None）。
 pub fn ortho(
     edges: &[OrthoEdge],
     nodes: &[(P, f64, f64)],
-    titles: &[Rect],
+    titles: &[(Rect, usize)],
     obstacles: &mut Obstacles,
 ) -> Vec<Option<Vec<P>>> {
     use std::collections::HashMap;
@@ -1243,7 +1259,7 @@ pub fn ortho(
             }
         }
         if !edges[i].keep {
-            straighten(&mut pts[i], obstacles, &[e.tail, e.head]);
+            straighten(&mut pts[i], obstacles, &e.skip);
         }
     }
 
@@ -1340,9 +1356,13 @@ pub fn ortho(
         // 題を避ける高さ（望む高さから近い順に）。調べるのはこの線の範囲に重なる題だけ
         let (lo, hi) = (a.0.min(b.0), a.0.max(b.0));
         let (top, bottom) = (upper.1, lower.1);
+        let skip = &edges[run.edge].skip;
         let near: Vec<&Rect> = titles
             .iter()
-            .filter(|r| r[0] <= hi && r[2] >= lo && r[1] <= bottom && r[3] >= top)
+            .filter(|(r, owner)| {
+                !skip.contains(owner) && r[0] <= hi && r[2] >= lo && r[1] <= bottom && r[3] >= top
+            })
+            .map(|(r, _)| r)
             .collect();
         let hits_title = |p: P, q: P| near.iter().any(|r| segment_hits(p, q, r));
         let clear = |y: f64| {
@@ -1512,7 +1532,7 @@ fn separate(
                     tries.sort_by(|a, b| (a - seg.pos).abs().total_cmp(&(b - seg.pos).abs()));
                     let p = paths[seg.edge].clone().unwrap_or_default();
                     let e = &edges[seg.edge];
-                    let skip = [e.tail, e.head];
+                    let skip = &e.skip;
                     let mut done = false;
                     // 端の線は、そのノードの幅の 9 割の中だけ
                     let n_pts = p.len();
@@ -1579,7 +1599,7 @@ fn separate(
                                 a.0.max(b.0) + 0.5,
                                 a.1.max(b.1) + 0.5,
                             ];
-                            !obstacles.blocked(r, &skip)
+                            !obstacles.blocked(r, skip)
                         });
                         if clear {
                             paths[seg.edge] = Some(q);
@@ -1600,6 +1620,9 @@ fn separate(
             break;
         }
     }
+    if work == 0 {
+        crate::cut_short();
+    }
 }
 
 #[cfg(test)]
@@ -1619,6 +1642,7 @@ mod ortho_tests {
             tail_end: OrthoEnd::free(),
             head_end: OrthoEnd::free(),
             keep: false,
+            skip: vec![tail, head],
         }
     }
 
@@ -1662,13 +1686,13 @@ mod ortho_tests {
         let (a, b) = (out[0].as_ref().unwrap()[0], out[1].as_ref().unwrap()[0]);
         assert!(a.0 < b.0);
         // 題を避ける
-        let title = [[-100.0, 40.0, -30.0, 60.0]];
+        let title = [([-100.0, 40.0, -30.0, 60.0], 99)];
         let one = vec![free(vec![(0.0, 0.0), (-60.0, 100.0)], 0, 1)];
         let p = ortho(&one, &nodes, &title, &mut no_obstacles())[0]
             .clone()
             .unwrap();
         assert!(
-            !p.windows(2).any(|w| segment_hits(w[0], w[1], &title[0])),
+            !p.windows(2).any(|w| segment_hits(w[0], w[1], &title[0].0)),
             "{p:?}"
         );
     }

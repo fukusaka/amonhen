@@ -87,7 +87,7 @@ mocha）は拡張ホストで動く。メインビューの Webview が送るは
 通した History、CRLF のファイルでの行単位の stage・行の破棄・Undo・commit（daemon で、と `amonhen.daemon.enabled` を
 切って）、別のつながりと CLI との 1 つの daemon の共有、拡張が起動するプロセスがすべて `windowsHide` であること、リポジトリを閉じると git のプロセスが終わることを
 確かめる。VSCode を落としたあとは、1 回 10 秒ほど。画面のない Linux では
-`xvfb-run -a npm run test:e2e`（CI と同じ）。VSCode は PATH ではなく自分で git を探すので、別の git で流すとき
+`xvfb-run -a npm run test:e2e`（CI と同じ）。VSCode は自分で git を選ぶ（Windows では PATH より先に Program Files を探し、ほかでは VSCode を起動したときの PATH を使う）ので、別の git で流すとき
 （CI の `git-minimum` のジョブはサポートする最低の版で流す）は `AMONHEN_E2E_GIT` に渡す。リポジトリをその git で作り、
 VSCode の `git.path` をその git にする。
 

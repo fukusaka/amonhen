@@ -300,6 +300,7 @@ pub fn remove_overlaps(pos: &mut [P], half: &[P], pinned: &[bool]) {
             let i = order[a];
             for &j in &order[a + 1..] {
                 if work == 0 {
+                    crate::cut_short();
                     return;
                 }
                 work -= 1;

@@ -99,6 +99,8 @@ pub struct Layout {
     /// 辺ごとの通り道（尾から頭へ、仮のノードのランクの行の上下の端での x の区間 (y, 左, 右)）。曲線はこの中を通す
     /// （Gansner ほか 1993 の §5）。仮のノードのない辺は空。
     pub corridors: Vec<Vec<Portal>>,
+    /// 仮のノードの上限を超えたので、長い辺の一部を仮のノードなしの直線にした。
+    pub straightened: bool,
 }
 
 /// 通り道の 1 つの関（y の高さで x が `lo` から `hi` の間）。
@@ -1640,6 +1642,7 @@ pub fn layout(
         height,
         crossings,
         corridors,
+        straightened: direct.iter().any(|&d| d),
     }
 }
 

@@ -123,6 +123,7 @@ gh attestation verify <file> --repo fukusaka/amonhen
 - **Command line and VSCode extension**: macOS on Apple silicon, Linux (x86_64 or arm64, any distribution), or Windows
   (x86_64 or arm64). The extension needs VSCode 1.120 or later.
 - `git` 2.23 or later must be installed, on the Mac and on SSH hosts alike (it covers the git of every Ubuntu,
-  Debian and RHEL release still supported, and of Xcode). Features of newer git (such as changed-path Bloom filters
+  Debian and RHEL release in standard support, and of Xcode; Ubuntu 18.04, still covered by Ubuntu Pro, has
+  2.17). Features of newer git (such as changed-path Bloom filters
   for commit-graph) are used when the git there has them, with the older way otherwise. When a git command fails and
   the git is older than 2.23, the error says so.

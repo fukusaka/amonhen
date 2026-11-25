@@ -223,6 +223,8 @@ fn component(
     };
     let iters = opts.maxiter.min(*budget / per_iter.max(1)).max(3);
     let tol = opts.epsilon * avg_len;
+    // 手間の上限で回数を減らし、収まる前に尽きたら打ち切ったと記す
+    let mut settled = false;
     for _ in 0..iters {
         *budget = budget.saturating_sub(per_iter);
         let mut change = 0.0;
@@ -273,8 +275,12 @@ fn component(
             }
         }
         if change < tol * m as f64 {
+            settled = true;
             break;
         }
+    }
+    if !settled && iters < opts.maxiter {
+        crate::cut_short();
     }
     for (k, &v) in comp.iter().enumerate() {
         pos[v] = x[k];
