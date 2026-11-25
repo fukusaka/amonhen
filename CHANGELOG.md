@@ -43,6 +43,7 @@ checkerboard behind transparent pictures can be switched between light and dark.
   over the ranks above; overlapping arcs get their own heights and other edges keep clear of their labels.
 - DOT diagrams: `splines=ortho` in the dot layout spreads crowded edge ends across more of a node's side, takes the
   outermost ones in from the left and right sides, and moves end lines apart when they would share a line.
+- DOT diagrams: the dot layout orders nodes with fewer edge crossings.
 
 #### Changed
 

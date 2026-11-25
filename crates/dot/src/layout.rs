@@ -114,6 +114,10 @@ type Chain = (Vec<usize>, bool, Option<usize>);
 
 /// 仮のノードの上限。
 const MAX_DUMMIES: usize = 12_000;
+/// 並べ替えで、交差が減らない回がこれだけ続けばやめる。
+const MINCROSS_STALE: usize = 12;
+/// 隣どうしの入れ替えを使う、ランクの間の線の切れ端の数の上限（大きな図の時間のため）。
+const TRANSPOSE_SEGS: usize = 1500;
 
 // ---- 1. ランク ----
 
@@ -853,8 +857,9 @@ impl Ordering<'_> {
         total
     }
 
-    /// 隣り合う同じクラスタのノードを、交差が減るなら入れ替える。
-    fn transpose(&mut self) {
+    /// 隣り合う同じクラスタのノードを、交差が減るなら入れ替える。`equal` なら、交差が同じでも入れ替える（同じ数の
+    /// 並びの間を動いて、次の並べ替えで減る形を探す。Gansner ほか 1993 の transpose）。
+    fn transpose(&mut self, equal: bool) {
         for _ in 0..4 {
             let mut improved = false;
             for r in 0..self.layers.len() {
@@ -866,7 +871,7 @@ impl Ordering<'_> {
                     }
                     let before = self.pair_crossings(u, v);
                     let after = self.pair_crossings(v, u);
-                    if after < before {
+                    if after < before || (equal && after == before && before > 0) {
                         self.layers[r].swap(i, i + 1);
                         self.pos[u] = i + 1;
                         self.pos[v] = i;
@@ -1199,29 +1204,59 @@ pub fn layout(
         }
         ord.sort_layer(r, &val);
     }
+    // 上からの初めの並びと、下からの初めの並び（下のランクの中央値）の 2 回。どちらも、中央値で上下に並べ替えて
+    // 入れ替え（1 回おきに交差の同じ入れ替えも）、減らなければいちばん良い並びに戻して続け、MINCROSS_STALE 回
+    // 続けて減らなければやめる。2 回のうち交差の少ないほう
     let mut best = ord.layers.clone();
     let mut best_count = ord.crossings();
-    let mut stale = 0;
-    let transpose = segs.len() <= 1500;
-    for i in 0..opt.sweeps {
+    let transpose = segs.len() <= TRANSPOSE_SEGS;
+    for start in 0..2 {
         if best_count == 0 {
             break;
         }
-        ord.global_keys();
-        ord.sweep(i % 2 == 0, &mut val);
-        if transpose {
-            ord.transpose();
+        if start == 1 {
+            ord.layers = best.clone();
+            ord.refresh();
+            ord.global_keys();
+            for r in (0..ord.layers.len()).rev() {
+                let layer = ord.layers[r].clone();
+                for &v in &layer {
+                    val[v] = ord
+                        .median(&nodes[v].down, false)
+                        .unwrap_or(ord.pos[v] as f64);
+                }
+                ord.sort_layer(r, &val);
+            }
         }
-        let c = ord.crossings();
-        if c < best_count {
-            best_count = c;
-            best = ord.layers.clone();
-            stale = 0;
-        } else {
-            stale += 1;
-            if stale >= 6 {
+        let mut here = ord.crossings();
+        let mut here_layers = ord.layers.clone();
+        let mut stale = 0;
+        for i in 0..opt.sweeps {
+            if here == 0 {
                 break;
             }
+            ord.global_keys();
+            ord.sweep((i + start) % 2 == 0, &mut val);
+            if transpose {
+                ord.transpose(i % 2 == 1);
+            }
+            let c = ord.crossings();
+            if c < here {
+                here = c;
+                here_layers = ord.layers.clone();
+                stale = 0;
+            } else {
+                stale += 1;
+                if stale >= MINCROSS_STALE {
+                    break;
+                }
+                ord.layers = here_layers.clone();
+                ord.refresh();
+            }
+        }
+        if here < best_count {
+            best_count = here;
+            best = here_layers;
         }
     }
     ord.layers = best;
