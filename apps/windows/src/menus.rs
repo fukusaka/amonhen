@@ -538,17 +538,35 @@ fn push_tooltip(t: Tracking) -> String {
 const TOOLBAR_ICON_SIZE: f32 = 20.0;
 
 /// ツールバーのボタンのアイコン（`id` は `publish` も）。どの FE でも同じ形の共通のアイコン（`crates/icons`、
-/// `docs/icons.md`）を、塗る形にして `PathIcon` で出す（`PathIcon` は線を引けない）。Files は Explorer の
-/// フォルダ（Segoe）のまま。
+/// `docs/icons.md`）を、線ごとに WinUI の `Path`（線を引く図形）で重ねて描く。色は文字の色（テーマに従う）。Files は
+/// Explorer のフォルダ（Segoe）のまま。
 fn toolbar_icon(id: &str) -> View {
-    match amonhen_icons::get(id).filter(|_| id != "files") {
-        Some(icon) => PathIcon::new()
-            .data(format!("F1 {}", icon.outline(TOOLBAR_ICON_SIZE)))
-            .width(f64::from(TOOLBAR_ICON_SIZE))
-            .height(f64::from(TOOLBAR_ICON_SIZE))
-            .into(),
-        None => FontIcon::new().glyph(glyph_of(id)).into(),
-    }
+    let Some(icon) = amonhen_icons::get(id).filter(|_| id != "files") else {
+        return FontIcon::new().glyph(glyph_of(id)).into();
+    };
+    let scale = TOOLBAR_ICON_SIZE / amonhen_icons::GRID;
+    let thickness = amonhen_icons::STROKE_WIDTH * scale;
+    let strokes = icon.shapes.iter().enumerate().map(|(i, shape)| {
+        let mut path = Path::new()
+            .data(shape.markup(TOOLBAR_ICON_SIZE))
+            .stroke(Brush::Theme(ThemeBrush::PrimaryText))
+            .stroke_thickness(f64::from(thickness))
+            .round_ends(true);
+        if !shape.dash.is_empty() {
+            // XAML の破線は線の太さを 1 とした長さ（形の破線は格子の長さ）。
+            let dash: Vec<String> = shape
+                .dash
+                .iter()
+                .map(|d| format!("{}", d / amonhen_icons::STROKE_WIDTH))
+                .collect();
+            path = path.stroke_dash_array(dash.join(" "));
+        }
+        (i.to_string(), View::from(path))
+    });
+    Grid::new()
+        .width(f64::from(TOOLBAR_ICON_SIZE))
+        .height(f64::from(TOOLBAR_ICON_SIZE))
+        .children((View::keyed_fragment(strokes),))
 }
 
 fn glyph_of(id: &str) -> &'static str {
