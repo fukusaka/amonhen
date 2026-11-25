@@ -63,12 +63,13 @@ pub fn colorize_for_coresvg(svg: &str, fg: &str) -> Option<String> {
 /// 1 つの Markdown のファイルで描く式の数・原文と SVG の合計の大きさ・時間の上限。超えた分は描かずに原文を見せる（1 つの
 /// ファイルで整形表示が止まらないように）。
 #[cfg(feature = "math")]
-const MAX_FILE_FORMULAS: usize = 2_000;
+const MAX_FILE_FORMULAS: usize = 10_000;
 #[cfg(feature = "math")]
 const MAX_FILE_SOURCE: usize = 512 * 1024;
-/// SVG の合計（FE は式ごとに色を当てて画像にするので、JSON とその手間が大きくなりすぎないように）。
+/// SVG の合計（FE は式ごとに色を当てて画像にするので、JSON とその手間が大きくなりすぎないように）。小さな式でも字形を
+/// 持つので 1 式あたり 2〜4 KB になり、上の 1 万式が入る大きさにする（1 万式で約 44 MB）。
 #[cfg(feature = "math")]
-const MAX_FILE_SVG: usize = 8 << 20;
+const MAX_FILE_SVG: usize = 48 << 20;
 #[cfg(feature = "math")]
 const MAX_FILE_TIME: std::time::Duration = std::time::Duration::from_secs(2);
 /// 描くスレッドのスタック（RaTeX の入れ子の上限まで足りる大きさ。使った分だけ取られる）。
