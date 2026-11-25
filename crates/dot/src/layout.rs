@@ -1346,6 +1346,41 @@ pub fn layout(
             flat_up[r] = flat_up[r].max(room);
         }
     }
+    // 間を越える同じランクの弧（隣でも 2 本目から）は、ランクのすぐ上を、横の範囲が重なるものと段を分けて通る（描く
+    // 側は 1 段 8、最初の段は行の上の端から 18 まで）。重なりの深さとラベルの分が、ランクの間の半分に収まらなければ
+    // 上に空ける
+    {
+        let mut spans: Vec<Vec<(usize, usize, f64)>> = vec![Vec::new(); rank_count];
+        for (ei, e) in input_edges.iter().enumerate() {
+            if let Route::Flat { adjacent, lane } = routes[ei]
+                && e.tail != e.head
+                && !(adjacent && lane == 0)
+            {
+                let r = nodes[e.tail].rank;
+                let (a, b) = (pos[e.tail], pos[e.head]);
+                spans[r].push((a.min(b), a.max(b), e.label.map_or(0.0, |(_, lh)| lh + 4.0)));
+            }
+        }
+        for (r, list) in spans.iter().enumerate() {
+            if list.is_empty() {
+                continue;
+            }
+            let mut ev: Vec<(usize, i32)> = Vec::with_capacity(list.len() * 2);
+            for &(lo, hi, _) in list {
+                ev.push((lo, 1));
+                ev.push((hi, -1));
+            }
+            ev.sort_by(|x, y| x.0.cmp(&y.0).then(y.1.cmp(&x.1)));
+            let (mut now, mut depth) = (0i32, 0i32);
+            for (_, d) in ev {
+                now += d;
+                depth = depth.max(now);
+            }
+            let label = list.iter().map(|l| l.2).fold(0.0, f64::max);
+            let need = 18.0 + 8.0 * (depth - 1).max(0) as f64 + label;
+            flat_up[r] = flat_up[r].max(need - base_gap / 2.0);
+        }
+    }
     // 題が横（LR・RL の絵の上下）のクラスタは、題の長さ（配置の縦）より箱が短ければ、両端のランクの外に場所を
     // 足して箱を伸ばす（中のクラスタから。伸ばすとランクの間が開くので、収まるまで数回やり直す）
     let mut stretch = vec![0f64; k];
