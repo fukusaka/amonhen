@@ -8,6 +8,7 @@ import * as vscode from 'vscode';
 import type { Sequence } from '../git/backend.ts';
 import type { Ref, Remote, Stash } from '../git/refs.ts';
 import { splitRemoteRef } from '../git/refs.ts';
+import { byName, refTree, type RefTree } from '../git/refTree.ts';
 import { arrangeBranches, type Arranged, type BranchGroupsInfo } from '../git/branchGroups.ts';
 import { signatureExplanation, signatureIcon, signatureLabel, signatureStatus } from '../git/signature.ts';
 import { stashBaseText, stashBranch } from '../git/stash.ts';
@@ -59,7 +60,10 @@ export type Node =
   /** Inactive・Archived（畳んでおく） */
   | { kind: 'branchGroup'; key: 'inactive' | 'archived'; items: Arranged[] }
   | { kind: 'remote'; remote: Remote; folder: Folder }
-  | { kind: 'tag'; ref: Ref }
+  /** タグの行。`label` はフォルダの中の名前（なければ名前のまま） */
+  | { kind: 'tag'; ref: Ref; label?: string }
+  /** タグの `/` のフォルダ（アプリと同じく名前の順で、フォルダは中の最初の名前の位置） */
+  | { kind: 'tagFolder'; id: string; label: string; children: RefTree<Ref>[] }
   | { kind: 'stash'; stash: Stash }
   | { kind: 'submodule'; submodule: Submodule; state?: string }
   | { kind: 'subtree'; subtree: Subtree }
@@ -325,6 +329,8 @@ export class SidebarProvider implements vscode.TreeDataProvider<Node>, vscode.Di
         return arrangedFolders(node.items, node.id, (a, label) => this.arrangedNode(repo, a, label));
       case 'branchGroup':
         return node.items.map((a) => this.arrangedNode(repo, a, a.name)).filter((n) => n !== undefined);
+      case 'tagFolder':
+        return tagNodes(node.children);
       default:
         return [];
     }
@@ -371,12 +377,19 @@ export class SidebarProvider implements vscode.TreeDataProvider<Node>, vscode.Di
             return { kind: 'remote', remote, folder };
           });
       }
-      case 'tags':
+      case 'tags': {
         if (this.engine) this.tagMarks.want();
-        return [...(state.tags ?? [])]
-          .filter((t) => this.filterWords.length === 0 || this.matches(shortName(t.name)))
-          .sort((a, b) => b.date - a.date)
-          .map((ref) => ({ kind: 'tag', ref }));
+        const tags = state.tags ?? [];
+        // 絞り込んでいれば、合うものだけを名前のまま平らに
+        if (this.filterWords.length > 0) {
+          return tags
+            .filter((t) => this.matches(shortName(t.name)))
+            .sort((a, b) => byName(a.name, b.name))
+            .map((ref) => ({ kind: 'tag', ref }));
+        }
+        // release/1.0 のような名前はフォルダにまとめる（アプリと同じく名前の順）
+        return tagNodes(refTree(tags.map((ref) => ({ name: shortName(ref.name), value: ref }))));
+      }
       case 'stashes':
         return (state.stashes ?? []).map((stash) => ({ kind: 'stash', stash }));
       case 'subtrees':
@@ -509,7 +522,8 @@ export class SidebarProvider implements vscode.TreeDataProvider<Node>, vscode.Di
         return item;
       }
       case 'folder':
-      case 'branchFolder': {
+      case 'branchFolder':
+      case 'tagFolder': {
         const item = new vscode.TreeItem(node.label, vscode.TreeItemCollapsibleState.Collapsed);
         item.id = node.id;
         item.iconPath = vscode.ThemeIcon.Folder;
@@ -558,7 +572,7 @@ export class SidebarProvider implements vscode.TreeDataProvider<Node>, vscode.Di
         return item;
       }
       case 'tag':
-        return this.tagItem(node.ref);
+        return this.tagItem(node.ref, node.label);
       case 'stash': {
         const item = new vscode.TreeItem(node.stash.name);
         item.id = `stash:${node.stash.oid}`;
@@ -710,9 +724,9 @@ export class SidebarProvider implements vscode.TreeDataProvider<Node>, vscode.Di
    * ない・同じ名前の別のタグがある）を出し、ツールチップにリモートごとの様子と署名の説明を並べる。右クリックの
    * Push・Replace・Delete from は、出せるリモートがあるときだけ出す（contextValue の `;push` など）
    */
-  private tagItem(ref: Ref): vscode.TreeItem {
+  private tagItem(ref: Ref, label?: string): vscode.TreeItem {
     const name = shortName(ref.name);
-    const item = new vscode.TreeItem(name);
+    const item = new vscode.TreeItem(label ?? name);
     item.id = ref.name;
     const remotes = this.engine ? this.tagMarks.remotes : undefined;
     const mark = remotes && tagMark(remotes, name);
@@ -875,6 +889,14 @@ function arrangedFolders(
   }
   return out.map((o): Node =>
     'pending' in o ? { kind: 'branchFolder', id: `${id}/${o.pending}`, label: o.pending, items: o.items } : o,
+  );
+}
+
+function tagNodes(tree: readonly RefTree<Ref>[]): Node[] {
+  return tree.map((t): Node =>
+    t.kind === 'folder'
+      ? { kind: 'tagFolder', id: `tags/${t.path}`, label: t.label, children: t.children }
+      : { kind: 'tag', ref: t.value, label: t.label },
   );
 }
 
