@@ -83,6 +83,12 @@ export function registerStashCommands(manager: RepositoryManager): vscode.Dispos
       }
     }),
     onStash('amonhen.stash.show', (repo, node) => showStash(repo, node)),
+    // アプリの Stashes の行の Copy Name（stash@{0}）
+    vscode.commands.registerCommand('amonhen.stash.copyName', async (node?: Node) => {
+      if (node?.kind !== 'stash') return;
+      await vscode.env.clipboard.writeText(node.stash.name);
+      vscode.window.setStatusBarMessage(`$(copy) ${node.stash.name}`, 3000);
+    }),
     // 新しい stash を先に確かめてから pop する（アプリの Pop。ツールバーの代わりに Stashes の見出しとコマンドパレット）
     vscode.commands.registerCommand(
       'amonhen.stash.popLatest',

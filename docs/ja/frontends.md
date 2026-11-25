@@ -191,7 +191,7 @@ GTK4 のアプリは macOS のアプリと同じふるまいをめざす。わ�
 | 機能 | macOS | GTK4 | Windows | VSCode | CLI | TUI | Notes |
 | --- | :-: | :-: | :-: | :-: | :-: | :-: | --- |
 | Stashes の表示（一覧と中身） | ✓ | ✓ | ✓ | ✓ | △ | ✓ | VSCode: サイドバーの一覧で、Show Stash は VSCode の複数ファイルの差分。<br>CLI: `refs` が並べ、`show stash@{n}`。<br>TUI: サイドバーに並べ、Enter で stash の差分を詳細に出す。 |
-| stash の行の詳細（ブランチ・HEAD に対する元・未追跡） | ✓ | ✓ | ✓ | ✓ | △ | ✓ | VSCode: 未追跡は行の説明に、ブランチと元はツールチップに（エンジンがあるとき）。<br>CLI: `amonhen run`（`stashBases`）から。<br>TUI: Enter で stash を出したとき、一番下の行に。 |
+| stash の行の詳細（ブランチ・HEAD に対する元・未追跡） | ✓ | ✓ | ✓ | ✓ | △ | ✓ | VSCode: アプリの行と同じく、行の説明にブランチ・HEAD に対する元・いつ・未追跡・元の短い ID（元と未追跡はエンジンがあるとき）。行の右クリックに Copy Name。<br>CLI: `amonhen run`（`stashBases`）から。<br>TUI: Enter で stash を出したとき、一番下の行に。 |
 | Apply・Pop・Drop…（Undo できる）・Branch… | ✓ | ✓ | ✓ | ✓ | △ | ✓ | VSCode: Branch… はエンジンがあるとき。Apply・Pop はできれば index も戻す（`--index`）。<br>CLI: `amonhen run` から。<br>TUI: サイドバーで `a`・`o`・`x`・`b`。 |
 
 ## 5b. Reflog

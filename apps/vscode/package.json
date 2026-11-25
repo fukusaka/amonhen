@@ -792,6 +792,11 @@
         "category": "Amon Hen"
       },
       {
+        "command": "amonhen.stash.copyName",
+        "title": "Copy Name",
+        "category": "Amon Hen"
+      },
+      {
         "command": "amonhen.history.selection.cherryPick",
         "title": "Cherry-pick Commits…",
         "category": "Amon Hen"
@@ -1330,6 +1335,11 @@
           "group": "2_stash@1"
         },
         {
+          "command": "amonhen.stash.copyName",
+          "when": "view == amonhen.sidebar && viewItem == stash",
+          "group": "9_copy@1"
+        },
+        {
           "command": "amonhen.submodule.update",
           "when": "view == amonhen.sidebar && viewItem =~ /^submodule/",
           "group": "inline"
@@ -1650,6 +1660,10 @@
         },
         {
           "command": "amonhen.stash.show",
+          "when": "false"
+        },
+        {
+          "command": "amonhen.stash.copyName",
           "when": "false"
         },
         {

@@ -191,7 +191,7 @@ The GTK4 app aims to behave like the macOS app. These are the only intended diff
 | Feature | macOS | GTK4 | Windows | VSCode | CLI | TUI | Notes |
 | --- | :-: | :-: | :-: | :-: | :-: | :-: | --- |
 | Stashes view (list and contents) | ✓ | ✓ | ✓ | ✓ | △ | ✓ | VSCode: Sidebar list; Show Stash opens VSCode's multi-file diff.<br>CLI: Listed by `refs`; `show stash@{n}`.<br>TUI: In the sidebar; Enter shows a stash's diff in the details. |
-| Stash row details (branch, base against HEAD, untracked) | ✓ | ✓ | ✓ | ✓ | △ | ✓ | VSCode: Untracked in the description, the branch and base in the tooltip (with the engine).<br>CLI: Via `amonhen run` (`stashBases`).<br>TUI: On the bottom line when Enter shows the stash. |
+| Stash row details (branch, base against HEAD, untracked) | ✓ | ✓ | ✓ | ✓ | △ | ✓ | VSCode: In the description, as the app's row: the branch, the base against HEAD, the time, untracked files and the base's short ID (the base and untracked with the engine); a row's right-click has Copy Name.<br>CLI: Via `amonhen run` (`stashBases`).<br>TUI: On the bottom line when Enter shows the stash. |
 | Apply, Pop, Drop… (undoable), Branch… | ✓ | ✓ | ✓ | ✓ | △ | ✓ | VSCode: Branch… with the engine; Apply and Pop restore the index (`--index`) when they can.<br>CLI: Via `amonhen run`.<br>TUI: `a`, `o`, `x` and `b` in the sidebar. |
 
 ## 5b. Reflog
