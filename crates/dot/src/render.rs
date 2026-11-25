@@ -35,7 +35,6 @@ const CLUSTER_MARGIN: f64 = 8.0;
 const LINE: &str = "var(--_l)";
 const BORDER: &str = "var(--_b)";
 const SURFACE_ALT: &str = "var(--_a)";
-const MUTED: &str = "var(--_m)";
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 enum Dir {
@@ -1057,7 +1056,8 @@ pub fn render(
                 0.0,
                 &cv.font,
                 &format!(" class=\"dot-cluster-label\"{}", font_attrs(&cv.font)),
-                Some(ground.and_then(Color::ink).unwrap_or(MUTED)),
+                // 地がなければ文字の色（Graphviz と同じくほかのラベルと同じ色）
+                ground.and_then(Color::ink),
             ));
         }
         clusters_out.push_str("</g>");

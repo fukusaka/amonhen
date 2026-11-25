@@ -460,7 +460,7 @@ fn text_on_explicit_fills_stays_readable() {
         given.contains("fill=\"#ffff00\"") && given.matches("fill=").count() == 1,
         "{svg}"
     );
-    // クラスタの題: 塗りか bgcolor の上なら読める色、なければ控えめな色
+    // クラスタの題: 塗りか bgcolor の上なら読める色、なければ文字の色（fill を書かず、図の文字の色を継ぐ）
     let svg = render(
         "digraph { subgraph cluster_a { label=\"Filled\"; style=filled; fillcolor=\"#202060\"; a } subgraph cluster_b { label=\"Back\"; bgcolor=\"#ffeecc\"; b } subgraph cluster_c { label=\"Plain\"; c } subgraph cluster_d { label=\"Own\"; bgcolor=black; fontcolor=red; d } }",
     )
@@ -471,10 +471,7 @@ fn text_on_explicit_fills_stays_readable() {
         "{svg}"
     );
     assert!(text_tag(&svg, "Back").contains("fill=\"#1f1f1f\""), "{svg}");
-    assert!(
-        text_tag(&svg, "Plain").contains("fill=\"var(--_m)\""),
-        "{svg}"
-    );
+    assert!(!text_tag(&svg, "Plain").contains("fill="), "{svg}");
     let own = text_tag(&svg, "Own");
     assert!(
         own.contains("fill=\"#ff0000\"") && own.matches("fill=").count() == 1,
