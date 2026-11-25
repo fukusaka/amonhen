@@ -54,17 +54,29 @@ export function registerBranchCommands(manager: RepositoryManager): vscode.Dispo
     }),
     command('amonhen.renameBranch', async (repo, target) => {
       if (!target || !('kind' in target) || target.kind !== 'branch' || target.remote) return;
-      const from = shortName(target.ref.name);
-      const to = await askName(repo, `Rename ${from}`, 'heads', from);
-      if (!to || to === from) return;
-      try {
-        // Undo で元の名前に戻せるように記録する（エンジンを通すときはコアが記録する）
-        await repo.undo.recordRename(from, to, () => repo.backend.renameBranch(from, to));
-      } finally {
-        await repo.refresh();
+      await renameBranch(repo, shortName(target.ref.name));
+    }),
+    // コマンドパレットの Rename Branch…: アプリの Repository メニューと同じく、今のブランチの名前を変える
+    command('amonhen.renameCurrentBranch', async (repo) => {
+      const head = (await repo.backend.head()).branch;
+      if (!head) {
+        void vscode.window.showWarningMessage('Rename Branch… needs a branch checked out (HEAD is detached).');
+        return;
       }
+      await renameBranch(repo, shortName(head));
     }),
   );
+}
+
+async function renameBranch(repo: Repository, from: string): Promise<void> {
+  const to = await askName(repo, `Rename ${from}`, 'heads', from);
+  if (!to || to === from) return;
+  try {
+    // Undo で元の名前に戻せるように記録する（エンジンを通すときはコアが記録する）
+    await repo.undo.recordRename(from, to, () => repo.backend.renameBranch(from, to));
+  } finally {
+    await repo.refresh();
+  }
 }
 
 /** 名前を入れてもらう。使えない名前や、すでにある名前ならその場で知らせる */
