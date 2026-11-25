@@ -1408,6 +1408,7 @@ First release.
 
 #### Fixed
 
+- Starting VSCode no longer reports that a Copy Short IDs menu item has no title.
 - Restoring the version before a commit that renamed a file brings back the old name instead of only deleting the new
   one, and Restore This Version isn't offered for a file the commit deleted.
 - Renaming a branch without the engine can be undone, as it already could with the engine.

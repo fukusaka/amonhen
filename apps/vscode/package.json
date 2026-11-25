@@ -935,11 +935,6 @@
         "title": "Copy Commit IDs",
         "category": "Amon Hen"
       },
-        {
-          "command": "amonhen.history.selection.copyShortIds",
-          "when": "webviewId == 'amonhen.main' && webviewSection == 'commits'",
-          "group": "9_copy@2"
-        },
       {
         "command": "amonhen.history.cherryPick",
         "title": "Cherry-pick…",
@@ -2447,6 +2442,11 @@
           "command": "amonhen.history.selection.copyIds",
           "when": "webviewId == 'amonhen.main' && webviewSection == 'commits'",
           "group": "9_copy@1"
+        },
+        {
+          "command": "amonhen.history.selection.copyShortIds",
+          "when": "webviewId == 'amonhen.main' && webviewSection == 'commits'",
+          "group": "9_copy@2"
         },
         {
           "command": "amonhen.history.cherryPick",
