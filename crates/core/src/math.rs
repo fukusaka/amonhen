@@ -204,6 +204,13 @@ pub(crate) fn render_all(blocks: &mut [Block]) {
     let _ = blocks;
 }
 
+/// 1 つの Markdown のファイルの式（TeX と、ブロックの組み方で描くか）を、出てくる順に描く（ファイルごとの上限つき。
+/// 色は `--math-fg` のまま）。Markdown を読まずに式だけを描く FE（VSCode 拡張の `amonhen-render`）が使う。
+#[cfg(feature = "math")]
+pub fn render_formulas(jobs: Vec<(String, bool)>) -> Vec<Result<MathPicture, String>> {
+    render_jobs(jobs)
+}
+
 /// 式を順に描く（大きなスタックの別スレッドで。上限を超えた分は描かない）。
 #[cfg(feature = "math")]
 fn render_jobs(jobs: Vec<(String, bool)>) -> Vec<Result<MathPicture, String>> {

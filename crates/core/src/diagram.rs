@@ -76,7 +76,7 @@ pub type ReadFile = dyn Fn(&str) -> Option<Vec<u8>> + Send + Sync;
 
 impl ImageSource {
     /// 1 つの Markdown のファイルで読むバイト数・回数の上限をつけたもの（図ごとの上限は `amonhen-dot`）。
-    pub(crate) fn bounded(&self) -> ImageSource {
+    pub fn bounded(&self) -> ImageSource {
         use std::sync::atomic::{AtomicUsize, Ordering};
         let read = self.read.clone();
         let bytes = Arc::new(AtomicUsize::new(0));
