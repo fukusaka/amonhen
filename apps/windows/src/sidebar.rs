@@ -702,7 +702,7 @@ fn group(key: &str, title: &str, children: impl IntoIterator<Item = TreeNode>) -
 }
 
 /// ローカルブランチの行の文字。`title` は見せる名前（フォルダの中なら最後の部分）。チェックアウト中なら ✓、
-/// お気に入りなら ★、積んだブランチなら ↳、上流との差（↑ 先にある、↓ 取り込んでいない）。
+/// お気に入りなら ★、積んだブランチなら ↳（上流との差は右端の札。`tracking_text`）。
 fn branch_text(e: &RefEntry, title: &str, head: Option<&str>, mark: Option<&str>) -> String {
     let mut text = String::new();
     if head == Some(e.name.as_str()) {
@@ -713,16 +713,22 @@ fn branch_text(e: &RefEntry, title: &str, head: Option<&str>, mark: Option<&str>
         text.push(' ');
     }
     text.push_str(title);
-    if e.ahead > 0 {
-        text.push_str(&format!("  ↑{}", e.ahead));
-    }
-    if e.behind > 0 {
-        text.push_str(&format!("  ↓{}", e.behind));
-    }
     text
 }
 
-/// ローカルブランチの行（名前と、右端の印: 取り込み済みと、上流がなくなった。macOS 版と同じく灰色のアイコンで、
+/// 上流との差の札（`↑2 ↓3`。差がなければ None）。
+fn tracking_text(e: &RefEntry) -> Option<String> {
+    let mut parts = Vec::new();
+    if e.ahead > 0 {
+        parts.push(format!("↑{}", e.ahead));
+    }
+    if e.behind > 0 {
+        parts.push(format!("↓{}", e.behind));
+    }
+    (!parts.is_empty()).then(|| parts.join(" "))
+}
+
+/// ローカルブランチの行（名前と、右端の印: 取り込み済み、上流がなくなった、上流との差。macOS 版と同じく灰色で、
 /// 意味はツールチップ。押すとブランチの様子の吹き出し）。
 fn branch_node(e: &RefEntry, title: &str, head: Option<&str>, mark: Option<&str>) -> TreeNode {
     let mut marks = Vec::new();
@@ -745,6 +751,15 @@ fn branch_node(e: &RefEntry, title: &str, head: Option<&str>, mark: Option<&str>
                 "Its upstream {upstream} no longer exists on the remote",
                 upstream = e.detail.clone().unwrap_or_default()
             ),
+        });
+    }
+    // 上流との差は右端の札に（macOS 版のバッジと同じく、押すとブランチの様子の吹き出し）。
+    if let Some(counts) = tracking_text(e) {
+        marks.push(RowMark {
+            mark: Some(Mark::Branch),
+            icon: Icon::Text(counts),
+            color: None,
+            tip: String::new(),
         });
     }
     let text = branch_text(e, title, head, mark);
