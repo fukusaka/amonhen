@@ -162,7 +162,7 @@ const FILTER: &[&str] = &[
     // サイドバーの行の印を押したら吹き出しを出す（木の項目は文字だけなので、行の TextBlock の中で印の字の位置を
     // 求め、指がその上にあるかを見る）。
     "Microsoft.UI.Xaml.Controls.TextBlock",
-    "Microsoft.UI.Xaml.Controls.ITextBlock::{Text,ContentStart,Inlines,TextHighlighters}",
+    "Microsoft.UI.Xaml.Controls.ITextBlock::{Text,ContentStart,Inlines,TextHighlighters,put_Text,put_FontSize,put_FontFamily}",
     "Microsoft.UI.Xaml.Controls.ITextBlockStatics::{}",
     "Microsoft.UI.Xaml.Documents.TextPointer",
     "Microsoft.UI.Xaml.Documents.ITextPointer::{GetPositionAtOffset,GetCharacterRect,Offset}",
@@ -244,6 +244,13 @@ const FILTER: &[&str] = &[
     "Microsoft.UI.Xaml.Documents.Typography",
     "Microsoft.UI.Xaml.Documents.ITypographyStatics::{SetVariants}",
     "Microsoft.UI.Xaml.FontVariants",
+    // Markdown の `<kbd>`: 文の中に置く枠付きの札（InlineUIContainer の中に Border と TextBlock）。
+    "Microsoft.UI.Xaml.Documents.InlineUIContainer",
+    "Microsoft.UI.Xaml.Documents.IInlineUIContainer::{put_Child}",
+    "Microsoft.UI.Xaml.Controls.Border",
+    "Microsoft.UI.Xaml.Controls.IBorder::{put_Child,put_BorderBrush,put_BorderThickness,put_CornerRadius,put_Padding,put_Background}",
+    "Microsoft.UI.Xaml.Controls.IBorderStatics::{}",
+    "Microsoft.UI.Xaml.CornerRadius",
 ];
 
 fn main() {
