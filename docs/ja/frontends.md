@@ -286,7 +286,7 @@ GTK4 のアプリは macOS のアプリと同じふるまいをめざす。わ�
 | すべてのファイル: Android の VectorDrawable の絵（色はコミットの `res` から、animated-vector は動く前の絵） | ✓ | ✓ | ✓ | — | n/a | — | VSCode: VectorDrawable の XML はテキストで出す。 |
 | ファイルの見出しのメニュー（Blame・File History・パスのコピー・開く） | ✓ | ✓ | ✓ | ✓ | n/a | ✓ | VSCode: 先頭に Expand・Collapse、Open File at This Commit、Show Whole File の後は Show Changes Only。いくつも選んだときの見出しにも File History・Copy Path。 右クリックと ⋯ の Show Whole File・Blame・File History・この版／前の版に戻す・Copy Path（Copy Path 以外はエンジンがあれば）と、VSCode の差分のエディターで開く。この時点のファイルを開くはない。<br>TUI: 見ているファイルの `B`・`L`・`Y`（パスのコピー）・`e`（git のエディタで開く）。 |
 | 選んだものの差分（範囲をまとめる・A..B / A...B・飛び飛び） | ✓ | ✓ | ✓ | ✓ | △ | ✓ | VSCode: エンジンがあるとき。<br>CLI: `diff <rev> <rev>`。<br>TUI: `m` と Shift-↑↓（か Ctrl・Alt を押しながらクリック）で選ぶ。`x` で向きを入れ替え、`.` で merge-base から。 |
-| 選んだものの操作（cherry-pick・revert・squash・ID のコピー） | ✓ | ✓ | △ | ✓ | △ | ✓ | VSCode: Copy Short IDs も。merge を選んでいれば Save Patches は出さず、Merge は HEAD 以外が 2 つ以上のとき。 エンジンがあるとき。<br>CLI: `amonhen run` から。<br>Windows: 続いたコミットをまとめるときは、ダイアログでメッセージを直してすぐ書き換える（編集モードはない）。<br>TUI: 印をつけたコミットに `y` `v`、`E` でまとめた形の編集モード、`Y` で ID のコピー、Save as Patch で保存。 |
+| 選んだものの操作（cherry-pick・revert・squash・ID のコピー） | ✓ | ✓ | ✓ | ✓ | △ | ✓ | VSCode: Copy Short IDs も。merge を選んでいれば Save Patches は出さず、Merge は HEAD 以外が 2 つ以上のとき。 エンジンがあるとき。<br>CLI: `amonhen run` から。<br>TUI: 印をつけたコミットに `y` `v`、`E` でまとめた形の編集モード、`Y` で ID のコピー、Save as Patch で保存。 |
 | 署名のポップオーバー | ✓ | ✓ | ✓ | ✓ | n/a | ✓ | VSCode: 詳細の Signature の行（様子・説明・署名した人・形式・鍵。指紋はツールチップ）と、タガー・件名・署名を添えた Tag・Merged Tag の行（エンジンがあれば）。ポップオーバーはない。<br>TUI: 確かめた結果を詳細に出す。ポップオーバーはない。 |
 | 単語の強調と構文の色 | ✓ | ✓ | ✓ | ✓ | n/a | ✓ | VSCode: 構文の色はエンジンがあれば、差分を出した後に付く。 |
 
