@@ -991,6 +991,9 @@ pub struct RichTextRun {
     /// Raises or lowers the run (superscript, subscript). Applied by the handler set with
     /// [`set_run_variant_handler`], as the typography attached property isn't in these bindings.
     pub variant: RunVariant,
+    /// Draws the run as a key cap (a framed label inside the line). Built by the handler set with
+    /// [`set_key_cap_handler`], which returns the inline to put in the run's place.
+    pub is_key_cap: bool,
 }
 
 /// A rich text run's position against the baseline.
@@ -1045,6 +1048,23 @@ pub fn set_run_variant_handler(
     handler: impl Fn(&windows_core::IInspectable, RunVariant) + 'static,
 ) {
     RUN_VARIANT_HANDLER.with(|h| *h.borrow_mut() = Some(Rc::new(handler)));
+}
+
+thread_local! {
+    static KEY_CAP_HANDLER: std::cell::RefCell<Option<Rc<dyn Fn(&RichTextRun) -> Option<windows_core::IInspectable>>>> =
+        const { std::cell::RefCell::new(None) };
+}
+
+/// Sets the handler that builds the inline for a key-cap run (an `InlineUIContainer`). Without
+/// it, or when it returns `None`, the run is drawn as plain text.
+pub fn set_key_cap_handler(
+    handler: impl Fn(&RichTextRun) -> Option<windows_core::IInspectable> + 'static,
+) {
+    KEY_CAP_HANDLER.with(|h| *h.borrow_mut() = Some(Rc::new(handler)));
+}
+
+pub(crate) fn key_cap(run: &RichTextRun) -> Option<windows_core::IInspectable> {
+    KEY_CAP_HANDLER.with(|h| h.borrow().clone())?(run)
 }
 
 pub(crate) fn apply_run_variant(run: &windows_core::IInspectable, variant: RunVariant) {

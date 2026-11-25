@@ -2883,6 +2883,13 @@ pub fn set_property(
             blocks.Clear().map_err(native_error)?;
             let append_run = |inlines: &windows_collections::IVector<Inline>,
                               value: &crate::RichTextRun| {
+                // A key cap is the app's inline (a framed label) in the run's place.
+                if value.is_key_cap
+                    && let Some(inline) = crate::element::key_cap(value)
+                    && let Ok(inline) = inline.cast::<Inline>()
+                {
+                    return inlines.Append(&inline).map_err(native_error);
+                }
                 let run = Run::new().map_err(native_error)?;
                 run.SetText(&value.text).map_err(native_error)?;
                 if value.is_bold {
