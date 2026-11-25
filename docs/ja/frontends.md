@@ -23,7 +23,7 @@ GTK4 のアプリは macOS のアプリと同じふるまいをめざす。わ�
 
 - 最後の窓を閉じるとアプリが終わる。
 - ログインシェルの環境変数を読み込まない（Linux のセッションはもう持っている）。
-- Linux と BSD では、Watchman が入っていて git が 2.26 以降なら fsmonitor に使う（git に fsmonitor--daemon がない）。
+- Linux と BSD では、Watchman が入っていて git が 2.26 以降なら fsmonitor に使う（BSD の git には fsmonitor--daemon がない。Linux では git 2.55 からあるが、Amon Hen はまだ使わない）。
 - Apple Intelligence はない。Claude Code と Codex だけ。
 - Finder の代わりにデスクトップのファイルマネージャー。外部エディターはデスクトップ項目から探す。
 - ヘッダーバーはアイコンだけ（ツールチップつき）。ツールバーのカスタマイズにアイコン・文字の選択はない。

@@ -23,7 +23,7 @@ The GTK4 app aims to behave like the macOS app. These are the only intended diff
 
 - The app quits when its last window closes.
 - No import of the login shell's environment (Linux sessions already carry it).
-- On Linux and the BSDs, fsmonitor uses Watchman when installed, with git 2.26 or later (git has no fsmonitor--daemon there).
+- On Linux and the BSDs, fsmonitor uses Watchman when installed, with git 2.26 or later (git has no fsmonitor--daemon on the BSDs, and on Linux only from git 2.55, which Amon Hen does not use yet).
 - No Apple Intelligence; Claude Code and Codex only.
 - Files (the desktop's file manager) instead of Finder; external editors are found by their desktop entries.
 - The header bar shows icons only, with tooltips; toolbar customization has no icon/text choice.
