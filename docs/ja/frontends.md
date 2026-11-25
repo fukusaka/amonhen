@@ -295,8 +295,8 @@ GTK4 のアプリは macOS のアプリと同じふるまいをめざす。わ�
 | 機能 | macOS | GTK4 | Windows | VSCode | CLI | TUI | Notes |
 | --- | :-: | :-: | :-: | :-: | :-: | :-: | --- |
 | Blame | ✓ | ✓ | ✓ | ✓ | △ | ✓ | VSCode: メインビューのページ。<br>CLI: `amonhen run`（`blame`）から。<br>Windows: 行のメニューからそのコミットを History に出す。<br>TUI: Working Copy のファイルかコミットの詳細で `B`。`H` で行のコミットを History で選ぶ。 |
-| ファイルをコミットの版に戻す（この版・その前の版。選べば stage も） | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | VSCode: エンジンがあるとき、History の詳細のファイルの右クリックから。Restore and Stage は 2 つめのボタン。<br>CLI: `restore --source <rev> [--staged]`。<br>TUI: File History の `V`。`y` この版、`b` その前の版、`s`・`B` で stage も。 |
-| File History | ✓ | ✓ | ✓ | ✓ | △ | ✓ | VSCode: メインビューのページ。エクスプローラー・エディターのタブ・コマンドパレット・メインビューのファイルから開く。<br>CLI: `amonhen run`（`fileHistory`）から。<br>Windows: Working Copy のファイルから。<br>TUI: 同じく `L`。変更のないファイルは `O` でパスを聞く。 |
+| ファイルをコミットの版に戻す（この版・その前の版。選べば stage も） | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | VSCode: エンジンがあるとき、詳細（History・Reflog・File History）のファイルの右クリックと、File History の今の名前の行の Restore This Version… から。Restore and Stage は 2 つめのボタン。<br>CLI: `restore --source <rev> [--staged]`。<br>TUI: File History の `V`。`y` この版、`b` その前の版、`s`・`B` で stage も。 |
+| File History | ✓ | ✓ | ✓ | ✓ | △ | ✓ | VSCode: メインビューのページ。エクスプローラー・エディターのタブ・コマンドパレット・メインビューのファイルから開く。行の右クリックにアプリと同じ項目（Copy Short ID も）。Merge Commits はメニューではなく帯のチェックボックス。<br>CLI: `amonhen run`（`fileHistory`）から。<br>Windows: Working Copy のファイルから。<br>TUI: 同じく `L`。変更のないファイルは `O` でパスを聞く。 |
 | リポジトリのタブの隣のタブに、リポジトリのツールバー付きで開く | ✓ | ✓ | ✓ | n/a | n/a | n/a | GTK4: リポジトリのタブがほかの窓で前に出ているときは、ツールバーのない題だけの帯になる。<br>TUI: メインの画面の代わりに開き、Esc で戻る。 |
 | 行の履歴 | — | — | — | — | — | — |  |
 

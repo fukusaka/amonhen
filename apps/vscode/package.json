@@ -2145,6 +2145,11 @@
           "group": "9_copy@2"
         },
         {
+          "command": "amonhen.details.copyShortId",
+          "when": "webviewId == 'amonhen.main' && webviewSection == 'fileHistory'",
+          "group": "9_copy@1.5"
+        },
+        {
           "command": "amonhen.details.copySubject",
           "when": "webviewId == 'amonhen.main' && webviewSection == 'commitDetails'",
           "group": "9_copy@3"
@@ -2333,6 +2338,11 @@
           "command": "amonhen.restoreFile.versionBefore",
           "when": "webviewId == 'amonhen.main' && webviewSection == 'commitFile' && amonhen.engine",
           "group": "2_restore@2"
+        },
+        {
+          "command": "amonhen.restoreFile.thisVersion",
+          "when": "webviewId == 'amonhen.main' && webviewSection == 'fileHistory' && fileHistoryCurrent && amonhen.engine",
+          "group": "2_restore@1"
         },
         {
           "command": "amonhen.addToGitignore",
