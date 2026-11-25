@@ -61,6 +61,7 @@ swift figures.swift alternatives alternatives.en.tsv alternatives ../../../docs/
 - [x] GTK4: the toolbar (and the same kinds elsewhere, such as Branch in the sidebar)
 - [x] macOS: the toolbar and the sidebar's branches
 - [x] Windows: the toolbar
-- [ ] The other icons (about 55: sidebar sections, states, signature marks, …)
+- [x] The other 72 shapes (sidebar sections, branch and worktree states, tools, settings pages, signatures, clone states, CI, AI, image comparison), chosen from three or four drafts each where the first one didn't read well
+- [ ] The other 72 shapes in the front ends (they still draw their own icons there)
 - [x] VSCode: the sidebar's title buttons and branch rows
 - Not decided: whether the app icon is redrawn too, the VSCode format, and whether the terminal front end gets anything (it shows text).
