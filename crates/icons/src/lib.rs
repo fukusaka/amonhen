@@ -16,6 +16,42 @@ pub struct Shape {
     pub d: &'static str,
     /// 破線の長さ（空なら実線）。長さ 0 の線と丸い端で点になる。
     pub dash: &'static [f32],
+    /// 同じ線を、移動・直線・3 次ベジェ・閉じるだけの列にしたもの（弧はベジェで近づけてある）。操作の番号（[`Op`]）
+    /// に続けて座標: 移動と直線は x y、ベジェは x1 y1 x2 y2 x y、閉じるは座標なし。弧を描けない描画（CGPath に渡す
+    /// とき、Direct2D）で使う。
+    pub segments: &'static [f32],
+}
+
+/// [`Shape::segments`] の操作の番号。
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+#[repr(u8)]
+pub enum Op {
+    Move = 0,
+    Line = 1,
+    Cubic = 2,
+    Close = 3,
+}
+
+impl Op {
+    /// 列の中の番号から。
+    pub fn from_code(code: f32) -> Option<Self> {
+        Some(match code as u8 {
+            0 => Op::Move,
+            1 => Op::Line,
+            2 => Op::Cubic,
+            3 => Op::Close,
+            _ => return None,
+        })
+    }
+
+    /// 番号に続く座標の数。
+    pub fn arity(self) -> usize {
+        match self {
+            Op::Move | Op::Line => 2,
+            Op::Cubic => 6,
+            Op::Close => 0,
+        }
+    }
 }
 
 /// 1 つのアイコン。
@@ -61,6 +97,56 @@ mod tests {
             let icon = get(name).unwrap_or_else(|| panic!("{name}"));
             assert!(!icon.shapes.is_empty(), "{name}");
         }
+    }
+
+    /// どの列も移動で始まり、番号と座標の数が合い、座標は格子の中（少しはみ出すのは弧の近似）。
+    #[test]
+    fn segments_are_well_formed() {
+        for (name, icon) in ICONS {
+            for shape in icon.shapes {
+                let s = shape.segments;
+                assert_eq!(Op::from_code(s[0]), Some(Op::Move), "{name}");
+                let mut i = 0;
+                while i < s.len() {
+                    let op = Op::from_code(s[i]).unwrap_or_else(|| panic!("{name}: op {}", s[i]));
+                    for &v in &s[i + 1..i + 1 + op.arity()] {
+                        assert!((-0.5..=16.5).contains(&v), "{name}: {v}");
+                    }
+                    i += 1 + op.arity();
+                }
+                assert_eq!(i, s.len(), "{name}");
+            }
+        }
+    }
+
+    /// 円（2 つの半円の弧）は 4 つのベジェになり、元の点に戻る。
+    #[test]
+    fn circle_becomes_four_cubics() {
+        let pull = get("pull").unwrap();
+        let circle = pull
+            .shapes
+            .iter()
+            .find(|s| s.d.starts_with("M6.5 13A"))
+            .unwrap();
+        let s = circle.segments;
+        let mut ops = Vec::new();
+        let mut i = 0;
+        while i < s.len() {
+            let op = Op::from_code(s[i]).unwrap();
+            ops.push(op);
+            i += 1 + op.arity();
+        }
+        assert_eq!(
+            ops.iter().filter(|&&op| op == Op::Cubic).count(),
+            4,
+            "{s:?}"
+        );
+        let n = s.len();
+        assert_eq!(s[n - 1], 3.0);
+        assert!(
+            (s[n - 3] - 6.5).abs() < 1e-4 && (s[n - 2] - 13.0).abs() < 1e-4,
+            "{s:?}"
+        );
     }
 
     #[test]
