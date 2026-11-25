@@ -403,6 +403,7 @@ fn main() -> glib::ExitCode {
     sshhosts::load();
     // Settings > Performance の fsmonitor を status に効かせる。
     settings::apply_fsmonitor();
+    theme::apply_math_time_limit();
     theme::watch_settings();
     backdrop::connect_changed(tabs::apply_backdrops);
     // コアが作る文（エラーなど）の言語。Linux の慣習どおり LC_ALL・LC_MESSAGES・LANG から。
