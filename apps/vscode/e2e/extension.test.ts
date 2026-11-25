@@ -1030,12 +1030,18 @@ async function branchArrangeFlow(): Promise<void> {
     await vscode.commands.executeCommand('amonhen.undo');
     await until('merge の Undo', () => git('rev-parse', 'HEAD').trim() === before);
     await settle();
-    // 取り込んでいないので、もう一度確かめてから消す
-    const answer = async (message: string) => (/aren’t merged/.test(message) ? 'Delete Anyway' : 'Delete');
+    // 取り込んでいないので、アプリと同じく 1 度の確認で、ほかにないコミットの数を見せて Delete Anyway を聞く
+    const asked: string[] = [];
+    const answer = async (message: string, options: vscode.MessageOptions) => {
+      asked.push(`${message}\n${options.detail ?? ''}`);
+      return 'Delete Anyway';
+    };
     await withWindow({ showWarningMessage: answer }, async () =>
       vscode.commands.executeCommand('amonhen.nav.delete', node('arr-a'), [node('arr-a'), node('arr-b')]),
     );
     assert.equal(git('branch', '--list', 'arr-a', 'arr-b').trim(), '');
+    assert.equal(asked.length, 1, JSON.stringify(asked));
+    assert.match(asked[0]!, /arr-a \(1 commit only on it\)/);
   } finally {
     if (git('symbolic-ref', '--short', 'HEAD').trim() !== current) git('switch', '-q', current);
     for (const b of names) if (git('branch', '--list', b).trim()) git('branch', '-D', b);
@@ -2446,7 +2452,7 @@ async function pullRequestMarkFlow(): Promise<void> {
     assert.match(drawnText(asked[0]!.drawing), /After deleting:/);
     assert.equal(git('branch', '--list', 'pm-lone').trim(), '', lastErrors());
 
-    // 取り込んでいないものと一緒に選ぶと、確認にプルリクエストが添えられ、もう一度聞くのは取り込んでいないものだけ
+    // 取り込んでいないものと一緒に選ぶと、1 度の確認にプルリクエストと、ほかにないコミットの数が添えられる
     git('switch', '-q', '-c', 'pm-plain');
     writeFileSync(join(root, 'pm-plain.txt'), 'pm\n');
     git('add', 'pm-plain.txt');
@@ -2461,14 +2467,14 @@ async function pullRequestMarkFlow(): Promise<void> {
       {
         showWarningMessage: async (message: string, options: vscode.MessageOptions) => {
           asked.push({ message, detail: options.detail ?? '', buttons: [] });
-          return /aren’t merged/.test(message) ? 'Delete Anyway' : 'Delete';
+          return 'Delete Anyway';
         },
       },
       async () => vscode.commands.executeCommand('amonhen.nav.delete', squashed, [squashed, plain]),
     );
-    assert.equal(asked.length, 2, JSON.stringify(asked));
+    assert.equal(asked.length, 1, JSON.stringify(asked));
     assert.match(asked[0]!.detail, /pm-squashed \(merged by pull request #77\)/);
-    assert.match(asked[1]!.message, /^pm-plain has/);
+    assert.match(asked[0]!.detail, /pm-plain \(1 commit only on it\)/);
     assert.equal(git('branch', '--list', 'pm-squashed', 'pm-plain').trim(), '', lastErrors());
   } finally {
     facts.readMerged = readMerged;
