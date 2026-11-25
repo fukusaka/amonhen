@@ -51,6 +51,7 @@ mod stashes;
 mod tabs;
 mod templates;
 mod theme;
+mod timezone;
 mod tip;
 mod win32;
 mod winui;

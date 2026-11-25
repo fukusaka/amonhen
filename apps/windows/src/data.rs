@@ -2263,6 +2263,8 @@ impl Data {
         // Markdown の図に当てる色の元は、テーマを持つ UI のスレッドで取っておく。
         let diagram_theme =
             amonhen_core::markdown::is_markdown(&path).then(crate::markdownview::diagram_theme);
+        // gantt の日付を数える時間帯（Settings > Theme。macOS 版・GTK4 版と同じ）。
+        let zone = crate::timezone::gantt_zone();
         std::thread::spawn(move || {
             // 画像は、その時点の中身を絵で見せる（読めなければ、ほかのファイルと同じく）。SVG はテキストでも
             // 見られる。
@@ -2331,7 +2333,7 @@ impl Data {
                     amonhen_core::markdown::parse_with_images(
                         &String::from_utf8_lossy(bytes.as_slice()),
                         None,
-                        None,
+                        Some(zone.clone()),
                         Some(images),
                     )
                 });
