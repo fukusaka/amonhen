@@ -162,14 +162,13 @@ async function deleteBranches(repo: Repository, refs: string[], mergedBy: Merged
 }
 
 /**
- * メインビューが開いていれば、アプリと同じく前と後の絵を見せて確かめる（先へ進めるだけで、Undo で戻せる。シートを
- * 出せなければ、これまでどおり確かめない）
+ * アプリと同じく、先に確かめる。メインビューが開いていれば前と後の絵を見せたシートで、でなければ modal で
  */
 async function confirmFastForward(repo: Repository, ref: string): Promise<boolean> {
   const upstream = (repo.current.branches ?? []).find((b) => b.name === ref)?.upstream;
   if (!upstream) return true;
   const name = shortName(ref);
-  const asked = await confirmInSheet(`Fast-forward ${name} to ${shortName(upstream)}?`, ['You can undo this.'], 'Fast-Forward', {
+  return confirmOperation(`Fast-forward ${name} to ${shortName(upstream)}?`, ['You can undo this.'], 'Fast-Forward', {
     drawing: async () =>
       moveDrawing(await repo.backend.graphPreview<MovePreview>({ op: 'movePreview', from: ref, to: upstream, branch: name }), {
         moving: name,
@@ -178,7 +177,6 @@ async function confirmFastForward(repo: Repository, ref: string): Promise<boolea
         lostNote: '',
       }),
   });
-  return asked ?? true;
 }
 
 /**
