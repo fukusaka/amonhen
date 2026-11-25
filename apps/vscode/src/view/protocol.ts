@@ -1,4 +1,5 @@
 /** メインビュー（エディタ領域の 1 つの Webview）と拡張ホストの間のメッセージと、ナビのドラッグ＆ドロップの型 */
+import type { DetailsStyle } from '../history/protocol.ts';
 import type { BlameHostMessage, BlameWebviewMessage } from '../blame/protocol.ts';
 import type { DaemonHostMessage, DaemonWebviewMessage } from '../daemonStatus/protocol.ts';
 import type { FileHistoryHostMessage, FileHistoryWebviewMessage } from '../fileHistory/protocol.ts';
@@ -38,6 +39,10 @@ export type HostMessage =
   | { type: 'show'; view: ViewName }
   /** 長い行を折り返すか（設定 `amonhen.wrapLongLines`。すべての差分とファイルの中身） */
   | { type: 'wrapLines'; wrap: boolean }
+  /** コミット情報の見せ方（簡潔・標準・詳細。すべての詳細の欄） */
+  | { type: 'detailsStyle'; style: DetailsStyle }
+  /** 表示の設定で選んだ: 高さを中身に合わせ直す（fit）、コミット情報だけを表示する・戻す（expand） */
+  | { type: 'detailsView'; action: 'fit' | 'expand' }
   /** 確認のシートを重ねる（答えは sheetAnswer） */
   | ({ type: 'sheet' } & Sheet);
 
@@ -56,6 +61,8 @@ export type WebviewMessage =
   | { type: 'view'; view: ViewName }
   /** 差分の帯の ↩︎: 長い行の折り返しを切り替える */
   | { type: 'toggleWrapLines' }
+  /** 詳細の帯の表示の設定（kept: 仕切りを動かした高さを保っている、expanded: コミット情報だけを表示している） */
+  | { type: 'detailsViewOptions'; kept: boolean; expanded: boolean }
   /** 確認のシートの答え。index は押したボタン（buttons の順）、やめたらなし。choice は選んでいた取り込み方など */
   | { type: 'sheetAnswer'; id: number; index?: number; choice?: number }
   /** 確認のシートの一覧の行を押した（item は lists の行を通して数えた番号。シートは閉じない） */

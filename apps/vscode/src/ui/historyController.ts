@@ -31,6 +31,8 @@ import type {
   SearchState,
   SelectionView,
   SignatureView,
+  CommitSummaryView,
+  FullExtras,
   TagView,
   HistoryItem,
   HistoryOrder,
@@ -670,9 +672,18 @@ export class HistoryController implements vscode.Disposable {
           signature?: SignatureCheck | null;
           children?: string[];
           notes?: string;
+          headRev?: string | null;
+          branches?: string[];
+          tags?: string[];
+          tagCount?: number;
+          previousTag?: string | null;
+          originUrl?: string | null;
+          remoteBranches?: string[];
+          merged?: CommitSummaryView[];
+          mergedCount?: number;
+          references?: Record<string, CommitSummaryView>;
           tagObjects?: { name: string; id: string | null; tagger?: string; taggerEmail?: string; time?: number; subject?: string; signed?: string | null; signature?: SignatureCheck | null }[];
           mergedTagSignatures?: (SignatureCheck | null)[];
-          mergedCount?: number;
         }
       | undefined;
     const committer = this.details.get(oid)?.committer.email ?? '';
@@ -699,6 +710,7 @@ export class HistoryController implements vscode.Disposable {
       oid,
       ...(signature ? { signature } : {}),
       children: info?.children ?? [],
+      full: fullExtras(info ?? {}, this.details.get(oid)?.message ?? ''),
       ...(info?.notes?.trim() ? { notes: info.notes } : {}),
       ...(tags.length > 0 ? { tags } : {}),
       ...(mergedTags.length > 0 ? { mergedTags } : {}),
@@ -1642,6 +1654,56 @@ export class HistoryController implements vscode.Disposable {
 }
 
 /** 検証の結果を、行と詳細に出す形に。SSH の鍵は指紋が SHA256: で始まる（allowed signers に載っていれば信用している） */
+/** 詳細（Full）の項目（アプリの CommitHeader の renderDetailed と同じもの） */
+function fullExtras(
+  info: {
+    headRev?: string | null;
+    branches?: string[];
+    tags?: string[];
+    tagCount?: number;
+    previousTag?: string | null;
+    originUrl?: string | null;
+    remoteBranches?: string[];
+    merged?: CommitSummaryView[];
+    mergedCount?: number;
+    references?: Record<string, CommitSummaryView>;
+  },
+  message: string,
+): FullExtras {
+  const short = (ref: string) => ref.replace(/^refs\/(heads|remotes|tags)\//, '');
+  // メッセージに書かれたコミットを、書かれた順に、書かれ方と一緒に
+  const related = Object.entries(info.references ?? {})
+    .map(([token, commit]) => {
+      const at = message.indexOf(token);
+      if (at < 0) return undefined;
+      const start = message.lastIndexOf('\n', at) + 1;
+      const end = message.indexOf('\n', at);
+      const line = message.slice(start, end < 0 ? undefined : end).toLowerCase();
+      const kind = line.includes('cherry picked from')
+        ? 'Cherry-picked from'
+        : line.includes('reverts commit')
+          ? 'Reverts'
+          : line.startsWith('fixes:')
+            ? 'Fixes'
+            : 'Mentions';
+      return { at, kind, commit };
+    })
+    .filter((r) => r !== undefined)
+    .sort((a, b) => a.at - b.at)
+    .map(({ kind, commit }) => ({ kind, commit }));
+  return {
+    ...(info.headRev ? { headRev: info.headRev } : {}),
+    branches: (info.branches ?? []).map(short),
+    tags: (info.tags ?? []).map(short),
+    tagCount: info.tagCount ?? 0,
+    ...(info.previousTag ? { previousTag: short(info.previousTag) } : {}),
+    ...(info.originUrl ? { pushed: (info.remoteBranches ?? []).map(short) } : {}),
+    merged: (info.merged ?? []).slice(0, 20),
+    mergedCount: info.mergedCount ?? 0,
+    related,
+  };
+}
+
 function signatureView(check: SignatureCheck, committerEmail: string, signed?: string | null): SignatureView {
   // 形式はコミット・タグの署名の頭で分かる（なければ指紋の形から SSH を推す）
   const kind = signed ?? (check.fingerprint?.startsWith('SHA256:') ? 'ssh' : undefined);

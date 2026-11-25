@@ -1322,6 +1322,9 @@ First release.
   has Edit Message… for an editable commit. The author's and committer's names search History for that person.
 - Markdown in All Files draws the HTML GitHub renders, with the engine: `<details>`, tables spanning cells, `align`,
   image sizes, `<picture>` by theme, `<kbd>`, `<sub>` and `<sup>`.
+- The details bar's ⚙︎ View Options shows the commit details Brief, Standard or Full (Full adds the children, the
+  branches and tags that contain the commit, whether it's pushed, and the merged and related commits), fits their
+  height, shows only them, and wraps long lines, as in the app.
 - History shows at most three labels on a row, with the rest as +N and long names cut in the middle (click either for
   every name), and a strip beside the list shows commit frequency and branch activity and jumps there when clicked,
   as in the app (with the engine).
