@@ -791,10 +791,16 @@ async function worktreeFlow(): Promise<void> {
     });
     assert.match(String(editing.item.description), /^e2e-wt · no changes/);
     assert.equal(icon(row(root)!.item), 'home');
-    // メインの作業ツリーが checkout しているブランチに ⌂ が付く
+    // メインの作業ツリーが checkout しているブランチは ⌂ だけ（worktree の名前はツールチップ）。Checkout の代わりに
+    // Open Worktree。今のブランチには ✎
     const branches = sidebar.getChildren(sidebar.getChildren().find((n) => n.kind === 'section' && n.section === 'branches')!);
     const mainBranch = branches.find((n) => n.kind === 'branch' && n.ref.name === `refs/heads/${branch}`)!;
-    assert.match(String(sidebar.getTreeItem(mainBranch).description), new RegExp(`⌂ ${basename(root)}`));
+    const mainItem = sidebar.getTreeItem(mainBranch);
+    assert.equal(mainItem.description, '⌂');
+    assert.match(String(mainItem.tooltip), new RegExp(`Checked out in the worktree “${basename(root)}”`));
+    assert.match(String(mainItem.contextValue), /;elsewhere/);
+    const current = branches.find((n) => n.kind === 'branch' && n.ref.name === 'refs/heads/e2e-wt')!;
+    assert.match(String(sidebar.getTreeItem(current).description), /^✎/);
 
     // worktree の変更の数が出る
     writeFileSync(join(folder, 'wt-change.txt'), 'change\n');

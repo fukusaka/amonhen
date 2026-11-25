@@ -574,7 +574,9 @@ export class SidebarProvider implements vscode.TreeDataProvider<Node>, vscode.Di
             ? this.worktrees.checkedOutElsewhere(shortName(node.ref.name), repo.root)
             : undefined;
         const facts = node.remote ? undefined : this.branchFacts.info;
-        return branchItem(node, other, facts && branchFlags(facts, shortName(node.ref.name)));
+        // worktree が 2 つ以上なら、今のブランチ（書き込む先のもの）に ✎ を添える
+        const editing = !node.remote && node.ref.isHead && this.engine && this.worktrees.worktrees.length > 1;
+        return branchItem(node, other, facts && branchFlags(facts, shortName(node.ref.name)), editing);
       }
       case 'worktree':
         return this.worktreeItem(node.worktree);
@@ -818,29 +820,39 @@ function branchFlags(info: BranchGroupsInfo, name: string): BranchFlags | undefi
 }
 
 /** `other` はこのブランチを checkout している、書き込む先以外の worktree */
-function branchItem(node: Extract<Node, { kind: 'branch' }>, other?: Worktree, flags?: BranchFlags): vscode.TreeItem {
+function branchItem(node: Extract<Node, { kind: 'branch' }>, other?: Worktree, flags?: BranchFlags, editing = false): vscode.TreeItem {
   const ref = node.ref;
   const item = new vscode.TreeItem(
     node.label,
     node.stack?.length ? vscode.TreeItemCollapsibleState.Expanded : vscode.TreeItemCollapsibleState.None,
   );
   item.id = node.remote ? `remoteBranch:${ref.name}` : ref.name;
+  // 今のブランチは取り込み済みと言わない（アプリと同じ）
+  const merged = !!flags?.merged && !ref.isHead;
   const parts: string[] = [];
-  if (ref.ahead) parts.push(`↑${ref.ahead}`);
-  if (ref.behind) parts.push(`↓${ref.behind}`);
-  if (ref.gone) parts.push('gone');
-  if (flags?.merged) parts.push('merged');
-  // お気に入りは積んだブランチでも平らに出すので、土台を書く
-  if (node.pinned && node.stackedOn) parts.push(`↳ ${node.stackedOn}`);
-  // ほかの worktree が checkout している（⌂ はメインの作業ツリー、⑂ は追加した worktree）
-  if (other) parts.push(`${other.main ? '⌂' : '⑂'} ${worktreeName(other)}`);
+  if (other) {
+    // ほかの worktree が checkout している（git はここでは checkout させない）。アプリと同じく、行には印だけを出し
+    // （⌂ はメインの作業ツリー、⑂ は追加した worktree）、worktree の名前はツールチップに（ブランチ名を隠さない）
+    parts.push(other.main ? '⌂' : '⑂');
+  } else {
+    if (editing) parts.push('✎');
+    if (ref.ahead) parts.push(`↑${ref.ahead}`);
+    if (ref.behind) parts.push(`↓${ref.behind}`);
+    if (ref.gone) parts.push('gone');
+    if (merged) parts.push('merged');
+    // お気に入りは積んだブランチでも平らに出すので、土台を書く
+    if (node.pinned && node.stackedOn) parts.push(`↳ ${node.stackedOn}`);
+  }
   item.description = parts.join(' ') || undefined;
-  item.iconPath = new vscode.ThemeIcon(ref.isHead ? 'check' : node.pinned ? 'star-full' : 'git-branch');
+  item.iconPath = new vscode.ThemeIcon(
+    ref.isHead ? 'check' : node.pinned ? 'star-full' : 'git-branch',
+    other && !other.main ? new vscode.ThemeColor('charts.green') : undefined,
+  );
   const lines = [shortName(ref.name)];
   if (ref.upstream) lines.push(`upstream: ${ref.upstream.replace(/^refs\/remotes\//, '')}`);
   lines.push(`${ref.oid.slice(0, 8)}  ${ref.subject}`);
-  if (other) lines.push(`Checked out in the worktree ${other.path}`);
-  if (flags?.merged) lines.push(flags.pullRequest !== undefined ? `Merged by pull request #${flags.pullRequest}` : 'Merged into the default branch');
+  if (other) lines.push(`Checked out in the worktree “${worktreeName(other)}” (${other.path})`);
+  if (merged) lines.push(flags!.pullRequest !== undefined ? `Merged by pull request #${flags!.pullRequest}` : 'Merged into the default branch');
   item.tooltip = lines.join('\n');
   // `;elsewhere` はほかの worktree が checkout している（Checkout・Fast-Forward の代わりに Open Worktree）
   item.contextValue = node.remote
