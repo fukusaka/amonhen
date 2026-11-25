@@ -180,8 +180,10 @@ impl Git {
     /// partial clone の手元にないオブジェクト `ids` を、`remote` から 1 回の fetch でまとめて取る（git の差分が足りない
     /// blob を取るときと同じ形。`cat-file` や `log -G` は 1 つずつ取りに行く）。
     ///
-    /// 手元のコミットを「持っている」と伝えると、サーバーはそこから辿れる blob も持っているとみなして送らない
-    /// （GitHub）ので、git 自身が足りないものを取るときと同じく何も伝えない（`fetch.negotiationAlgorithm=noop`）。
+    /// 手元のコミットを「持っている」と伝えると、サーバーとやり取りの方式によっては、そこから辿れる blob も持っている
+    /// とみなして空の pack を返し、fetch が失敗する（git の upload-pack は到達可能性の bitmap があるとき、GitHub は
+    /// skipping のとき。GitHub は既定の consecutive なら送る）。どれでも取れるように、git 自身が足りないものを取る
+    /// ときと同じく何も伝えない（`fetch.negotiationAlgorithm=noop`）。
     /// それができるのは git 2.29 から（FETCH_HEAD を書き換えない `--no-write-fetch-head` も）。それより古い git では
     /// 取らずに戻り、git が要るときに 1 つずつ取るのに任せる（遅いが、取れないことはない）。
     pub fn fetch_missing(&self, remote: &str, ids: &[String]) -> Result<()> {

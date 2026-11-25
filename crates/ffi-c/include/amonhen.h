@@ -534,6 +534,58 @@ char *amonhen_rename_label(const char *old,
                            const char *new_);
 
 /**
+ * 共通のアイコン（`amonhen-icons`、どの FE でも同じ形）`name`（NUL 終わり）の線の数。ないアイコンなら -1。
+ *
+ * # Safety
+ * `name` は NUL 終わりの文字列であること。
+ */
+int32_t amonhen_icon_shape_count(const char *name);
+
+/**
+ * 共通のアイコン `name` の `index` 本目の線。移動・直線・3 次ベジェ・閉じるの列（`amonhen_icons::Shape::segments`:
+ * 操作の番号 0・1・2・3 に続けて、移動と直線は x y、ベジェは x1 y1 x2 y2 x y）を返し、その長さを `len` に、破線の
+ * 長さ（なければ NULL と 0）を `dash`・`dash_len` に入れる。座標は 16×16 の格子で、線の太さは
+ * `amonhen_icon_stroke_width`。返す列はプログラムが終わるまで有効で、解放しない。ないときは NULL。
+ *
+ * # Safety
+ * `name` は NUL 終わりの文字列、`len`・`dash`・`dash_len` は書けること。
+ */
+const float *amonhen_icon_shape(const char *name,
+                                uintptr_t index,
+                                uintptr_t *len,
+                                const float **dash,
+                                uintptr_t *dash_len);
+
+/**
+ * 共通のアイコン `name` を、一辺 `size`（描く単位）の正方形に太さ `stroke` で描く線。縦・横の線は画素
+ * （`pixel_scale` は描く単位あたりの画素の数）に合わせてある（`amonhen_icons::Icon::strokes`）。返す列は
+ * `[線の数, (列の長さ, 破線の長さの数, 列…, 破線…) × 線の数]`（列は `amonhen_icon_shape` と同じ形、座標は描く単位）
+ * で、長さを `len` に入れる。`amonhen_icon_strokes_free` で解放する。ないアイコンなら NULL。
+ *
+ * # Safety
+ * `name` は NUL 終わりの文字列、`len` は書けること。
+ */
+float *amonhen_icon_strokes(const char *name,
+                            float size,
+                            float pixel_scale,
+                            float stroke,
+                            uintptr_t *len);
+
+/**
+ * `amonhen_icon_strokes` が返した列を解放する。
+ *
+ * # Safety
+ * `ptr` と `len` は `amonhen_icon_strokes` が返したものであること（NULL なら何もしない）。
+ */
+void amonhen_icon_strokes_free(float *ptr,
+                               uintptr_t len);
+
+/**
+ * 共通のアイコンの線の太さ（16×16 の格子の単位）。
+ */
+float amonhen_icon_stroke_width(void);
+
+/**
  * SVG（`data` の `len` バイト）の、モバイル向けの描画部品で崩れる機能（JSON の配列。要素は
  * `{"targets": ["android"|"ios"|"flutter"|"reactNative", …], "feature", "message", "count"}`）。
  * `amonhen_string_free` で解放する。

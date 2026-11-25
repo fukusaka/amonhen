@@ -96,7 +96,7 @@ impl System {
             grid[cy * cols + cx].push(i as u32);
         }
         let reach = cell * cell;
-        for i in 0..n {
+        for (i, o) in out.iter_mut().enumerate().take(n) {
             let (cx, cy) = at(self.pos[i]);
             for gy in cy.saturating_sub(1)..=(cy + 1).min(rows - 1) {
                 for gx in cx.saturating_sub(1)..=(cx + 1).min(cols - 1) {
@@ -119,8 +119,8 @@ impl System {
                         };
                         let l = k + self.r[i] + self.r[j];
                         let f = l * l / d2 * self.mass[j];
-                        out[i].0 += ux * f;
-                        out[i].1 += uy * f;
+                        o.0 += ux * f;
+                        o.1 += uy * f;
                     }
                 }
             }
@@ -134,7 +134,7 @@ impl System {
         let l = k + 2.0 * r_avg;
         let l2 = l * l;
         let mut stack: Vec<u32> = Vec::new();
-        for i in 0..self.pos.len() {
+        for (i, o) in out.iter_mut().enumerate().take(self.pos.len()) {
             let p = self.pos[i];
             stack.clear();
             stack.push(0);
@@ -164,8 +164,8 @@ impl System {
                         node.mass
                     };
                     let f = l2 / d2 * mass;
-                    out[i].0 += ux * f;
-                    out[i].1 += uy * f;
+                    o.0 += ux * f;
+                    o.1 += uy * f;
                 } else {
                     for c in 0..4 {
                         stack.push(node.child + c);
@@ -219,11 +219,10 @@ impl System {
             }
             self.attract(&mut force);
             let t = t0 * (1.0 - it as f64 / iters as f64) + t0 * 0.01;
-            for i in 0..n {
+            for (i, &(fx, fy)) in force.iter().enumerate().take(n) {
                 if self.fixed[i] {
                     continue;
                 }
-                let (fx, fy) = force[i];
                 let l = (fx * fx + fy * fy).sqrt();
                 if l < 1e-12 {
                     continue;
