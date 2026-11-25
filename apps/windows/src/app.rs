@@ -21172,6 +21172,7 @@ impl HistoryView {
             .session
             .renderer
             .image_common(commit.content().key, file);
+        let key = commit.content().key;
         let view = commit.image_views.entry(file).or_default();
         let area = if mode == Mode::TwoUp {
             image::two_up_area(layout.canvas, 1)
@@ -21201,6 +21202,13 @@ impl HistoryView {
                 };
                 view.pan = (0.0, 0.0);
             }
+            // 市松模様の明暗（透けた画素がなければボタンはない）。
+            Some(Hit::Checker) => match self.session.renderer.image_tone(key, file) {
+                Some(tone) if tone.transparent() => {
+                    view.dark = Some(!image::dark_checker(view, tone));
+                }
+                _ => return false,
+            },
             Some(Hit::ZoomOut) => image::zoom_by(view, 1.0 / 1.5, common, area),
             Some(Hit::ZoomIn) => image::zoom_by(view, 1.5, common, area),
             Some(Hit::ZoomFit) => {
@@ -21234,6 +21242,7 @@ impl HistoryView {
             .session
             .renderer
             .image_common(file.content().key, usize::MAX);
+        let key = file.content().key;
         let view = &mut file.picture_view;
         let mut drag = None;
         match image::hit(&layout, Mode::TwoUp, view, common, x, y, false) {
@@ -21245,6 +21254,12 @@ impl HistoryView {
                 };
                 view.pan = (0.0, 0.0);
             }
+            Some(Hit::Checker) => match self.session.renderer.image_tone(key, usize::MAX) {
+                Some(tone) if tone.transparent() => {
+                    view.dark = Some(!image::dark_checker(view, tone));
+                }
+                _ => return false,
+            },
             Some(Hit::ZoomOut) => image::zoom_by(view, 1.0 / 1.5, common, layout.canvas),
             Some(Hit::ZoomIn) => image::zoom_by(view, 1.5, common, layout.canvas),
             Some(Hit::ZoomFit) => {

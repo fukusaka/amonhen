@@ -2024,6 +2024,7 @@ impl Renderer {
                 None => image::describe(Some(bytes), pixels.as_ref()),
             };
             let bitmap = pixels.as_ref().and_then(|p| self.bitmap(p).ok());
+            let tone = image::tone(&[pixels.as_ref()]);
             self.images.insert(
                 key,
                 ImageEntry {
@@ -2033,6 +2034,7 @@ impl Renderer {
                     after_bitmap: bitmap,
                     caption,
                     difference: None,
+                    tone,
                 },
             );
         }
@@ -2054,6 +2056,8 @@ impl Renderer {
         };
         let size = entry.after.as_ref().map_or((0.0, 0.0), |p| p.size());
         let mut caption = entry.caption.clone();
+        let tone = entry.tone;
+        let dark = image::dark_checker(&view, tone);
         let layout = image::single_layout(width, height);
         unsafe {
             self.d2d
@@ -2070,6 +2074,7 @@ impl Renderer {
                         .as_deref()
                         .and_then(|svg| self.rasterize_svg(svg).ok());
                     let bitmap = pixels.as_ref().and_then(|p| self.bitmap(p).ok());
+                    let tone = image::tone(&[pixels.as_ref()]);
                     self.images.insert(
                         mobile_key,
                         ImageEntry {
@@ -2079,6 +2084,7 @@ impl Renderer {
                             after_bitmap: bitmap,
                             caption: String::new(),
                             difference: None,
+                            tone,
                         },
                     );
                 }
@@ -2113,7 +2119,7 @@ impl Renderer {
                                 .PushAxisAlignedClip(&d2d_rect(area), D2D1_ANTIALIAS_MODE_ALIASED);
                         }
                         let rect = image::fit(size, area, &view);
-                        self.checker(rect);
+                        self.checker(rect, dark);
                         self.draw_bitmap(&bitmap, rect, 1.0);
                         unsafe { self.d2d.PopAxisAlignedClip() };
                     }
@@ -2121,7 +2127,7 @@ impl Renderer {
             }
             None => {
                 let rect = image::fit(size, layout.canvas, &view);
-                self.checker(rect);
+                self.checker(rect, dark);
                 self.draw_bitmap(&bitmap, rect, 1.0);
             }
         }
@@ -2144,6 +2150,7 @@ impl Renderer {
             }
             self.draw_centered(glyph, &icons, r, &foreground())?;
         }
+        self.draw_checker_button(layout.checker, tone, dark)?;
         self.draw_small(
             &caption,
             &self.meta_format.clone(),
@@ -2184,6 +2191,7 @@ impl Renderer {
             );
             let before_bitmap = before.as_ref().and_then(|p| self.bitmap(p).ok());
             let after_bitmap = after.as_ref().and_then(|p| self.bitmap(p).ok());
+            let tone = crate::imagediff::tone(&[before.as_ref(), after.as_ref()]);
             self.images.insert(
                 key,
                 ImageEntry {
@@ -2193,6 +2201,7 @@ impl Renderer {
                     after_bitmap,
                     caption,
                     difference: None,
+                    tone,
                 },
             );
         }
@@ -2414,6 +2423,8 @@ impl Renderer {
         );
         let (before, after) = (entry.before_bitmap.clone(), entry.after_bitmap.clone());
         let mut caption = entry.caption.clone();
+        let tone = entry.tone;
+        let dark = image::dark_checker(&view, tone);
         if mode == Mode::Difference {
             if entry.difference.is_none() {
                 let (pixels, changed, total) =
@@ -2431,6 +2442,7 @@ impl Renderer {
                 caption = image::difference_summary(*changed, *total);
             }
         }
+        self.draw_checker_button(layout.checker, tone, dark)?;
         let canvas = layout.canvas;
         unsafe {
             self.d2d
@@ -2468,7 +2480,7 @@ impl Renderer {
                                     );
                                 }
                                 let rect = image::fit(size, area, &view);
-                                self.checker(rect);
+                                self.checker(rect, dark);
                                 self.draw_bitmap(bitmap, rect, 1.0);
                                 unsafe {
                                     self.brush.SetColor(&color);
@@ -2506,7 +2518,7 @@ impl Renderer {
                 }
                 Mode::Swipe | Mode::Onion => {
                     let rect = image::fit(common, image::overlay_area(canvas), &view);
-                    self.checker(rect);
+                    self.checker(rect, dark);
                     let before_rect = image::fitted(common, before_size, rect);
                     let after_rect = image::fitted(common, after_size, rect);
                     if mode == Mode::Onion {
@@ -2531,7 +2543,7 @@ impl Renderer {
                             self.d2d
                                 .PushAxisAlignedClip(&d2d_rect(left), D2D1_ANTIALIAS_MODE_ALIASED);
                         }
-                        self.checker(rect);
+                        self.checker(rect, dark);
                         if let Some(b) = &before {
                             self.draw_bitmap(b, before_rect, 1.0);
                         }
@@ -2612,17 +2624,23 @@ impl Renderer {
     }
 
     /// 透けたところを見せる市松模様。
-    fn checker(&self, rect: crate::imagediff::Rect) {
+    /// 透けた絵の下の市松模様（`dark` なら暗い 2 色。色はコアの `checker` の、macOS 版・GTK4 版と同じもの）。
+    fn checker(&self, rect: crate::imagediff::Rect, dark: bool) {
+        self.checker_squares(rect, dark, 8.0);
+    }
+
+    fn checker_squares(&self, rect: crate::imagediff::Rect, dark: bool, s: f32) {
         if rect.w <= 0.0 || rect.h <= 0.0 {
             return;
         }
-        let gray = rgba(0.86, 0.86, 0.86, 1.0);
+        use amonhen_core::checker::{DARK, LIGHT};
+        let (a, b) = if dark { DARK } else { LIGHT };
+        let (a, b) = (a as f32, b as f32);
         unsafe {
-            self.brush.SetColor(&rgba(1.0, 1.0, 1.0, 1.0));
+            self.brush.SetColor(&rgba(a, a, a, 1.0));
             self.d2d.FillRectangle(&d2d_rect(rect), &self.brush);
-            self.brush.SetColor(&gray);
+            self.brush.SetColor(&rgba(b, b, b, 1.0));
         }
-        let s = 8.0;
         let (right, bottom) = (rect.x + rect.w, rect.y + rect.h);
         let mut y = rect.y;
         let mut row = 0;
@@ -2645,6 +2663,45 @@ impl Renderer {
             y += s;
             row += 1;
         }
+    }
+
+    /// 帯の市松模様の明暗の切り替え（透けた画素があるときだけ。暗くしている間は押した形）。
+    fn draw_checker_button(
+        &self,
+        r: crate::imagediff::Rect,
+        tone: amonhen_core::checker::Tone,
+        dark: bool,
+    ) -> Result<()> {
+        if !tone.transparent() {
+            return Ok(());
+        }
+        unsafe {
+            self.brush.SetColor(&if dark {
+                rgba(0.21, 0.52, 0.89, 0.35)
+            } else {
+                diff_file()
+            });
+            self.d2d.FillRectangle(&d2d_rect(r), &self.brush);
+        }
+        // 小さな市松模様（3 × 3）を、今の明暗で。
+        let icon = crate::imagediff::Rect {
+            x: r.x + (r.w - 12.0) / 2.0,
+            y: r.y + (r.h - 12.0) / 2.0,
+            w: 12.0,
+            h: 12.0,
+        };
+        self.checker_squares(icon, dark, 4.0);
+        unsafe {
+            self.brush.SetColor(&with_alpha(foreground(), 0.5));
+            self.d2d
+                .DrawRectangle(&d2d_rect(icon), &self.brush, 1.0, None::<&ID2D1StrokeStyle>);
+        }
+        Ok(())
+    }
+
+    /// 市松模様の明暗の既定と、透けた画素があるか（読んだ絵のもの。読んでいなければ None）。
+    pub fn image_tone(&self, key: u64, file: usize) -> Option<amonhen_core::checker::Tone> {
+        self.images.get(&(key, file)).map(|e| e.tone)
     }
 
     /// 点線の枠。
@@ -3198,6 +3255,8 @@ struct ImageEntry {
     after_bitmap: Option<ID2D1Bitmap1>,
     caption: String,
     difference: Option<(Option<ID2D1Bitmap1>, usize, usize)>,
+    /// 絵の明るさ（市松模様の明暗の既定と、透けた画素があるか）。
+    tone: amonhen_core::checker::Tone,
 }
 
 fn d2d_rect(r: crate::imagediff::Rect) -> D2D_RECT_F {
