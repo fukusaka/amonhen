@@ -12,17 +12,31 @@ impl Git {
         if !FORMATS.contains(&options.format.as_str()) {
             return Err(tr!("Unknown archive format: {format}", format = options.format).into());
         }
-        // partial clone で手元にない中身は、git archive が 1 つずつ取りに行く。先に 1 回の fetch でまとめて取る。
+        let mut narrowed = false;
+        // partial clone で手元にない中身は、git archive が取りに行く。先に 1 回の fetch でまとめて取る。
         if let Some(partial) = self.repository_form()?.partial {
             let missing = self.missing_in_tree(&options.rev, &options.paths, usize::MAX)?;
             if !missing.ids.is_empty() {
                 let ids: Vec<String> = missing.ids.iter().map(Oid::to_string).collect();
                 self.fetch_missing(&partial.remote, &ids)?;
             }
+            narrowed = narrows_fetch(&options.paths);
         }
+        let attr_source = format!("--attr-source={}", options.rev);
         let format = format!("--format={}", options.format);
         let prefix = format!("--prefix={}", options.prefix);
-        let mut args = vec!["archive", format.as_str()];
+        let mut args = Vec::new();
+        if narrowed {
+            // git archive は、.gitattributes を読むためにコミットの tree をまるごと index に読み込み、そのとき手元に
+            // ない中身をすべて取る（git 2.33 からはまとめて、それより前は 1 つずつ）。選んだフォルダより多く取らない
+            // よう index を作らせず（`--worktree-attributes`）、.gitattributes は同じコミットの tree から読ませる
+            // （`--attr-source`）。書き出す中身は git archive の既定と同じ。
+            args.push(attr_source.as_str());
+        }
+        args.extend(["archive", format.as_str()]);
+        if narrowed {
+            args.push("--worktree-attributes");
+        }
         if !options.prefix.is_empty() {
             args.push(&prefix);
         }
@@ -46,8 +60,10 @@ impl Git {
         self.missing_in_tree(rev, paths, limit)
     }
 
-    /// `rev` の tree（`paths` があればその下だけ）の blob のうち、手元にないもの。取りには行かない
+    /// `rev` の tree の blob のうち、git archive が読むもので手元にないもの。取りには行かない
     /// （`rev-list --missing=print` は足りないものを `?` を付けて出すだけ。`--no-walk` でそのコミットの tree だけ）。
+    /// `paths` で絞れるのは [`narrows_fetch`] のときだけで、その下と、上のフォルダの `.gitattributes`。それ以外は
+    /// git archive が tree をまるごと読むので、すべてを数える。
     fn missing_in_tree(
         &self,
         rev: &str,
@@ -73,9 +89,11 @@ impl Git {
         }
         // フォルダで絞るのは ls-tree で（rev-list のパスはコミットを選ぶのに使われ、tree の中身を絞らない）。
         let mut args = vec!["ls-tree", "-r", "-z", "--full-tree", &commit];
-        if !paths.is_empty() {
+        let attributes = attributes_above(paths);
+        if narrows_fetch(paths) {
             args.push("--");
             args.extend(paths.iter().map(String::as_str));
+            args.extend(attributes.iter().map(String::as_str));
         }
         let mut seen = OidSet::default();
         for entry in self.read(&args)?.split(|&b| b == 0) {
@@ -100,5 +118,46 @@ impl Git {
             }
         }
         Ok(found)
+    }
+}
+
+/// git archive に、`paths` の下の中身（と、上のフォルダの `.gitattributes`）だけを読ませられるか。index を作らずに
+/// コミットの tree から .gitattributes を読む `--attr-source` が git 2.41 から。
+fn narrows_fetch(paths: &[String]) -> bool {
+    !paths.is_empty() && crate::git_at_least(2, 41)
+}
+
+/// `paths` の上にあるフォルダ（いちばん上を含む）の `.gitattributes`。git archive は、書き出すファイルの属性を
+/// それらからも読む。
+fn attributes_above(paths: &[String]) -> Vec<String> {
+    let mut found = std::collections::BTreeSet::from([".gitattributes".to_owned()]);
+    for path in paths {
+        let path = path.trim_end_matches('/');
+        for (i, _) in path.match_indices('/') {
+            found.insert(format!("{}/.gitattributes", &path[..i]));
+        }
+    }
+    found.into_iter().collect()
+}
+
+#[cfg(test)]
+mod tests {
+    use super::attributes_above;
+
+    #[test]
+    fn lists_the_attributes_of_the_folders_above() {
+        let paths = [
+            "docs".to_owned(),
+            "src/app/".to_owned(),
+            "src/lib/a.rs".to_owned(),
+        ];
+        assert_eq!(
+            attributes_above(&paths),
+            [
+                ".gitattributes",
+                "src/.gitattributes",
+                "src/lib/.gitattributes"
+            ]
+        );
     }
 }

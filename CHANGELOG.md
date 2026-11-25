@@ -19,6 +19,11 @@ becomes the GitHub Release notes.
 - Markdown math finds `$…$` by GitHub's rules: only at the start, after a space or after `(`, and not before a letter,
   digit or `_`, nor in italics, links or footnotes. So `a$x$b` and `日本語の$x$` stay text, as on GitHub.
 
+#### Fixed
+
+- Exporting chosen folders as an archive in a partial clone fetches only the contents it asked about, not every missing
+  file of the commit (git 2.41 or later; older git fetches them all, and the question now counts them all).
+
 ### [0.2.15] - 2026-11-25
 
 Markdown previews draw math and the HTML GitHub renders, and DOT diagrams draw images, gradients and more of
@@ -1406,6 +1411,8 @@ First release.
 
 #### Fixed
 
+- Exporting chosen folders as an archive in a partial clone fetches only the contents it asked about (with the
+  engine, git 2.41 or later).
 - Restoring the version before a commit that renamed a file brings back the old name instead of only deleting the new
   one, and Restore This Version isn't offered for a file the commit deleted.
 - Renaming a branch without the engine can be undone, as it already could with the engine.
