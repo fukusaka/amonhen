@@ -468,7 +468,10 @@ mod tests {
         let dir =
             std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../../apps/vscode/media/icons");
         for (path, svg) in vscode_files() {
-            let committed = std::fs::read_to_string(dir.join(&path)).unwrap_or_default();
+            // Windows の取り出しは改行を CRLF にすることがある（core.autocrlf）。
+            let committed = std::fs::read_to_string(dir.join(&path))
+                .unwrap_or_default()
+                .replace("\r\n", "\n");
             assert_eq!(
                 committed, svg,
                 "{path} is stale: cargo run -p amonhen-icons --example vscode"
