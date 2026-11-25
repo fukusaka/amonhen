@@ -16,15 +16,19 @@ becomes the GitHub Release notes.
 
 #### Changed
 
+- Android VectorDrawables take their colors from `values-night*/` (and `color-night*/`, `drawable-night*/`) in the dark
+  appearance, picking qualified folders in Android's order.
 - Markdown math finds `$…$` by GitHub's rules: only at the start, after a space or after `(`, and not before a letter,
   digit or `_`, nor in italics, links or footnotes. So `a$x$b` and `日本語の$x$` stay text, as on GitHub.
+- Diagrams take Mermaid's colors for the appearance by default, closer to GitHub. The setting moved to Settings >
+  Theme > Diagrams, and pele's colors are now called the Obsidian style.
+- Why a Markdown diagram can't be drawn is shown in Japanese too: every DOT error, and Mermaid's common ones (syntax
+  errors, unknown diagram types, limits).
 - Fences named after a Graphviz engine, such as ` ```neato `, stay code, as on GitHub; ` ```dot `, ` ```graphviz `
   and ` ```gv ` are drawn, and `layout` still picks the engine.
-- DOT diagrams follow Graphviz's defaults: nodes and clusters without a fill are transparent, cluster titles are in the
-  text color, and the margin is `pad` (4 points by default). `fontname` picks the typeface, falling back to the
-  renderer's sans-serif, serif or monospace. `splines=ortho` edges ignore ports, and edges to a node
-  in a cluster cross its title instead of going around it. HTML-like tables and cells with `style="invis"` are not
-  drawn but keep their room.
+- DOT diagrams follow Graphviz's defaults: unfilled nodes and clusters stay transparent, cluster titles take the text
+  color, `pad` sets the margin (4 points by default) and `fontname` picks the typeface. `splines=ortho` ignores
+  ports, edges into a cluster cross its title, and invisible HTML-like tables and cells aren't drawn.
 - DOT diagrams note under the picture when a large graph's layout or edge routing is cut short at its work limit,
   and when its longest edges are drawn straight.
 

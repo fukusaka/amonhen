@@ -92,7 +92,7 @@ Every message is one line of JSON (UTF-8). Requests carry an `id` (any JSON valu
 |---|---|---|
 | `diagram` | language (the fence's word: `mermaid`, `dot`, `graphviz` or `gv`), text, from? (the Markdown file's path from the repository root; DOT images are read relative to its folder), colors (dark, text, background, kinds: the screen's `#rrggbb` colors, kinds being syntax kinds such as `keyword`), utcOffset? (minutes, local time − UTC, for gantt dates; UTC without it) | svg (colored with the theme's syntax colors, or the diagram's own Mermaid theme) and note? (it's an approximation), or error (why it can't be drawn), or neither (not a diagram it draws: show the code) |
 | `math` | formulas (tex, display?: one Markdown file's formulas, in order, under the apps' per-file limits), color (`#rrggbb`) | formulas: for each, svg, width, height, depth (in em of the text size × 1.21), or error, or neither (show the TeX) |
-| `vectorDrawable` | path (from the repository root), data (the XML, base64), fallback? (the color for what can't be resolved) | svg (sized in dp), notes |
+| `vectorDrawable` | path (from the repository root), data (the XML, base64), fallback? (the color for what can't be resolved), dark? (look up the dark appearance's resources such as `values-night` first) | svg (sized in dp), notes |
 | `svgCheck` | data (the SVG, base64) | issues (targets, feature, message, count), approximations (android, ios, flutter, reactNative: SVG text) |
 
 A reply is `{"id": …, "ok": true, …}` with the fields above, or `{"id": …, "ok": false, "message": …}` when the request itself fails (a line that isn't JSON gets `"id": null`).

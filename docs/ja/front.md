@@ -92,7 +92,7 @@ History と差分は番号（`history`・`diff`）で持つ。FE がスクロー
 |---|---|---|
 | `diagram` | language（フェンスの言葉: `mermaid`・`dot`・`graphviz`・`gv`）・text・from?（Markdown のファイルのリポジトリの根からのパス。DOT の図の画像はそのフォルダから読む）・colors（dark・text・background・kinds: 画面の `#rrggbb` の色。kinds は `keyword` などの構文の種類）・utcOffset?（分、地方時 − UTC。gantt の日付。なければ UTC） | svg（テーマの構文の色か、図の中で指定した Mermaid のテーマで色を当てたもの）と note?（近いもので描いた）、か error（描けないわけ）、かどちらもない（描く図でない: コードとして見せる） |
 | `math` | formulas（tex・display?: 1 つの Markdown のファイルの式を出てくる順に。ファイルごとの上限はアプリと同じ）・color（`#rrggbb`） | formulas: それぞれ svg・width・height・depth（本文の字の大きさ × 1.21 を 1 とする em）か error、かどちらもない（TeX を見せる） |
-| `vectorDrawable` | path（リポジトリの根から）・data（XML の base64）・fallback?（引けない色を描く色） | svg（大きさは dp）・notes |
+| `vectorDrawable` | path（リポジトリの根から）・data（XML の base64）・fallback?（引けない色を描く色）・dark?（暗い外観の資源（`values-night` など）を先に引く） | svg（大きさは dp）・notes |
 | `svgCheck` | data（SVG の base64） | issues（targets・feature・message・count）・approximations（android・ios・flutter・reactNative の SVG の文字列） |
 
 答えは `{"id": …, "ok": true, …}`（上の中身つき）か、求めそのものが失敗したときの `{"id": …, "ok": false, "message": …}`（JSON でない行には `"id": null`）。

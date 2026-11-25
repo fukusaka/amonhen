@@ -638,7 +638,10 @@ fn notes_approximations() {
 #[test]
 fn refuses_what_is_too_big() {
     let long = format!("digraph {{ a }}{}", " ".repeat(50_000));
-    assert!(render(&long).unwrap_err().message.contains("limit"));
+    assert_eq!(
+        render(&long).unwrap_err(),
+        amonhen_dot::Error::TooLong { limit: 50_000 }
+    );
     let nodes: String = (0..2100).map(|i| format!("n{i};")).collect();
     assert!(render(&format!("digraph {{ {nodes} }}")).is_err());
     let product = format!(
@@ -652,7 +655,10 @@ fn refuses_what_is_too_big() {
             .collect::<Vec<_>>()
             .join(" ")
     );
-    assert!(render(&product).unwrap_err().message.contains("edges"));
+    assert_eq!(
+        render(&product).unwrap_err(),
+        amonhen_dot::Error::TooManyEdges { limit: 5_000 }
+    );
     // 深い入れ子もスタックをあふれさせない（上限より深ければ誤り）
     let nested = |depth: usize| {
         let open: String = (0..depth)
