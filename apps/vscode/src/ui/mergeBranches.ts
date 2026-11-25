@@ -19,6 +19,8 @@ interface RefItem extends vscode.QuickPickItem {
 interface Choice extends vscode.QuickPickItem {
   revs: string[];
   oneByOne: boolean;
+  /** 選ぶと順を決め直す（アプリのシートでドラッグして並べ替えるのと同じ） */
+  reorder?: boolean;
 }
 
 export function registerMergeBranchesCommand(manager: RepositoryManager): vscode.Disposable {
@@ -76,14 +78,22 @@ async function mergeRevs(repo: Repository, revs: string[], head: string | undefi
     return;
   }
 
-  // 調べられなくても merge はできる（見込みなしで選ばせる）
-  const steps = await vscode.window.withProgress(
-    { location: vscode.ProgressLocation.Notification, title: 'Checking for conflicts…' },
-    () => repo.backend.predictMerge(revs.map(shortName)).catch(() => undefined),
-  );
-  const choice = await vscode.window.showQuickPick(choices(revs, target, steps), {
-    placeHolder: advice(revs, target, steps),
-  });
+  // 順を変えるたびに調べ直す
+  let choice: Choice | undefined;
+  for (;;) {
+    // 調べられなくても merge はできる（見込みなしで選ばせる）
+    const order = revs;
+    const steps = await vscode.window.withProgress(
+      { location: vscode.ProgressLocation.Notification, title: 'Checking for conflicts…' },
+      () => repo.backend.predictMerge(order.map(shortName)).catch(() => undefined),
+    );
+    choice = await vscode.window.showQuickPick(choices(revs, target, steps), {
+      placeHolder: advice(revs, target, steps),
+    });
+    if (!choice?.reorder) break;
+    const reordered = await pickOrder(revs);
+    if (reordered) revs = reordered;
+  }
   if (!choice) return;
   // いくつもなので Fast-Forward Only はない
   // 1 つのコミットにまとめるなら、その前と後の絵を添える
@@ -117,8 +127,15 @@ function choices(revs: string[], target: string, steps: string[][] | undefined):
     revs,
     oneByOne: true,
   };
+  const reorder: Choice = {
+    label: '$(arrow-swap) Change the Order…',
+    detail: `Now ${names.join(', ')}. git merges them in this order, and the merge commit lists them as parents in it.`,
+    revs,
+    oneByOne: false,
+    reorder: true,
+  };
   if (early.length === 0) {
-    return [merge, oneByOne];
+    return [merge, oneByOne, reorder];
   }
   const [only] = early;
   if (conflicting.length === 1 && only !== undefined) {
@@ -129,9 +146,28 @@ function choices(revs: string[], target: string, steps: string[][] | undefined):
       revs: order,
       oneByOne: false,
     };
-    return [putLast, oneByOne, merge];
+    return [putLast, oneByOne, merge, reorder];
   }
-  return [oneByOne, merge];
+  return [oneByOne, merge, reorder];
+}
+
+/** 先に merge するものから 1 つずつ選んで、順を決める（最後の 1 つは残ったもの）。やめれば undefined */
+async function pickOrder(revs: readonly string[]): Promise<string[] | undefined> {
+  const left = [...revs];
+  const order: string[] = [];
+  while (left.length > 1) {
+    const picked = await vscode.window.showQuickPick(
+      left.map((rev) => ({ label: shortName(rev), rev })),
+      {
+        title: `Change the Order (${order.length + 1} of ${revs.length})`,
+        placeHolder: order.length === 0 ? 'Choose what to merge first' : `After ${order.map(shortName).join(', ')}, choose what comes next`,
+      },
+    );
+    if (!picked) return undefined;
+    order.push(picked.rev);
+    left.splice(left.indexOf(picked.rev), 1);
+  }
+  return [...order, ...left];
 }
 
 /** QuickPick の上に出す一言 */

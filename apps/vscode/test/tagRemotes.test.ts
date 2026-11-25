@@ -1,7 +1,7 @@
 /** タグのリモートでの様子から決まるメニューと印（アプリのサイドバーと同じ決まり） */
 import assert from 'node:assert/strict';
 import { test } from 'node:test';
-import { tagMark, tagMarkLabel, tagStateText, tagTargets, type TagRemotes } from '../src/git/tagRemotes.ts';
+import { manyTagTargets, tagMark, tagMarkLabel, tagStateText, tagTargets, type TagRemotes } from '../src/git/tagRemotes.ts';
 
 const info: TagRemotes = {
   remotes: [
@@ -24,6 +24,21 @@ test('tagTargets offers Push where it is missing, Replace where it differs, and 
   assert.deepEqual(tagTargets(info, 'v2.0'), { push: ['fork', 'new'], replace: ['origin'], onRemote: ['origin', 'new'] });
   // 読んだ後にできたタグ（様子がない）は、どこにもないのと同じ
   assert.deepEqual(tagTargets(info, 'later'), { push: ['origin', 'fork', 'new'], replace: [], onRemote: ['new'] });
+});
+
+test('manyTagTargets groups several tags by remote, in the order of the remotes', () => {
+  assert.deepEqual(manyTagTargets(info, ['v1.0', 'v1.1', 'v2.0']), {
+    push: [
+      { remote: 'fork', tags: ['v1.1', 'v2.0'] },
+      { remote: 'new', tags: ['v1.0', 'v1.1', 'v2.0'] },
+    ],
+    replace: [{ remote: 'origin', tags: ['v2.0'] }],
+    onRemote: [
+      { remote: 'origin', tags: ['v1.0', 'v1.1', 'v2.0'] },
+      { remote: 'fork', tags: ['v1.0'] },
+      { remote: 'new', tags: ['v1.0', 'v1.1', 'v2.0'] },
+    ],
+  });
 });
 
 test('tagMark marks a different tag first, then a tag on no remote that was read', () => {

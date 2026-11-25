@@ -304,3 +304,6 @@ macOS アプリに追いつく（1 つの機能を 1 つの pull request で、�
 - [x] 90. すべてのファイルをアプリと同じに: リストか木、変えたフォルダを開く、消したファイルは前の版、「@ コミット」、Show This Change、どのファイルも Open in Editor、見方を覚える、モバイルの確認の部品の切り替え、Markdown の相対リンク
 - [x] 91. 詳細の小さな差: ファイルの見出しの Expand・Collapse、Open File at This Commit、Show Changes Only、選んだときのファイルのメニュー、取っていない親、帯の「All Folders」「All Diffs」、空のときの文言、表示のメニューの Monospaced Commit Message と Changed Files as Tree
 - [x] 92. Working Copy の小さな差: ファイルの並べ方の List と「File Name」、ファイルのメニューの項目と並び、untracked のファイルの「Delete …」、行の破棄は確かめない、Description だけのコミット、「Amend Commit」、差分を読めないわけは差分の場所に、Take Current・Incoming File は失うものがあるときだけ確かめる
+- [x] 93. Stashes・Restore・File History・進行中の操作の小さな差: Stash の選び方を組み合わせる、stash の行のいつ・元の ID・Copy Name、File History の Restore This Version… と Copy Short ID、Skip・Abort は尋ねない（revert に Skip なし）
+- [x] 94. サイドバーの小さな差: Copy Branch / Tag Name と Copy Names、いくつものタグの Push・Replace・削除、タグのフォルダ、中身のある節だけをアプリと同じ組み方で（Remotes はリモートのブランチから）、絞り込みは平らに、ほかで checkout しているブランチの Open Worktree、ブランチの印、先に聞く Prune、リモートの Edit Push URL… と Check Connection、取り出してある submodule だけの Open in New Window、ドラッグでの push の確認とアプリと同じ upstream の設定
+- [x] 95. 同期とブランチの操作の小さな差: メインビューなしでも Fast-Forward を尋ねる、いくつも消すときは未マージのコミットを添えて 1 度だけ尋ねる、上流のないブランチの Force Push は Publish、今のブランチの Rename Branch…、octopus merge の Change the Order…

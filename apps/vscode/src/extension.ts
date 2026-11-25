@@ -87,7 +87,7 @@ export async function activate(
   void updateFsmonitor();
   const manager = new RepositoryManager(log);
   const sidebar = new SidebarProvider(manager);
-  const dragAndDrop = new SidebarDragAndDrop(manager);
+  const dragAndDrop = new SidebarDragAndDrop(manager, (branch, root) => sidebar.worktrees.checkedOutElsewhere(branch, root));
   const view = vscode.window.createTreeView('amonhen.sidebar', {
     treeDataProvider: sidebar,
     dragAndDropController: dragAndDrop,

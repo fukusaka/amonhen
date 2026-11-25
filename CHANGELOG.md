@@ -1361,6 +1361,14 @@ First release.
   This Commit and Show Changes Only, selected commits' headers have File History and Copy Path, parents not fetched are
   marked, the bar reads Expand All Folders / Diffs, and the display menu has Monospaced Commit Message (off at first,
   as in the app) and Changed Files as Tree.
+- Branch operations follow the app: Fast-Forward asks without the main view too, deleting several asks once with the
+  unmerged commits, Force Push publishes a branch with no upstream, Rename Branch… renames the current branch, and
+  Merge Branches… can change the order.
+- Stashes, Restore and File History follow the app: Stash's choices combine, stash rows show the time and base ID
+  with Copy Name, File History rows have Restore This Version… and Copy Short ID, and Skip / Abort don't ask first.
+- The sidebar follows the app in the small things: Copy Branch / Tag Name, menus for several tags, tags in `/`
+  folders, only groups with rows, flat filter results, Open Worktree for a branch checked out elsewhere, and a
+  confirmation before Prune or a push by dragging.
 - The Working Copy follows the app in the small things: List at first and "File Name", the file menu's Stage, Discard…
   or Delete File…, both .gitignore items, Reveal and Open File, no question before discarding lines, a commit with only
   a description, "Amend Commit", diff errors in the pane, and Take Current / Incoming File.
