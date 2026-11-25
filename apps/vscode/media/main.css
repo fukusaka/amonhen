@@ -2903,6 +2903,9 @@ aside.details.all-files-page .details-body {
 .markdown .md-table td {
   padding: 4px 10px;
   border: 1px solid var(--vscode-panel-border);
+  /* 語の途中で折らない（GitHub と同じ break-word）。anywhere のままだと、幅の割合の画像などに押されて、ほかの列が
+     1 文字の幅まで細る */
+  overflow-wrap: break-word;
 }
 
 .markdown kbd {
