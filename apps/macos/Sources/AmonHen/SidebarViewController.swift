@@ -1044,7 +1044,7 @@ final class SidebarViewController: NSViewController, NSOutlineViewDataSource, NS
         cell.textField?.stringValue = node.title
         cell.textField?.font = .systemFont(ofSize: NSFont.systemFontSize)
         cell.textField?.textColor = node === cleanWorktreesNode ? .secondaryLabelColor : .labelColor
-        cell.imageView?.image = NSImage(systemSymbolName: Self.symbol(for: node), accessibilityDescription: nil)
+        cell.imageView?.image = AppIcons.image(symbol: Self.symbol(for: node))
         cell.imageView?.contentTintColor = node.isHead ? .controlAccentColor : .secondaryLabelColor
         // 今のブランチ（HEAD）は、塗った丸に枝の専用の形で示す（色だけだと、選んだ行や色の見分けにくい人には
         // 分からない。名前はほかの行と同じ色にして、選んだ行のアクセントカラーとぶつけない。GTK4 版と同じ）。

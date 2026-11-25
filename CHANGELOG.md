@@ -11,7 +11,7 @@ becomes the GitHub Release notes.
 
 #### Changed
 
-- The GTK4 app's toolbar draws the new icons shared by every front end (see `docs/icons.md`); the other front ends follow.
+- The toolbar draws new icons shared by every front end, also used for branches in the sidebar (macOS, GTK4; see `docs/icons.md`).
 
 ### [0.2.15] - 2026-11-25
 

@@ -59,7 +59,7 @@ final class MainToolbar: NSObject, NSToolbarDelegate {
         spinner.controlSize = .small
         spinner.isDisplayedWhenStopped = false
         let button = NSButton(
-            image: NSImage(systemSymbolName: "waveform.path.ecg", accessibilityDescription: "Activity")!,
+            image: AppIcons.image("activity", size: MainToolbar.iconSize, label: "Activity")!,
             target: nil, action: #selector(AppDelegate.showActivity(_:)))
         button.bezelStyle = .texturedRounded
         button.isBordered = false
@@ -89,7 +89,7 @@ final class MainToolbar: NSObject, NSToolbarDelegate {
         repositoryItem.toolTip = L("Switch Repository")
         // 今のブランチ。押すとブランチの切り替え（⌘⇧B）。名前の変更・上流は Repository メニュー。
         branchButton.bezelStyle = .texturedRounded
-        branchButton.image = NSImage(systemSymbolName: "arrow.triangle.branch", accessibilityDescription: "Branch")
+        branchButton.image = AppIcons.image("branch", label: "Branch")
         branchButton.imagePosition = .imageLeading
         branchButton.lineBreakMode = .byTruncatingMiddle
         branchButton.action = #selector(RepositoryWindow.switchBranch(_:))
@@ -212,7 +212,7 @@ final class MainToolbar: NSObject, NSToolbarDelegate {
             pushItem.label = ahead > 0 ? "\(push) ↑\(ahead)" : push
             pullItem.label = behind > 0 ? "Pull ↓\(behind)" : "Pull"
         }
-        pushItem.image = NSImage(systemSymbolName: published ? "arrow.up.circle" : "icloud.and.arrow.up", accessibilityDescription: push)
+        pushItem.image = AppIcons.image(published ? "push" : "publish", size: Self.iconSize, label: push)
         pushItem.toolTip = !published && !hasRemote ? L("No remote to publish to. Add one in Repository > Add Remote….")
             : !published ? L("Publish — choose the remote to create this branch on first (⌃⌘P)")
             : ahead > 0 ? L("%ld commits ahead of upstream (⌃⌘P)", ahead)
@@ -243,52 +243,55 @@ final class MainToolbar: NSObject, NSToolbarDelegate {
         let item: NSToolbarItem, label: String, symbol: String, action: Selector, tip: String
         switch id {
         case .repositories:
-            (item, label, symbol, action, tip) = (NSToolbarItem(itemIdentifier: id), "Repositories", "square.grid.2x2",
+            (item, label, symbol, action, tip) = (NSToolbarItem(itemIdentifier: id), "Repositories", "repositories",
                                                   #selector(AppDelegate.showRepositories(_:)), L("Show the Repositories page (⌘⇧R)"))
         case .fetch:
-            (item, label, symbol, action, tip) = (NSToolbarItem(itemIdentifier: id), "Fetch", "arrow.down.circle",
+            (item, label, symbol, action, tip) = (NSToolbarItem(itemIdentifier: id), "Fetch", "fetch",
                                                   #selector(RepositoryWindow.fetch(_:)), L("Fetch all remotes (⌃⌘F)"))
         case .pull:
-            (item, label, symbol, action, tip) = (pullItem, "Pull", "arrow.down.to.line.circle",
+            (item, label, symbol, action, tip) = (pullItem, "Pull", "pull",
                                                   #selector(RepositoryWindow.pull(_:)), L("Pull — review the incoming commits and how to integrate them first (⌃⌘L)"))
         case .push:
-            (item, label, symbol, action, tip) = (pushItem, "Push", "arrow.up.circle",
+            (item, label, symbol, action, tip) = (pushItem, "Push", "push",
                                                   #selector(RepositoryWindow.push(_:)), L("Push — review the commits to send first (⌃⌘P)"))
         case .merge:
-            (item, label, symbol, action, tip) = (NSToolbarItem(itemIdentifier: id), "Merge", "arrow.triangle.merge",
+            (item, label, symbol, action, tip) = (NSToolbarItem(itemIdentifier: id), "Merge", "merge",
                                                   #selector(RepositoryWindow.mergeIntoCurrent(_:)),
                                                   L("Merge a branch, tag or the selected commit into the current branch (⌥⌘M)"))
         case .rebase:
-            (item, label, symbol, action, tip) = (NSToolbarItem(itemIdentifier: id), "Rebase", "arrow.triangle.pull",
+            (item, label, symbol, action, tip) = (NSToolbarItem(itemIdentifier: id), "Rebase", "rebase",
                                                   #selector(RepositoryWindow.rebaseCurrent(_:)),
                                                   L("Rebase the current branch onto a branch, tag or the selected commit (⌥⌘R)"))
         case .stash:
-            (item, label, symbol, action, tip) = (NSToolbarItem(itemIdentifier: id), "Stash", "tray.and.arrow.down",
+            (item, label, symbol, action, tip) = (NSToolbarItem(itemIdentifier: id), "Stash", "stash",
                                                   #selector(RepositoryWindow.stashChanges(_:)), L("Stash your uncommitted changes (⌥⌘S)"))
         case .pop:
-            (item, label, symbol, action, tip) = (NSToolbarItem(itemIdentifier: id), "Pop", "tray.and.arrow.up",
+            (item, label, symbol, action, tip) = (NSToolbarItem(itemIdentifier: id), "Pop", "pop",
                                                   #selector(RepositoryWindow.popStash(_:)), L("Apply the latest stash and remove it (⌥⌘⇧S)"))
         case .newBranch:
-            (item, label, symbol, action, tip) = (NSToolbarItem(itemIdentifier: id), "Branch", "plus.square.on.square",
+            (item, label, symbol, action, tip) = (NSToolbarItem(itemIdentifier: id), "Branch", "new-branch",
                                                   #selector(RepositoryWindow.newBranch(_:)), L("New branch from HEAD (⌥⌘B)"))
         case .undo:
-            (item, label, symbol, action, tip) = (undoItem, "Undo", "arrow.uturn.backward.circle",
+            (item, label, symbol, action, tip) = (undoItem, "Undo", "undo",
                                                   #selector(RepositoryWindow.undoOperation(_:)), undoItem.toolTip ?? "")
         case .terminal:
             (item, label, symbol, action, tip) = (NSToolbarItem(itemIdentifier: id), L("Terminal"), "terminal",
                                                   #selector(RepositoryWindow.openInTerminal(_:)), L("Open in Terminal"))
         case .editor:
-            (item, label, symbol, action, tip) = (NSToolbarItem(itemIdentifier: id), L("Editor"), "chevron.left.forwardslash.chevron.right",
+            (item, label, symbol, action, tip) = (NSToolbarItem(itemIdentifier: id), L("Editor"), "editor",
                                                   #selector(RepositoryWindow.openInEditor(_:)), ExternalEditor.toolTip)
         case .finder:
-            (item, label, symbol, action, tip) = (NSToolbarItem(itemIdentifier: id), "Finder", "folder",
+            (item, label, symbol, action, tip) = (NSToolbarItem(itemIdentifier: id), "Finder", "sf:folder",
                                                   #selector(RepositoryWindow.revealInFinder(_:)), Titles.showInFinder)
         default:
             return nil
         }
         if item.label.isEmpty { item.label = label }
         item.paletteLabel = label
-        item.image = NSImage(systemSymbolName: symbol, accessibilityDescription: label)
+        // 共通のアイコン（どの FE でも同じ形）。Finder だけは Finder の印（`sf:`、SF Symbols）のまま。
+        item.image = symbol.hasPrefix("sf:")
+            ? NSImage(systemSymbolName: String(symbol.dropFirst(3)), accessibilityDescription: label)
+            : AppIcons.image(symbol, size: Self.iconSize, label: label)
         item.action = action
         if item.toolTip == nil { item.toolTip = tip }
         return item
@@ -296,6 +299,9 @@ final class MainToolbar: NSObject, NSToolbarDelegate {
 }
 
 extension MainToolbar {
+    /// ツールバーのアイコンの大きさ（ポイント）。
+    static let iconSize: CGFloat = 18
+
     /// ≡: メニューバーにしかなかった、たまに使う操作の置き場所（GTK4 のヘッダーバーの ≡ と同じ中身）。ウィンドウの
     /// 中だけで、すべての操作に届くように。
     static let moreCommands: [Command?] = [
@@ -329,7 +335,7 @@ extension MainToolbar {
         menu.addItem(Commands.rebuildHistory.menuItem())
         item.menu = menu
         item.showsIndicator = true
-        item.image = NSImage(systemSymbolName: "arrow.clockwise", accessibilityDescription: L("Refresh"))
+        item.image = AppIcons.image("refresh", size: Self.iconSize, label: L("Refresh"))
         item.label = L("Refresh")
         item.paletteLabel = L("Refresh")
         item.action = #selector(RepositoryWindow.refreshRepository(_:))
