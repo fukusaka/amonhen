@@ -23203,6 +23203,21 @@ fn attach_input(element: &IInspectable, target: Target) -> windows_core_reactor:
                             }
                             _ => {}
                         }
+                    } else if let Some(row) = row {
+                        // 印の外: 行を選ぶ（Shift で続けて、Ctrl で足す・外す。選んだ行に Discard Lines が効く。
+                        // macOS 版・GTK4 版と同じ）。
+                        let down = |key: xaml::VirtualKey| {
+                            xaml::InputKeyboardSource::GetKeyStateForCurrentThread(key)
+                                .is_ok_and(|s| s.contains(xaml::CoreVirtualKeyStates::Down))
+                        };
+                        let (shift, ctrl) = (
+                            down(xaml::VirtualKey::Shift),
+                            down(xaml::VirtualKey::Control),
+                        );
+                        if let Some(working) = h.session.data.working.as_mut() {
+                            working.select(row as u32, shift, ctrl);
+                            h.diff.dirty = true;
+                        }
                     }
                 }
                 // ファイルの見出しを押すと、そのファイルを畳む・開く（すべてのファイルで開いたファイルには何もしない）。
