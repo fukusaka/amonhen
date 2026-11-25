@@ -1080,51 +1080,6 @@ impl Repository {
         self.backend.blob(&entry.oid)
     }
 
-    /// コミット `commit` の Markdown のファイル `path`（中身 `text`）をブロックにする（`markdown::parse_with_images`）。
-    /// DOT の図の画像は同じコミットから読む。図を描く手（裏のスレッド）が求めたファイルを、このスレッドで読んで渡す。
-    pub fn markdown_at(
-        &self,
-        commit: &Oid,
-        path: &str,
-        text: &str,
-        github: Option<&str>,
-        zone: Option<std::sync::Arc<dyn crate::diagram::TimeZone>>,
-    ) -> Vec<crate::markdown::Block> {
-        use std::sync::mpsc;
-        type Request = (String, mpsc::Sender<Option<Vec<u8>>>);
-        let (requests, asked) = mpsc::channel::<Request>();
-        let read = move |file: &str| -> Option<Vec<u8>> {
-            let (reply, answer) = mpsc::channel();
-            requests.send((file.to_owned(), reply)).ok()?;
-            answer.recv().ok().flatten()
-        };
-        let images = crate::diagram::ImageSource {
-            from: path.to_owned(),
-            read: std::sync::Arc::new(read),
-        };
-        std::thread::scope(|scope| {
-            // 図の配置は深く入れ子になることがあるので、スタックを大きく取る
-            let parse = std::thread::Builder::new()
-                .stack_size(32 << 20)
-                .spawn_scoped(scope, move || {
-                    crate::markdown::parse_with_images(text, github, zone, Some(images))
-                });
-            let Ok(parse) = parse else {
-                return Vec::new();
-            };
-            // 読み手（`images`）が描き終えて捨てられるまで、求めに答える
-            for (file, reply) in asked {
-                let data = self
-                    .file_at(commit, &file)
-                    .ok()
-                    .filter(|d| d.len() <= crate::diagram::MAX_IMAGE_BYTES)
-                    .map(|d| d.to_vec());
-                let _ = reply.send(data);
-            }
-            parse.join().unwrap_or_default()
-        })
-    }
-
     /// コミット `commit` の `path` の Android の VectorDrawable（中身 `xml`）を絵にする（History の「すべての
     /// ファイル」）。色の参照などは同じコミットの資源から引き、引けない色は `fallback`（画面の文字の色）で描く
     /// （`vectordrawable::picture`）。裏のスレッドで呼ぶ。

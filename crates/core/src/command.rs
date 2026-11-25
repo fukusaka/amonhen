@@ -27,27 +27,6 @@ pub enum Revs {
     Many(Vec<String>),
 }
 
-/// `Command::MarkdownBlocks` の図と数式に当てる、FE の画面の色（`#rrggbb`）。`kinds` は構文の種類（`keyword` など）
-/// → 色で、ないものは `text`。
-#[derive(Clone, Debug, Default, Deserialize)]
-pub struct PictureColors {
-    #[serde(default)]
-    pub dark: bool,
-    pub text: String,
-    pub background: String,
-    #[serde(default)]
-    pub kinds: std::collections::HashMap<String, String>,
-}
-
-/// 地方時との差が決まった時間帯（FE が渡す時差。gantt の日付）。
-struct FixedZone(f64);
-
-impl crate::diagram::TimeZone for FixedZone {
-    fn offset_ms(&self, _utc_ms: f64) -> f64 {
-        self.0
-    }
-}
-
 impl Revs {
     pub fn into_vec(self) -> Vec<String> {
         match self {
@@ -745,18 +724,12 @@ pub enum Command {
     },
     /// コミット `oid` の Markdown のファイル `path` を、FE が組み立てて見せるブロックの並びにしたもの（`info.blocks`:
     /// `markdown::Block` の配列）。`github`（`https://github.com/owner/repo`）があれば `#123`・`@user`・コミットの ID も
-    /// リンクにする。History の「すべてのファイル」の整形した表示。DOT の図の画像は同じコミットから読む。`colors`
-    /// （FE の画面の色）があれば、図（構文の色の配色。図の中で指定したテーマが先）と数式（文字の色）の SVG に色を当てて
-    /// 返す（なければ CSS の変数のまま）。`utcOffset`（分、地方時 − UTC）があれば gantt の日付をその時差で数える。
+    /// リンクにする。History の「すべてのファイル」の整形した表示。
     MarkdownBlocks {
         oid: String,
         path: String,
         #[serde(default)]
         github: Option<String>,
-        #[serde(default)]
-        colors: Option<PictureColors>,
-        #[serde(default)]
-        utc_offset: Option<i32>,
     },
     /// コミット `oid` の SVG のファイル `path` の、モバイル向けの描画部品で崩れる機能（`info.issues`: targets・
     /// feature・message・count）と、部品ごとの崩れ方の近似（`info.approximations`: android・ios・flutter・
@@ -5234,34 +5207,16 @@ impl Repository {
                 oid: o,
                 path,
                 github,
-                colors,
-                utc_offset,
             } => {
-                let commit = oid(&o)?;
-                let data = self.file_at(&commit, &path)?;
+                let data = self.file_at(&oid(&o)?, &path)?;
                 let text = String::from_utf8_lossy(&data);
-                let zone = utc_offset.map(|minutes| {
-                    std::sync::Arc::new(FixedZone(f64::from(minutes) * 60_000.0))
-                        as std::sync::Arc<dyn crate::diagram::TimeZone>
-                });
-                let mut blocks = self.markdown_at(
-                    &commit,
-                    &path,
-                    &text,
-                    github.as_deref().filter(|g| !g.is_empty()),
-                    zone,
-                );
-                if let Some(colors) = colors {
-                    let theme = crate::diagram::ThemeColors {
-                        text: colors.text,
-                        background: colors.background,
-                        kinds: colors.kinds,
-                    };
-                    crate::markdown::colorize_pictures(&mut blocks, colors.dark, &theme);
-                }
+                let blocks =
+                    crate::markdown::parse_json(&text, github.as_deref().filter(|g| !g.is_empty()));
                 Ok(Response {
                     ok: true,
-                    info: Some(serde_json::json!({ "blocks": blocks })),
+                    info: Some(serde_json::json!({
+                        "blocks": serde_json::from_str::<serde_json::Value>(&blocks).unwrap_or_default(),
+                    })),
                     ..Default::default()
                 })
             }
@@ -6025,62 +5980,6 @@ mod tests {
             &format!(r#"{{"op":"svgCheck","oid":"{head}","path":"none.svg"}}"#),
         );
         assert_eq!(missing["ok"], false);
-    }
-
-    #[cfg(all(feature = "diagrams", feature = "math"))]
-    #[test]
-    fn markdown_blocks_color_diagrams_and_math_and_read_dot_images_from_the_commit() {
-        let (tmp, repo) = setup();
-        let dir = tmp.path();
-        std::fs::create_dir_all(dir.join("docs/img")).unwrap();
-        std::fs::write(
-            dir.join("docs/img/a.svg"),
-            r#"<svg xmlns="http://www.w3.org/2000/svg" width="8" height="8"><rect width="8" height="8"/></svg>"#,
-        )
-        .unwrap();
-        std::fs::write(
-            dir.join("docs/a.md"),
-            "```mermaid\nflowchart LR\n  A --> B\n```\n\n$$x^2$$\n\nInline $y$.\n\n```dot\ndigraph { a [image=\"img/a.svg\" shape=box] }\n```\n",
-        )
-        .unwrap();
-        git(dir, &["add", "."]);
-        git(dir, &["commit", "-q", "-m", "md"]);
-        let head = git(dir, &["rev-parse", "HEAD"]);
-        let plain = run(
-            &repo,
-            &format!(r#"{{"op":"markdownBlocks","oid":"{head}","path":"docs/a.md"}}"#),
-        );
-        let blocks = &plain["info"]["blocks"];
-        assert_eq!(blocks[0]["kind"], "diagram", "{plain}");
-        let raw = blocks[0]["svg"].as_str().unwrap();
-        assert!(raw.contains("var(--pele"), "{raw}");
-        // DOT の図の画像は、同じコミットのファイルを読んで描く
-        let dot = blocks[3]["svg"].as_str().unwrap();
-        assert!(dot.contains("<image"), "{dot}");
-        let colored = run(
-            &repo,
-            &format!(
-                r##"{{"op":"markdownBlocks","oid":"{head}","path":"docs/a.md","utcOffset":540,
-                "colors":{{"dark":true,"text":"#abcdef","background":"#101010","kinds":{{"keyword":"#ff0000"}}}}}}"##
-            ),
-        );
-        let blocks = &colored["info"]["blocks"];
-        let diagram = blocks[0]["svg"].as_str().unwrap();
-        assert!(!diagram.contains("var(--pele"), "{diagram}");
-        assert!(diagram.contains("#abcdef"), "{diagram}");
-        assert_eq!(blocks[1]["kind"], "math", "{colored}");
-        let formula = blocks[1]["svg"].as_str().unwrap();
-        assert!(
-            formula.contains("#abcdef") && !formula.contains("--math-fg"),
-            "{formula}"
-        );
-        let inline = blocks[2]["runs"]
-            .as_array()
-            .unwrap()
-            .iter()
-            .find_map(|r| r["math"]["svg"].as_str())
-            .unwrap();
-        assert!(inline.contains("#abcdef"), "{inline}");
     }
 
     #[test]
