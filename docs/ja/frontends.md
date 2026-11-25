@@ -239,7 +239,7 @@ GTK4 のアプリは macOS のアプリと同じふるまいをめざす。わ�
 | 重ねられないファイルの Unstaged / Staged の切り替え | ✓ | ✓ | ✓ | n/a | ✓ | ✓ | VSCode: いつも別々に出す。<br>CLI: `diff --staged`。<br>TUI: 初めは stage していない側。差分の `s` で替える。 |
 | 差分の表示の選択（unified/split・前後の行・折り返し） | △ | △ | △ | △ | n/a | △ | macOS・GTK4: 長い行の折り返しだけ（「長い行を折り返す」、すべての差分・ファイルの中身・マージエディタで）。左右に並べる表示はない。<br>Windows: 同じ。<br>VSCode: 長い行の折り返しだけ（`amonhen.wrapLongLines`、Alt+Z か差分の上の ↩︎。マージエディタは VSCode のもの）。<br>TUI: 長い行の折り返しだけ（Alt-z かコマンドの一覧の Wrap Long Lines。その回だけ）。左右に並べる表示はない。 |
 | 空白を無視する（その間は行ごとの stage・破棄はしない） | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | VSCode: エンジンがあれば。その間は選んだ側（Changes か Staged）の差分。<br>CLI: `diff -w`・`-b`・`--ignore-space-at-eol`（`--combined` とは使えない）。<br>TUI: 差分の `w` で順に替える。その間は片方の側だけ（`s` で替える）。 |
-| 行・hunk・ファイルを捨てる（Undo できる） | ✓ | ✓ | △ | ✓ | ✓ | ✓ | CLI: `discard --rows`。<br>Windows: Working Copy の差分で行か hunk の見出しを右クリック（Discard Lines）。行を選ぶことはできない |
+| 行・hunk・ファイルを捨てる（Undo できる） | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | CLI: `discard --rows`。<br>Windows: Working Copy の差分で行を押して選び（Shift で範囲、Ctrl で足す・外す、hunk の見出しでその hunk）、右クリックの Discard Lines。選んでいない行・hunk の見出しを右クリックすれば、そこだけ。 |
 | Add to .gitignore | ✓ | ✓ | ✓ | ✓ | n/a | ✓ | VSCode: エンジンがあれば。<br>TUI: untracked のファイルで `i`、続けて `p` でそのパス、`e` で拡張子。 |
 | コンフリクトのファイルからマージエディターを開く | ✓ | ✓ | △ | ✓ | n/a | n/a | macOS, GTK4: UTF-8 でないファイルは開かない。片側を選ぶ。<br>VSCode: VSCode のマージエディターを開く。<br>Windows: ファイルを選ぶと、マージエディタを画面に重ねて開く（埋め込まない）<br>TUI: ファイルの差分にマーカーを出し、`o` `t` `b` `a` で選んでいる行のコンフリクトを解く。 |
 | 一部のフォルダだけを取り出しているとき、一覧の上に知らせる | ✓ | ✓ | ✓ | ✓ | △ | ✓ | CLI: `status` が sparse checkout を添える。 |
@@ -282,7 +282,7 @@ GTK4 のアプリは macOS のアプリと同じふるまいをめざす。わ�
 | 透けた絵の下の市松模様を明るく・暗く（既定は絵の色から） | ✓ | ✓ | ✓ | ✓ | n/a | — | |
 | すべてのファイル: その時点の木と、コミットの行に印を付けたファイルの中身 | ✓ | ✓ | ✓ | ✓ | n/a | ✓ | VSCode: エンジンがあれば。リストか木（帯の List・Tree）、変えたフォルダは最初から開く、消したファイルは前の版を出す、パスの後に @ とコミット、Show This Change でその差分へ、Markdown の相対リンクでそのファイルを開く。<br>TUI: History の `a`。画面に重ねる。プレビューはない（中身は文字で出す）。 |
 | すべてのファイルのプレビュー: 拡大縮小できる画像・SVG の絵とモバイル向けの確認・整形した Markdown・バイナリの Quick Look | ✓ | ✓ | △ | △ | n/a | — | VSCode: どのファイルも Quick Look の代わりに VSCode のエディタで開ける。モバイル向けの確認は部品を切り替え（覚える）、SVG・Markdown・VectorDrawable の見方も覚える。Mermaid・DOT の図と数式は、エンジンと一緒に同梱した絵の手伝い（`amonhen-render`。エンジンそのものは描かない）が描く。図はテーマの構文の色で描く（図の中で指定したテーマが先。図の配色の設定はない）。gantt の日付はシステムの時間帯で数える。<br>GTK4: Quick Look の代わりに GNOME のプレビュー（か既定のアプリ）。SVG の絵は librsvg で描く。<br>Windows: 拡大縮小できる画像・SVG の絵とモバイル向けの確認・整形した Markdown とその中の Mermaid・DOT の図（Direct2D の SVG は文字を描かないので resvg で描く）。部品の切り替えはパスの帯にある。gantt の時間帯はまだ設定にない（UTC）。数式は TeX をコードとして見せる。バイナリのプレビューはまだない。コミットの中の画像・`<picture>`・`align`・画像の大きさ・`<details>` を描き、DOT の画像ノードも絵を出す。文の途中の画像はそこで行が切れ、`<kbd>` はキーの札でなく等幅の文字、`<sub>`・`<sup>` は飾りのない文字。 |
-| 整形した Markdown の中を探す（キーの札・表のマスも） | ✓ | ✓ | — | ✓ | n/a | — | 絵と閉じた `<details>` の中は探さない。<br>VSCode: Markdown を押して入ってから ⌘F（Ctrl+F）。ビューのほかの所の ⌘F は VSCode の検索。 |
+| 整形した Markdown の中を探す（キーの札・表のマスも） | ✓ | ✓ | ✓ | ✓ | n/a | — | 絵と閉じた `<details>` の中は探さない。<br>VSCode: Markdown を押して入ってから ⌘F（Ctrl+F）。ビューのほかの所の ⌘F は VSCode の検索。 |
 | すべてのファイル: Android の VectorDrawable の絵（色はコミットの `res` から、animated-vector は動く前の絵） | ✓ | ✓ | ✓ | ✓ | n/a | — | |
 | ファイルの見出しのメニュー（Blame・File History・パスのコピー・開く） | ✓ | ✓ | ✓ | ✓ | n/a | ✓ | VSCode: 先頭に Expand・Collapse、Open File at This Commit、Show Whole File の後は Show Changes Only。いくつも選んだときの見出しにも File History・Copy Path。 右クリックと ⋯ の Show Whole File・Blame・File History・この版／前の版に戻す・Copy Path（Copy Path 以外はエンジンがあれば）と、VSCode の差分のエディターで開く。この時点のファイルを開くはない。<br>TUI: 見ているファイルの `B`・`L`・`Y`（パスのコピー）・`e`（git のエディタで開く）。 |
 | 選んだものの差分（範囲をまとめる・A..B / A...B・飛び飛び） | ✓ | ✓ | ✓ | ✓ | △ | ✓ | VSCode: エンジンがあるとき。<br>CLI: `diff <rev> <rev>`。<br>TUI: `m` と Shift-↑↓（か Ctrl・Alt を押しながらクリック）で選ぶ。`x` で向きを入れ替え、`.` で merge-base から。 |
@@ -388,7 +388,7 @@ GTK4 のアプリは macOS のアプリと同じふるまいをめざす。わ�
 | `gh` を通す GitHub | ✓ | ✓ | ✓ | — | — | — |  |
 | Pull Requests（CI・draft・レビュー、checkout・開く・URL のコピー） | ✓ | ✓ | ✓ | — | — | — |  |
 | Create Pull Request（base・draft） | ✓ | ✓ | ✓ | — | — | — | macOS: base は打ち込む（最初は既定のブランチ）。fork からは元のリポジトリへ。<br>GTK4: base は打ち込む（最初は既定のブランチ）。fork からは元のリポジトリへ。<br>Windows: base は打ち込む（最初は既定のブランチ）。fork からは元のリポジトリへ。 |
-| ブランチの状態のポップオーバー（CI・プルリクエスト） | ✓ | ✓ | △ | — | — | — | Windows: 行の右端の取り込み済み・gone の印を押すと開く。どちらもないブランチには印がなく、様子は右クリックの先頭からダイアログで。 |
+| ブランチの状態のポップオーバー（CI・プルリクエスト） | ✓ | ✓ | ✓ | — | — | — | Windows: 行の右端の印（取り込み済み・gone・上流との差）と、右クリックのメニューの先頭から開く。キーボードで開いたメニューからはダイアログ。 |
 | Open on GitHub | ✓ | ✓ | ✓ | — | — | — |  |
 | メッセージの `#123` のリンク | ✓ | ✓ | ✓ | — | — | — |  |
 | GitHub のアバター | ✓ | ✓ | ✓ | — | — | — |  |

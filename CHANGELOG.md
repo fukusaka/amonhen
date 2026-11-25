@@ -18,6 +18,8 @@ becomes the GitHub Release notes.
 
 - Markdown math finds `$…$` by GitHub's rules: only at the start, after a space or after `(`, and not before a letter,
   digit or `_`, nor in italics, links or footnotes. So `a$x$b` and `日本語の$x$` stay text, as on GitHub.
+- Diagrams take Mermaid's colors for the appearance by default, closer to GitHub. The setting moved to Settings >
+  Theme > Diagrams, and pele's colors are now called the Obsidian style.
 - Markdown previews no longer turn bare URLs inside HTML into links; as on GitHub, only those in Markdown text are.
 - Markdown previews leave one space where an HTML comment is dropped between words, as browsers do, instead of two.
 - Markdown previews size `<img width="50%">` as a share of the column's width (of the cell's, in tables) instead of the

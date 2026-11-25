@@ -1576,6 +1576,11 @@ impl Renderer {
                     self.brush.SetColor(&fill);
                     self.d2d.FillRectangle(&rect(0.0, width), &self.brush);
                 }
+                // 選んだ行（Working Copy の差分。macOS 版・GTK4 版の行の選択）。
+                if commit.selection.is_some_and(|s| s.contains(&i)) {
+                    self.brush.SetColor(&SELECTION);
+                    self.d2d.FillRectangle(&rect(left, width), &self.brush);
+                }
             }
             let title = self.header_title(&commit, i);
             self.diff_layout(view, commit.syntax, i, title.as_deref())?;
