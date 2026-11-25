@@ -983,7 +983,8 @@ pub fn render(
                 a.num("gradientangle").unwrap_or(0.0),
             )
         } else {
-            format!(" fill=\"{SURFACE_ALT}\" fill-opacity=\"0.5\"")
+            // 塗りの指定がなければ塗らない（Graphviz と同じ）
+            " fill=\"none\"".to_owned()
         };
         let peripheries = a.num("peripheries").unwrap_or(1.0);
         let stroke = if peripheries < 1.0 {

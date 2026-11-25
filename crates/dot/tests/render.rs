@@ -409,6 +409,18 @@ fn uses_theme_variables_and_given_colors() {
     );
     let filled = render("digraph { a [style=filled] }").unwrap().svg;
     assert!(filled.contains("fill=\"var(--_a)\""), "{filled}");
+    // クラスタも塗りの指定がなければ塗らない
+    let svg = render("digraph { subgraph cluster_a { a } subgraph cluster_b { style=filled; b } }")
+        .unwrap()
+        .svg;
+    assert!(
+        part(&svg, "cluster_a").contains("fill=\"none\" stroke=\"var(--_b)\""),
+        "{svg}"
+    );
+    assert!(
+        part(&svg, "cluster_b").contains("fill=\"var(--_a)\" stroke"),
+        "{svg}"
+    );
 }
 
 /// `>word<` を中に持つ `<text …>` の開きの札。
