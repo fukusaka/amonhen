@@ -142,7 +142,8 @@ Host windows-pc
 ssh windows-pc "powershell -NoProfile -NonInteractive -EncodedCommand $(iconv -f UTF-8 -t UTF-16LE check.ps1 | base64)"
 ```
 
-- `powershell -Command -`（スクリプトを標準入力から読む）は ssh 越しでは止まる。
+- `powershell -Command -`（スクリプトを標準入力から読む）は 1 行ずつ実行する。複数行にわたるブロック（関数など）は
+  黙って実行されず、終了コードは 0 のまま。
 - スクリプトの最初に `[Console]::OutputEncoding = [Text.Encoding]::UTF8` を置くと、日本語の出力を Mac で読める。
 - Windows PowerShell 5.1 で `npm` は `npm.ps1` になり、テストが失敗しても `$LASTEXITCODE` が 0 のままだった（今の
   `npm.ps1` は終了コードを返す作りなので、npm の版によるかもしれない）。`npm.cmd` を呼ぶ。`r` は別名（Invoke-History）なので、関数の名前にしない。
