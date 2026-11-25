@@ -25,7 +25,8 @@ use crate::text::{self, Font, Names, Text, color_attr, text_svg};
 const PATCH: f64 = 40.0;
 /// 点（Graphviz の 1 インチ = 72）。
 const INCH: f64 = 72.0;
-const PAD: f64 = 8.0;
+/// 絵の余白の既定（Graphviz の `pad` の既定 0.0555 インチ）。
+const PAD: f64 = 4.0;
 const FONT_SIZE: f64 = 14.0;
 /// クラスタの題の左右の余白（アプリの書体のゆとりとは別に）。
 const TITLE_PAD: f64 = 8.0;
@@ -2089,10 +2090,11 @@ pub fn render(
             cy + t.height / 2.0,
         );
     }
-    let dx = PAD - bbox.x0;
-    let dy = PAD - bbox.y0;
-    let width = (bbox.x1 - bbox.x0 + 2.0 * PAD).ceil().max(1.0);
-    let height = (bbox.y1 - bbox.y0 + 2.0 * PAD).ceil().max(1.0);
+    let (pad_x, pad_y) = pad(g.get("pad"));
+    let dx = pad_x - bbox.x0;
+    let dy = pad_y - bbox.y0;
+    let width = (bbox.x1 - bbox.x0 + 2.0 * pad_x).ceil().max(1.0);
+    let height = (bbox.y1 - bbox.y0 + 2.0 * pad_y).ceil().max(1.0);
     let mut content = String::new();
     // グラフの地（色の並びはグラデーション）
     let ground = g
@@ -2137,6 +2139,27 @@ pub fn render(
     let acc = Accessible::default();
     let _ = ctx.model;
     svg_document("dot", width, height, FONT_SIZE, &options, &acc, &content)
+}
+
+/// 絵の余白（点。`pad` はインチで、`x,y` か 1 つの値。`!` は読まない）。既定は Graphviz と同じ 4 点。
+fn pad(s: Option<&str>) -> (f64, f64) {
+    let read = |v: &str| {
+        v.trim()
+            .trim_end_matches('!')
+            .parse::<f64>()
+            .ok()
+            .filter(|v| v.is_finite())
+            .map(|v| v.clamp(0.0, 10.0) * INCH)
+    };
+    let Some(s) = s else {
+        return (PAD, PAD);
+    };
+    let mut it = s.trim().trim_end_matches('!').split(',');
+    match (it.next().and_then(read), it.next().and_then(read)) {
+        (Some(x), Some(y)) => (x, y),
+        (Some(x), None) => (x, x),
+        _ => (PAD, PAD),
+    }
 }
 
 /// `imagepos` の置き場所（横と縦: -1 は左・上、0 は中、1 は右・下）。既定は中央。

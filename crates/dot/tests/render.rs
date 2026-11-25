@@ -423,6 +423,23 @@ fn uses_theme_variables_and_given_colors() {
     );
 }
 
+#[test]
+fn pads_the_drawing_as_graphviz_does() {
+    // 既定は 4 点、`pad` はインチ（x,y か 1 つ）
+    let size = |src: &str| {
+        let svg = render(src).unwrap().svg;
+        let view = svg.split("viewBox=\"0 0 ").nth(1).unwrap();
+        let mut it = view.split('"').next().unwrap().split(' ');
+        let w: f64 = it.next().unwrap().parse().unwrap();
+        let h: f64 = it.next().unwrap().parse().unwrap();
+        (w, h)
+    };
+    assert_eq!(size("digraph { a }"), (62.0, 44.0));
+    assert_eq!(size("digraph { pad=\"1,0.5\"; a }"), (198.0, 108.0));
+    assert_eq!(size("digraph { pad=0; a }"), (54.0, 36.0));
+    assert_eq!(size("digraph { pad=nope; a }"), (62.0, 44.0));
+}
+
 /// `>word<` を中に持つ `<text …>` の開きの札。
 fn text_tag<'a>(svg: &'a str, word: &str) -> &'a str {
     let end = svg
