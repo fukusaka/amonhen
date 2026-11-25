@@ -1361,6 +1361,9 @@ First release.
   This Commit and Show Changes Only, selected commits' headers have File History and Copy Path, parents not fetched are
   marked, the bar reads Expand All Folders / Diffs, and the display menu has Monospaced Commit Message (off at first,
   as in the app) and Changed Files as Tree.
+- Branch operations follow the app: Fast-Forward asks without the main view too, deleting several asks once with the
+  unmerged commits, Force Push publishes a branch with no upstream, Rename Branch… renames the current branch, and
+  Merge Branches… can change the order.
 
 #### Changed
 
