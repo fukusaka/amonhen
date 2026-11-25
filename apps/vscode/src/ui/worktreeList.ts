@@ -1,7 +1,8 @@
 /**
- * サイドバーの worktree のもと。共有の daemon のコアで worktree の一覧（`worktrees`）と、それぞれの変更の数
- * （`worktreeChanges`。変わっていない worktree は前の数を返すので軽い）を読み、今のリポジトリが変わるたびに
- * 読み直す
+ * サイドバーの worktree のもと。共有の daemon のコアで worktree の一覧（`worktrees`）と、ほかの worktree の変更の
+ * 数（`worktreeChanges`。変わっていない worktree は前の数を返すので軽い）を読み、今のリポジトリが変わるたびに
+ * 読み直す。書き込む先（今のリポジトリ）の数は、その Working Copy の status から数える（アプリと同じ。コアの数は
+ * HEAD か index が変わるまで数え直さないので、足したばかりの untracked のファイルが入らない）
  */
 import * as vscode from 'vscode';
 import { daemonFor } from '../daemon/connection.ts';
@@ -10,6 +11,10 @@ import type { Repository, Section } from '../state/repository.ts';
 
 export class WorktreeList implements vscode.Disposable {
   private repo: Repository | undefined;
+  /** 今のリポジトリの揃えたパス */
+  private editing: string | undefined;
+  /** 前の書き込む先。その間はコアに聞いていないので、次に読むときに数え直す */
+  private previous: string | undefined;
   private repoListener: vscode.Disposable | undefined;
   private timer: NodeJS.Timeout | undefined;
   /** 読むたびに増やし、古い答えを捨てる */
@@ -28,6 +33,8 @@ export class WorktreeList implements vscode.Disposable {
   }
 
   changes(w: Worktree): number {
+    const status = this.repo && canonical(w.path) === this.editing ? this.repo.current.status : undefined;
+    if (status) return status.entries.filter((e) => e.kind !== 'ignored').length;
     return this.counts.get(canonical(w.path)) ?? 0;
   }
 
@@ -58,6 +65,8 @@ export class WorktreeList implements vscode.Disposable {
     if (repo === this.repo) return;
     this.repoListener?.dispose();
     this.repo = repo;
+    if (this.editing) this.previous = this.editing;
+    this.editing = repo && canonical(repo.root);
     this.generation++;
     this.repoListener = repo?.onDidChange((changed) => this.onRepositoryChange(changed));
     this.schedule(0);
@@ -97,11 +106,19 @@ export class WorktreeList implements vscode.Disposable {
       if (generation !== this.generation || reply['ok'] !== true) return;
       const list = ((reply['info'] as { worktrees?: Worktree[] } | undefined)?.worktrees ?? []).filter((w) => !w.bare);
       let counts: { path: string; count: number }[] = [];
-      const paths = list.filter((w) => w.prunable === null).map((w) => w.path);
+      // 書き込む先の数は status から数えるので、コアには聞かない
+      const paths = list.filter((w) => w.prunable === null && canonical(w.path) !== this.editing).map((w) => w.path);
       if (list.length > 1 && paths.length > 0) {
-        const changed = (await client.call({ op: 'run', command: { op: 'worktreeChanges', paths } })).json;
+        const read = async (paths: string[], fresh: boolean) => {
+          if (paths.length === 0) return [];
+          const changed = (await client.call({ op: 'run', command: { op: 'worktreeChanges', paths, fresh } })).json;
+          return (changed['info'] as { worktrees?: { path: string; count: number }[] } | undefined)?.worktrees ?? [];
+        };
+        const previous = this.previous;
+        const stale = paths.filter((p) => canonical(p) === previous);
+        counts = [...(await read(paths.filter((p) => !stale.includes(p)), false)), ...(await read(stale, true))];
         if (generation !== this.generation) return;
-        counts = (changed['info'] as { worktrees?: { path: string; count: number }[] } | undefined)?.worktrees ?? [];
+        if (this.previous === previous) this.previous = undefined;
       }
       this.set(list, counts);
     } catch {
