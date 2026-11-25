@@ -37,7 +37,8 @@ pub enum Mark {
 }
 
 /// `key` の行の文字 `text` にある印と、その位置（UTF-16 の単位で、始まりと長さ）。印は名前の後ろの 2 つの空白の
-/// 後にある（名前の中の同じ字は見ない）。
+/// 後にある（名前の中の同じ字は見ない）。プルリクエストの行だけは、印が番号の前（最初の 2 つの空白の前）にある
+/// （狭いサイドバーでも切れないよう）。
 pub fn marks_in(key: &str, text: &str) -> Vec<(Mark, usize, usize)> {
     let candidates: &[(&str, Mark)] = match parse_ref_key(key) {
         Some((kind, _)) if kind == RefKind::Local as u8 => {
@@ -56,14 +57,19 @@ pub fn marks_in(key: &str, text: &str) -> Vec<(Mark, usize, usize)> {
         ],
         _ => return Vec::new(),
     };
-    let Some(tail) = text.find("  ") else {
+    let Some(gap) = text.find("  ") else {
         return Vec::new();
+    };
+    let (from, to) = if key.starts_with("pr:") {
+        (0, gap)
+    } else {
+        (gap, text.len())
     };
     let units = |s: &str| s.encode_utf16().count();
     let mut found = Vec::new();
-    // 名前の後ろを空白で切った語のうち、印のもの（ref の名前に空白は入らない）。
-    let mut at = tail;
-    for word in text[tail..].split(' ') {
+    // 名前の後ろ（プルリクエストは番号の前）を空白で切った語のうち、印のもの（ref の名前に空白は入らない）。
+    let mut at = from;
+    for word in text[from..to].split(' ') {
         if let Some((_, mark)) = candidates.iter().find(|(w, _)| *w == word) {
             found.push((*mark, units(&text[..at]), units(word)));
         }
@@ -863,7 +869,12 @@ mod tests {
             marks_in(&tag, "v1  🔏 ⚠"),
             [(Mark::Signature, 4, 2), (Mark::TagRemotes, 7, 1)]
         );
-        assert_eq!(marks_in("pr:3", "#3 Fix  draft ✗"), [(Mark::Checks, 14, 1)]);
+        // プルリクエストの印は番号の前。件名の中の同じ字は見ない。
+        assert_eq!(
+            marks_in("pr:3", "draft ✗  #3 Fix ✓"),
+            [(Mark::Checks, 6, 1)]
+        );
+        assert_eq!(marks_in("pr:3", "#3 Fix"), []);
         assert_eq!(marks_in("page:history", "History  merged"), []);
     }
 
