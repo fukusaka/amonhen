@@ -291,9 +291,12 @@ fn fills(run: &Run) -> bool {
     width(run).is_some() && run.height.is_some()
 }
 
+/// 文の中に置く画像の一時ファイル、見せる大きさ、伸ばすか、代わりの文。
+type InlineImage = (std::path::PathBuf, f64, f64, bool, String);
+
 thread_local! {
-    /// 文の中に置く画像（鍵 → 一時ファイル、見せる大きさ、伸ばすか、代わりの文）。段落を組むときに入れ、部品を作るときに引く。
-    static INLINE_IMAGES: std::cell::RefCell<std::collections::HashMap<String, (std::path::PathBuf, f64, f64, bool, String)>> =
+    /// 文の中に置く画像（鍵 → `InlineImage`）。段落を組むときに入れ、部品を作るときに引く。
+    static INLINE_IMAGES: std::cell::RefCell<std::collections::HashMap<String, InlineImage>> =
         std::cell::RefCell::default();
 }
 
