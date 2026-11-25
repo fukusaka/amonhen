@@ -3259,3 +3259,61 @@ body.monospace-message .details-head pre.body {
   color: var(--vscode-button-foreground);
   background: var(--vscode-button-background);
 }
+
+/* 整形した Markdown の検索の帯（⌘F）。中身の上に留める */
+.markdown-view:focus {
+  outline: none;
+}
+
+.md-find-bar {
+  position: sticky;
+  top: 0;
+  z-index: 2;
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  padding: 4px 12px;
+  background: var(--vscode-editor-background);
+  border-bottom: 1px solid var(--vscode-panel-border);
+}
+
+.md-find-bar[hidden] {
+  display: none;
+}
+
+.md-find-bar input[type='search'] {
+  flex: 0 1 240px;
+  min-width: 120px;
+  padding: 2px 6px;
+  color: var(--vscode-input-foreground);
+  background: var(--vscode-input-background);
+  border: 1px solid var(--vscode-input-border, transparent);
+  outline: none;
+}
+
+.md-find-bar input[type='search']:focus {
+  border-color: var(--vscode-focusBorder);
+}
+
+.md-find-bar .icon-button {
+  visibility: visible;
+}
+
+.md-find-bar .bar-button {
+  padding: 1px 8px;
+  color: var(--vscode-foreground);
+  background: transparent;
+}
+
+.md-find-bar .bar-button:hover {
+  background: var(--vscode-toolbar-hoverBackground, var(--vscode-list-hoverBackground));
+}
+
+/* 一致の地（エディタの検索と同じ色。今の一致は濃く） */
+::highlight(amonhen-md-find) {
+  background-color: var(--vscode-editor-findMatchHighlightBackground, rgba(255, 204, 0, 0.35));
+}
+
+::highlight(amonhen-md-find-current) {
+  background-color: var(--vscode-editor-findMatchBackground, rgba(255, 149, 0, 0.7));
+}
