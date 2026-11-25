@@ -380,7 +380,7 @@ async function workingCopyFlow(label: string): Promise<void> {
   const mark = posted.length;
   await vscode.commands.executeCommand('amonhen.refresh');
   await waitPosted('wcFiles', mark, (m) => m.layout === 'tree' && m.files.some((f) => f.group === 'unstaged' && f.path === FILE));
-  await wc.handle({ type: 'wcLayout', layout: 'flat' });
+  await wc.handle({ type: 'wcLayout', layout: 'list' });
 
   /** 差分を選び、変わった行が 1 行の書き換えだけであることを確かめて、その行を返す */
   const select = async (group: 'unstaged' | 'staged') => {
@@ -417,15 +417,17 @@ async function workingCopyFlow(label: string): Promise<void> {
   await wc.handle({ type: 'wcStageLines', ...(await select('staged')), stage: false });
   await until('unstage', () => numstat('--cached') === '' && numstat() === one);
 
-  // 行の破棄（確かめのダイアログには Discard と答える）と、その Undo
+  // 行の破棄（アプリと同じく確かめない。Undo で戻せる）と、その Undo
   const { version, lines } = await select('unstaged');
-  const warning = vscode.window.showWarningMessage;
-  (vscode.window as { showWarningMessage: unknown }).showWarningMessage = async () => 'Discard';
-  try {
-    await wc.handle({ type: 'wcDiscardLines', path: FILE, version, lines });
-  } finally {
-    (vscode.window as { showWarningMessage: unknown }).showWarningMessage = warning;
-  }
+  let asked = false;
+  const showWarningMessage = async () => {
+    asked = true;
+    return undefined;
+  };
+  await withWindow({ showWarningMessage }, () =>
+    wc.handle({ type: 'wcDiscardLines', path: FILE, version, lines }),
+  );
+  assert.equal(asked, false, '行の破棄は確かめない');
   await until('行の破棄', () => git('status', '--porcelain').trim() === '');
   assert.equal(readFileSync(path, 'latin1'), before, '破棄したら元の内容（CRLF のまま）');
   await vscode.commands.executeCommand('amonhen.undo');
@@ -570,10 +572,12 @@ async function tagsAndRemotesFlow(): Promise<void> {
   const sidebar = api.sidebar;
   const origin = git('remote', 'get-url', 'origin').trim();
   const inOrigin = (...args: string[]) => childProcess.execFileSync('git', args, { cwd: origin, encoding: 'utf8' });
-  const tagsSection = sidebar.getChildren().find((n) => n.kind === 'section' && n.section === 'tags')!;
+  // Tags の節はタグがあるときだけ出る
+  const tagsSection = () => sidebar.getChildren().find((n) => n.kind === 'section' && n.section === 'tags');
   await repo.want('tags');
   const tagItem = (name: string) => {
-    const node = sidebar.getChildren(tagsSection).find((n) => n.kind === 'tag' && n.ref.name === `refs/tags/${name}`);
+    const section = tagsSection();
+    const node = section && sidebar.getChildren(section).find((n) => n.kind === 'tag' && n.ref.name === `refs/tags/${name}`);
     return node && { node, item: sidebar.getTreeItem(node) };
   };
   const tagIs = (name: string, what: string, fn: (item: vscode.TreeItem) => boolean) =>
@@ -599,6 +603,7 @@ async function tagsAndRemotesFlow(): Promise<void> {
       async () => vscode.commands.executeCommand('amonhen.fetch'),
     );
   const tag = 'e2e-tag';
+  const several = ['e2e-many-a', 'e2e-many-b'];
   const remote = 'e2e-mirror';
   try {
     // まだ origin にないタグは「どのリモートにもない」。Push で origin に置く
@@ -607,7 +612,18 @@ async function tagsAndRemotesFlow(): Promise<void> {
     let found = await tagIs(tag, 'どのリモートにもない', (i) => String(i.description).startsWith('not on any remote'));
     assert.match(String(found.item.contextValue), /;push/);
     assert.doesNotMatch(String(found.item.contextValue), /;onRemote/);
-    await vscode.commands.executeCommand('amonhen.tag.push', found.node);
+    // リモートと話すので先に聞く（アプリと同じ）
+    let pushAsked = '';
+    await withWindow(
+      {
+        showWarningMessage: async (message: string) => {
+          pushAsked = message;
+          return 'Push';
+        },
+      },
+      async () => vscode.commands.executeCommand('amonhen.tag.push', found.node),
+    );
+    assert.equal(pushAsked, `Push ${tag} to origin?`);
     assert.equal(inOrigin('rev-parse', tag).trim(), git('rev-parse', tag).trim());
     found = await tagIs(tag, 'origin にある', (i) => /;onRemote/.test(String(i.contextValue)));
     assert.doesNotMatch(String(found.item.contextValue), /;push/);
@@ -641,6 +657,31 @@ async function tagsAndRemotesFlow(): Promise<void> {
     await until('タグの Undo', () => git('tag', '--list', tag).trim() === tag);
     assert.equal(git('rev-parse', tag).trim(), oid);
 
+    // いくつも選んだタグは、まとめて push・リモートから削除・手元の削除（アプリの「… N Tags」）
+    for (const t of several) git('tag', t);
+    await vscode.commands.executeCommand('amonhen.refresh');
+    const picked = await until('選んだタグの行', () => {
+      const nodes = several.map((t) => tagItem(t)?.node);
+      return nodes.every((n) => n) && (nodes as NonNullable<(typeof nodes)[number]>[]);
+    });
+    const titles: string[] = [];
+    const answer = (button: string) => ({
+      showWarningMessage: async (message: string) => {
+        titles.push(message);
+        return button;
+      },
+      showInformationMessage: async () => undefined,
+    });
+    await withWindow(answer('Push'), async () => vscode.commands.executeCommand('amonhen.tags.push', picked[0], picked));
+    assert.equal(titles.at(-1), 'Push 2 tags to origin?');
+    for (const t of several) assert.equal(inOrigin('rev-parse', t).trim(), git('rev-parse', t).trim());
+    await withWindow(answer('Delete'), async () => vscode.commands.executeCommand('amonhen.tags.deleteFromRemote', picked[0], picked));
+    assert.equal(titles.at(-1), 'Delete 2 tags from origin?');
+    assert.equal(inOrigin('tag', '--list', 'e2e-many-*').trim(), '');
+    await withWindow(answer('Delete'), async () => vscode.commands.executeCommand('amonhen.tags.delete', picked[0], picked));
+    assert.equal(titles.at(-1), 'Delete 2 tags?');
+    assert.equal(git('tag', '--list', 'e2e-many-*').trim(), '');
+
     // SSH の鍵で署名したタグ（git 2.34 から）は、allowed signers に載っていれば Verified
     const [major, minor] = git('--version').match(/(\d+)\.(\d+)/)!.slice(1).map(Number) as [number, number];
     if (major > 2 || (major === 2 && minor >= 34)) {
@@ -659,12 +700,54 @@ async function tagsAndRemotesFlow(): Promise<void> {
     // リモートを足し、名前と URL を変え、prune して、外す
     await withWindow({ showInputBox: inputs(remote, origin) }, async () => vscode.commands.executeCommand('amonhen.remote.add'));
     assert.equal(git('remote', 'get-url', remote).trim(), origin);
+    // ブランチのないリモートはサイドバーに出ない（アプリと同じ。操作は Repository Settings の Remotes から、同じ
+    // コマンドで）。ブランチを置くと出る
+    const remotesSection = () => sidebar.getChildren().find((n) => n.kind === 'section' && n.section === 'remotes');
+    const remoteRow = (name: string) => {
+      const section = remotesSection();
+      return section && sidebar.getChildren(section).find((n) => n.kind === 'remote' && n.remote.name === name);
+    };
     const remoteNode = (name: string) =>
       until(`リモート ${name}`, async () => {
         await repo.refresh();
-        const section = sidebar.getChildren().find((n) => n.kind === 'section' && n.section === 'remotes')!;
-        return sidebar.getChildren(section).find((n) => n.kind === 'remote' && n.remote.name === name);
+        return git('remote').split('\n').includes(name) && { kind: 'remote' as const, remote: { name } };
       });
+    await repo.refresh();
+    assert.equal(remoteRow(remote), undefined, 'ブランチのないリモートは出ない');
+    git('update-ref', `refs/remotes/${remote}/shown`, 'HEAD');
+    await until('ブランチを置いたリモートが出る', async () => {
+      await repo.refresh();
+      return remoteRow(remote);
+    });
+    git('update-ref', '-d', `refs/remotes/${remote}/shown`);
+
+    // ブランチをリモートの見出しに落として Push: 送り先を名前で確かめ、上流にする（アプリと同じ）
+    const dropped = 'e2e-drop';
+    git('branch', dropped, 'HEAD');
+    try {
+      await repo.refresh();
+      const data = new vscode.DataTransfer();
+      const source = { kind: 'branch', ref: { name: `refs/heads/${dropped}` }, label: dropped };
+      data.set('application/vnd.code.tree.amonhen.sidebar', new vscode.DataTransferItem(source));
+      const dropAsked: { message: string; detail?: string }[] = [];
+      await withWindow(
+        {
+          showQuickPick: async (items: readonly vscode.QuickPickItem[]) => items.find((i) => i.label.includes('$(cloud-upload)')),
+          showWarningMessage: async (message: string, options: vscode.MessageOptions) => {
+            dropAsked.push({ message, detail: options.detail });
+            return 'Push';
+          },
+        },
+        async () => api.dragAndDrop.handleDrop((await remoteNode(remote)) as never, data),
+      );
+      assert.deepEqual(dropAsked, [{ message: `Push ${dropped} to ${remote}/${dropped}?`, detail: `Creates ${remote}/${dropped}.` }]);
+      assert.equal(inOrigin('rev-parse', dropped).trim(), git('rev-parse', dropped).trim());
+      assert.equal(git('config', `branch.${dropped}.remote`).trim(), remote);
+    } finally {
+      git('branch', '-D', dropped);
+      if (inOrigin('branch', '--list', dropped).trim()) inOrigin('branch', '-D', dropped);
+      for (const r of [`refs/remotes/${remote}/${dropped}`]) if (git('for-each-ref', r).trim()) git('update-ref', '-d', r);
+    }
     await withWindow({ showInputBox: inputs(`${remote}-2`) }, async () =>
       vscode.commands.executeCommand('amonhen.remote.rename', await remoteNode(remote)),
     );
@@ -676,15 +759,25 @@ async function tagsAndRemotesFlow(): Promise<void> {
     assert.equal(git('remote', 'get-url', `${remote}-2`).trim(), url);
     // prune で、リモートで消えたブランチの追跡が消える
     git('update-ref', `refs/remotes/${remote}-2/gone`, 'HEAD');
-    await vscode.commands.executeCommand('amonhen.remote.prune', await remoteNode(`${remote}-2`));
+    let pruneAsked = '';
+    await withWindow(
+      {
+        showWarningMessage: async (message: string) => {
+          pruneAsked = message;
+          return 'Prune';
+        },
+      },
+      async () => vscode.commands.executeCommand('amonhen.remote.prune', await remoteNode(`${remote}-2`)),
+    );
+    assert.equal(pruneAsked, `Prune ${remote}-2?`);
     assert.equal(git('for-each-ref', `refs/remotes/${remote}-2/gone`).trim(), '');
     await withWindow({ showWarningMessage: async () => 'Remove' }, async () =>
       vscode.commands.executeCommand('amonhen.remote.remove', await remoteNode(`${remote}-2`)),
     );
     assert.equal(git('remote').split('\n').includes(`${remote}-2`), false);
   } finally {
-    for (const t of [tag, 'e2e-signed']) if (git('tag', '--list', t).trim()) git('tag', '-d', t);
-    if (inOrigin('tag', '--list', tag).trim()) inOrigin('tag', '-d', tag);
+    for (const t of [tag, 'e2e-signed', ...several]) if (git('tag', '--list', t).trim()) git('tag', '-d', t);
+    for (const t of [tag, ...several]) if (inOrigin('tag', '--list', t).trim()) inOrigin('tag', '-d', t);
     for (const r of [remote, `${remote}-2`]) if (git('remote').split('\n').includes(r)) git('remote', 'remove', r);
     try {
       git('config', '--unset', 'gpg.ssh.allowedSignersFile');
@@ -728,10 +821,16 @@ async function worktreeFlow(): Promise<void> {
     });
     assert.match(String(editing.item.description), /^e2e-wt · no changes/);
     assert.equal(icon(row(root)!.item), 'home');
-    // メインの作業ツリーが checkout しているブランチに ⌂ が付く
+    // メインの作業ツリーが checkout しているブランチは ⌂ だけ（worktree の名前はツールチップ）。Checkout の代わりに
+    // Open Worktree。今のブランチには ✎
     const branches = sidebar.getChildren(sidebar.getChildren().find((n) => n.kind === 'section' && n.section === 'branches')!);
     const mainBranch = branches.find((n) => n.kind === 'branch' && n.ref.name === `refs/heads/${branch}`)!;
-    assert.match(String(sidebar.getTreeItem(mainBranch).description), new RegExp(`⌂ ${basename(root)}`));
+    const mainItem = sidebar.getTreeItem(mainBranch);
+    assert.equal(mainItem.description, '⌂');
+    assert.match(String(mainItem.tooltip), new RegExp(`Checked out in the worktree “${basename(root)}”`));
+    assert.match(String(mainItem.contextValue), /;elsewhere/);
+    const current = branches.find((n) => n.kind === 'branch' && n.ref.name === 'refs/heads/e2e-wt')!;
+    assert.match(String(sidebar.getTreeItem(current).description), /^✎/);
 
     // worktree の変更の数が出る
     writeFileSync(join(folder, 'wt-change.txt'), 'change\n');
@@ -977,8 +1076,8 @@ async function branchArrangeFlow(): Promise<void> {
     // 絞り込むと、名前にどの言葉も含むものだけが平らに出る（大文字小文字は区別しない）
     await withWindow({ showInputBox: inputs('ARR- ch') }, async () => vscode.commands.executeCommand('amonhen.filterRefs'));
     assert.deepEqual(shape(), ['arr-arch']);
-    const remotes = sidebar.getChildren().find((n) => n.kind === 'section' && n.section === 'remotes')!;
-    assert.deepEqual(sidebar.getChildren(remotes), []);
+    // 合うもののない節は出さない（アプリと同じ）
+    assert.equal(sidebar.getChildren().find((n) => n.kind === 'section' && n.section === 'remotes'), undefined);
     assert.match(String(sidebar.getTreeItem(section).id), /:filtered$/);
     await vscode.commands.executeCommand('amonhen.clearRefsFilter');
     assert.equal(sidebar.filter, '');
@@ -1030,12 +1129,18 @@ async function branchArrangeFlow(): Promise<void> {
     await vscode.commands.executeCommand('amonhen.undo');
     await until('merge の Undo', () => git('rev-parse', 'HEAD').trim() === before);
     await settle();
-    // 取り込んでいないので、もう一度確かめてから消す
-    const answer = async (message: string) => (/aren’t merged/.test(message) ? 'Delete Anyway' : 'Delete');
+    // 取り込んでいないので、アプリと同じく 1 度の確認で、ほかにないコミットの数を見せて Delete Anyway を聞く
+    const asked: string[] = [];
+    const answer = async (message: string, options: vscode.MessageOptions) => {
+      asked.push(`${message}\n${options.detail ?? ''}`);
+      return 'Delete Anyway';
+    };
     await withWindow({ showWarningMessage: answer }, async () =>
       vscode.commands.executeCommand('amonhen.nav.delete', node('arr-a'), [node('arr-a'), node('arr-b')]),
     );
     assert.equal(git('branch', '--list', 'arr-a', 'arr-b').trim(), '');
+    assert.equal(asked.length, 1, JSON.stringify(asked));
+    assert.match(asked[0]!, /arr-a \(1 commit only on it\)/);
   } finally {
     if (git('symbolic-ref', '--short', 'HEAD').trim() !== current) git('switch', '-q', current);
     for (const b of names) if (git('branch', '--list', b).trim()) git('branch', '-D', b);
@@ -1166,8 +1271,12 @@ async function submoduleFlow(): Promise<void> {
   const gitDir = git('rev-parse', '--absolute-git-dir').trim();
   const libGit = (...args: string[]) => childProcess.execFileSync('git', ['-C', lib, ...args], { encoding: 'utf8' });
   const url = (p: string) => `file://${p.replaceAll('\\', '/')}`;
-  const section = () => sidebar.getChildren().find((n) => n.kind === 'section' && n.section === 'submodules')!;
-  const row = () => sidebar.getChildren(section()).find((n) => n.kind === 'submodule' && n.submodule.path === path);
+  // Submodules の節は submodule があるときだけ出る
+  const section = () => sidebar.getChildren().find((n) => n.kind === 'section' && n.section === 'submodules');
+  const row = () => {
+    const s = section();
+    return s && sidebar.getChildren(s).find((n) => n.kind === 'submodule' && n.submodule.path === path);
+  };
   const gitmodules = (key: string) => {
     try {
       return git('config', '--file', '.gitmodules', `submodule.${path}.${key}`).trim();
@@ -1181,8 +1290,7 @@ async function submoduleFlow(): Promise<void> {
   libGit('symbolic-ref', 'HEAD', 'refs/heads/main');
   libGit('-c', 'user.name=a', '-c', 'user.email=a@example.com', 'commit', '-q', '--allow-empty', '-m', 'lib one');
   try {
-    // Submodules を開く（開くまでは読まない）
-    sidebar.onDidExpand(section());
+    assert.equal(section(), undefined, 'submodule がなければ Submodules は出ない');
     await withWindow({ showInputBox: inputs(url(lib), path, '') }, async () => vscode.commands.executeCommand('amonhen.submodules.add'));
     assert.equal(gitmodules('url'), url(lib));
     await until('submodule の行', () => row());
@@ -1190,6 +1298,8 @@ async function submoduleFlow(): Promise<void> {
     assert.equal(fact.url, url(lib));
     assert.equal(sidebar.getTreeItem(row()!).description, undefined);
     assert.match(String(sidebar.getTreeItem(row()!).tooltip), /Follows the recorded commit/);
+    // 取り出してあるので Open in New Window が出る
+    assert.match(String(sidebar.getTreeItem(row()!).contextValue), /;checkedOut/);
 
     // 追うブランチと URL を変える
     await withWindow({ showInputBox: inputs('main') }, async () => vscode.commands.executeCommand('amonhen.submodule.setBranch', row()));
@@ -1365,9 +1475,11 @@ async function stashOptionsFlow(): Promise<void> {
   writeFileSync(b, 'b\n');
   git('add', 'so-a.txt', 'so-b.txt');
   git('commit', '-q', '-m', 'stash options');
-  const pick = (label: string) => ({
-    showQuickPick: async (items: readonly vscode.QuickPickItem[]) => items.find((i) => i.label === label),
-    showInputBox: inputs(''),
+  // アプリと同じシート: まず何を（すべて・stage した変更だけ）、すべてなら組み合わせる選び方（canPickMany）
+  const pick = (what: string, options: string[] = [], message = '') => ({
+    showQuickPick: async (items: readonly vscode.QuickPickItem[], opts?: vscode.QuickPickOptions) =>
+      opts?.canPickMany ? items.filter((i) => options.includes(i.label)) : items.find((i) => i.label === what),
+    showInputBox: inputs(message),
   });
   try {
     // stage した変更を残す: a（stage）も b（stage していない）も stash に入り、a の stage は残る
@@ -1375,7 +1487,7 @@ async function stashOptionsFlow(): Promise<void> {
     writeFileSync(b, 'b2\n');
     git('add', 'so-a.txt');
     await repo.refresh();
-    await withWindow(pick('Stash, Keeping the Staged Changes'), async () => vscode.commands.executeCommand('amonhen.stash'));
+    await withWindow(pick('All changes', ['Keep the staged changes in the working tree (--keep-index)']), async () => vscode.commands.executeCommand('amonhen.stash'));
     assert.equal(git('diff', '--cached', '--name-only').trim(), 'so-a.txt', lastErrors());
     assert.equal(git('diff', '--name-only').trim(), '');
     assert.equal(git('stash', 'list').trim().split('\n').length, 1);
@@ -1388,7 +1500,7 @@ async function stashOptionsFlow(): Promise<void> {
       writeFileSync(b, 'b3\n');
       git('add', 'so-a.txt');
       await repo.refresh();
-      await withWindow(pick('Stash Only the Staged Changes'), async () => vscode.commands.executeCommand('amonhen.stash'));
+      await withWindow(pick('Only the staged changes'), async () => vscode.commands.executeCommand('amonhen.stash'));
       assert.equal(git('diff', '--cached', '--name-only').trim(), '', lastErrors());
       assert.equal(git('diff', '--name-only').trim(), 'so-b.txt');
       assert.equal(git('stash', 'show', '--name-only').trim(), 'so-a.txt');
@@ -1400,14 +1512,14 @@ async function stashOptionsFlow(): Promise<void> {
     writeFileSync(a, 'a4\n');
     writeFileSync(b, 'b4\n');
     await repo.refresh();
-    await withWindow({ showInputBox: inputs('only b') }, async () => vscode.commands.executeCommand('amonhen.stash.files', { path: 'so-b.txt' }));
+    await withWindow(pick('All changes', [], 'only b'), async () => vscode.commands.executeCommand('amonhen.stash.files', { path: 'so-b.txt' }));
     assert.equal(git('diff', '--name-only').trim(), 'so-a.txt', lastErrors());
     assert.equal(git('stash', 'show', '--name-only').trim(), 'so-b.txt');
 
     // いくつも選んで: 選んだファイルすべてを 1 つの stash に
     writeFileSync(b, 'b5\n');
     await repo.refresh();
-    await withWindow({ showInputBox: inputs('both') }, async () =>
+    await withWindow(pick('All changes', [], 'both'), async () =>
       vscode.commands.executeCommand('amonhen.stash.files', { path: 'so-a.txt', paths: ['so-a.txt', 'so-b.txt'] }),
     );
     assert.equal(git('diff', '--name-only').trim(), '', lastErrors());
@@ -1500,12 +1612,13 @@ async function submoduleMoreFlow(): Promise<void> {
     // 手で clone してから足す（データはその中に残る）
     git('clone', '-q', `file://${lib.replaceAll('\\', '/')}`, path);
     git('submodule', 'add', '-q', `file://${lib.replaceAll('\\', '/')}`, path);
-    const section = sidebar.getChildren().find((n) => n.kind === 'section' && n.section === 'submodules')!;
-    sidebar.onDidExpand(section);
     await repo.refresh();
     await sidebar.submoduleFacts.reload();
     await until('自分のフォルダにデータ', () => sidebar.submoduleFacts.get(path)?.ownGitDir);
-    const row = await until('submodule の行', () => sidebar.getChildren(section).find((n) => n.kind === 'submodule' && n.submodule.path === path));
+    const row = await until('submodule の行', () => {
+      const section = sidebar.getChildren().find((n) => n.kind === 'section' && n.section === 'submodules');
+      return section && sidebar.getChildren(section).find((n) => n.kind === 'submodule' && n.submodule.path === path);
+    });
     assert.match(String(sidebar.getTreeItem(row).contextValue), /;ownGitDir/);
     await vscode.commands.executeCommand('amonhen.submodule.absorb', row);
     assert.ok(existsSync(join(gitDir, 'modules', path)), lastErrors());
@@ -1665,10 +1778,10 @@ async function bundleArchiveFlow(): Promise<void> {
     assert.equal(git('rev-parse', `refs/remotes/bundle-e2e/${branch}`).trim(), head, lastErrors());
     // 設定のないリモートの名前でも、Remotes の下に並ぶ（リモートの操作は出さない）
     const sidebar = api.sidebar;
-    const remotes = sidebar.getChildren().find((n) => n.kind === 'section' && n.section === 'remotes')!;
-    const fetched = await until('Remotes の下に bundle-e2e が出る', () =>
-      sidebar.getChildren(remotes).find((n) => n.kind === 'remote' && n.remote.name === 'bundle-e2e'),
-    );
+    const fetched = await until('Remotes の下に bundle-e2e が出る', () => {
+      const remotes = sidebar.getChildren().find((n) => n.kind === 'section' && n.section === 'remotes');
+      return remotes && sidebar.getChildren(remotes).find((n) => n.kind === 'remote' && n.remote.name === 'bundle-e2e');
+    });
     assert.equal((sidebar.getTreeItem(fetched) as vscode.TreeItem).contextValue, 'remote.unconfigured');
 
     // clone（ファイル、フォルダの順に選ぶ）
@@ -2174,7 +2287,7 @@ async function detailsCopyFlow(): Promise<void> {
   };
   assert.equal(await copied('amonhen.details.copySubject'), git('log', '-1', '--format=%s', oid).trim());
   assert.equal(await copied('amonhen.details.copyMessage'), git('log', '-1', '--format=%B', oid).trim());
-  assert.equal(await copied('amonhen.details.copyShortId'), oid.slice(0, 7));
+  assert.equal(await copied('amonhen.details.copyShortId'), oid.slice(0, 8));
   assert.equal(await copied('amonhen.details.copyShowCommand'), `git show ${oid}`);
   // History の行の右クリック: このコミットを指すブランチの名前（HEAD のブランチ 1 つなら選ばずにそのまま）
   const branch = git('symbolic-ref', '--short', 'HEAD').trim();
@@ -2446,7 +2559,7 @@ async function pullRequestMarkFlow(): Promise<void> {
     assert.match(drawnText(asked[0]!.drawing), /After deleting:/);
     assert.equal(git('branch', '--list', 'pm-lone').trim(), '', lastErrors());
 
-    // 取り込んでいないものと一緒に選ぶと、確認にプルリクエストが添えられ、もう一度聞くのは取り込んでいないものだけ
+    // 取り込んでいないものと一緒に選ぶと、1 度の確認にプルリクエストと、ほかにないコミットの数が添えられる
     git('switch', '-q', '-c', 'pm-plain');
     writeFileSync(join(root, 'pm-plain.txt'), 'pm\n');
     git('add', 'pm-plain.txt');
@@ -2461,14 +2574,14 @@ async function pullRequestMarkFlow(): Promise<void> {
       {
         showWarningMessage: async (message: string, options: vscode.MessageOptions) => {
           asked.push({ message, detail: options.detail ?? '', buttons: [] });
-          return /aren’t merged/.test(message) ? 'Delete Anyway' : 'Delete';
+          return 'Delete Anyway';
         },
       },
       async () => vscode.commands.executeCommand('amonhen.nav.delete', squashed, [squashed, plain]),
     );
-    assert.equal(asked.length, 2, JSON.stringify(asked));
+    assert.equal(asked.length, 1, JSON.stringify(asked));
     assert.match(asked[0]!.detail, /pm-squashed \(merged by pull request #77\)/);
-    assert.match(asked[1]!.message, /^pm-plain has/);
+    assert.match(asked[0]!.detail, /pm-plain \(1 commit only on it\)/);
     assert.equal(git('branch', '--list', 'pm-squashed', 'pm-plain').trim(), '', lastErrors());
   } finally {
     facts.readMerged = readMerged;
@@ -3414,7 +3527,7 @@ async function conflictsWithoutMarkersFlow(): Promise<void> {
     assert.ok(conflictsRow, 'Conflicts の行');
     assert.equal((api.sidebar.getTreeItem(conflictsRow) as vscode.TreeItem).description, '3');
 
-    // Accept は、解決した内容が失われると確かめる（ここでは断る）
+    // Take Current File は、マーカーのないファイルでは解決した内容が失われると確かめる（ここでは断る）
     let detail: string | undefined;
     const showWarningMessage = async (_: string, options: { detail?: string }) => {
       detail = options.detail;
@@ -3795,15 +3908,18 @@ async function mergeBranchesFlow(label: string): Promise<void> {
   // 1 つ目の QuickPick（いくつも選ぶ）では order の順に選び、2 つ目（どう merge するか）では choose で選ぶ
   let order: string[] = [];
   let choose: (label: string) => boolean = () => false;
+  let first = '';
   const placeHolders: string[] = [];
   const warned: string[] = [];
   const failed: string[] = [];
   const stubs = {
-    showQuickPick: async (items: unknown, options?: { canPickMany?: boolean; placeHolder?: string }) => {
+    showQuickPick: async (items: unknown, options?: { canPickMany?: boolean; placeHolder?: string; title?: string }) => {
       const list = (await items) as ({ label: string; ref?: string } & Record<string, unknown>)[];
       if (options?.canPickMany) {
         return order.map((b) => list.find((i) => i.ref === `refs/heads/${b}`)!);
       }
+      // 順を決め直すときは first を先に
+      if (options?.title?.startsWith('Change the Order')) return list.find((i) => i.label === first);
       // 3 つ目（取り込み方）は git の設定のとおり
       if (list.some((i) => 'mode' in i)) return list.find((i) => i['mode'] === 'git');
       placeHolders.push(options?.placeHolder ?? '');
@@ -3827,6 +3943,16 @@ async function mergeBranchesFlow(label: string): Promise<void> {
       assert.equal(placeHolders.at(-1), `Merge 2 into ${branch} in one commit`);
       await vscode.commands.executeCommand('amonhen.undo');
       await until('merge の Undo', () => head() === start);
+
+      // 順を決め直すと、その順で merge する（アプリのシートでドラッグして並べ替えるのと同じ）
+      let reordered = false;
+      first = name('x');
+      choose = (l) => (reordered ? l.startsWith('$(git-merge)') : (reordered = l.startsWith('$(arrow-swap)')));
+      await vscode.commands.executeCommand('amonhen.mergeBranches');
+      await until('並べ替えた merge', () => git('log', '-1', '--format=%s').startsWith(`Merge branches '${name('x')}' and '${name('a')}'`));
+      await vscode.commands.executeCommand('amonhen.undo');
+      await until('並べ替えた merge の Undo', () => head() === start);
+      choose = (l) => l.startsWith('$(git-merge)');
 
       // x の後の y はぶつかる。見込みが分かれば（git 2.38 以降）そう伝える。それでも 1 つにまとめると git は断る
       order = [name('x'), name('y'), name('a')];
@@ -4843,14 +4969,15 @@ suite('Amon Hen in VSCode', () => {
     const panel = await showView('amonhen.showWorkingCopy');
     const gitignore = join(root, '.gitignore');
     const had = existsSync(gitignore) ? readFileSync(gitignore) : undefined;
-    const quickPick = vscode.window.showQuickPick;
     const [major = 0, minor = 0] = (git('version').match(/(\d+)\.(\d+)/) ?? []).slice(1).map(Number);
     const sparseCheckout = major > 2 || (major === 2 && minor >= 25);
-    (vscode.window as { showQuickPick: unknown }).showQuickPick = async (items: string[]) => items[1];
     try {
-      await vscode.commands.executeCommand('amonhen.addToGitignore', { path: 'dir/new.ignored-e2e' });
+      // 右クリックの 2 つの項目: そのパスと、拡張子のパターン
+      await vscode.commands.executeCommand('amonhen.addToGitignore', { path: 'dir/path.ignored-e2e' });
+      assert.match(readFileSync(gitignore, 'utf8'), /^dir\/path\.ignored-e2e$/m);
+      await vscode.commands.executeCommand('amonhen.addExtensionToGitignore', { path: 'dir/new.ignored-e2e' });
       assert.match(readFileSync(gitignore, 'utf8'), /^\*\.ignored-e2e$/m);
-      await vscode.commands.executeCommand('amonhen.addToGitignore', { path: 'other.ignored-e2e' });
+      await vscode.commands.executeCommand('amonhen.addExtensionToGitignore', { path: 'other.ignored-e2e' });
       assert.equal(readFileSync(gitignore, 'utf8').match(/\*\.ignored-e2e/g)?.length, 1);
       let mark = posted.length;
       panel.workingCopy.setRepository(panel.repository);
@@ -4863,7 +4990,6 @@ suite('Amon Hen in VSCode', () => {
         assert.deepEqual((await waitPosted('wcSparse', mark, (m) => m.sparse !== null)).sparse?.folders, ['e2e-only-folder']);
       }
     } finally {
-      (vscode.window as { showQuickPick: unknown }).showQuickPick = quickPick;
       if (sparseCheckout) git('sparse-checkout', 'disable');
       if (had) writeFileSync(gitignore, had);
       else rmSync(gitignore, { force: true });

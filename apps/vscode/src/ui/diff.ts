@@ -8,7 +8,7 @@ import { gitUri } from './uri.ts';
 /** コンフリクトしたファイルを開く。マージエディタで開けなければ、ファイルをそのまま開く */
 export async function openConflict(root: string, change: Change, sequence?: Sequence): Promise<void> {
   if (!(await openMergeEditor(root, change, sequence))) {
-    // 片側が削除されたコンフリクトなど。Accept Current / Incoming で解決する
+    // 片側が削除されたコンフリクトなど。Take Current File・Take Incoming File で解決する
     await vscode.commands.executeCommand('vscode.open', vscode.Uri.file(join(root, change.path)));
   }
 }

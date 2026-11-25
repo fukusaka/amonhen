@@ -60,6 +60,13 @@ export function registerWorktreeCommands(manager: RepositoryManager, sidebar: Si
     });
 
   return vscode.Disposable.from(
+    // ほかの worktree が checkout しているブランチは、ここでは checkout できない（git が断る）。その worktree を開く
+    vscode.commands.registerCommand('amonhen.branch.openWorktree', async (node?: Node) => {
+      const repo = manager.current;
+      if (!repo || node?.kind !== 'branch' || node.remote) return;
+      const other = sidebar.worktrees.checkedOutElsewhere(shortName(node.ref.name), repo.root);
+      if (other) await edit(other.path).catch(showError);
+    }),
     command('amonhen.worktree.edit', (w) => edit(w.path)),
     command('amonhen.worktree.openInNewWindow', async (w) => {
       await vscode.commands.executeCommand('vscode.openFolder', vscode.Uri.file(w.path), { forceNewWindow: true });

@@ -47,8 +47,20 @@ export function tagTargets(info: TagRemotes, tag: string): TagTargets {
   return targets;
 }
 
+/** いくつものタグを、リモートごとに送れる・置き換えられる・消せるもの（リモートの並びの順。ないリモートは除く） */
+export type ManyTagTargets = Record<keyof TagTargets, { remote: string; tags: string[] }[]>;
+
+export function manyTagTargets(info: TagRemotes, tags: readonly string[]): ManyTagTargets {
+  const each = tags.map((tag) => ({ tag, targets: tagTargets(info, tag) }));
+  const collect = (key: keyof TagTargets) =>
+    info.remotes
+      .map(({ name: remote }) => ({ remote, tags: each.filter((e) => e.targets[key].includes(remote)).map((e) => e.tag) }))
+      .filter((r) => r.tags.length > 0);
+  return { push: collect('push'), replace: collect('replace'), onRemote: collect('onRemote') };
+}
+
 /**
- * タグの行の印: 同じ名前の別のタグがあるリモート（different）か、読んだどのリモートにもない（missing）。
+ * タグの行の印:同じ名前の別のタグがあるリモート（different）か、読んだどのリモートにもない（missing）。
  * どちらでもなければ（読んだリモートがない、どこかにある）undefined
  */
 export function tagMark(info: TagRemotes, tag: string): { kind: 'different'; remotes: string[] } | { kind: 'missing' } | undefined {

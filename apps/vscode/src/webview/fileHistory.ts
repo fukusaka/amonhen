@@ -81,6 +81,8 @@ export function createFileHistoryView(): View {
       oid: entry.oid,
       path: entry.path,
       subject: entry.subject || undefined,
+      // 作業ツリーのファイルと同じ名前の版だけ戻せる（名前を変える前の版を戻すと、元の名前のファイルができてしまう。アプリと同じ）
+      fileHistoryCurrent: entry.path === path,
       preventDefaultContextMenuItems: true,
     });
     div.append(el('div', 'subject', entry.subject));

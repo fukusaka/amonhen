@@ -8,9 +8,10 @@ import * as vscode from 'vscode';
 import type { Sequence } from '../git/backend.ts';
 import type { Ref, Remote, Stash } from '../git/refs.ts';
 import { splitRemoteRef } from '../git/refs.ts';
+import { byName, refTree, type RefTree } from '../git/refTree.ts';
 import { arrangeBranches, type Arranged, type BranchGroupsInfo } from '../git/branchGroups.ts';
 import { signatureExplanation, signatureIcon, signatureLabel, signatureStatus } from '../git/signature.ts';
-import { stashBaseText, stashBranch } from '../git/stash.ts';
+import { stashBaseText, stashBranch, stashDescription } from '../git/stash.ts';
 import { describeSubmodule } from '../git/status.ts';
 import { submoduleMarks, submoduleTooltip } from '../git/submodules.ts';
 import { subtreeTooltip, type Subtree } from '../git/subtrees.ts';
@@ -59,7 +60,10 @@ export type Node =
   /** Inactive・Archived（畳んでおく） */
   | { kind: 'branchGroup'; key: 'inactive' | 'archived'; items: Arranged[] }
   | { kind: 'remote'; remote: Remote; folder: Folder }
-  | { kind: 'tag'; ref: Ref }
+  /** タグの行。`label` はフォルダの中の名前（なければ名前のまま） */
+  | { kind: 'tag'; ref: Ref; label?: string }
+  /** タグの `/` のフォルダ（アプリと同じく名前の順で、フォルダは中の最初の名前の位置） */
+  | { kind: 'tagFolder'; id: string; label: string; children: RefTree<Ref>[] }
   | { kind: 'stash'; stash: Stash }
   | { kind: 'submodule'; submodule: Submodule; state?: string }
   | { kind: 'subtree'; subtree: Subtree }
@@ -108,6 +112,8 @@ export class SidebarProvider implements vscode.TreeDataProvider<Node>, vscode.Di
   private sequence: { root: string; info: SequenceInfo } | undefined;
   /** sparse checkout のリポジトリ（Working Copy の行に印を付ける） */
   private readonly sparse = new Set<string>();
+  /** 最後に出した節（変われば、いちばん上から描き直す） */
+  private lastShown = '';
   /** 更新通知で同じノードを指せるよう、セクションのノードは使い回す */
   private readonly sections = new Map<RefSection, Node>(
     (Object.keys(SECTION_LABELS) as RefSection[]).map((s) => [s, { kind: 'section', section: s }]),
@@ -188,6 +194,11 @@ export class SidebarProvider implements vscode.TreeDataProvider<Node>, vscode.Di
       // Working Copy の変化は、入口の数と途中の merge / rebase に出る
       // Stashes の節は、stash があるかで出たり消えたりする
       if (changed.has('workingCopy') || changed.has('stashes')) {
+        this._onDidChangeTreeData.fire(undefined);
+        return;
+      }
+      // 節は中身があるときだけ出すので、出す節が変われば、いちばん上から描き直す
+      if (this.shownKey(repository) !== this.lastShown) {
         this._onDidChangeTreeData.fire(undefined);
         return;
       }
@@ -289,15 +300,9 @@ export class SidebarProvider implements vscode.TreeDataProvider<Node>, vscode.Di
       const conflicts = (state.status?.entries ?? []).filter((e) => e.kind === 'unmerged').length;
       if (conflicts > 0) nodes.push({ kind: 'conflicts', count: conflicts });
       if (state.sequence) nodes.push({ kind: 'sequence', sequence: state.sequence, progress: state.progress });
-      // Stashes は stash があるときだけ（アプリと同じ）。status が stash の数を言うのは git 2.35 からなので、
-      // 一覧も読んでおく（git stash list は軽い）
-      if (!state.stashes) void repo.want('stashes');
-      const stashes = Math.max(state.status?.stashCount ?? 0, state.stashes?.length ?? 0);
-      // Subtrees はこの機械の git に git subtree があるときだけ（アプリと同じ。エンジンで調べる）
-      const hidden = (n: Node) =>
-        n.kind === 'section' &&
-        ((n.section === 'stashes' && stashes === 0) || (n.section === 'subtrees' && !(this.engine && this.subtreeFacts.available)));
-      nodes.push(...[...this.sections.values()].filter((n) => !hidden(n)));
+      const shown = this.shownSections(repo);
+      this.lastShown = shown.join(',');
+      nodes.push(...shown.map((s) => this.sections.get(s)!));
       // Range Diff は開いている間だけ、Reflog はいつもいちばん下（アプリと同じ）
       if (this.rangeDiffShown) nodes.push({ kind: 'view', view: 'rangeDiff' });
       if (this.engine) nodes.push({ kind: 'view', view: 'reflog' }, { kind: 'view', view: 'settings' });
@@ -325,9 +330,41 @@ export class SidebarProvider implements vscode.TreeDataProvider<Node>, vscode.Di
         return arrangedFolders(node.items, node.id, (a, label) => this.arrangedNode(repo, a, label));
       case 'branchGroup':
         return node.items.map((a) => this.arrangedNode(repo, a, a.name)).filter((n) => n !== undefined);
+      case 'tagFolder':
+        return tagNodes(node.children);
       default:
         return [];
     }
+  }
+
+  /**
+   * 出す節。アプリと同じく、中身のないものは出さない。絞り込み中は、合うものがある Branches・Remotes・Tags と
+   * Stashes だけ（Submodules・Subtrees は絞り込まない）
+   */
+  private shownSections(repo: Repository): RefSection[] {
+    const state = repo.current;
+    // Stashes・Submodules は中身があるかを知るために読んでおく（git stash list と .gitmodules は軽い）。status が
+    // stash の数を言うのは git 2.35 から
+    if (!state.stashes) void repo.want('stashes');
+    if (!state.submodules) void repo.want('submodules');
+    const filtering = this.filterWords.length > 0;
+    const named = (refs: readonly Ref[] | undefined) =>
+      filtering ? (refs ?? []).some((r) => this.matches(shortName(r.name))) : (refs?.length ?? 0) > 0;
+    const shown: Record<RefSection, boolean> = {
+      branches: named(state.branches),
+      remotes: named(remoteRefs(state.remoteBranches, state.remotes).map((r) => r.ref)),
+      // タグの一覧は開くまで読まない（絞り込めば読む）ので、それまでは 1 つでもあるかで決める
+      tags: state.tags ? named(state.tags) : !filtering && !!state.hasTags,
+      stashes: Math.max(state.status?.stashCount ?? 0, state.stashes?.length ?? 0) > 0,
+      submodules: !filtering && (state.submodules?.length ?? 0) > 0,
+      // Subtrees はこの機械の git に git subtree があるときだけ（アプリと同じ。エンジンで調べる）
+      subtrees: !filtering && this.engine && this.subtreeFacts.available,
+    };
+    return (Object.keys(SECTION_LABELS) as RefSection[]).filter((s) => shown[s]);
+  }
+
+  private shownKey(repo: Repository): string {
+    return this.shownSections(repo).join(',');
   }
 
   private sectionChildren(repo: Repository, section: RefSection): Node[] {
@@ -338,45 +375,49 @@ export class SidebarProvider implements vscode.TreeDataProvider<Node>, vscode.Di
         if (this.filterWords.length > 0) {
           return (state.branches ?? [])
             .filter((r) => this.matches(shortName(r.name)))
+            .sort((a, b) => byName(a.name, b.name))
             .map((ref) => ({ kind: 'branch', ref, label: shortName(ref.name) }));
         }
         return this.branchChildren(repo);
       case 'remotes': {
-        const remotes = [...(state.remotes ?? [])];
-        const names = remotes.map((r) => r.name);
-        const byRemote = new Map<string, Ref[]>(names.map((n) => [n, []]));
-        for (const ref of state.remoteBranches ?? []) {
-          // `origin/HEAD` は出さない
-          if (ref.symref) continue;
-          const split = splitRemoteRef(ref.name, names);
-          if (!split || (this.filterWords.length > 0 && !this.matches(shortName(ref.name)))) continue;
-          // 設定のないリモートの名前の下の ref（Fetch from Bundle が取り込んだものなど）も、アプリと同じくその名前で並べる
-          if (!byRemote.has(split.remote)) {
-            byRemote.set(split.remote, []);
-            remotes.push({ name: split.remote, unconfigured: true });
-          }
-          byRemote.get(split.remote)!.push(ref);
+        // アプリと同じく、リモートのブランチから組む（ブランチのないリモートは出さない。名前・URL などは Repository
+        // Settings の Remotes で）。設定のないリモートの名前の下の ref（Fetch from Bundle が取り込んだものなど）も、
+        // その名前で並べる
+        const refs = remoteRefs(state.remoteBranches, state.remotes);
+        // 絞り込んでいれば、合うものだけを名前のまま（origin/main）平らに
+        if (this.filterWords.length > 0) {
+          return refs
+            .filter(({ ref }) => this.matches(shortName(ref.name)))
+            .sort((a, b) => byName(a.ref.name, b.ref.name))
+            .map(({ ref, remote }) => ({ kind: 'branch', ref, label: shortName(ref.name), remote }));
         }
-        remotes.sort((a, b) => Number(a.unconfigured ?? false) - Number(b.unconfigured ?? false));
-        const filtering = this.filterWords.length > 0;
-        const rest = (remote: string) => (r: Ref) => r.name.slice(`refs/remotes/${remote}/`.length);
-        return remotes
-          .filter((remote) => !filtering || (byRemote.get(remote.name)?.length ?? 0) > 0)
-          .map((remote) => {
-            const refs = byRemote.get(remote.name) ?? [];
-            // 絞り込んでいれば、フォルダに分けずに平らに
-            const folder: Folder = filtering
-              ? { folders: new Map(), leaves: refs.map((ref) => ({ name: rest(remote.name)(ref), ref })) }
-              : buildFolder(refs, rest(remote.name));
-            return { kind: 'remote', remote, folder };
-          });
+        const configured = new Map((state.remotes ?? []).map((r) => [r.name, r]));
+        const byRemote = new Map<string, Ref[]>();
+        for (const { ref, remote } of refs) {
+          if (!byRemote.has(remote)) byRemote.set(remote, []);
+          byRemote.get(remote)!.push(ref);
+        }
+        return [...byRemote.keys()]
+          .sort((a, b) => Number(!configured.has(a)) - Number(!configured.has(b)) || byName(a, b))
+          .map((name) => ({
+            kind: 'remote',
+            remote: configured.get(name) ?? { name, unconfigured: true },
+            folder: buildFolder(byRemote.get(name)!, (r) => r.name.slice(`refs/remotes/${name}/`.length)),
+          }));
       }
-      case 'tags':
+      case 'tags': {
         if (this.engine) this.tagMarks.want();
-        return [...(state.tags ?? [])]
-          .filter((t) => this.filterWords.length === 0 || this.matches(shortName(t.name)))
-          .sort((a, b) => b.date - a.date)
-          .map((ref) => ({ kind: 'tag', ref }));
+        const tags = state.tags ?? [];
+        // 絞り込んでいれば、合うものだけを名前のまま平らに
+        if (this.filterWords.length > 0) {
+          return tags
+            .filter((t) => this.matches(shortName(t.name)))
+            .sort((a, b) => byName(a.name, b.name))
+            .map((ref) => ({ kind: 'tag', ref }));
+        }
+        // release/1.0 のような名前はフォルダにまとめる（アプリと同じく名前の順）
+        return tagNodes(refTree(tags.map((ref) => ({ name: shortName(ref.name), value: ref }))));
+      }
       case 'stashes':
         return (state.stashes ?? []).map((stash) => ({ kind: 'stash', stash }));
       case 'subtrees':
@@ -509,7 +550,8 @@ export class SidebarProvider implements vscode.TreeDataProvider<Node>, vscode.Di
         return item;
       }
       case 'folder':
-      case 'branchFolder': {
+      case 'branchFolder':
+      case 'tagFolder': {
         const item = new vscode.TreeItem(node.label, vscode.TreeItemCollapsibleState.Collapsed);
         item.id = node.id;
         item.iconPath = vscode.ThemeIcon.Folder;
@@ -532,7 +574,9 @@ export class SidebarProvider implements vscode.TreeDataProvider<Node>, vscode.Di
             ? this.worktrees.checkedOutElsewhere(shortName(node.ref.name), repo.root)
             : undefined;
         const facts = node.remote ? undefined : this.branchFacts.info;
-        return branchItem(node, other, facts && branchFlags(facts, shortName(node.ref.name)));
+        // worktree が 2 つ以上なら、今のブランチ（書き込む先のもの）に ✎ を添える
+        const editing = !node.remote && node.ref.isHead && this.engine && this.worktrees.worktrees.length > 1;
+        return branchItem(node, other, facts && branchFlags(facts, shortName(node.ref.name)), editing);
       }
       case 'worktree':
         return this.worktreeItem(node.worktree);
@@ -545,12 +589,9 @@ export class SidebarProvider implements vscode.TreeDataProvider<Node>, vscode.Di
         return item;
       }
       case 'remote': {
-        const filtered = this.filterWords.length > 0;
-        const item = new vscode.TreeItem(
-          node.remote.name,
-          filtered ? vscode.TreeItemCollapsibleState.Expanded : vscode.TreeItemCollapsibleState.Collapsed,
-        );
-        item.id = `remote:${node.remote.name}${filtered ? ':filtered' : ''}`;
+        // 絞り込み中はリモートの行を出さない（合うブランチを Remotes の下に平らに並べる）
+        const item = new vscode.TreeItem(node.remote.name, vscode.TreeItemCollapsibleState.Collapsed);
+        item.id = `remote:${node.remote.name}`;
         item.description = node.remote.unconfigured ? 'not a configured remote' : node.remote.fetchUrl;
         item.iconPath = new vscode.ThemeIcon(node.remote.unconfigured ? 'folder' : 'cloud');
         // 設定のないものには、リモートの操作（fetch・名前・URL・削除）を出さない
@@ -558,15 +599,15 @@ export class SidebarProvider implements vscode.TreeDataProvider<Node>, vscode.Di
         return item;
       }
       case 'tag':
-        return this.tagItem(node.ref);
+        return this.tagItem(node.ref, node.label);
       case 'stash': {
         const item = new vscode.TreeItem(node.stash.name);
         item.id = `stash:${node.stash.oid}`;
-        // アプリの Stashes の行と同じく、作ったときのブランチ・土台と HEAD の離れ具合・untracked を添える
+        // アプリの Stashes の行と同じく、作ったときのブランチ・土台と HEAD の関係・いつ・untracked・土台の短い ID を添える
         const fact = this.engine ? this.stashFacts.get(node.stash.oid) : undefined;
         const branch = stashBranch(node.stash.subject);
         const moved = fact && stashBaseText(fact.ahead, fact.behind);
-        item.description = [node.stash.subject, fact?.untracked ? '+ untracked' : undefined].filter(Boolean).join(' · ');
+        item.description = stashDescription(node.stash, fact);
         item.tooltip = [
           node.stash.name,
           node.stash.subject,
@@ -597,7 +638,8 @@ export class SidebarProvider implements vscode.TreeDataProvider<Node>, vscode.Di
           fact?.conflict ? 'warning' : 'file-submodule',
           off ? new vscode.ThemeColor('disabledForeground') : undefined,
         );
-        item.contextValue = `submodule${fact?.ownGitDir ? ';ownGitDir' : ''}`;
+        // `;checkedOut` は取り出してある（Open in New Window はそのときだけ）
+        item.contextValue = `submodule${fact?.ownGitDir ? ';ownGitDir' : ''}${off ? '' : ';checkedOut'}`;
         return item;
       }
       case 'subtree': {
@@ -710,9 +752,9 @@ export class SidebarProvider implements vscode.TreeDataProvider<Node>, vscode.Di
    * ない・同じ名前の別のタグがある）を出し、ツールチップにリモートごとの様子と署名の説明を並べる。右クリックの
    * Push・Replace・Delete from は、出せるリモートがあるときだけ出す（contextValue の `;push` など）
    */
-  private tagItem(ref: Ref): vscode.TreeItem {
+  private tagItem(ref: Ref, label?: string): vscode.TreeItem {
     const name = shortName(ref.name);
-    const item = new vscode.TreeItem(name);
+    const item = new vscode.TreeItem(label ?? name);
     item.id = ref.name;
     const remotes = this.engine ? this.tagMarks.remotes : undefined;
     const mark = remotes && tagMark(remotes, name);
@@ -779,33 +821,48 @@ function branchFlags(info: BranchGroupsInfo, name: string): BranchFlags | undefi
 }
 
 /** `other` はこのブランチを checkout している、書き込む先以外の worktree */
-function branchItem(node: Extract<Node, { kind: 'branch' }>, other?: Worktree, flags?: BranchFlags): vscode.TreeItem {
+function branchItem(node: Extract<Node, { kind: 'branch' }>, other?: Worktree, flags?: BranchFlags, editing = false): vscode.TreeItem {
   const ref = node.ref;
   const item = new vscode.TreeItem(
     node.label,
     node.stack?.length ? vscode.TreeItemCollapsibleState.Expanded : vscode.TreeItemCollapsibleState.None,
   );
   item.id = node.remote ? `remoteBranch:${ref.name}` : ref.name;
+  // 今のブランチは取り込み済みと言わない（アプリと同じ）
+  const merged = !!flags?.merged && !ref.isHead;
   const parts: string[] = [];
-  if (ref.ahead) parts.push(`↑${ref.ahead}`);
-  if (ref.behind) parts.push(`↓${ref.behind}`);
-  if (ref.gone) parts.push('gone');
-  if (flags?.merged) parts.push('merged');
-  // お気に入りは積んだブランチでも平らに出すので、土台を書く
-  if (node.pinned && node.stackedOn) parts.push(`↳ ${node.stackedOn}`);
-  // ほかの worktree が checkout している（⌂ はメインの作業ツリー、⑂ は追加した worktree）
-  if (other) parts.push(`${other.main ? '⌂' : '⑂'} ${worktreeName(other)}`);
+  if (other) {
+    // ほかの worktree が checkout している（git はここでは checkout させない）。アプリと同じく、行には印だけを出し
+    // （⌂ はメインの作業ツリー、⑂ は追加した worktree）、worktree の名前はツールチップに（ブランチ名を隠さない）
+    parts.push(other.main ? '⌂' : '⑂');
+  } else {
+    if (editing) parts.push('✎');
+    if (ref.ahead) parts.push(`↑${ref.ahead}`);
+    if (ref.behind) parts.push(`↓${ref.behind}`);
+    if (ref.gone) parts.push('gone');
+    if (merged) parts.push('merged');
+    // お気に入りは積んだブランチでも平らに出すので、土台を書く
+    if (node.pinned && node.stackedOn) parts.push(`↳ ${node.stackedOn}`);
+  }
   item.description = parts.join(' ') || undefined;
-  item.iconPath = new vscode.ThemeIcon(ref.isHead ? 'check' : node.pinned ? 'star-full' : 'git-branch');
+  item.iconPath = new vscode.ThemeIcon(
+    ref.isHead ? 'check' : node.pinned ? 'star-full' : 'git-branch',
+    other && !other.main ? new vscode.ThemeColor('charts.green') : undefined,
+  );
   const lines = [shortName(ref.name)];
   if (ref.upstream) lines.push(`upstream: ${ref.upstream.replace(/^refs\/remotes\//, '')}`);
   lines.push(`${ref.oid.slice(0, 8)}  ${ref.subject}`);
-  if (other) lines.push(`Checked out in the worktree ${other.path}`);
-  if (flags?.merged) lines.push(flags.pullRequest !== undefined ? `Merged by pull request #${flags.pullRequest}` : 'Merged into the default branch');
+  if (other) lines.push(`Checked out in the worktree “${worktreeName(other)}” (${other.path})`);
+  if (merged) lines.push(flags!.pullRequest !== undefined ? `Merged by pull request #${flags!.pullRequest}` : 'Merged into the default branch');
   item.tooltip = lines.join('\n');
+  // `;elsewhere` はほかの worktree が checkout している（Checkout・Fast-Forward の代わりに Open Worktree）
   item.contextValue = node.remote
     ? 'remoteBranch'
-    : (ref.isHead ? 'branch.current' : 'branch') + syncState(ref) + (node.pinned ? ';pinned' : '') + (flags?.archived ? ';archived' : '');
+    : (ref.isHead ? 'branch.current' : 'branch') +
+      syncState(ref) +
+      (node.pinned ? ';pinned' : '') +
+      (flags?.archived ? ';archived' : '') +
+      (other ? ';elsewhere' : '');
   // 選ぶと、そのブランチの履歴をメインビューに出す
   item.command = { command: 'amonhen.showRef', title: 'Show History', arguments: [ref.name] };
   return item;
@@ -870,6 +927,23 @@ function arrangedFolders(
   }
   return out.map((o): Node =>
     'pending' in o ? { kind: 'branchFolder', id: `${id}/${o.pending}`, label: o.pending, items: o.items } : o,
+  );
+}
+
+/** 並べるリモートのブランチと、そのリモート（`origin/HEAD` は出さない） */
+function remoteRefs(refs: readonly Ref[] | undefined, remotes: readonly Remote[] | undefined): { ref: Ref; remote: string }[] {
+  const names = (remotes ?? []).map((r) => r.name);
+  return (refs ?? []).flatMap((ref) => {
+    const split = ref.symref ? undefined : splitRemoteRef(ref.name, names);
+    return split ? [{ ref, remote: split.remote }] : [];
+  });
+}
+
+function tagNodes(tree: readonly RefTree<Ref>[]): Node[] {
+  return tree.map((t): Node =>
+    t.kind === 'folder'
+      ? { kind: 'tagFolder', id: `tags/${t.path}`, label: t.label, children: t.children }
+      : { kind: 'tag', ref: t.value, label: t.label },
   );
 }
 

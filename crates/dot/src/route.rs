@@ -940,6 +940,10 @@ fn stub(c: P, half: P, side: Side, along: f64, natural: Side, toward: f64, m: P)
 
 /// 端の短い道がノードから離れる長さの既定（矢じり 10 と少し）。
 pub const STUB: f64 = 14.0;
+/// 同じ側に並べる端の間の下限（これより込めば広げ、横の側へも回す）。
+const END_GAP: f64 = 8.0;
+/// 横の側から出入りするのに要る、隣のノードとの間（ノードから離れる長さ）。
+const SIDE_ROOM: f64 = 8.0;
 
 /// 一直線に並ぶ中の点と、重なる点を除く。
 fn tidy(out: Vec<P>) -> Vec<P> {
@@ -1157,8 +1161,39 @@ pub fn ortho(
                 .total_cmp(&(b.0 / b.1 as f64))
                 .then(a.3[0].cmp(&b.3[0]))
         });
+        let (width, cx) = nodes.get(node).map_or((0.0, 0.0), |n| (n.1, n.0.0));
+        let half_w = width / 2.0;
+        // 込んでいれば（7 割の幅で END_GAP 未満の間）幅の 9 割まで使い、それでも足りなければ、いちばん左・右の端を
+        // 向こうがその側にあり、脇を通る間があれば、横の側へ移す（Graphviz も横の側から出入りする）
+        let mut avail = width * 0.7;
+        if avail / (slots.len() as f64) < END_GAP {
+            avail = width * 0.9;
+        }
+        if avail / (slots.len() as f64) < END_GAP && slots.len() >= 3 {
+            for (left, side) in [(true, Side::W), (false, Side::E)] {
+                let at = if left { 0 } else { slots.len() - 1 };
+                let x = slots[at].0 / slots[at].1 as f64;
+                let room = if left { margin[node].0 } else { margin[node].1 };
+                let beyond = if left {
+                    x < cx - half_w
+                } else {
+                    x > cx + half_w
+                };
+                if beyond && room >= SIDE_ROOM {
+                    let slot = slots.remove(at);
+                    for (i, tail) in slot.3 {
+                        if let Some(end) = &mut ends[i][usize::from(!tail)] {
+                            end.0 = side;
+                            end.1 = 0.0;
+                        }
+                    }
+                }
+            }
+        }
+        if slots.is_empty() {
+            continue;
+        }
         let k = slots.len() as f64;
-        let avail = nodes.get(node).map_or(0.0, |n| n.1) * 0.7;
         for (j, slot) in slots.into_iter().enumerate() {
             let off = -avail / 2.0 + avail * (j as f64 + 0.5) / k;
             for (i, tail) in slot.3 {
@@ -1361,14 +1396,19 @@ pub fn ortho(
             Some(tidy(out))
         })
         .collect();
-    separate(&mut paths, edges, obstacles);
+    separate(&mut paths, edges, nodes, obstacles);
     paths
 }
 
 /// 違う辺の、同じ向きで TRACK より近く並んで重なる線を離す（溝を分ける）。動かすのは両隣が直角の中ほどの線
 /// だけで、両隣の線を伸び縮みさせて TRACK ずつずらし、ほかの線とも TRACK 以上離れ、ノード・題・ラベルの箱に
 /// 当たらない位置を選ぶ。samehead・sametail の組（同じ点で会う線）は離さない。比べる組の数は NUDGE_WORK まで。
-fn separate(paths: &mut [Option<Vec<P>>], edges: &[OrthoEdge], obstacles: &mut Obstacles) {
+fn separate(
+    paths: &mut [Option<Vec<P>>],
+    edges: &[OrthoEdge],
+    nodes: &[(P, f64, f64)],
+    obstacles: &mut Obstacles,
+) {
     #[derive(Clone, Copy)]
     struct Seg {
         edge: usize,
@@ -1442,10 +1482,17 @@ fn separate(paths: &mut [Option<Vec<P>>], edges: &[OrthoEdge], obstacles: &mut O
                 }
                 work -= 1;
                 if near(&segs[i], &segs[j]) {
-                    // 動かせるほう（後の辺を先に）
+                    // 動かせるほう（後の辺を先に）: 中ほどの線と、ポートのない端の縦の線（ノードの幅の中で、
+                    // 隣の横の線を伸び縮みさせる）
                     let movable = |s: &Seg, paths: &[Option<Vec<P>>]| {
                         let n = paths[s.edge].as_ref().map_or(0, Vec::len);
-                        s.at > 0 && s.at + 2 < n
+                        let e = &edges[s.edge];
+                        let free_end = |end: &OrthoEnd| matches!(end.port, OrthoPort::Free);
+                        (s.at > 0 && s.at + 2 < n)
+                            || (n >= 3
+                                && s.vertical
+                                && ((s.at == 0 && free_end(&e.tail_end))
+                                    || (s.at + 2 == n && free_end(&e.head_end))))
                     };
                     let (m, other) = if movable(&segs[j], paths) {
                         (j, i)
@@ -1467,7 +1514,22 @@ fn separate(paths: &mut [Option<Vec<P>>], edges: &[OrthoEdge], obstacles: &mut O
                     let e = &edges[seg.edge];
                     let skip = [e.tail, e.head];
                     let mut done = false;
+                    // 端の線は、そのノードの幅の 9 割の中だけ
+                    let n_pts = p.len();
+                    let end_node = if seg.at == 0 {
+                        Some(e.tail)
+                    } else if seg.at + 2 == n_pts {
+                        Some(e.head)
+                    } else {
+                        None
+                    };
                     for to in tries {
+                        if let Some(v) = end_node
+                            && let Some(&((cx, _), w, _)) = nodes.get(v)
+                            && (to - cx).abs() > w / 2.0 * 0.9
+                        {
+                            continue;
+                        }
                         let probe = Seg { pos: to, ..seg };
                         // 近くの線だけ（並びの時の位置で二分探索）と、動かした線
                         let from =
@@ -1501,14 +1563,15 @@ fn separate(paths: &mut [Option<Vec<P>>], edges: &[OrthoEdge], obstacles: &mut O
                             (p[k].0 - p[k + 1].0).abs() + (p[k].1 - p[k + 1].1).abs()
                         };
                         let last = q.len() - 2;
-                        let ends_ok = [seg.at - 1, seg.at + 1]
+                        let ends_ok = [seg.at.checked_sub(1), Some(seg.at + 1)]
                             .into_iter()
-                            .filter(|&k| k == 0 || k == last)
+                            .flatten()
+                            .filter(|&k| k <= last && k != seg.at && (k == 0 || k == last))
                             .all(|k| len(&q, k) >= len(&p, k) - 1e-6);
                         if !ends_ok {
                             continue;
                         }
-                        let clear = (seg.at - 1..=seg.at + 1).all(|k| {
+                        let clear = (seg.at.saturating_sub(1)..=(seg.at + 1).min(last)).all(|k| {
                             let (a, b) = (q[k], q[k + 1]);
                             let r = [
                                 a.0.min(b.0) - 0.5,

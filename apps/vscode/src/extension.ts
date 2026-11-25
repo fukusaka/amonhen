@@ -17,6 +17,7 @@ import { registerFetchCommand } from './ui/fetchCommand.ts';
 import { registerFileToolCommands } from './ui/fileToolCommands.ts';
 import { refsScope } from './history/scope.ts';
 import { registerIgnoreCommand } from './ui/ignoreCommand.ts';
+import { registerWcFileCommands } from './ui/wcFileCommands.ts';
 import { initPreferences } from './ui/preferences.ts';
 import { registerFormCommands } from './ui/formCommands.ts';
 import { registerHistoryCommands } from './ui/historyCommands.ts';
@@ -86,7 +87,7 @@ export async function activate(
   void updateFsmonitor();
   const manager = new RepositoryManager(log);
   const sidebar = new SidebarProvider(manager);
-  const dragAndDrop = new SidebarDragAndDrop(manager);
+  const dragAndDrop = new SidebarDragAndDrop(manager, (branch, root) => sidebar.worktrees.checkedOutElsewhere(branch, root));
   const view = vscode.window.createTreeView('amonhen.sidebar', {
     treeDataProvider: sidebar,
     dragAndDropController: dragAndDrop,
@@ -135,6 +136,7 @@ export async function activate(
       if (repo && first) await openConflict(repo.root, first, repo.current.sequence);
     }),
     registerIgnoreCommand(manager),
+    registerWcFileCommands(manager),
     vscode.commands.registerCommand('amonhen.selectRepository', () => manager.pick()),
     vscode.commands.registerCommand('amonhen.open', () => show()),
     vscode.commands.registerCommand('amonhen.showWorkingCopy', () => show('workingCopy')),
