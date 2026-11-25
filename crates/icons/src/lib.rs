@@ -64,6 +64,35 @@ pub struct Icon {
 
 include!(concat!(env!("OUT_DIR"), "/icons.rs"));
 
+impl Shape {
+    /// [`Shape::segments`] を、一辺 `size` の正方形に描く大きさのパス（`M`・`L`・`C`・`Z` だけ、絶対座標、空白で
+    /// 区切る）にする。SVG と XAML のパスの書き方のどちらでも読める（WinUI の `Path` に渡す）。
+    pub fn markup(&self, size: f32) -> String {
+        let scale = (size / GRID) as f64;
+        let s = self.segments;
+        let mut out = String::new();
+        let mut i = 0;
+        while i < s.len() {
+            let Some(op) = Op::from_code(s[i]) else { break };
+            let letter = match op {
+                Op::Move => 'M',
+                Op::Line => 'L',
+                Op::Cubic => 'C',
+                Op::Close => 'Z',
+            };
+            if !out.is_empty() {
+                out.push(' ');
+            }
+            out.push(letter);
+            for &v in &s[i + 1..i + 1 + op.arity()] {
+                write!(out, " {}", r(v as f64 * scale)).unwrap();
+            }
+            i += 1 + op.arity();
+        }
+        out
+    }
+}
+
 impl Icon {
     /// 線を引いた後の見た目を、塗る形にしたもの（SVG のパスの書き方、移動・直線・弧と閉じるだけ）。一辺 `size` の
     /// 正方形に描く大きさで、nonzero で塗る。線を引けず塗るだけの描画（WinUI の `PathIcon`、アイコンのフォント）で
@@ -333,6 +362,14 @@ mod tests {
                 .count()
                 > 10
         );
+    }
+
+    /// 描く大きさのパスは、移動で始まり、大きさに合わせて広がる。
+    #[test]
+    fn markup_scales() {
+        let pull = get("pull").unwrap();
+        assert_eq!(pull.shapes[0].markup(16.0), "M 3.5 2 L 12.5 2");
+        assert_eq!(pull.shapes[0].markup(32.0), "M 7 4 L 25 4");
     }
 
     #[test]
