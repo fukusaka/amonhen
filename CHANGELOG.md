@@ -23,7 +23,8 @@ becomes the GitHub Release notes.
 - DOT diagrams follow Graphviz's defaults: nodes and clusters without a fill are transparent, cluster titles are in the
   text color, and the margin is `pad` (4 points by default). `fontname` picks the typeface, falling back to the
   renderer's sans-serif, serif or monospace. `splines=ortho` edges ignore ports, and edges to a node
-  in a cluster cross its title instead of going around it.
+  in a cluster cross its title instead of going around it. HTML-like tables and cells with `style="invis"` are not
+  drawn but keep their room.
 - DOT diagrams note under the picture when a large graph's layout or edge routing is cut short at its work limit,
   and when its longest edges are drawn straight.
 
