@@ -262,6 +262,67 @@ struct Pictures<'a> {
     details: Cell<usize>,
 }
 
+/// 読めた画像を見せる大きさ: HTML の `width`・`height`（片方なら比を保つ）か、もとの大きさ（幅は 640 まで）。
+fn shown_size(image: &MdImage, run: &Run) -> (f64, f64) {
+    let ratio = image.height / image.width.max(1.0);
+    let (w, h) = match (run.width, run.height) {
+        (Some(w), Some(h)) => (f64::from(w), f64::from(h)),
+        (Some(w), None) => (f64::from(w), f64::from(w) * ratio),
+        (None, Some(h)) => (f64::from(h) / ratio.max(0.0001), f64::from(h)),
+        (None, None) => (image.width, image.height),
+    };
+    if w > MAX_IMAGE_WIDTH {
+        (MAX_IMAGE_WIDTH, h * MAX_IMAGE_WIDTH / w)
+    } else {
+        (w, h)
+    }
+}
+
+thread_local! {
+    /// 文の中に置く画像（鍵 → 一時ファイル、見せる大きさ、代わりの文）。段落を組むときに入れ、部品を作るときに引く。
+    static INLINE_IMAGES: std::cell::RefCell<std::collections::HashMap<String, (std::path::PathBuf, f64, f64, String)>> =
+        std::cell::RefCell::default();
+}
+
+/// 文の中に置く画像の部品（InlineUIContainer の中の Image。鍵は `Pictures::inline_key` が作ったもの）。
+pub fn inline_image(key: &str) -> Option<windows_core_reactor::IInspectable> {
+    let (file, w, h, alt) = INLINE_IMAGES.with(|m| m.borrow().get(key).cloned())?;
+    let uri = url_of(&file);
+    let escape = |s: &str| {
+        s.replace('&', "&amp;")
+            .replace('"', "&quot;")
+            .replace('<', "&lt;")
+            .replace('>', "&gt;")
+    };
+    let tip = if alt.is_empty() {
+        String::new()
+    } else {
+        format!(r#" ToolTipService.ToolTip="{}""#, escape(&alt))
+    };
+    let xaml = format!(
+        r#"<InlineUIContainer xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"><Image Source="{}" Width="{w}" Height="{h}" Stretch="Uniform"{tip}/></InlineUIContainer>"#,
+        escape(&uri)
+    );
+    amonhen_win_xaml::XamlReader::Load(&windows_core_reactor::HSTRING::from(xaml)).ok()
+}
+
+/// ファイルの `file:///` の URL（`\` を `/` に、空白などは % で）。
+fn url_of(path: &std::path::Path) -> String {
+    let text = path.display().to_string().replace('\\', "/");
+    let mut out = String::from("file:///");
+    for c in text.chars() {
+        if c.is_ascii_alphanumeric() || "/:._-~".contains(c) {
+            out.push(c);
+        } else {
+            let mut buf = [0u8; 4];
+            for b in c.encode_utf8(&mut buf).bytes() {
+                out.push_str(&format!("%{b:02X}"));
+            }
+        }
+    }
+    out
+}
+
 thread_local! {
     /// 開け閉めした `<details>`（文書の鍵と、番号 → 開いているか）。WinUI の Expander は自分で開け閉めするが、
     /// 組み直すたびに最初の状態を渡すと戻ってしまうので、押した後の状態を覚えて渡す。別の文書を開いたら忘れる。
@@ -467,18 +528,7 @@ impl Pictures<'_> {
     /// リンクの中の画像は押せる。
     fn image(&self, run: &Run) -> Option<View> {
         let image = self.images.get(self.source(run)?)?;
-        let ratio = image.height / image.width.max(1.0);
-        let (w, h) = match (run.width, run.height) {
-            (Some(w), Some(h)) => (f64::from(w), f64::from(h)),
-            (Some(w), None) => (f64::from(w), f64::from(w) * ratio),
-            (None, Some(h)) => (f64::from(h) / ratio.max(0.0001), f64::from(h)),
-            (None, None) => (image.width, image.height),
-        };
-        let (w, h) = if w > MAX_IMAGE_WIDTH {
-            (MAX_IMAGE_WIDTH, h * MAX_IMAGE_WIDTH / w)
-        } else {
-            (w, h)
-        };
+        let (w, h) = shown_size(image, run);
         let picture: View = Image::new()
             .source_data(image.data.clone())
             .stretch(Stretch::Uniform)
@@ -505,6 +555,34 @@ impl Pictures<'_> {
 }
 
 impl Pictures<'_> {
+    /// 文の中に置く画像の鍵（読めた画像を一時ファイルに書き、`inline_image` が部品にする）。読めなければ None。
+    fn inline_key(&self, run: &Run) -> Option<String> {
+        let image = self.images.get(self.source(run)?)?;
+        let (w, h) = shown_size(image, run);
+        let bytes = image.data.as_bytes();
+        let hash = {
+            use std::hash::{Hash, Hasher};
+            let mut hasher = std::collections::hash_map::DefaultHasher::new();
+            bytes.hash(&mut hasher);
+            hasher.finish()
+        };
+        let dir = std::env::temp_dir().join("amonhen-markdown-images");
+        let file = dir.join(format!("{hash:016x}"));
+        if !file.exists() {
+            std::fs::create_dir_all(&dir).ok()?;
+            std::fs::write(&file, bytes).ok()?;
+        }
+        let key = format!("{hash:016x}:{w}:{h}");
+        INLINE_IMAGES.with(|m| {
+            let mut m = m.borrow_mut();
+            if m.len() > 512 {
+                m.clear();
+            }
+            m.insert(key.clone(), (file, w, h, run.text.clone()));
+        });
+        Some(key)
+    }
+
     fn take(&self) -> Option<&DiagramPicture> {
         let i = self.next.get();
         self.next.set(i + 1);
@@ -583,6 +661,7 @@ fn inlines(runs: &[Run], bold: bool) -> Vec<RichTextInline> {
                 } else {
                     RunVariant::Normal
                 },
+                inline: None,
             })
         })
         .collect()
@@ -591,7 +670,29 @@ fn inlines(runs: &[Run], bold: bool) -> Vec<RichTextInline> {
 /// 段落・見出し: 読めた画像は絵で、ほかの文字はそのまま。画像だけの段落（バッジの並びなど）は横に並べる。HTML の
 /// `align` でそろえる（短い行は真ん中・右に寄る。GTK4 版の `justify`）。
 fn paragraph(runs: &[Run], size: f64, bold: bool, align: Align, pictures: &Pictures) -> View {
-    let view = if runs.iter().any(|r| pictures.image(r).is_some()) {
+    let has_text = runs
+        .iter()
+        .any(|r| (!r.text.trim().is_empty() && pictures.image(r).is_none()) || r.line_break);
+    let view = if has_text && runs.iter().any(|r| pictures.image(r).is_some()) {
+        // 文の途中の画像: 文と同じ行に置く（GitHub と同じく、行は切らない。macOS 版・GTK4 版と同じ）。
+        let mut inlines = inlines(runs, bold);
+        for (inline, run) in inlines.iter_mut().zip(runs) {
+            // リンクの中の画像も絵で（文の中の部品はリンクにできないので、リンクは外す）。
+            if let Some(key) = pictures.inline_key(run) {
+                *inline = RichTextInline::Run(RichTextRun {
+                    text: run.text.clone(),
+                    inline: Some(key),
+                    ..RichTextRun::default()
+                });
+            }
+        }
+        RichTextBlock::new()
+            .paragraphs(RichText::single_paragraph(inlines))
+            .font_size(size)
+            .is_text_selection_enabled(true)
+            .text_wrapping(TextWrapping::Wrap)
+            .into()
+    } else if runs.iter().any(|r| pictures.image(r).is_some()) {
         let mut parts: Vec<View> = Vec::new();
         let mut words: Vec<Run> = Vec::new();
         let mut only_images = true;
