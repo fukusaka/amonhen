@@ -11,10 +11,13 @@ export function setSharedIconsRoot(extensionUri: vscode.Uri): void {
   root = extensionUri;
 }
 
-/** 共通のアイコン `name` の、ライト・ダークの 2 枚。`green` はほかの worktree のブランチの色（charts.green）。 */
-export function sharedIcon(name: string, green = false): { light: vscode.Uri; dark: vscode.Uri } | undefined {
+/** 状態の色（VSCode の charts.* と list.warningForeground の既定の色を書き込んだ写し）。 */
+export type SharedIconColor = 'green' | 'yellow' | 'orange' | 'red' | 'warning';
+
+/** 共通のアイコン `name` の、ライト・ダークの 2 枚（`color` があればその色の写し）。 */
+export function sharedIcon(name: string, color?: SharedIconColor | false): { light: vscode.Uri; dark: vscode.Uri } | undefined {
   if (!root) return undefined;
-  const file = `${name}${green ? '-green' : ''}.svg`;
+  const file = `${name}${color ? `-${color}` : ''}.svg`;
   return {
     light: vscode.Uri.joinPath(root, 'media', 'icons', 'light', file),
     dark: vscode.Uri.joinPath(root, 'media', 'icons', 'dark', file),

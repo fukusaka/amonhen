@@ -11,7 +11,7 @@ import type { Ref, Remote, Stash } from '../git/refs.ts';
 import { splitRemoteRef } from '../git/refs.ts';
 import { byName, refTree, type RefTree } from '../git/refTree.ts';
 import { arrangeBranches, type Arranged, type BranchGroupsInfo } from '../git/branchGroups.ts';
-import { signatureExplanation, signatureIcon, signatureLabel, signatureStatus } from '../git/signature.ts';
+import { signatureExplanation, signatureIcon, signatureLabel, signatureStatus, type SignatureStatus } from '../git/signature.ts';
 import { stashBaseText, stashBranch, stashDescription } from '../git/stash.ts';
 import { describeSubmodule } from '../git/status.ts';
 import { submoduleMarks, submoduleTooltip } from '../git/submodules.ts';
@@ -444,7 +444,7 @@ export class SidebarProvider implements vscode.TreeDataProvider<Node>, vscode.Di
           item.id = 'view:workingCopy';
           const count = state?.status?.entries.filter((e) => e.kind !== 'ignored').length ?? 0;
           item.description = count > 0 ? `${count} changed` : 'clean';
-          item.iconPath = new vscode.ThemeIcon('diff');
+          item.iconPath = sharedIcon('working-copy') ?? new vscode.ThemeIcon('diff');
           // sparse checkout なら、一部のフォルダだけだと添える（アプリの Working Copy の行のフォルダの印）
           if (repo && this.sparse.has(repo.root)) {
             item.description += ' · some folders';
@@ -463,7 +463,7 @@ export class SidebarProvider implements vscode.TreeDataProvider<Node>, vscode.Di
           const item = new vscode.TreeItem('Repository Settings');
           item.id = 'view:settings';
           item.tooltip = 'This repository’s git settings (author, operations, remotes…)';
-          item.iconPath = new vscode.ThemeIcon('settings-gear');
+          item.iconPath = sharedIcon('settings') ?? new vscode.ThemeIcon('settings-gear');
           item.command = { command: 'amonhen.showRepositorySettings', title: 'Show Repository Settings' };
           return item;
         }
@@ -471,7 +471,7 @@ export class SidebarProvider implements vscode.TreeDataProvider<Node>, vscode.Di
           const item = new vscode.TreeItem('Range Diff');
           item.id = 'view:rangeDiff';
           item.tooltip = 'Two versions of the same commits, compared (git range-diff)';
-          item.iconPath = new vscode.ThemeIcon('diff-multiple');
+          item.iconPath = sharedIcon('range-diff') ?? new vscode.ThemeIcon('diff-multiple');
           item.command = { command: 'amonhen.showRangeDiff', title: 'Show Range Diff' };
           item.contextValue = 'view.rangeDiff';
           return item;
@@ -480,14 +480,14 @@ export class SidebarProvider implements vscode.TreeDataProvider<Node>, vscode.Di
           const item = new vscode.TreeItem('Reflog');
           item.id = 'view:reflog';
           item.tooltip = 'Every place HEAD has been, including commits no branch reaches any more';
-          item.iconPath = new vscode.ThemeIcon('list-ordered');
+          item.iconPath = sharedIcon('reflog') ?? new vscode.ThemeIcon('list-ordered');
           item.command = { command: 'amonhen.showReflog', title: 'Show Reflog' };
           return item;
         }
         const item = new vscode.TreeItem('History');
         item.id = 'view:history';
         item.description = state?.status?.branch.head ?? 'detached HEAD';
-        item.iconPath = new vscode.ThemeIcon('history');
+        item.iconPath = sharedIcon('history') ?? new vscode.ThemeIcon('history');
         item.command = { command: 'amonhen.showHistory', title: 'Show History' };
         return item;
       }
@@ -496,7 +496,7 @@ export class SidebarProvider implements vscode.TreeDataProvider<Node>, vscode.Di
         item.id = 'view:conflicts';
         item.description = String(node.count);
         item.tooltip = `${node.count} ${node.count === 1 ? 'file has' : 'files have'} conflicts. Click to open the first in the merge editor.`;
-        item.iconPath = new vscode.ThemeIcon('warning', new vscode.ThemeColor('list.warningForeground'));
+        item.iconPath = sharedIcon('conflict', 'warning') ?? new vscode.ThemeIcon('warning', new vscode.ThemeColor('list.warningForeground'));
         item.command = { command: 'amonhen.openFirstConflict', title: 'Open the First Conflict' };
         item.contextValue = 'view.conflicts';
         return item;
@@ -586,7 +586,7 @@ export class SidebarProvider implements vscode.TreeDataProvider<Node>, vscode.Di
         item.id = 'worktrees:clean';
         item.description = String(node.worktrees.length);
         item.tooltip = 'Worktrees without changes';
-        item.iconPath = new vscode.ThemeIcon('check-all');
+        item.iconPath = sharedIcon('clean') ?? new vscode.ThemeIcon('check-all');
         return item;
       }
       case 'remote': {
@@ -594,7 +594,7 @@ export class SidebarProvider implements vscode.TreeDataProvider<Node>, vscode.Di
         const item = new vscode.TreeItem(node.remote.name, vscode.TreeItemCollapsibleState.Collapsed);
         item.id = `remote:${node.remote.name}`;
         item.description = node.remote.unconfigured ? 'not a configured remote' : node.remote.fetchUrl;
-        item.iconPath = new vscode.ThemeIcon(node.remote.unconfigured ? 'folder' : 'cloud');
+        item.iconPath = sharedIcon(node.remote.unconfigured ? 'folder' : 'remote') ?? new vscode.ThemeIcon(node.remote.unconfigured ? 'folder' : 'cloud');
         // 設定のないものには、リモートの操作（fetch・名前・URL・削除）を出さない
         item.contextValue = node.remote.unconfigured ? 'remote.unconfigured' : 'remote';
         return item;
@@ -618,7 +618,7 @@ export class SidebarProvider implements vscode.TreeDataProvider<Node>, vscode.Di
         ]
           .filter(Boolean)
           .join('\n');
-        item.iconPath = new vscode.ThemeIcon('archive');
+        item.iconPath = sharedIcon('stashes') ?? new vscode.ThemeIcon('archive');
         item.contextValue = 'stash';
         item.command = { command: 'amonhen.stash.show', title: 'Show Stash', arguments: [node] };
         return item;
@@ -635,10 +635,12 @@ export class SidebarProvider implements vscode.TreeDataProvider<Node>, vscode.Di
           item.description = node.submodule.initialized ? node.state : 'not initialized';
         }
         const off = fact ? !fact.initialized : !node.submodule.initialized;
-        item.iconPath = new vscode.ThemeIcon(
-          fact?.conflict ? 'warning' : 'file-submodule',
-          off ? new vscode.ThemeColor('disabledForeground') : undefined,
-        );
+        item.iconPath =
+          sharedIcon(fact?.conflict ? 'conflict' : off ? 'not-checked-out' : 'submodule') ??
+          new vscode.ThemeIcon(
+            fact?.conflict ? 'warning' : 'file-submodule',
+            off ? new vscode.ThemeColor('disabledForeground') : undefined,
+          );
         // `;checkedOut` は取り出してある（Open in New Window はそのときだけ）
         item.contextValue = `submodule${fact?.ownGitDir ? ';ownGitDir' : ''}${off ? '' : ';checkedOut'}`;
         return item;
@@ -648,7 +650,7 @@ export class SidebarProvider implements vscode.TreeDataProvider<Node>, vscode.Di
         item.id = `subtree:${node.subtree.dir}`;
         item.description = node.subtree.squashed ? 'squashed' : undefined;
         item.tooltip = subtreeTooltip(node.subtree);
-        item.iconPath = new vscode.ThemeIcon('folder-library');
+        item.iconPath = sharedIcon('subtree') ?? new vscode.ThemeIcon('folder-library');
         item.contextValue = 'subtree';
         return item;
       }
@@ -726,12 +728,12 @@ export class SidebarProvider implements vscode.TreeDataProvider<Node>, vscode.Di
     item.description = parts.join(' · ');
     item.iconPath =
       w.prunable !== null
-        ? new vscode.ThemeIcon('warning', new vscode.ThemeColor('list.warningForeground'))
+        ? (sharedIcon('conflict', 'warning') ?? new vscode.ThemeIcon('warning', new vscode.ThemeColor('list.warningForeground')))
         : editing
-          ? new vscode.ThemeIcon('edit')
+          ? (sharedIcon('edited-worktree') ?? new vscode.ThemeIcon('edit'))
           : w.main
-            ? new vscode.ThemeIcon('home')
-            : new vscode.ThemeIcon('repo-forked', new vscode.ThemeColor('charts.green'));
+            ? (sharedIcon('main-worktree') ?? new vscode.ThemeIcon('home'))
+            : (sharedIcon('branch', 'green') ?? new vscode.ThemeIcon('repo-forked', new vscode.ThemeColor('charts.green')));
     item.tooltip = [
       w.path,
       w.branch ? `Branch: ${w.branch}` : 'detached HEAD',
@@ -769,13 +771,14 @@ export class SidebarProvider implements vscode.TreeDataProvider<Node>, vscode.Di
       const icon = signatureIcon(status);
       const color = icon.color ? new vscode.ThemeColor(icon.color) : undefined;
       // 確かめ終わるまでは、ふつうのタグのアイコン
-      item.iconPath = new vscode.ThemeIcon(status.kind === 'pending' ? 'tag' : icon.icon, color);
+      const shared = status.kind === 'pending' ? sharedIcon('tag') : signatureSharedIcon(status);
+      item.iconPath = shared ?? new vscode.ThemeIcon(status.kind === 'pending' ? 'tag' : icon.icon, color);
       const explanation = escape(signatureExplanation(status, true));
       tooltip.appendMarkdown(`\n\n$(${icon.icon}) **${signatureLabel(status)}** (${signed.signed}) — ${explanation}`);
       const signer = signed.signature?.signer || signed.signature?.key;
       if (signer) tooltip.appendMarkdown(`\n\nSigned by ${escape(signer)}`);
     } else {
-      item.iconPath = new vscode.ThemeIcon('tag');
+      item.iconPath = sharedIcon('tag') ?? new vscode.ThemeIcon('tag');
     }
     if (remotes && remotes.remotes.length > 0) {
       tooltip.appendMarkdown(`\n\n${remotes.remotes.map((r) => escape(tagStateText(remotes, name, r.name))).join('  \n')}`);
@@ -846,11 +849,10 @@ function branchItem(node: Extract<Node, { kind: 'branch' }>, other?: Worktree, f
     if (node.pinned && node.stackedOn) parts.push(`↳ ${node.stackedOn}`);
   }
   item.description = parts.join(' ') || undefined;
-  // ブランチはどの FE でも同じ形のアイコン（ほかの worktree が checkout していれば緑）。今のブランチ・お気に入りは
-  // まだ codicon。
+  // どの FE でも同じ形のアイコン（今のブランチ・お気に入り・ブランチ。ほかの worktree が checkout していれば緑）。
   const elsewhere = !!other && !other.main;
   item.iconPath =
-    (!ref.isHead && !node.pinned && sharedIcon('branch', elsewhere)) ||
+    sharedIcon(ref.isHead ? 'current-branch' : node.pinned ? 'favorite' : 'branch', elsewhere && 'green') ??
     new vscode.ThemeIcon(
       ref.isHead ? 'check' : node.pinned ? 'star-full' : 'git-branch',
       elsewhere ? new vscode.ThemeColor('charts.green') : undefined,
@@ -966,4 +968,28 @@ function folderChildren(folder: Folder, id: string, remote?: string): Node[] {
 /** Markdown の記号を文字のまま出す */
 function escape(text: string): string {
   return text.replace(/[\\`*_{}[\]()#+\-.!|<>$]/g, '\\$&');
+}
+
+/** 署名の状態の、どの FE でも同じ形のアイコン（色は状態の色）。 */
+function signatureSharedIcon(status: SignatureStatus): ReturnType<typeof sharedIcon> {
+  switch (status.kind) {
+    case 'verified':
+      return sharedIcon('signed', 'green');
+    case 'untrusted':
+      return sharedIcon('trust-unknown', 'yellow');
+    case 'signerMismatch':
+      return sharedIcon('signer-mismatch', 'yellow');
+    case 'expired':
+      return sharedIcon('expired-key', 'orange');
+    case 'revoked':
+      return sharedIcon('revoked-key', 'red');
+    case 'bad':
+      return sharedIcon('bad-signature', 'red');
+    case 'noKey':
+      return sharedIcon('missing-key');
+    case 'unsupported':
+      return sharedIcon('cannot-verify');
+    case 'pending':
+      return undefined;
+  }
 }
