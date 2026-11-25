@@ -8,6 +8,7 @@ use pulldown_cmark::{
 };
 use serde::Serialize;
 
+mod dollars;
 mod html;
 
 /// 文字の飾り（ひと続きの文字）。
@@ -680,30 +681,11 @@ impl Builder {
         });
     }
 
-    /// 文中の数式。`raw` は書いたままの原文（描けない FE はコードとして見せる）、`tex` は TeX。
-    fn inline_math(&mut self, raw: &str, tex: String, display: bool) {
+    /// `$$…$$` を、段落を分けて数式のブロックにする（MathJax・GitHub と同じく、独立した行に中央寄せで描く）。
+    /// 見出し・表のマス・画像の代わりの文の中はブロックにせず false（文中の式として `dollars` が選ぶ）。
+    fn display_math(&mut self, tex: &str) -> bool {
         if self.style.image.is_some() {
-            // 画像の代わりの文の中は文字のまま
-            self.push_run(raw, false);
-            return;
-        }
-        self.kbd_break = false;
-        self.runs.push(Run {
-            text: raw.to_owned(),
-            code: true,
-            link: self.style.links.last().cloned(),
-            math_tex: Some(tex),
-            math_display: display,
-            ..Run::default()
-        });
-    }
-
-    /// `$$…$$`。段落の中なら段落を分けて数式のブロックにする（MathJax・GitHub と同じく、独立した行に中央寄せで
-    /// 描く）。見出し・表のマスの中は文中の式（ブロックの組み方）。
-    fn display_math(&mut self, raw: &str, tex: String) {
-        if self.style.image.is_some() {
-            self.push_run(raw, false);
-            return;
+            return false;
         }
         let place = self.container().map(|i| &self.stack[i]);
         match place {
@@ -727,17 +709,15 @@ impl Builder {
                         heading: Some(_), ..
                     },
                 ),
-            ) => {
-                self.inline_math(raw, tex, true);
-                return;
-            }
+            ) => return false,
             _ => self.boundary(),
         }
         self.add(Block::Math {
-            text: tex,
+            text: tex.to_owned(),
             math: None,
             error: None,
         });
+        true
     }
 
     /// 閉じたブロックを、入れ子の親（なければ一番上）に足す。段落・見出しは、囲む HTML の `align` でそろえる。
@@ -1396,6 +1376,7 @@ pub fn parse_with_images(
 ) -> Vec<Block> {
     let images = images.map(|i| i.bounded());
     let mut blocks = parse_blocks(text, zone, images.as_ref());
+    dollars::find(&mut blocks);
     crate::math::render_all(&mut blocks);
     for block in &mut blocks {
         linkify_block(block, github);
@@ -1677,23 +1658,21 @@ fn parse_blocks(
             }
             Event::InlineMath(tex) | Event::DisplayMath(tex) => {
                 let raw = text.get(range.clone()).unwrap_or_default();
-                let display = raw.starts_with("$$");
-                let digit_after = text
-                    .get(range.end..)
-                    .is_some_and(|rest| rest.starts_with(|c: char| c.is_ascii_digit()));
                 if let Some(html) = &mut b.html_block {
                     html.push_str(raw);
                 } else if let Some(pre) = b.pre() {
                     pre.push_str(raw);
                 } else if b.tokenizer.in_raw() {
                     // 読まない HTML の要素（`<script>` など）の中
-                } else if !display && digit_after {
-                    // 閉じの `$` のすぐ後が数字なら数式にしない（`$5/$10` の値段。pandoc と同じ決まり）
-                    b.push_run(raw, false);
-                } else if display {
-                    b.display_math(raw, tex.trim().to_owned());
+                } else if raw.starts_with("$$")
+                    && dollars::opens_after(text[..range.start].chars().next_back())
+                    && dollars::closes_before(text[range.end..].chars().next())
+                    && b.display_math(tex.trim())
+                {
+                    // 段落の中の `$$…$$` はブロック
                 } else {
-                    b.inline_math(raw, code_span(&tex).to_owned(), false);
+                    // 文中の式は、段落ができてから GitHub と同じ決まりで選ぶ（`dollars`）
+                    b.push_run(&dollars::unescape(raw), false);
                 }
             }
             Event::Html(text) => match &mut b.html_block {

@@ -279,7 +279,11 @@ mod tests {
     }
 
     fn paragraphs(md: &str) -> Vec<String> {
-        parse(md)
+        paragraphs_of(&parse(md))
+    }
+
+    fn paragraphs_of(blocks: &[Block]) -> Vec<String> {
+        blocks
             .iter()
             .map(|b| match b {
                 Block::Paragraph { runs, .. } => line(runs),
@@ -292,10 +296,40 @@ mod tests {
     #[test]
     fn inline_math_follows_github() {
         assert_eq!(paragraphs("a $x^2$ b"), ["a [x^2] b"]);
+        // 開きの前は頭・空白・`(` だけ、閉じの後に英数字・`_` は続かない（GitHub の Markdown API で確かめた）
         assert_eq!(
             paragraphs("$a$$b$ and foo$y=x$bar"),
-            ["[a][b] and foo[y=x]bar"]
+            ["[a]$b$ and foo$y=x$bar"]
         );
+        assert_eq!(paragraphs("($x$), $y$. $z$-$w$"), ["([x]), [y]. [z]-$w$"]);
+        assert_eq!(paragraphs("$x$a $x$_ $x$です"), ["$x$a $x$_ [x]です"]);
+        assert_eq!(paragraphs("日本語の$x$ と $y$"), ["日本語の$x$ と [y]"]);
+        assert_eq!(
+            paragraphs(r#"a$x$b 5$x$ "$x$" [$x$]"#),
+            [r#"a$x$b 5$x$ "$x$" [$x$]"#]
+        );
+        assert_eq!(paragraphs("$x$y$ and $x$$$y$"), ["$x$y$ and [x]$$y$"]);
+        // 閉じの前の空白は、後が終わりか記号のときだけ
+        assert_eq!(paragraphs("$x $."), ["[x ]."]);
+        assert_eq!(paragraphs("a $y $ b and $x $a"), ["a $y $ b and $x $a"]);
+        // `\$` は `$` として組を探す
+        assert_eq!(paragraphs(r"\$x$ and $x\$"), ["[x] and [x]"]);
+        assert_eq!(paragraphs(r"$x\$ y$"), ["[x] y$"]);
+        assert_eq!(paragraphs(r"$\$$ and $\$x$"), ["$$$ and $$x$"]);
+        // 斜体・リンクの中は数式にしない。太字の中はする
+        assert_eq!(
+            paragraphs("*$x$* [$y$](https://example.com) **$z$**"),
+            ["$x$ $y$ [z]"]
+        );
+        // 脚注の中身も数式にしない
+        let blocks = parse("a $x$[^1]\n\n[^1]: $y$\n");
+        let Some(Block::Footnote { blocks: inner, .. }) = blocks.last() else {
+            panic!("{blocks:?}")
+        };
+        assert_eq!(paragraphs_of(inner), ["$y$"]);
+        // `` $`…`$ `` の中には `$` を書け、閉じの後は見ない
+        assert_eq!(paragraphs("$`a$b`$ and more"), ["[a$b] and more"]);
+        assert_eq!(paragraphs("a $`x`$b"), ["a [x]b"]);
         // GitHub の $`…`$（中は文字どおり。pulldown-cmark は中の $ で閉じるので、中に $ は書けない）
         assert_eq!(paragraphs("a $`x+y`$ b"), ["a [x+y] b"]);
         assert_eq!(paragraphs("a $`` x`y ``$ b"), ["a [x`y] b"]);
@@ -316,11 +350,14 @@ mod tests {
         assert_eq!(paragraphs("price: $3.50 or $4"), ["price: $3.50 or $4"]);
         // 閉じの $ の後が数字
         assert_eq!(paragraphs("$5/$10 each"), ["$5/$10 each"]);
-        // 開きの後・閉じの前が空白
-        assert_eq!(paragraphs("$ x$ and $x $"), ["$ x$ and $x $"]);
+        assert_eq!(
+            paragraphs("from $5 to $10, $5k-$10k"),
+            ["from $5 to $10, $5k-$10k"]
+        );
+        // 開きの後が空白
+        assert_eq!(paragraphs("$ x$ and $ x $"), ["$ x$ and $ x $"]);
         // \$ は文字
         assert_eq!(paragraphs(r"pay \$5 and \$6"), ["pay $5 and $6"]);
-        assert_eq!(paragraphs(r"\$x$ and $x\$"), ["$x$ and $x$"]);
         // コードの中
         assert_eq!(paragraphs("`$x$` code"), ["`$x$` code"]);
         // 閉じない
