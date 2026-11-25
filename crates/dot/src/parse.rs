@@ -5,7 +5,7 @@
 //! - 注釈: `//`・`/* */`、`#` から行の終わり（C の前処理の出力）。
 //! - 入れ子の深さには上限を置く（スタックがあふれないように）。
 
-use crate::Error;
+use crate::{Error, Syntax};
 
 /// 値。`html` は `<…>` で書いたもの。
 #[derive(Clone, Debug, PartialEq)]
@@ -117,8 +117,11 @@ impl<'a> Lexer<'a> {
         }
     }
 
-    fn err(&self, what: &str) -> Error {
-        Error::new(format!("{what} (line {})", self.line))
+    fn err(&self, kind: Syntax) -> Error {
+        Error::Syntax {
+            kind,
+            line: self.line,
+        }
     }
 
     /// 空白と注釈を飛ばす。
@@ -146,7 +149,7 @@ impl<'a> Lexer<'a> {
                     self.i += 2;
                     loop {
                         if self.i + 1 >= self.s.len() {
-                            return Err(self.err("Unterminated comment"));
+                            return Err(self.err(Syntax::UnterminatedComment));
                         }
                         if self.s[self.i] == b'*' && self.s[self.i + 1] == b'/' {
                             self.i += 2;
@@ -206,7 +209,7 @@ impl<'a> Lexer<'a> {
             }
             _ => {
                 let ch = self.src[self.i..].chars().next().unwrap_or('?');
-                Err(self.err(&format!("Unexpected character '{ch}'")))
+                Err(self.err(Syntax::UnexpectedCharacter(ch)))
             }
         }
     }
@@ -227,7 +230,7 @@ impl<'a> Lexer<'a> {
             self.i += 1;
         }
         if digits == 0 {
-            return Err(self.err("Malformed number"));
+            return Err(self.err(Syntax::MalformedNumber));
         }
         // 数のすぐあとの名前の文字は、Graphviz と同じく別の名前として読む（警告だけ）。
         Ok(Tok::Id {
@@ -242,7 +245,7 @@ impl<'a> Lexer<'a> {
         let mut run = self.i;
         loop {
             let Some(&c) = self.s.get(self.i) else {
-                return Err(self.err("Unterminated string"));
+                return Err(self.err(Syntax::UnterminatedString));
             };
             match c {
                 b'"' => {
@@ -275,7 +278,7 @@ impl<'a> Lexer<'a> {
                             out.push_str(&self.src[self.i..self.i + 1 + next_len]);
                             self.i += 1 + next_len;
                         }
-                        None => return Err(self.err("Unterminated string")),
+                        None => return Err(self.err(Syntax::UnterminatedString)),
                     }
                     run = self.i;
                 }
@@ -311,7 +314,7 @@ impl<'a> Lexer<'a> {
             }
             self.i += 1;
         }
-        Err(self.err("Unterminated HTML string"))
+        Err(self.err(Syntax::UnterminatedHtml))
     }
 }
 
@@ -339,15 +342,15 @@ impl<'a> Parser<'a> {
         }
     }
 
-    fn err(&self, what: &str) -> Error {
-        self.lex.err(what)
+    fn err(&self, kind: Syntax) -> Error {
+        self.lex.err(kind)
     }
 
-    fn expect(&mut self, want: Tok, what: &str) -> Result<(), Error> {
+    fn expect(&mut self, want: Tok, what: &'static str) -> Result<(), Error> {
         match self.bump()? {
             Some(t) if t == want => Ok(()),
-            Some(_) => Err(self.err(&format!("Expected {what}"))),
-            None => Err(self.err(&format!("Expected {what} before the end"))),
+            Some(_) => Err(self.err(Syntax::Expected(what))),
+            None => Err(self.err(Syntax::ExpectedBeforeEnd(what))),
         }
     }
 
@@ -361,14 +364,14 @@ impl<'a> Parser<'a> {
                         self.bump()?;
                         match self.bump()? {
                             Some(Tok::Id { text: more, .. }) => text.push_str(&more),
-                            _ => return Err(self.err("Expected a string after '+'")),
+                            _ => return Err(self.err(Syntax::ExpectedStringAfterPlus)),
                         }
                     }
                 }
                 Ok(Value { text, html: false })
             }
             Some(Tok::Html(text)) => Ok(Value { text, html: true }),
-            _ => Err(self.err("Expected a name")),
+            _ => Err(self.err(Syntax::ExpectedName)),
         }
     }
 
@@ -382,12 +385,12 @@ impl<'a> Parser<'a> {
         let directed = match &t {
             Some(t) if keyword(t, "digraph") => true,
             Some(t) if keyword(t, "graph") => false,
-            _ => return Err(self.err("Expected 'graph' or 'digraph'")),
+            _ => return Err(self.err(Syntax::ExpectedGraph)),
         };
         let id = match self.peek()? {
             Some(Tok::LBrace) => None,
             Some(_) => Some(self.id()?.text),
-            None => return Err(self.err("Expected '{'")),
+            None => return Err(self.err(Syntax::Expected("'{'"))),
         };
         self.expect(Tok::LBrace, "'{'")?;
         let stmts = self.stmts(directed, 1)?;
@@ -402,12 +405,12 @@ impl<'a> Parser<'a> {
     /// `}` までの文。
     fn stmts(&mut self, directed: bool, depth: usize) -> Result<Vec<Stmt>, Error> {
         if depth > MAX_DEPTH {
-            return Err(self.err("Subgraphs are nested too deeply"));
+            return Err(self.err(Syntax::NestedTooDeeply));
         }
         let mut out = Vec::new();
         loop {
             match self.peek()? {
-                None => return Err(self.err("Expected '}' before the end")),
+                None => return Err(self.err(Syntax::ExpectedBeforeEnd("'}'"))),
                 Some(Tok::RBrace) => {
                     self.bump()?;
                     return Ok(out);
@@ -433,7 +436,7 @@ impl<'a> Parser<'a> {
                     Some(Tok::Comma) | Some(Tok::Semi) => {
                         self.bump()?;
                     }
-                    None => return Err(self.err("Expected ']' before the end")),
+                    None => return Err(self.err(Syntax::ExpectedBeforeEnd("']'"))),
                     Some(_) => {
                         let key = self.id()?.text;
                         if matches!(self.peek()?, Some(Tok::Eq)) {
@@ -530,7 +533,7 @@ impl<'a> Parser<'a> {
                 };
                 self.bump()?;
                 if !matches!(self.peek()?, Some(Tok::LBracket)) {
-                    return Err(self.err("Expected '['"));
+                    return Err(self.err(Syntax::Expected("'['")));
                 }
                 Ok(Stmt::Attr(kind, self.attr_list()?))
             }
@@ -547,7 +550,7 @@ impl<'a> Parser<'a> {
                 let attrs = self.attr_list()?;
                 Ok(Stmt::Node(node, attrs))
             }
-            _ => Err(self.err("Unexpected symbol")),
+            _ => Err(self.err(Syntax::UnexpectedSymbol)),
         }
     }
 }
@@ -567,7 +570,7 @@ mod tests {
     use super::*;
 
     fn ok(src: &str) -> Graph {
-        parse(src).unwrap_or_else(|e| panic!("{src}: {}", e.message))
+        parse(src).unwrap_or_else(|e| panic!("{src}: {e}"))
     }
 
     #[test]
@@ -674,7 +677,16 @@ mod tests {
     fn limits_nesting() {
         let deep = format!("digraph {{ {} }}", "{".repeat(MAX_DEPTH + 5));
         let e = parse(&deep).unwrap_err();
-        assert!(e.message.contains("nested"), "{}", e.message);
+        assert!(
+            matches!(
+                e,
+                Error::Syntax {
+                    kind: Syntax::NestedTooDeeply,
+                    ..
+                }
+            ),
+            "{e}"
+        );
         let fine = format!("digraph {{ {}a{} }}", "{".repeat(50), "}".repeat(50));
         ok(&fine);
     }

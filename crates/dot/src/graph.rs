@@ -127,10 +127,6 @@ struct Builder {
     limits: Limits,
 }
 
-fn too_many(what: &str, limit: usize) -> Error {
-    Error::new(format!("The graph has more than {limit} {what}"))
-}
-
 impl Builder {
     fn is_ancestor(&self, a: usize, mut b: usize) -> bool {
         loop {
@@ -149,7 +145,9 @@ impl Builder {
             Some(&i) => i,
             None => {
                 if self.model.nodes.len() >= self.limits.nodes {
-                    return Err(too_many("nodes", self.limits.nodes));
+                    return Err(Error::TooManyNodes {
+                        limit: self.limits.nodes,
+                    });
                 }
                 let i = self.model.nodes.len();
                 self.model.nodes.push(Node {
@@ -198,7 +196,9 @@ impl Builder {
             self.pairs.insert(key, self.model.edges.len());
         }
         if self.model.edges.len() >= self.limits.edges {
-            return Err(too_many("edges", self.limits.edges));
+            return Err(Error::TooManyEdges {
+                limit: self.limits.edges,
+            });
         }
         self.model.edges.push(Edge {
             tail,
@@ -258,7 +258,9 @@ impl Builder {
                         };
                         if let Some(prev) = &prev {
                             if prev.len().saturating_mul(group.len()) > self.limits.edges {
-                                return Err(too_many("edges", self.limits.edges));
+                                return Err(Error::TooManyEdges {
+                                    limit: self.limits.edges,
+                                });
                             }
                             for (t, tp) in prev {
                                 for (h, hp) in &group {
