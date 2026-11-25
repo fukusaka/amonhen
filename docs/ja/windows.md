@@ -145,8 +145,8 @@ ssh windows-pc "powershell -NoProfile -NonInteractive -EncodedCommand $(iconv -f
 - `powershell -Command -`（スクリプトを標準入力から読む）は 1 行ずつ実行する。複数行にわたるブロック（関数など）は
   黙って実行されず、終了コードは 0 のまま。
 - スクリプトの最初に `[Console]::OutputEncoding = [Text.Encoding]::UTF8` を置くと、日本語の出力を Mac で読める。
-- Windows PowerShell 5.1 で `npm` は `npm.ps1` になり、テストが失敗しても `$LASTEXITCODE` が 0 のままだった（今の
-  `npm.ps1` は終了コードを返す作りなので、npm の版によるかもしれない）。`npm.cmd` を呼ぶ。`r` は別名（Invoke-History）なので、関数の名前にしない。
+- Windows PowerShell 5.1 で `npm` は `npm.ps1` になり、既定の実行ポリシー（Restricted）で実行を断られる。何も
+  動かず、`$LASTEXITCODE` は前の値のまま（0 のことが多い）。`npm.cmd` を呼ぶ。`r` は別名（Invoke-History）なので、関数の名前にしない。
 - ssh のセッションにはデスクトップがない。そこから起動した窓は画面に出ず、撮れない。画面は実機かリモート デスクトップで
   見る。
 

@@ -145,8 +145,8 @@ ssh windows-pc "powershell -NoProfile -NonInteractive -EncodedCommand $(iconv -f
 - `powershell -Command -` (reading the script from standard input) runs it line by line: a block spread over several
   lines (such as a function) silently doesn't run, and the exit code is still 0.
 - Start a script with `[Console]::OutputEncoding = [Text.Encoding]::UTF8` to read Japanese output on the Mac.
-- In Windows PowerShell 5.1, `npm` runs `npm.ps1`, and `$LASTEXITCODE` stayed 0 here even when tests failed
-  (the current `npm.ps1` is meant to pass the code on, so it may depend on the npm version). Call `npm.cmd`. `r` is an alias (Invoke-History), so don't name a function `r`.
+- In Windows PowerShell 5.1, `npm` resolves to `npm.ps1`, which the default execution policy (Restricted)
+  refuses to run: nothing runs and `$LASTEXITCODE` keeps its earlier value, often 0. Call `npm.cmd`. `r` is an alias (Invoke-History), so don't name a function `r`.
 - An ssh session has no desktop: windows started from it don't appear on the screen and can't be captured. Look at the
   screen in person or through Remote Desktop.
 
