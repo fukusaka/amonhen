@@ -468,7 +468,7 @@ impl Pictures<'_> {
         themed.or(run.image.as_ref())
     }
 
-    /// 読めた画像の、HTML の `width`・`height`（片方なら比を保つ）か、もとの大きさ（幅は 640 まで）で見せる絵。
+    /// 読めた画像の、HTML の `width`・`height`（片方なら比を保ち、両方なら比を保たずに伸ばす）か、もとの大きさ（幅は 640 まで）で見せる絵。
     /// 幅の割合（`width="50%"`）は本文の欄の幅に対して決める（図と同じく欄の幅は決まった値）。リンクの中の画像は
     /// 押せる。
     fn image(&self, run: &Run) -> Option<View> {
@@ -478,6 +478,12 @@ impl Pictures<'_> {
             run.width_percent
                 .map(|p| percent_width(p, f64::from(TEXT_WIDTH)))
         });
+        // 幅と高さを両方決めたら、GitHub（ブラウザ）と同じく比を保たずにその大きさへ伸ばす
+        let stretch = if width.is_some() && run.height.is_some() {
+            Stretch::Fill
+        } else {
+            Stretch::Uniform
+        };
         let (w, h) = match (width, run.height) {
             (Some(w), Some(h)) => (w, f64::from(h)),
             (Some(w), None) => (w, w * ratio),
@@ -491,7 +497,7 @@ impl Pictures<'_> {
         };
         let picture: View = Image::new()
             .source_data(image.data.clone())
-            .stretch(Stretch::Uniform)
+            .stretch(stretch)
             .width(w)
             .height(h)
             .into();
