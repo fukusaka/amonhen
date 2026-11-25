@@ -2925,6 +2925,9 @@ pub fn set_property(
                         .and_then(|run| run.SetForeground(&brush))
                         .map_err(native_error)?;
                 }
+                if let Ok(inspectable) = run.cast::<windows_core::IInspectable>() {
+                    crate::element::apply_run_variant(&inspectable, value.variant);
+                }
                 let run = run.cast::<Inline>().map_err(native_error)?;
                 inlines.Append(&run).map_err(native_error)
             };

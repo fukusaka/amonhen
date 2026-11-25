@@ -988,6 +988,18 @@ pub struct RichTextRun {
     /// Draws the run in a monospace font (Cascadia Mono, then Consolas).
     pub is_monospace: bool,
     pub is_strikethrough: bool,
+    /// Raises or lowers the run (superscript, subscript). Applied by the handler set with
+    /// [`set_run_variant_handler`], as the typography attached property isn't in these bindings.
+    pub variant: RunVariant,
+}
+
+/// A rich text run's position against the baseline.
+#[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
+pub enum RunVariant {
+    #[default]
+    Normal,
+    Superscript,
+    Subscript,
 }
 
 impl RichTextRun {
@@ -1021,6 +1033,27 @@ thread_local! {
 /// UI thread).
 pub fn set_app_link_handler(handler: impl Fn(&str) + 'static) {
     APP_LINK_HANDLER.with(|h| *h.borrow_mut() = Some(Rc::new(handler)));
+}
+
+thread_local! {
+    static RUN_VARIANT_HANDLER: std::cell::RefCell<Option<Rc<dyn Fn(&windows_core::IInspectable, RunVariant)>>> =
+        const { std::cell::RefCell::new(None) };
+}
+
+/// Sets the handler that applies a run's [`RunVariant`] to the native `Run` (on the UI thread).
+pub fn set_run_variant_handler(
+    handler: impl Fn(&windows_core::IInspectable, RunVariant) + 'static,
+) {
+    RUN_VARIANT_HANDLER.with(|h| *h.borrow_mut() = Some(Rc::new(handler)));
+}
+
+pub(crate) fn apply_run_variant(run: &windows_core::IInspectable, variant: RunVariant) {
+    if variant == RunVariant::Normal {
+        return;
+    }
+    if let Some(handler) = RUN_VARIANT_HANDLER.with(|h| h.borrow().clone()) {
+        handler(run, variant);
+    }
 }
 
 pub(crate) fn open_app_link(target: &str) {

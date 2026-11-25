@@ -279,7 +279,8 @@ struct RootInput {
 
 /// 前のタブの History で `f` を呼ぶ（窓の入力の処理から。入力を受けるのは前のタブだけ）。
 /// メッセージの中のコミット ID のリンク（`APP_LINK_PREFIX` の `rev:`）を押したら、前に出ている窓の History で
-/// そのコミットへ（macOS 版の `amonhen-rev:`）。窓はどれも同じ UI のスレッドなので、タブを作るたびに付け直してよい。
+/// そのコミットへ（macOS 版の `amonhen-rev:`）。Markdown の上付き・下付きもここで当てる。窓はどれも同じ UI の
+/// スレッドなので、タブを作るたびに付け直してよい。
 fn install_app_links() {
     windows_reactor::set_app_link_handler(|target| {
         if let Some(rev) = target.strip_prefix("rev:") {
@@ -287,6 +288,20 @@ fn install_app_links() {
             with_history(|h| {
                 h.sender.send(Message::GoToRev(rev));
             });
+        }
+    });
+    // Markdown の `<sup>`・`<sub>`: 文字の飾りを上付き・下付きにする（reactor の Run には付属の値がないので、ここで）。
+    windows_reactor::set_run_variant_handler(|run, variant| {
+        let value = match variant {
+            windows_reactor::RunVariant::Superscript => xaml::FontVariants::Superscript,
+            // Segoe UI には下付き（subs）の字形がないので、下に置く小さな字（sinf）。
+            windows_reactor::RunVariant::Subscript => xaml::FontVariants::Inferior,
+            windows_reactor::RunVariant::Normal => return,
+        };
+        if let Ok(element) = run.cast::<xaml::DependencyObject>()
+            && let Err(e) = xaml::Typography::SetVariants(&element, value)
+        {
+            eprintln!("上付き・下付きにできない: {e}");
         }
     });
 }

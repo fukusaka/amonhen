@@ -5204,6 +5204,26 @@ impl windows_core::RuntimeName for FontFamily {
 unsafe impl Send for FontFamily {}
 unsafe impl Sync for FontFamily {}
 #[repr(transparent)]
+#[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
+pub struct FontVariants(pub i32);
+impl FontVariants {
+    pub const Normal: Self = Self(0);
+    pub const Superscript: Self = Self(1);
+    pub const Subscript: Self = Self(2);
+    pub const Ordinal: Self = Self(3);
+    pub const Inferior: Self = Self(4);
+    pub const Ruby: Self = Self(5);
+}
+impl windows_core::imp::TypeKind for FontVariants {
+    type TypeKind = windows_core::imp::CopyType;
+}
+impl windows_core::RuntimeType for FontVariants {
+    const SIGNATURE: windows_core::imp::ConstBuffer =
+        windows_core::imp::ConstBuffer::from_slice(b"enum(Microsoft.UI.Xaml.FontVariants;i4)");
+    const NAME: windows_core::imp::ConstBuffer =
+        windows_core::imp::ConstBuffer::from_slice(b"Microsoft.UI.Xaml.FontVariants");
+}
+#[repr(transparent)]
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct FrameworkElement(windows_core::IUnknown);
 windows_core::imp::interface_hierarchy!(
@@ -9198,6 +9218,170 @@ impl windows_core::RuntimeType for ITreeViewStatics2 {
 #[repr(C)]
 pub struct ITreeViewStatics2_Vtbl {
     pub base__: windows_core::IInspectable_Vtbl,
+}
+windows_core::imp::define_interface!(
+    ITypography,
+    ITypography_Vtbl,
+    0xfa27e2e3_be5e_5d21_9a5e_90cf102af828
+);
+impl windows_core::RuntimeType for ITypography {
+    const SIGNATURE: windows_core::imp::ConstBuffer =
+        windows_core::imp::ConstBuffer::for_interface::<Self>();
+    const NAME: windows_core::imp::ConstBuffer =
+        windows_core::imp::ConstBuffer::from_slice(b"Microsoft.UI.Xaml.Documents.ITypography");
+}
+#[repr(C)]
+pub struct ITypography_Vtbl {
+    pub base__: windows_core::IInspectable_Vtbl,
+}
+windows_core::imp::define_interface!(
+    ITypographyStatics,
+    ITypographyStatics_Vtbl,
+    0x55fe4535_2125_533a_ada8_27be2b9e1193
+);
+impl windows_core::RuntimeType for ITypographyStatics {
+    const SIGNATURE: windows_core::imp::ConstBuffer =
+        windows_core::imp::ConstBuffer::for_interface::<Self>();
+    const NAME: windows_core::imp::ConstBuffer = windows_core::imp::ConstBuffer::from_slice(
+        b"Microsoft.UI.Xaml.Documents.ITypographyStatics",
+    );
+}
+#[repr(C)]
+pub struct ITypographyStatics_Vtbl {
+    pub base__: windows_core::IInspectable_Vtbl,
+    AnnotationAlternatesProperty: usize,
+    GetAnnotationAlternates: usize,
+    SetAnnotationAlternates: usize,
+    EastAsianExpertFormsProperty: usize,
+    GetEastAsianExpertForms: usize,
+    SetEastAsianExpertForms: usize,
+    EastAsianLanguageProperty: usize,
+    GetEastAsianLanguage: usize,
+    SetEastAsianLanguage: usize,
+    EastAsianWidthsProperty: usize,
+    GetEastAsianWidths: usize,
+    SetEastAsianWidths: usize,
+    StandardLigaturesProperty: usize,
+    GetStandardLigatures: usize,
+    SetStandardLigatures: usize,
+    ContextualLigaturesProperty: usize,
+    GetContextualLigatures: usize,
+    SetContextualLigatures: usize,
+    DiscretionaryLigaturesProperty: usize,
+    GetDiscretionaryLigatures: usize,
+    SetDiscretionaryLigatures: usize,
+    HistoricalLigaturesProperty: usize,
+    GetHistoricalLigatures: usize,
+    SetHistoricalLigatures: usize,
+    StandardSwashesProperty: usize,
+    GetStandardSwashes: usize,
+    SetStandardSwashes: usize,
+    ContextualSwashesProperty: usize,
+    GetContextualSwashes: usize,
+    SetContextualSwashes: usize,
+    ContextualAlternatesProperty: usize,
+    GetContextualAlternates: usize,
+    SetContextualAlternates: usize,
+    StylisticAlternatesProperty: usize,
+    GetStylisticAlternates: usize,
+    SetStylisticAlternates: usize,
+    StylisticSet1Property: usize,
+    GetStylisticSet1: usize,
+    SetStylisticSet1: usize,
+    StylisticSet2Property: usize,
+    GetStylisticSet2: usize,
+    SetStylisticSet2: usize,
+    StylisticSet3Property: usize,
+    GetStylisticSet3: usize,
+    SetStylisticSet3: usize,
+    StylisticSet4Property: usize,
+    GetStylisticSet4: usize,
+    SetStylisticSet4: usize,
+    StylisticSet5Property: usize,
+    GetStylisticSet5: usize,
+    SetStylisticSet5: usize,
+    StylisticSet6Property: usize,
+    GetStylisticSet6: usize,
+    SetStylisticSet6: usize,
+    StylisticSet7Property: usize,
+    GetStylisticSet7: usize,
+    SetStylisticSet7: usize,
+    StylisticSet8Property: usize,
+    GetStylisticSet8: usize,
+    SetStylisticSet8: usize,
+    StylisticSet9Property: usize,
+    GetStylisticSet9: usize,
+    SetStylisticSet9: usize,
+    StylisticSet10Property: usize,
+    GetStylisticSet10: usize,
+    SetStylisticSet10: usize,
+    StylisticSet11Property: usize,
+    GetStylisticSet11: usize,
+    SetStylisticSet11: usize,
+    StylisticSet12Property: usize,
+    GetStylisticSet12: usize,
+    SetStylisticSet12: usize,
+    StylisticSet13Property: usize,
+    GetStylisticSet13: usize,
+    SetStylisticSet13: usize,
+    StylisticSet14Property: usize,
+    GetStylisticSet14: usize,
+    SetStylisticSet14: usize,
+    StylisticSet15Property: usize,
+    GetStylisticSet15: usize,
+    SetStylisticSet15: usize,
+    StylisticSet16Property: usize,
+    GetStylisticSet16: usize,
+    SetStylisticSet16: usize,
+    StylisticSet17Property: usize,
+    GetStylisticSet17: usize,
+    SetStylisticSet17: usize,
+    StylisticSet18Property: usize,
+    GetStylisticSet18: usize,
+    SetStylisticSet18: usize,
+    StylisticSet19Property: usize,
+    GetStylisticSet19: usize,
+    SetStylisticSet19: usize,
+    StylisticSet20Property: usize,
+    GetStylisticSet20: usize,
+    SetStylisticSet20: usize,
+    CapitalsProperty: usize,
+    GetCapitals: usize,
+    SetCapitals: usize,
+    CapitalSpacingProperty: usize,
+    GetCapitalSpacing: usize,
+    SetCapitalSpacing: usize,
+    KerningProperty: usize,
+    GetKerning: usize,
+    SetKerning: usize,
+    CaseSensitiveFormsProperty: usize,
+    GetCaseSensitiveForms: usize,
+    SetCaseSensitiveForms: usize,
+    HistoricalFormsProperty: usize,
+    GetHistoricalForms: usize,
+    SetHistoricalForms: usize,
+    FractionProperty: usize,
+    GetFraction: usize,
+    SetFraction: usize,
+    NumeralStyleProperty: usize,
+    GetNumeralStyle: usize,
+    SetNumeralStyle: usize,
+    NumeralAlignmentProperty: usize,
+    GetNumeralAlignment: usize,
+    SetNumeralAlignment: usize,
+    SlashedZeroProperty: usize,
+    GetSlashedZero: usize,
+    SetSlashedZero: usize,
+    MathematicalGreekProperty: usize,
+    GetMathematicalGreek: usize,
+    SetMathematicalGreek: usize,
+    VariantsProperty: usize,
+    GetVariants: usize,
+    pub SetVariants: unsafe extern "system" fn(
+        *mut core::ffi::c_void,
+        *mut core::ffi::c_void,
+        FontVariants,
+    ) -> windows_core::HRESULT,
 }
 windows_core::imp::define_interface!(
     IUIElement,
@@ -20524,6 +20708,49 @@ impl<
         }
     }
 }
+#[repr(transparent)]
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct Typography(windows_core::IUnknown);
+windows_core::imp::interface_hierarchy!(
+    Typography,
+    windows_core::IUnknown,
+    windows_core::IInspectable
+);
+impl Typography {
+    pub fn SetVariants<P0>(element: P0, value: FontVariants) -> windows_core::Result<()>
+    where
+        P0: windows_core::Param<DependencyObject>,
+    {
+        Self::ITypographyStatics(|this| unsafe {
+            (windows_core::Interface::vtable(this).SetVariants)(
+                windows_core::Interface::as_raw(this),
+                element.param().abi(),
+                value,
+            )
+            .ok()
+        })
+    }
+    fn ITypographyStatics<R, F: FnOnce(&ITypographyStatics) -> windows_core::Result<R>>(
+        callback: F,
+    ) -> windows_core::Result<R> {
+        static SHARED: windows_core::imp::FactoryCache<Typography, ITypographyStatics> =
+            windows_core::imp::FactoryCache::new();
+        SHARED.call(callback)
+    }
+}
+impl windows_core::RuntimeType for Typography {
+    const SIGNATURE: windows_core::imp::ConstBuffer =
+        windows_core::imp::ConstBuffer::for_class::<Self, ITypography>();
+}
+unsafe impl windows_core::Interface for Typography {
+    type Vtable = <ITypography as windows_core::Interface>::Vtable;
+    const IID: windows_core::GUID = <ITypography as windows_core::Interface>::IID;
+}
+impl windows_core::RuntimeName for Typography {
+    const NAME: &'static str = "Microsoft.UI.Xaml.Documents.Typography";
+}
+unsafe impl Send for Typography {}
+unsafe impl Sync for Typography {}
 #[repr(transparent)]
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct UIElement(windows_core::IUnknown);
