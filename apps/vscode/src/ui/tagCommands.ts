@@ -1,6 +1,7 @@
 /**
  * サイドバーのタグとリモートの右クリック（アプリのサイドバーと同じ操作）。タグはリモートへの push・置き換え・
- * 削除と手元の削除（Undo できる）、リモートは追加・名前の変更・URL の変更・prune・削除。どれも共有の daemon の
+ * 削除と手元の削除（Undo できる）、リモートは追加・名前の変更・URL と push の URL の変更・つながるかの確かめ・
+ * prune・削除（Repository Settings の Remotes からも）。どれも共有の daemon の
  * コアで行う（エンジンがなければメニューに出さない）
  */
 import * as vscode from 'vscode';
@@ -244,8 +245,47 @@ export function registerTagCommands(manager: RepositoryManager, sidebar: Sidebar
       if (url === undefined || url.trim() === current) return;
       await changeRemote(repo, { kind: 'setUrl', name: remote, url: url.trim() }, `Edit URL of ${remote}`);
     }),
-    // リモートで消えたブランチの追跡を消す
+    // push の URL（アプリの Edit… のシートの Push URL）。空なら fetch の URL へ送る
+    remoteCommand('amonhen.remote.editPushUrl', async (repo, remote) => {
+      const info = repo.current.remotes?.find((r) => r.name === remote);
+      const fetchUrl = info?.fetchUrl ?? '';
+      const pushUrl = info?.pushUrl && info.pushUrl !== fetchUrl ? info.pushUrl : '';
+      const url = await vscode.window.showInputBox({
+        title: `Push URL of ${remote}`,
+        prompt: 'Where Push sends to. Empty to push to the fetch URL.',
+        value: pushUrl,
+        placeHolder: fetchUrl,
+      });
+      if (url === undefined) return;
+      await changeRemote(repo, { kind: 'setPushUrl', name: remote, url: url.trim() || null }, `Edit push URL of ${remote}`);
+    }),
+    // つながるかを確かめる（アプリの Edit… のシートの Check Connection。git ls-remote）
+    remoteCommand('amonhen.remote.checkConnection', async (repo, remote) => {
+      const url = repo.current.remotes?.find((r) => r.name === remote)?.fetchUrl;
+      if (!url) return;
+      const client = await daemonFor(repo.root);
+      if (!client) throw new Error('Check Connection needs the Amon Hen engine (amonhen.daemon.enabled)');
+      const reply = await vscode.window.withProgress(
+        { location: vscode.ProgressLocation.Notification, title: `Connecting to ${remote}…` },
+        async () => (await client.call({ op: 'run', command: { op: 'checkRemote', url } })).json,
+      );
+      if (reply['ok'] !== true) throw new Error(String(reply['error'] ?? `Can’t reach ${remote}`));
+      const info = reply['info'] as { branches?: number; tags?: number; head?: string | null } | undefined;
+      void vscode.window.showInformationMessage(
+        `${remote}: reachable, ${info?.branches ?? 0} branches, ${info?.tags ?? 0} tags${info?.head ? `, HEAD at ${info.head}` : ''}`,
+      );
+    }),
+    // リモートで消えたブランチの追跡を消す。リモートと話す（消えたブランチを読む）ので、先に聞く
     remoteCommand('amonhen.remote.prune', async (repo, remote) => {
+      const answer = await vscode.window.showWarningMessage(
+        `Prune ${remote}?`,
+        {
+          modal: true,
+          detail: `Removes the remote-tracking branches whose branches are gone from ${remote} (git remote prune). ${CANT_UNDO}`,
+        },
+        'Prune',
+      );
+      if (answer !== 'Prune') return;
       await changeRemote(repo, { kind: 'prune', name: remote }, `Prune ${remote}`);
       vscode.window.setStatusBarMessage(`$(check) Pruned ${remote}`, 5000);
     }),

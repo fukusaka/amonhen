@@ -293,8 +293,18 @@
         "category": "Amon Hen"
       },
       {
+        "command": "amonhen.remote.editPushUrl",
+        "title": "Edit Push URL…",
+        "category": "Amon Hen"
+      },
+      {
+        "command": "amonhen.remote.checkConnection",
+        "title": "Check Connection",
+        "category": "Amon Hen"
+      },
+      {
         "command": "amonhen.remote.prune",
-        "title": "Prune",
+        "title": "Prune…",
         "category": "Amon Hen"
       },
       {
@@ -1240,9 +1250,19 @@
           "group": "1_remote@2"
         },
         {
-          "command": "amonhen.remote.prune",
+          "command": "amonhen.remote.editPushUrl",
           "when": "view == amonhen.sidebar && viewItem == remote && amonhen.engine",
           "group": "1_remote@3"
+        },
+        {
+          "command": "amonhen.remote.checkConnection",
+          "when": "view == amonhen.sidebar && viewItem == remote && amonhen.engine",
+          "group": "1_remote@4"
+        },
+        {
+          "command": "amonhen.remote.prune",
+          "when": "view == amonhen.sidebar && viewItem == remote && amonhen.engine",
+          "group": "1_remote@5"
         },
         {
           "command": "amonhen.remote.remove",
@@ -1946,6 +1966,14 @@
         },
         {
           "command": "amonhen.remote.prune",
+          "when": "false"
+        },
+        {
+          "command": "amonhen.remote.editPushUrl",
+          "when": "false"
+        },
+        {
+          "command": "amonhen.remote.checkConnection",
           "when": "false"
         },
         {
