@@ -380,7 +380,7 @@ async function workingCopyFlow(label: string): Promise<void> {
   const mark = posted.length;
   await vscode.commands.executeCommand('amonhen.refresh');
   await waitPosted('wcFiles', mark, (m) => m.layout === 'tree' && m.files.some((f) => f.group === 'unstaged' && f.path === FILE));
-  await wc.handle({ type: 'wcLayout', layout: 'flat' });
+  await wc.handle({ type: 'wcLayout', layout: 'list' });
 
   /** 差分を選び、変わった行が 1 行の書き換えだけであることを確かめて、その行を返す */
   const select = async (group: 'unstaged' | 'staged') => {
@@ -417,15 +417,17 @@ async function workingCopyFlow(label: string): Promise<void> {
   await wc.handle({ type: 'wcStageLines', ...(await select('staged')), stage: false });
   await until('unstage', () => numstat('--cached') === '' && numstat() === one);
 
-  // 行の破棄（確かめのダイアログには Discard と答える）と、その Undo
+  // 行の破棄（アプリと同じく確かめない。Undo で戻せる）と、その Undo
   const { version, lines } = await select('unstaged');
-  const warning = vscode.window.showWarningMessage;
-  (vscode.window as { showWarningMessage: unknown }).showWarningMessage = async () => 'Discard';
-  try {
-    await wc.handle({ type: 'wcDiscardLines', path: FILE, version, lines });
-  } finally {
-    (vscode.window as { showWarningMessage: unknown }).showWarningMessage = warning;
-  }
+  let asked = false;
+  const showWarningMessage = async () => {
+    asked = true;
+    return undefined;
+  };
+  await withWindow({ showWarningMessage }, () =>
+    wc.handle({ type: 'wcDiscardLines', path: FILE, version, lines }),
+  );
+  assert.equal(asked, false, '行の破棄は確かめない');
   await until('行の破棄', () => git('status', '--porcelain').trim() === '');
   assert.equal(readFileSync(path, 'latin1'), before, '破棄したら元の内容（CRLF のまま）');
   await vscode.commands.executeCommand('amonhen.undo');
@@ -3525,7 +3527,7 @@ async function conflictsWithoutMarkersFlow(): Promise<void> {
     assert.ok(conflictsRow, 'Conflicts の行');
     assert.equal((api.sidebar.getTreeItem(conflictsRow) as vscode.TreeItem).description, '3');
 
-    // Accept は、解決した内容が失われると確かめる（ここでは断る）
+    // Take Current File は、マーカーのないファイルでは解決した内容が失われると確かめる（ここでは断る）
     let detail: string | undefined;
     const showWarningMessage = async (_: string, options: { detail?: string }) => {
       detail = options.detail;
@@ -4967,14 +4969,15 @@ suite('Amon Hen in VSCode', () => {
     const panel = await showView('amonhen.showWorkingCopy');
     const gitignore = join(root, '.gitignore');
     const had = existsSync(gitignore) ? readFileSync(gitignore) : undefined;
-    const quickPick = vscode.window.showQuickPick;
     const [major = 0, minor = 0] = (git('version').match(/(\d+)\.(\d+)/) ?? []).slice(1).map(Number);
     const sparseCheckout = major > 2 || (major === 2 && minor >= 25);
-    (vscode.window as { showQuickPick: unknown }).showQuickPick = async (items: string[]) => items[1];
     try {
-      await vscode.commands.executeCommand('amonhen.addToGitignore', { path: 'dir/new.ignored-e2e' });
+      // 右クリックの 2 つの項目: そのパスと、拡張子のパターン
+      await vscode.commands.executeCommand('amonhen.addToGitignore', { path: 'dir/path.ignored-e2e' });
+      assert.match(readFileSync(gitignore, 'utf8'), /^dir\/path\.ignored-e2e$/m);
+      await vscode.commands.executeCommand('amonhen.addExtensionToGitignore', { path: 'dir/new.ignored-e2e' });
       assert.match(readFileSync(gitignore, 'utf8'), /^\*\.ignored-e2e$/m);
-      await vscode.commands.executeCommand('amonhen.addToGitignore', { path: 'other.ignored-e2e' });
+      await vscode.commands.executeCommand('amonhen.addExtensionToGitignore', { path: 'other.ignored-e2e' });
       assert.equal(readFileSync(gitignore, 'utf8').match(/\*\.ignored-e2e/g)?.length, 1);
       let mark = posted.length;
       panel.workingCopy.setRepository(panel.repository);
@@ -4987,7 +4990,6 @@ suite('Amon Hen in VSCode', () => {
         assert.deepEqual((await waitPosted('wcSparse', mark, (m) => m.sparse !== null)).sparse?.folders, ['e2e-only-folder']);
       }
     } finally {
-      (vscode.window as { showQuickPick: unknown }).showQuickPick = quickPick;
       if (sparseCheckout) git('sparse-checkout', 'disable');
       if (had) writeFileSync(gitignore, had);
       else rmSync(gitignore, { force: true });

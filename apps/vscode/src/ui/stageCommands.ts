@@ -55,7 +55,12 @@ async function confirmMarkers(repo: Repository, changes: readonly Change[]): Pro
   return choice === 'Mark as Resolved';
 }
 
-/** コンフリクトしたファイルを、現在の側か取り込む側の内容で解決する。確認してから行う */
+/**
+ * コンフリクトしたファイルを、現在の側か取り込む側のファイルで解決する（Take Current File・Take Incoming File）。
+ * アプリと同じく、git checkout --ours・--theirs のようにすぐ行い、失うものがあるときだけ確かめる: エディタで保存して
+ * いない変更（上書きされて失われる）と、マーカーの残っていないファイル（rerere やほかのエディタで解決した内容を片側で
+ * 上書きする）
+ */
 export async function acceptConflicts(
   repo: Repository | undefined,
   changes: readonly Change[],
@@ -65,25 +70,35 @@ export async function acceptConflicts(
   if (!repo || files.length === 0) {
     return;
   }
-  const name = side === 'current' ? 'Current (HEAD)' : 'Incoming';
+  const title = side === 'current' ? 'Take Current File' : 'Take Incoming File';
   const target = files.length === 1 ? files[0]!.path : `${files.length} files`;
-  // マーカーが残っていなければ、rerere やほかのエディタで解決した内容を上書きしてしまう
-  const resolved = changes.some((c) => c.markers === 0);
-  const choice = await vscode.window.showWarningMessage(
-    `Resolve ${target} with ${name}?`,
-    {
-      modal: true,
-      detail: resolved
-        ? 'No conflict markers are left, so it may already be resolved. That resolution and the other side’s changes are lost.'
-        : 'The other side’s changes and your edits to the file are lost.',
-    },
-    'Accept',
-  );
-  if (choice !== 'Accept') {
-    return;
+  const paths = new Set(files.map((f) => vscode.Uri.file(join(repo.root, f.path)).fsPath));
+  const unsaved = vscode.workspace.textDocuments.filter((d) => d.isDirty && d.uri.scheme === 'file' && paths.has(d.uri.fsPath));
+  const ask =
+    unsaved.length > 0
+      ? {
+          message: `Take the ${side === 'current' ? 'current' : 'incoming'} file without saving ${target}?`,
+          detail: 'Your unsaved changes to the file are lost.',
+        }
+      : changes.some((c) => c.markers === 0)
+        ? {
+            message: `Replace the resolved content of ${target}?`,
+            detail: 'No conflict markers are left, so it may already be resolved. It becomes one side’s whole file.',
+          }
+        : undefined;
+  if (ask) {
+    const choice = await vscode.window.showWarningMessage(ask.message, { modal: true, detail: ask.detail }, title);
+    if (choice !== title) {
+      return;
+    }
   }
   try {
     await repo.backend.resolveConflicts(files, side);
+    // 保存していなかった変更は捨てると答えた。エディタをファイルの今の中身に戻す（あとで保存して上書きしないように）
+    for (const doc of unsaved) {
+      await vscode.window.showTextDocument(doc, { preview: false, preserveFocus: false });
+      await vscode.commands.executeCommand('workbench.action.files.revert');
+    }
   } catch (err) {
     showError(err);
   } finally {

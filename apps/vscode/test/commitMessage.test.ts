@@ -3,6 +3,7 @@ import { test } from 'node:test';
 import {
   addTrailer,
   commitDisabledReason,
+  composeMessage,
   fixupSubjects,
   lengthLevel,
   longestLine,
@@ -57,11 +58,18 @@ test('fixup targets skip fixups, squashes and repeats, and stop at 15', () => {
 });
 
 test('commitDisabledReason says why Commit is disabled, as the app does', () => {
-  const state = { staged: 1, amend: false, summary: 'Fix', committing: false };
+  const state = { staged: 1, amend: false, message: 'Fix\n', committing: false };
   assert.equal(commitDisabledReason(state), undefined);
   assert.equal(commitDisabledReason({ ...state, staged: 0 }), 'No files are checked');
   assert.equal(commitDisabledReason({ ...state, staged: 0, amend: true }), undefined);
-  assert.equal(commitDisabledReason({ ...state, summary: '  ' }), 'Write a commit message');
-  assert.equal(commitDisabledReason({ ...state, staged: 0, summary: '' }), 'No files are checked\nWrite a commit message');
-  assert.equal(commitDisabledReason({ ...state, staged: 0, summary: '', committing: true }), 'Committing…');
+  assert.equal(commitDisabledReason({ ...state, message: '  ' }), 'Write a commit message');
+  assert.equal(commitDisabledReason({ ...state, staged: 0, message: '' }), 'No files are checked\nWrite a commit message');
+  assert.equal(commitDisabledReason({ ...state, staged: 0, message: '', committing: true }), 'Committing…');
+});
+
+test('composeMessage joins the summary and the description, and either alone is enough, as the app does', () => {
+  assert.equal(composeMessage({ summary: ' Fix ', body: '' }), 'Fix\n');
+  assert.equal(composeMessage({ summary: 'Fix', body: '\nWhy\n' }), 'Fix\n\nWhy\n');
+  assert.equal(composeMessage({ summary: '', body: 'Only the description\n\nmore' }), 'Only the description\n\nmore\n');
+  assert.equal(composeMessage({ summary: ' ', body: ' \n' }), '');
 });

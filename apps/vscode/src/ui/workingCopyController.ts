@@ -10,6 +10,7 @@ import { daemonFor } from '../daemon/connection.ts';
 import { applySyntax, changedRows, readWorkingDiff, selectedRows, type DaemonDiff } from '../daemon/diff.ts';
 import { applyDiffSelection, computeDiff, type ComputedDiff } from '../diff/fileDiff.ts';
 import { discardFiles, discardLines } from '../state/discard.ts';
+import { failureCause } from '../failure/cause.ts';
 import { COMMIT_TYPES, fixupSubjects, templateMessage, type MessageParts } from '../workingCopy/commitMessage.ts';
 import type { DiffWhitespace } from '../history/protocol.ts';
 import type { FileStat, WorkingCopyHostMessage, WorkingCopyWebviewMessage } from '../workingCopy/protocol.ts';
@@ -234,6 +235,17 @@ export class WorkingCopyController implements vscode.Disposable {
       return;
     }
     this.selected = { group: change.group, path: change.path };
+    try {
+      await this.sendDiffOf(change);
+    } catch (err) {
+      // 空の差分や知らせにせず、差分の場所に読めなかった理由を出す（アプリと同じ）
+      if (this.selected?.path !== change.path) return;
+      const message = err instanceof Error ? err.message : String(err);
+      this.post({ type: 'wcDiffFailed', group: change.group, path: change.path, error: failureCause(message) });
+    }
+  }
+
+  private async sendDiffOf(change: Change): Promise<void> {
     // 読んでいる間に空白の扱いを選び直したら、この差分は送らない（選び直しで読み直した方を送る。古い差分に新しい
     // 扱いの札を付けない）
     const whitespace = this.whitespace;
@@ -388,16 +400,28 @@ export class WorkingCopyController implements vscode.Disposable {
       }
       case 'wcDiscardFiles': {
         const changes = message.paths.flatMap((p) => find('unstaged', p) ?? []);
-        await this.discard(repo, changes.length === 1 ? changes[0]!.path : `${changes.length} files`, () =>
-          discardFiles(repo.backend, repo.undo, changes),
+        if (changes.length === 0) break;
+        const target = changes.length === 1 ? changes[0]!.path : `${changes.length} files`;
+        // untracked のファイルは消す（アプリと同じく Delete と言う。消す前の中身を記録するので Undo で戻せる）
+        const untracked = changes.every((c) => c.letter === 'U');
+        const choice = await vscode.window.showWarningMessage(
+          untracked ? `Delete ${target}?` : `Discard the changes to ${target}?`,
+          {
+            modal: true,
+            detail: untracked
+              ? `${changes.length === 1 ? 'It’s' : 'They’re'} untracked. You can undo this.`
+              : 'The unstaged changes are discarded. You can undo this.',
+          },
+          untracked ? 'Delete' : 'Discard',
         );
+        if (choice !== (untracked ? 'Delete' : 'Discard')) break;
+        await this.discard(repo, () => discardFiles(repo.backend, repo.undo, changes));
         break;
       }
       case 'wcDiscardLines': {
         if (this.whitespace !== 'exact') break;
         const change = find('unstaged', message.path);
         if (!change) break;
-        const n = message.lines.length;
         const daemon = await this.daemonDiff(change);
         if (daemon) {
           if (daemon.diff.version !== message.version) {
@@ -406,7 +430,7 @@ export class WorkingCopyController implements vscode.Disposable {
             break;
           }
           const client = (await daemonFor(repo.root))!;
-          await this.discard(repo, `${n} ${n === 1 ? 'line' : 'lines'} of ${change.path}`, async () => {
+          await this.discard(repo, async () => {
             await client.call({ op: 'discardRows', diff: daemon.handle, rows: selectedRows(daemon.rows, message.lines) });
           });
           break;
@@ -417,9 +441,7 @@ export class WorkingCopyController implements vscode.Disposable {
           vscode.window.setStatusBarMessage('The file changed, so the diff was updated. Select the lines again.', 4000);
           break;
         }
-        await this.discard(repo, `${n} ${n === 1 ? 'line' : 'lines'} of ${change.path}`, () =>
-          discardLines(repo.backend, repo.undo, change.path, fresh, message.lines),
-        );
+        await this.discard(repo, () => discardLines(repo.backend, repo.undo, change.path, fresh, message.lines));
         break;
       }
       case 'wcCommit':
@@ -455,16 +477,11 @@ export class WorkingCopyController implements vscode.Disposable {
     }
   }
 
-  /** 確かめてから破棄する。破棄した内容は Undo で戻せる */
-  private async discard(repo: Repository, target: string, run: () => Promise<void>): Promise<void> {
-    const choice = await vscode.window.showWarningMessage(
-      `Discard the changes to ${target}?`,
-      { modal: true, detail: 'The unstaged changes are discarded. You can undo this.' },
-      'Discard',
-    );
-    if (choice !== 'Discard') {
-      return;
-    }
+  /**
+   * 破棄する。破棄した内容は Undo で戻せる。ファイルごとのときは呼ぶ前に確かめ、選んだ行・hunk はアプリと同じく
+   * 確かめない（選んで押すので。Undo で戻せる）
+   */
+  private async discard(repo: Repository, run: () => Promise<void>): Promise<void> {
     try {
       await run();
     } catch (err) {

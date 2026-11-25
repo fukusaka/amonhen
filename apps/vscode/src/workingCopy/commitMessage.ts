@@ -17,13 +17,23 @@ export function messageLength(text: string): number {
  * Commit を押せないわけ（押せるときは undefined）。アプリと同じく、コミットしている間はそのこと、そうでなければ
  * チェックしたファイルがない（Amend でないとき）・メッセージがないを改行でつなぐ
  */
-export function commitDisabledReason(state: { staged: number; amend: boolean; summary: string; committing: boolean }): string | undefined {
+export function commitDisabledReason(state: { staged: number; amend: boolean; message: string; committing: boolean }): string | undefined {
   if (state.committing) return 'Committing…';
   const reasons = [
     ...(state.staged === 0 && !state.amend ? ['No files are checked'] : []),
-    ...(!state.summary.trim() ? ['Write a commit message'] : []),
+    ...(!state.message.trim() ? ['Write a commit message'] : []),
   ];
   return reasons.length > 0 ? reasons.join('\n') : undefined;
+}
+
+/**
+ * Summary と Description をつないだメッセージ（末尾に改行）。アプリと同じく、どちらかだけでもよい。両方とも空なら空
+ */
+export function composeMessage(parts: MessageParts): string {
+  const head = parts.summary.trim();
+  const body = parts.body.trim();
+  const text = !body ? head : !head ? body : `${head}\n\n${body}`;
+  return text ? `${text}\n` : '';
 }
 
 /** 長さの目安: 50 を超えると長め、72 を超えると長すぎ（git の慣習） */

@@ -1372,6 +1372,9 @@ First release.
 - The sidebar follows the app in the small things: Copy Branch / Tag Name, menus for several tags, tags in `/`
   folders, only groups with rows, flat filter results, Open Worktree for a branch checked out elsewhere, and a
   confirmation before Prune or a push by dragging.
+- The Working Copy follows the app in the small things: List at first and "File Name", the file menu's Stage, Discard…
+  or Delete File…, both .gitignore items, Reveal and Open File, no question before discarding lines, a commit with only
+  a description, "Amend Commit", diff errors in the pane, and Take Current / Incoming File.
 
 #### Changed
 

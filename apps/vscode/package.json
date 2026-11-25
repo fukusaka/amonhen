@@ -528,7 +528,52 @@
       },
       {
         "command": "amonhen.addToGitignore",
-        "title": "Add to .gitignore…",
+        "title": "Add Path to .gitignore",
+        "category": "Amon Hen"
+      },
+      {
+        "command": "amonhen.addExtensionToGitignore",
+        "title": "Add Extension to .gitignore",
+        "category": "Amon Hen"
+      },
+      {
+        "command": "amonhen.wcFile.stage",
+        "title": "Stage",
+        "category": "Amon Hen"
+      },
+      {
+        "command": "amonhen.wcFile.unstage",
+        "title": "Unstage",
+        "category": "Amon Hen"
+      },
+      {
+        "command": "amonhen.wcFile.discard",
+        "title": "Discard…",
+        "category": "Amon Hen"
+      },
+      {
+        "command": "amonhen.wcFile.delete",
+        "title": "Delete File…",
+        "category": "Amon Hen"
+      },
+      {
+        "command": "amonhen.wcFile.open",
+        "title": "Open File",
+        "category": "Amon Hen"
+      },
+      {
+        "command": "amonhen.wcFile.revealInFinder",
+        "title": "Reveal in Finder",
+        "category": "Amon Hen"
+      },
+      {
+        "command": "amonhen.wcFile.revealInExplorer",
+        "title": "Reveal in File Explorer",
+        "category": "Amon Hen"
+      },
+      {
+        "command": "amonhen.wcFile.openContainingFolder",
+        "title": "Open Containing Folder",
         "category": "Amon Hen"
       },
       {
@@ -2140,6 +2185,42 @@
           "when": "false"
         },
         {
+          "command": "amonhen.addExtensionToGitignore",
+          "when": "false"
+        },
+        {
+          "command": "amonhen.wcFile.stage",
+          "when": "false"
+        },
+        {
+          "command": "amonhen.wcFile.unstage",
+          "when": "false"
+        },
+        {
+          "command": "amonhen.wcFile.discard",
+          "when": "false"
+        },
+        {
+          "command": "amonhen.wcFile.delete",
+          "when": "false"
+        },
+        {
+          "command": "amonhen.wcFile.open",
+          "when": "false"
+        },
+        {
+          "command": "amonhen.wcFile.revealInFinder",
+          "when": "false"
+        },
+        {
+          "command": "amonhen.wcFile.revealInExplorer",
+          "when": "false"
+        },
+        {
+          "command": "amonhen.wcFile.openContainingFolder",
+          "when": "false"
+        },
+        {
           "command": "amonhen.showRefs",
           "when": "false"
         },
@@ -2439,17 +2520,17 @@
         },
         {
           "command": "amonhen.blame",
-          "when": "webviewId == 'amonhen.main' && (webviewSection == 'commitFile' || (webviewSection == 'wcFile' && !wcMulti) || webviewSection == 'fileHistory') && amonhen.engine",
+          "when": "webviewId == 'amonhen.main' && (webviewSection == 'commitFile' || webviewSection == 'fileHistory') && amonhen.engine",
           "group": "1_file@2"
         },
         {
           "command": "amonhen.fileHistory.copyPath",
-          "when": "webviewId == 'amonhen.main' && (webviewSection == 'fileHistory' || webviewSection == 'commitFile' || webviewSection == 'selectionFile' || (webviewSection == 'wcFile' && !wcMulti))",
+          "when": "webviewId == 'amonhen.main' && (webviewSection == 'fileHistory' || webviewSection == 'commitFile' || webviewSection == 'selectionFile')",
           "group": "9_copy@2"
         },
         {
           "command": "amonhen.fileHistory",
-          "when": "webviewId == 'amonhen.main' && (webviewSection == 'commitFile' || webviewSection == 'selectionFile' || (webviewSection == 'wcFile' && !wcMulti) || webviewSection == 'blame') && amonhen.engine",
+          "when": "webviewId == 'amonhen.main' && (webviewSection == 'commitFile' || webviewSection == 'selectionFile' || webviewSection == 'blame') && amonhen.engine",
           "group": "1_file@1"
         },
         {
@@ -2498,19 +2579,79 @@
           "group": "2_restore@1"
         },
         {
-          "command": "amonhen.addToGitignore",
-          "when": "webviewId == 'amonhen.main' && (webviewSection == 'wcFile' && !wcMulti) && wcUntracked && amonhen.engine",
-          "group": "3_ignore@1"
+          "command": "amonhen.wcFile.stage",
+          "when": "webviewId == 'amonhen.main' && webviewSection == 'wcFile' && !wcMulti && wcGroup == 'unstaged'",
+          "group": "0_change@1"
+        },
+        {
+          "command": "amonhen.wcFile.unstage",
+          "when": "webviewId == 'amonhen.main' && webviewSection == 'wcFile' && !wcMulti && wcGroup == 'staged'",
+          "group": "0_change@1"
+        },
+        {
+          "command": "amonhen.wcFile.discard",
+          "when": "webviewId == 'amonhen.main' && webviewSection == 'wcFile' && !wcMulti && wcGroup == 'unstaged' && !wcUntracked",
+          "group": "0_change@2"
+        },
+        {
+          "command": "amonhen.wcFile.delete",
+          "when": "webviewId == 'amonhen.main' && webviewSection == 'wcFile' && !wcMulti && wcGroup == 'unstaged' && wcUntracked",
+          "group": "0_change@2"
         },
         {
           "command": "amonhen.stash.files",
           "when": "webviewId == 'amonhen.main' && webviewSection == 'wcFile' && !wcConflict && amonhen.engine",
-          "group": "2_stash@1"
+          "group": "0_change@3"
+        },
+        {
+          "command": "amonhen.addToGitignore",
+          "when": "webviewId == 'amonhen.main' && webviewSection == 'wcFile' && !wcMulti && wcUntracked && amonhen.engine",
+          "group": "1_file@1"
+        },
+        {
+          "command": "amonhen.addExtensionToGitignore",
+          "when": "webviewId == 'amonhen.main' && webviewSection == 'wcFile' && !wcMulti && wcUntracked && wcExtension && amonhen.engine",
+          "group": "1_file@2"
+        },
+        {
+          "command": "amonhen.blame",
+          "when": "webviewId == 'amonhen.main' && webviewSection == 'wcFile' && !wcMulti && !wcUntracked && !wcDeleted && amonhen.engine",
+          "group": "1_file@1"
+        },
+        {
+          "command": "amonhen.fileHistory",
+          "when": "webviewId == 'amonhen.main' && webviewSection == 'wcFile' && !wcMulti && !wcUntracked && amonhen.engine",
+          "group": "1_file@2"
         },
         {
           "command": "amonhen.forgetResolution",
-          "when": "webviewId == 'amonhen.main' && (webviewSection == 'wcFile' && !wcMulti) && wcRerere && amonhen.engine",
+          "when": "webviewId == 'amonhen.main' && webviewSection == 'wcFile' && !wcMulti && wcRerere && amonhen.engine",
           "group": "2_conflict@1"
+        },
+        {
+          "command": "amonhen.fileHistory.copyPath",
+          "when": "webviewId == 'amonhen.main' && webviewSection == 'wcFile' && !wcMulti",
+          "group": "9_copy@1"
+        },
+        {
+          "command": "amonhen.wcFile.revealInFinder",
+          "when": "webviewId == 'amonhen.main' && webviewSection == 'wcFile' && !wcMulti && !wcDeleted && !remoteName && isMac",
+          "group": "9_copy@2"
+        },
+        {
+          "command": "amonhen.wcFile.revealInExplorer",
+          "when": "webviewId == 'amonhen.main' && webviewSection == 'wcFile' && !wcMulti && !wcDeleted && !remoteName && isWindows",
+          "group": "9_copy@2"
+        },
+        {
+          "command": "amonhen.wcFile.openContainingFolder",
+          "when": "webviewId == 'amonhen.main' && webviewSection == 'wcFile' && !wcMulti && !wcDeleted && !remoteName && isLinux",
+          "group": "9_copy@2"
+        },
+        {
+          "command": "amonhen.wcFile.open",
+          "when": "webviewId == 'amonhen.main' && webviewSection == 'wcFile' && !wcMulti && !wcDeleted",
+          "group": "9_copy@3"
         },
         {
           "command": "amonhen.exportArchive",
