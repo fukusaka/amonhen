@@ -15,6 +15,7 @@ import { pickMergeMode } from './mergeMode.ts';
 import { confirmRewrite } from './rewriteConfirm.ts';
 import { sequenceRowName, type Node } from './sidebar.ts';
 import { showError } from './stageCommands.ts';
+import type { Worktree } from '../git/worktrees.ts';
 
 const MIME = 'application/vnd.code.tree.amonhen.sidebar';
 
@@ -23,9 +24,12 @@ export class SidebarDragAndDrop implements vscode.TreeDragAndDropController<Node
   readonly dragMimeTypes = [MIME];
   readonly dropMimeTypes = [MIME];
   private readonly manager: RepositoryManager;
+  /** ブランチを checkout している、書き込む先以外の worktree（`root` は書き込む先） */
+  private readonly elsewhere: (branch: string, root: string) => Worktree | undefined;
 
-  constructor(manager: RepositoryManager) {
+  constructor(manager: RepositoryManager, elsewhere: (branch: string, root: string) => Worktree | undefined = () => undefined) {
     this.manager = manager;
+    this.elsewhere = elsewhere;
   }
 
   handleDrag(source: readonly Node[], data: vscode.DataTransfer): void {
@@ -42,6 +46,16 @@ export class SidebarDragAndDrop implements vscode.TreeDragAndDropController<Node
       return;
     }
     const drop = toDropTarget(target);
+    // ほかの worktree が checkout しているブランチは、ここでは checkout できず、fast-forward でも動かせない
+    // （その作業ツリーとずれる）。その worktree で行う（アプリと同じ）
+    const onto = drop?.kind === 'branch' && drop.ref !== source.ref.name ? shortName(drop.ref) : undefined;
+    const other = onto ? this.elsewhere(onto, repo.root) : undefined;
+    if (other) {
+      const open = `Open the Worktree of ${onto} to Merge or Rebase`;
+      const picked = await vscode.window.showQuickPick([{ label: `$(repo-forked) ${open}` }], { placeHolder: 'Choose what dropping does' });
+      if (picked) await vscode.commands.executeCommand('amonhen.worktree.edit', { kind: 'worktree', worktree: other });
+      return;
+    }
     if (drop) {
       const local = source.kind === 'branch' && !source.remote;
       await pickAndRun(repo, { ref: source.ref.name, local, upstream: source.ref.upstream }, drop);

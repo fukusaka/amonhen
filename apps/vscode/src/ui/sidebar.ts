@@ -803,9 +803,14 @@ function branchItem(node: Extract<Node, { kind: 'branch' }>, other?: Worktree, f
   if (other) lines.push(`Checked out in the worktree ${other.path}`);
   if (flags?.merged) lines.push(flags.pullRequest !== undefined ? `Merged by pull request #${flags.pullRequest}` : 'Merged into the default branch');
   item.tooltip = lines.join('\n');
+  // `;elsewhere` はほかの worktree が checkout している（Checkout・Fast-Forward の代わりに Open Worktree）
   item.contextValue = node.remote
     ? 'remoteBranch'
-    : (ref.isHead ? 'branch.current' : 'branch') + syncState(ref) + (node.pinned ? ';pinned' : '') + (flags?.archived ? ';archived' : '');
+    : (ref.isHead ? 'branch.current' : 'branch') +
+      syncState(ref) +
+      (node.pinned ? ';pinned' : '') +
+      (flags?.archived ? ';archived' : '') +
+      (other ? ';elsewhere' : '');
   // 選ぶと、そのブランチの履歴をメインビューに出す
   item.command = { command: 'amonhen.showRef', title: 'Show History', arguments: [ref.name] };
   return item;
