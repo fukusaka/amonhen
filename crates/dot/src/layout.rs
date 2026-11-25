@@ -96,6 +96,17 @@ pub struct Layout {
     pub height: f64,
     /// 並びを決めたあとの交差の数。
     pub crossings: usize,
+    /// 辺ごとの通り道（尾から頭へ、仮のノードのランクの行の上下の端での x の区間 (y, 左, 右)）。曲線はこの中を通す
+    /// （Gansner ほか 1993 の §5）。仮のノードのない辺は空。
+    pub corridors: Vec<Vec<Portal>>,
+}
+
+/// 通り道の 1 つの関（y の高さで x が `lo` から `hi` の間）。
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct Portal {
+    pub y: f64,
+    pub lo: f64,
+    pub hi: f64,
 }
 
 /// 辺の仮のノードの列（上から下、両端を含む）、逆向きか、ラベルの仮のノード。
@@ -1421,11 +1432,89 @@ pub fn layout(
     }
 
     // 道筋
+    let mut corridors: Vec<Vec<Portal>> = vec![Vec::new(); input_edges.len()];
     for (ei, chain) in chains.iter().enumerate() {
         let Some((chain, rev, label_node)) = chain else {
             continue;
         };
         let e = &input_edges[ei];
+        // 通り道: 仮のノードのランクの行で、左右の隣の間。ラベルの仮のノードでは、線はラベルの側へ出ない
+        let mut gates: Vec<Portal> = Vec::new();
+        // 同じ行の左右の隣の間（本物のノードは避ける箱と同じく外形から 4、ラベルの仮のノードはラベルの端から 2、ほかの
+        // 仮のノードとは真ん中で分ける。並んだ線が同じ角に寄って束にならない）
+        let between = |v: usize| -> (Option<usize>, Option<usize>, f64, f64) {
+            let r = nodes[v].rank;
+            let i = pos[v];
+            let side = |u: usize, right: bool| -> f64 {
+                let reach = if right { nodes[u].right } else { nodes[u].left };
+                if nodes[u].real {
+                    reach + 4.0
+                } else if nodes[u].h > 0.0 {
+                    reach + 2.0
+                } else {
+                    (xs[v] - xs[u]).abs() / 2.0
+                }
+            };
+            let left = i.checked_sub(1).map(|k| layers[r][k]);
+            let right = layers[r].get(i + 1).copied();
+            let lo = left.map_or(f64::NEG_INFINITY, |u| xs[u] + side(u, true));
+            let hi = right.map_or(f64::INFINITY, |u| xs[u] - side(u, false));
+            (left, right, lo.min(xs[v]), hi.max(xs[v]))
+        };
+        // 両端のノードの行では、行の端から 4 外（ノードを避ける箱の外）で、同じ行の隣の間を通る（ノードの中心はこの
+        // 区間の中なので、そこからの線は隣を横切らない）
+        let (a, b) = (chain[0], chain[chain.len() - 1]);
+        let end_gate = |u: usize, below: bool| -> Portal {
+            let r = nodes[u].rank;
+            let half = rank_h[r] / 2.0 + 4.0;
+            let (_, _, lo, hi) = between(u);
+            Portal {
+                y: rank_y[r] + if below { half } else { -half },
+                lo,
+                hi,
+            }
+        };
+        gates.push(end_gate(a, true));
+        for &v in &chain[1..chain.len() - 1] {
+            let r = nodes[v].rank;
+            let (left, right, mut lo, mut hi) = between(v);
+            if Some(v) == *label_node {
+                if opt.label_left {
+                    lo = xs[v] - 1.0;
+                } else {
+                    hi = xs[v] + 1.0;
+                }
+            }
+
+            // 関の高さ: 左右の隣の本物のノード（避ける箱と同じく 4 広げる）とラベルの分。どちらもなければ行の中心だけ
+            let mut half: f64 = 0.0;
+            for u in [left, right].into_iter().flatten() {
+                if nodes[u].real {
+                    half = half.max(nodes[u].h / 2.0 + 4.0);
+                }
+            }
+            if Some(v) == *label_node {
+                half = half.max(nodes[v].h / 2.0);
+            }
+            let y = rank_y[r];
+            gates.push(Portal {
+                y: y - half,
+                lo,
+                hi,
+            });
+            if half > 0.0 {
+                gates.push(Portal {
+                    y: y + half,
+                    lo,
+                    hi,
+                });
+            }
+        }
+        gates.push(end_gate(b, false));
+        if *rev {
+            gates.reverse();
+        }
+        corridors[ei] = gates;
         let mut pts: Vec<(f64, f64)> = chain
             .iter()
             .map(|&v| (xs[v], rank_y[nodes[v].rank]))
@@ -1480,6 +1569,7 @@ pub fn layout(
         width,
         height,
         crossings,
+        corridors,
     }
 }
 
@@ -1583,6 +1673,11 @@ pub fn make_room_for_tracks(
     for b in lay.clusters.iter_mut().flatten() {
         b[1] = with_lower(b[1]);
         b[3] = with_upper(b[3]);
+    }
+    for gates in &mut lay.corridors {
+        for g in gates.iter_mut() {
+            g.y = with_upper(g.y);
+        }
     }
     lay.height += cum[rows.len()];
 }

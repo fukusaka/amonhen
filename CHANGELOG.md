@@ -7,7 +7,11 @@ becomes the GitHub Release notes.
 
 ## App and engine
 
-### Unreleased
+### [0.2.15] - 2026-11-25
+
+Markdown previews draw math and the HTML GitHub renders, and DOT diagrams draw images, gradients and more of
+Graphviz's styles, with better ortho edges and cluster placement. All Files draws Android VectorDrawables, and the
+checkerboard behind transparent pictures can be switched between light and dark.
 
 #### Added
 
@@ -23,6 +27,7 @@ becomes the GitHub Release notes.
   Comments, styles, scripts and forms are left out, as on GitHub.
 - A button beside the zoom buttons switches the checkerboard behind transparent pictures between light and dark;
   light pictures such as white icons get the dark one by default (macOS, GTK4).
+- Markdown previews can be searched with ⌘F (GTK4: Ctrl+F), key caps and table cells included (macOS, GTK4).
 - Markdown previews draw math as on GitHub (` ```math `, `$$…$$`, `$…$` and `` $`…`$ ``) with RaTeX and the KaTeX
   fonts, in the text color (macOS, GTK4); prices such as `$5 and $6` stay text.
 
@@ -32,6 +37,8 @@ becomes the GitHub Release notes.
 - DOT diagrams: clusters joined by edges both ways sit side by side instead of being stacked, as in Graphviz.
 - DOT diagrams: `splines=ortho` in the dot layout widens the space between ranks (up to `ranksep`) when many edges
   run across it, so they no longer merge into one line.
+- DOT diagrams: edges in the dot layout are drawn as Graphviz does, as smooth curves along the shortest way between
+  the nodes around them, instead of bending at every rank.
 
 #### Changed
 

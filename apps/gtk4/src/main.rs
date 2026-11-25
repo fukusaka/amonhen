@@ -39,6 +39,7 @@ mod historydisplay;
 mod historyedit;
 mod icon;
 mod imagediff;
+mod markdownfind;
 mod markdownview;
 mod measure;
 mod menu;
@@ -279,6 +280,9 @@ fn parse_args() -> Result<Args, String> {
             "--keys" => workcopy::press_keys_once(&it.next().ok_or("--keys <place:key,...>")?),
             "--find-diff" => commitfiles::find_once(&it.next().ok_or("--find-diff <text>")?),
             "--find-message" => messagefind::find_once(&it.next().ok_or("--find-message <text>")?),
+            "--find-markdown" => {
+                markdownfind::find_once(&it.next().ok_or("--find-markdown <text>")?)
+            }
             "--signature-popover" => signature::popover_once(),
             "--diff-file-menu" => {
                 let file = it.next().ok_or("--diff-file-menu <n>")?;

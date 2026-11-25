@@ -282,6 +282,7 @@ GTK4 のアプリは macOS のアプリと同じふるまいをめざす。わ�
 | 透けた絵の下の市松模様を明るく・暗く（既定は絵の色から） | ✓ | ✓ | — | — | n/a | — | |
 | すべてのファイル: その時点の木と、コミットの行に印を付けたファイルの中身 | ✓ | ✓ | ✓ | ✓ | n/a | ✓ | VSCode: エンジンがあれば。リストか木（帯の List・Tree）、変えたフォルダは最初から開く、消したファイルは前の版を出す、パスの後に @ とコミット、Show This Change でその差分へ、Markdown の相対リンクでそのファイルを開く。<br>TUI: History の `a`。画面に重ねる。プレビューはない（中身は文字で出す）。 |
 | すべてのファイルのプレビュー: 拡大縮小できる画像・SVG の絵とモバイル向けの確認・整形した Markdown・バイナリの Quick Look | ✓ | ✓ | △ | △ | n/a | — | VSCode: どのファイルも Quick Look の代わりに VSCode のエディタで開ける。モバイル向けの確認は部品を切り替え（覚える）、SVG と Markdown の見方も覚える。Mermaid の図と数式はコードのまま（エンジンは数式を描かない）。<br>GTK4: Quick Look の代わりに GNOME のプレビュー（か既定のアプリ）。SVG の絵は librsvg で描く。<br>Windows: 拡大縮小できる画像・SVG の絵とモバイル向けの確認・整形した Markdown とその中の Mermaid・DOT の図（Direct2D の SVG は文字を描かないので resvg で描く）。部品の切り替えはパスの帯にある。gantt の時間帯はまだ設定にない（UTC）。数式は TeX をコードとして見せる。バイナリのプレビューはまだない。コミットの中の画像・`<picture>`・`align`・画像の大きさ・`<details>` を描き、DOT の画像ノードも絵を出す。文の途中の画像はそこで行が切れ、`<kbd>` はキーの札でなく等幅の文字、`<sub>`・`<sup>` は飾りのない文字。 |
+| 整形した Markdown の中を探す（キーの札・表のマスも） | ✓ | ✓ | — | — | n/a | — | 絵と閉じた `<details>` の中は探さない。 |
 | すべてのファイル: Android の VectorDrawable の絵（色はコミットの `res` から、animated-vector は動く前の絵） | ✓ | ✓ | ✓ | — | n/a | — | VSCode: VectorDrawable の XML はテキストで出す。 |
 | ファイルの見出しのメニュー（Blame・File History・パスのコピー・開く） | ✓ | ✓ | ✓ | ✓ | n/a | ✓ | VSCode: 右クリックと ⋯ の Show Whole File・Blame・File History・この版／前の版に戻す・Copy Path（Copy Path 以外はエンジンがあれば）と、VSCode の差分のエディターで開く。この時点のファイルを開くはない。<br>TUI: 見ているファイルの `B`・`L`・`Y`（パスのコピー）・`e`（git のエディタで開く）。 |
 | 選んだものの差分（範囲をまとめる・A..B / A...B・飛び飛び） | ✓ | ✓ | ✓ | ✓ | △ | ✓ | VSCode: エンジンがあるとき。<br>CLI: `diff <rev> <rev>`。<br>TUI: `m` と Shift-↑↓（か Ctrl・Alt を押しながらクリック）で選ぶ。`x` で向きを入れ替え、`.` で merge-base から。 |
@@ -385,7 +386,7 @@ GTK4 のアプリは macOS のアプリと同じふるまいをめざす。わ�
 | 機能 | macOS | GTK4 | Windows | VSCode | CLI | TUI | Notes |
 | --- | :-: | :-: | :-: | :-: | :-: | :-: | --- |
 | `gh` を通す GitHub | ✓ | ✓ | ✓ | — | — | — |  |
-| Pull Requests（CI・draft・レビュー、checkout・開く・URL のコピー） | ✓ | ✓ | △ | — | — | — | Windows: 題の後ろの CI の印を押すとチェックのポップオーバー。ただしサイドバーが行より狭いと、印は題といっしょに切れる。 |
+| Pull Requests（CI・draft・レビュー、checkout・開く・URL のコピー） | ✓ | ✓ | △ | — | — | — | Windows: CI と draft の印は番号の前に置く（ツリーの行は文字だけで、右端に印を残せない）。チェックのポップオーバーは行の右クリックから。 |
 | Create Pull Request（base・draft） | ✓ | ✓ | ✓ | — | — | — | macOS: base は打ち込む（最初は既定のブランチ）。fork からは元のリポジトリへ。<br>GTK4: base は打ち込む（最初は既定のブランチ）。fork からは元のリポジトリへ。<br>Windows: base は打ち込む（最初は既定のブランチ）。fork からは元のリポジトリへ。 |
 | ブランチの状態のポップオーバー（CI・プルリクエスト） | ✓ | ✓ | △ | — | — | — | Windows: 名前の後ろの merged・gone を押すと開く。どちらもないブランチには印がなく、様子は右クリックの先頭からダイアログで。 |
 | Open on GitHub | ✓ | ✓ | ✓ | — | — | — |  |

@@ -2346,7 +2346,10 @@ final class CommitDetailViewController: NSSplitViewController, NSTextViewDelegat
 
     /// `commit` の変更を裏で読んで表示する。`stash` なら stash の中身（untracked のファイルを含む）。
     /// 差分を検索する（`--find` の確認用）。
-    func find(_ query: String) { diffView.find(query) }
+    func find(_ query: String) {
+        // すべてのファイルで開いているファイル（Markdown の整形表示も）を探す。
+        if let filesBrowser, diffView.replacement === filesBrowser { filesBrowser.find(query) } else { diffView.find(query) }
+    }
 
     /// `--measure-diff-scroll`: 差分をスクロールし、窓の幅を変えて測る。
     func measureDiffScroll(frames: Int, rowsPerFrame: Double, completion: @escaping (String) -> Void) {

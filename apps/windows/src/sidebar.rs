@@ -342,11 +342,13 @@ pub fn nodes(
                 .flatten()
                 .filter(|s| !s.is_empty())
                 .collect();
-            let mut title = format!("#{} {}", pr.number, pr.title);
-            if !marks.is_empty() {
-                title.push_str("  ");
-                title.push_str(&marks.join(" "));
-            }
+            // 印は番号の前に置く（TreeView の行は文字だけで、macOS 版のように右端に寄せた印を置けない。後ろに
+            // 置くと、狭いサイドバーでは件名と一緒に切れて見えなくなる）。
+            let title = if marks.is_empty() {
+                format!("#{} {}", pr.number, pr.title)
+            } else {
+                format!("{}  #{} {}", marks.join(" "), pr.number, pr.title)
+            };
             TreeNode::new(key, title)
         });
         out.push(group("pull-requests", "Pull Requests", rows).expanded(true));

@@ -6,7 +6,8 @@
 //! GtkTextView にない枠は、段落の背景で代える: 引用・囲みは左を下げて薄い背景、コードは背景、横線は細い背景の行。
 //! 表は GtkGrid を、`<kbd>` は枠付きのラベルを文字の間に埋め込む。HTML の `<details>` は見出しを押すと開く・閉じる
 //! （組み直す）。`<picture>` は外観に合う画像を出し、外観が変わったら組み直す。数式はコアが描いた SVG に文字の色を
-//! 当てて絵にし（`formula`）、文中の式は文字として埋め込んで基線にそろえる（`rise`）。
+//! 当てて絵にし（`formula`）、文中の式は文字として埋め込んで基線にそろえる（`rise`）。Ctrl+F で見えている文字を
+//! 探す（`markdownfind`）。
 
 use std::cell::{Cell, RefCell};
 use std::collections::{HashMap, HashSet};
@@ -574,6 +575,8 @@ struct Doc {
     /// Markdown のファイル。
     from: String,
     on_open: OnOpenPath,
+    /// 検索の帯（組み直したら探し直す）。
+    find: RefCell<std::rc::Weak<crate::markdownfind::MarkdownFind>>,
 }
 
 /// 整形表示を作る（スクロールする欄）。`path` は Markdown のファイル、`images` は画像の場所 → 読んだ絵（この
@@ -601,6 +604,7 @@ pub fn view(
         tables: RefCell::default(),
         from: path.to_owned(),
         on_open,
+        find: RefCell::default(),
     });
     build(&doc, &text);
     // リンクを押す（文字を選んでいるときは押したことにしない）。
@@ -666,7 +670,17 @@ pub fn view(
             });
         });
     }
-    scrolled.upcast()
+    // 検索の帯（差分の帯と同じく下に）。
+    let root = gtk::Box::new(gtk::Orientation::Vertical, 0);
+    root.set_vexpand(true);
+    root.append(&scrolled);
+    let find = crate::markdownfind::MarkdownFind::new(&text, &root);
+    root.append(find.bar());
+    doc.find.replace(Rc::downgrade(&find));
+    // 帯は整形表示のある間だけ持つ。
+    let keep = RefCell::new(Some(find));
+    root.connect_destroy(move |_| drop(keep.take()));
+    root.upcast()
 }
 
 /// 文字を組み立てる（前のものは消す）。
@@ -692,6 +706,9 @@ fn build(doc: &Rc<Doc>, text: &gtk::TextView) {
         .map(|(grid, margin)| (grid.downgrade(), margin))
         .collect();
     fit_tables(doc, text);
+    if let Some(find) = doc.find.borrow().upgrade() {
+        find.refresh();
+    }
     // 表のマスの中のリンク（ラベルの <a>）。
     for label in builder.labels.take() {
         let (weak, doc) = (text.downgrade(), doc.clone());

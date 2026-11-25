@@ -21,6 +21,7 @@ pub mod render;
 pub mod route;
 pub mod shapes;
 pub mod simplex;
+pub mod spline;
 pub mod text;
 mod x11;
 
