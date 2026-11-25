@@ -54,7 +54,7 @@ git config --global core.longpaths true
 
 `Add-WindowsCapability` は Windows Update から取ってくるので、先に待っている更新（と、求められる再起動）を済ませる。
 それでも失敗するときは `winget install --id Microsoft.OpenSSH.Preview -e` で、GitHub で配っている同じ OpenSSH を
-入れる（`C:\Program Files\OpenSSH` に入り、ファイアウォールの規則は入らないことがある）。
+入れる（`C:\Program Files\OpenSSH` に入り、ファイアウォールの規則は Private のネットワークにだけ 22 番を開ける）。
 
 ```powershell
 Add-WindowsCapability -Online -Name OpenSSH.Server~~~~0.0.1.0

@@ -54,7 +54,7 @@ git config --global core.longpaths true
 
 `Add-WindowsCapability` downloads from Windows Update, so finish pending updates (and the restart they ask for) first.
 If it still fails, `winget install --id Microsoft.OpenSSH.Preview -e` installs the same OpenSSH from GitHub (into
-`C:\Program Files\OpenSSH`, possibly without the firewall rule).
+`C:\Program Files\OpenSSH`; its firewall rule opens port 22 to Private networks only).
 
 ```powershell
 Add-WindowsCapability -Online -Name OpenSSH.Server~~~~0.0.1.0
