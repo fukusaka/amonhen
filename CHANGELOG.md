@@ -1366,6 +1366,9 @@ First release.
   Merge Branches… can change the order.
 - Stashes, Restore and File History follow the app: Stash's choices combine, stash rows show the time and base ID
   with Copy Name, File History rows have Restore This Version… and Copy Short ID, and Skip / Abort don't ask first.
+- The sidebar follows the app in the small things: Copy Branch / Tag Name, menus for several tags, tags in `/`
+  folders, only groups with rows, flat filter results, Open Worktree for a branch checked out elsewhere, and a
+  confirmation before Prune or a push by dragging.
 
 #### Changed
 

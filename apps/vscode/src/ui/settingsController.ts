@@ -240,7 +240,7 @@ export class SettingsController implements vscode.Disposable {
         await this.editConfig(client, a.key);
         return;
       case 'remote':
-        await this.remoteAction(client, a.op, a.name);
+        await this.remoteAction(a.op, a.name);
         return;
       case 'fetchMore':
         await vscode.commands.executeCommand('amonhen.fetchMoreHistory');
@@ -318,11 +318,10 @@ export class SettingsController implements vscode.Disposable {
   }
 
   /**
-   * Remotes の行のボタン。追加・名前・URL・prune・削除はサイドバーのリモートのメニューと同じコマンド、push の URL と
-   * つながるかの確かめは、ここで（アプリの Remotes のシートの Push URL と Check Connection）
+   * Remotes の行のボタン。サイドバーのリモートのメニューと同じコマンド（push の URL とつながるかの確かめは、アプリの
+   * Remotes のシートの Push URL と Check Connection）
    */
   private async remoteAction(
-    client: NonNullable<Awaited<ReturnType<typeof daemonFor>>>,
     op: 'add' | 'rename' | 'editUrl' | 'editPushUrl' | 'check' | 'prune' | 'remove',
     name: string | undefined,
   ): Promise<void> {
@@ -333,45 +332,8 @@ export class SettingsController implements vscode.Disposable {
     if (!name) return;
     const remote = this.repo?.current.remotes?.find((r) => r.name === name);
     const node = { kind: 'remote', remote: remote ?? { name } };
-    switch (op) {
-      case 'rename':
-      case 'editUrl':
-      case 'prune':
-      case 'remove':
-        await vscode.commands.executeCommand(`amonhen.remote.${op}`, node);
-        return;
-      case 'editPushUrl': {
-        const fetchUrl = remote?.fetchUrl ?? '';
-        const pushUrl = remote?.pushUrl && remote.pushUrl !== fetchUrl ? remote.pushUrl : '';
-        const url = await vscode.window.showInputBox({
-          title: `Push URL of ${name}`,
-          prompt: 'Where Push sends to. Empty to push to the fetch URL.',
-          value: pushUrl,
-          placeHolder: fetchUrl,
-        });
-        if (url === undefined) return;
-        const reply = (
-          await client.call({ op: 'run', command: { op: 'changeRemote', change: { kind: 'setPushUrl', name, url: url.trim() || null } } })
-        ).json;
-        if (reply['ok'] !== true) throw new Error(String(reply['error'] ?? 'Can’t set the push URL'));
-        await this.repo?.refresh();
-        return;
-      }
-      case 'check': {
-        const url = remote?.fetchUrl;
-        if (!url) return;
-        const reply = await vscode.window.withProgress(
-          { location: vscode.ProgressLocation.Notification, title: `Connecting to ${name}…` },
-          async () => (await client.call({ op: 'run', command: { op: 'checkRemote', url } })).json,
-        );
-        if (reply['ok'] !== true) throw new Error(String(reply['error'] ?? `Can’t reach ${name}`));
-        const info = reply['info'] as { branches?: number; tags?: number; head?: string | null } | undefined;
-        void vscode.window.showInformationMessage(
-          `${name}: reachable, ${info?.branches ?? 0} branches, ${info?.tags ?? 0} tags${info?.head ? `, HEAD at ${info.head}` : ''}`,
-        );
-        return;
-      }
-    }
+    const command = { editPushUrl: 'editPushUrl', check: 'checkConnection' }[op as 'editPushUrl' | 'check'] ?? op;
+    await vscode.commands.executeCommand(`amonhen.remote.${command}`, node);
   }
 
   private async load(): Promise<void> {

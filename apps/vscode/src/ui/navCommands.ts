@@ -46,7 +46,19 @@ export function registerNavCommands(manager: RepositoryManager, mergedBy: Merged
       else await one(repo, refs[0]!, (await repo.backend.head()).branch);
     });
 
+  /** 名前をコピー（ターミナルや PR に貼るため。リモートブランチは origin/ を付けたまま。いくつも選べば 1 行に 1 つ） */
+  const copyNames = async (node?: Node, selected?: Node[]) => {
+    const nodes = selected && selected.length > 1 ? selected : node ? [node] : [];
+    const names = nodes.map(refOf).filter((r) => r !== undefined).map(shortName);
+    if (names.length === 0) return;
+    await vscode.env.clipboard.writeText(names.join('\n'));
+    vscode.window.setStatusBarMessage(`$(copy) ${names.length === 1 ? names[0] : `${names.length} names`}`, 3000);
+  };
+
   return vscode.Disposable.from(
+    vscode.commands.registerCommand('amonhen.branch.copyName', copyNames),
+    vscode.commands.registerCommand('amonhen.tag.copyName', copyNames),
+    vscode.commands.registerCommand('amonhen.refs.copyNames', copyNames),
     command('amonhen.nav.checkout', (repo, ref) => checkoutRef(repo, ref)),
     command('amonhen.nav.checkoutAsLocal', (repo, ref) => checkoutRef(repo, ref)),
     several(

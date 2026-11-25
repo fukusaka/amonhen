@@ -1,7 +1,8 @@
 /**
  * サイドバーのナビでの、ブランチのドラッグ＆ドロップ。
  * - ブランチ（またはタグ）をローカルブランチにドロップ: Merge / Rebase を選ぶ
- * - ローカルブランチをリモート（またはリモートのブランチ）にドロップ: Push / Force Push を選ぶ
+ * - ローカルブランチをリモート（またはリモートのブランチ）にドロップ: Push / Force Push を選び、送り先を名前で
+ *   確かめる（上流なら Push のシート）。上流にするのはリモートの見出しに落とした Push だけ
  * どちらもドロップ先を書き換える操作になる。
  */
 import * as vscode from 'vscode';
@@ -15,6 +16,9 @@ import { pickMergeMode } from './mergeMode.ts';
 import { confirmRewrite } from './rewriteConfirm.ts';
 import { sequenceRowName, type Node } from './sidebar.ts';
 import { showError } from './stageCommands.ts';
+import { pushWithSheet } from './pushSheet.ts';
+import { publish } from './syncCommands.ts';
+import type { Worktree } from '../git/worktrees.ts';
 
 const MIME = 'application/vnd.code.tree.amonhen.sidebar';
 
@@ -23,9 +27,12 @@ export class SidebarDragAndDrop implements vscode.TreeDragAndDropController<Node
   readonly dragMimeTypes = [MIME];
   readonly dropMimeTypes = [MIME];
   private readonly manager: RepositoryManager;
+  /** ブランチを checkout している、書き込む先以外の worktree（`root` は書き込む先） */
+  private readonly elsewhere: (branch: string, root: string) => Worktree | undefined;
 
-  constructor(manager: RepositoryManager) {
+  constructor(manager: RepositoryManager, elsewhere: (branch: string, root: string) => Worktree | undefined = () => undefined) {
     this.manager = manager;
+    this.elsewhere = elsewhere;
   }
 
   handleDrag(source: readonly Node[], data: vscode.DataTransfer): void {
@@ -42,6 +49,16 @@ export class SidebarDragAndDrop implements vscode.TreeDragAndDropController<Node
       return;
     }
     const drop = toDropTarget(target);
+    // ほかの worktree が checkout しているブランチは、ここでは checkout できず、fast-forward でも動かせない
+    // （その作業ツリーとずれる）。その worktree で行う（アプリと同じ）
+    const onto = drop?.kind === 'branch' && drop.ref !== source.ref.name ? shortName(drop.ref) : undefined;
+    const other = onto ? this.elsewhere(onto, repo.root) : undefined;
+    if (other) {
+      const open = `Open the Worktree of ${onto} to Merge or Rebase`;
+      const picked = await vscode.window.showQuickPick([{ label: `$(repo-forked) ${open}` }], { placeHolder: 'Choose what dropping does' });
+      if (picked) await vscode.commands.executeCommand('amonhen.worktree.edit', { kind: 'worktree', worktree: other });
+      return;
+    }
     if (drop) {
       const local = source.kind === 'branch' && !source.remote;
       await pickAndRun(repo, { ref: source.ref.name, local, upstream: source.ref.upstream }, drop);
@@ -70,6 +87,8 @@ export interface Action {
   conflictNote?: () => string | undefined;
   /** 実行の前に確かめる。false なら実行しない */
   confirm?: () => Promise<boolean>;
+  /** 確認と実行をこれに任せる（上流への push は Push のシートで） */
+  instead?: () => Promise<void>;
 }
 
 /**
@@ -115,9 +134,8 @@ export async function pickAndRun(repo: Repository, source: DragSource, target: D
     return;
   }
   const picked = await vscode.window.showQuickPick(actions, { placeHolder: 'Choose what dropping does' });
-  if (picked) {
-    await runAction(repo, picked);
-  }
+  if (picked?.instead) await picked.instead();
+  else if (picked) await runAction(repo, picked);
 }
 
 function dropActions(repo: Repository, source: DragSource, target: DropTarget): Action[] {
@@ -150,22 +168,42 @@ function dropActions(repo: Repository, source: DragSource, target: DropTarget): 
     return [];
   }
   const remoteBranch = target.kind === 'remote' ? src : target.ref.slice(`refs/remotes/${remote}/`.length);
-  // upstream が無ければ、push 先を upstream にする
-  const setUpstream = !source.upstream;
   const dest = `${remote}/${remoteBranch}`;
-  const detail = setUpstream ? `Set ${dest} as the upstream` : undefined;
-  const push = (force: boolean) => async () => {
-    await backend.push(remote, src, remoteBranch, { force, setUpstream });
-    return 'pushed' as const;
+  // 上流に落としたなら、ふつうの Push（送るコミットを見せるシート）。上流は Remotes の見出しに落としたときだけ
+  // 設定し、Force Push では設定しない（アプリと同じ）
+  const local = (repo.current.branches ?? []).find((b) => b.name === sourceRef);
+  const toUpstream = local?.upstream === `refs/remotes/${dest}` && !local.gone;
+  const there = (repo.current.remoteBranches ?? []).find((r) => r.name === `refs/remotes/${dest}`)?.oid;
+  const push = (force: boolean): Action => {
+    const setUpstream = target.kind === 'remote' && !force;
+    return {
+      label: force ? `$(warning) Force Push ${src} to ${dest}` : `$(cloud-upload) Push ${src} to ${dest}`,
+      detail: force
+        ? '--force-with-lease: replaces the remote’s history, as after a rebase'
+        : setUpstream && !toUpstream
+          ? `Set ${dest} as the upstream`
+          : undefined,
+      ...(toUpstream
+        ? { instead: () => pushWithSheet(repo, { branch: sourceRef, force }, publish) }
+        : {}),
+      // 送り先を名前で見せて確かめる（リモートに送ったものは Undo では戻せない）
+      confirm: async () => {
+        const detail = force
+          ? `${dest} loses the commits ${src} doesn’t have. This can’t be undone.`
+          : there === undefined
+            ? `Creates ${dest}.`
+            : '';
+        const ok = force ? 'Force Push' : 'Push';
+        const title = force ? `Force push ${src} to ${dest}?` : `Push ${src} to ${dest}?`;
+        return (await vscode.window.showWarningMessage(title, { modal: true, ...(detail ? { detail } : {}) }, ok)) === ok;
+      },
+      run: async () => {
+        await backend.push(remote, src, remoteBranch, { force, setUpstream, ...(force && there ? { expect: there } : {}) });
+        return 'pushed' as const;
+      },
+    };
   };
-  return [
-    { label: `$(cloud-upload) Push ${src} to ${dest}`, detail, run: push(false) },
-    {
-      label: `$(warning) Force Push ${src} to ${dest}`,
-      detail: '--force-with-lease: replaces the remote’s history, as after a rebase',
-      run: push(true),
-    },
-  ];
+  return [push(false), push(true)];
 }
 
 /** 操作を進捗付きで実行し、結果（最新・コンフリクト・完了）に合わせて知らせる */

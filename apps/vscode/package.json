@@ -222,6 +222,21 @@
         "category": "Amon Hen"
       },
       {
+        "command": "amonhen.branch.copyName",
+        "title": "Copy Branch Name",
+        "category": "Amon Hen"
+      },
+      {
+        "command": "amonhen.tag.copyName",
+        "title": "Copy Tag Name",
+        "category": "Amon Hen"
+      },
+      {
+        "command": "amonhen.refs.copyNames",
+        "title": "Copy Names",
+        "category": "Amon Hen"
+      },
+      {
         "command": "amonhen.tag.push",
         "title": "Push Tag",
         "category": "Amon Hen"
@@ -242,6 +257,26 @@
         "category": "Amon Hen"
       },
       {
+        "command": "amonhen.tags.push",
+        "title": "Push Tags…",
+        "category": "Amon Hen"
+      },
+      {
+        "command": "amonhen.tags.replace",
+        "title": "Replace Tags on Remote…",
+        "category": "Amon Hen"
+      },
+      {
+        "command": "amonhen.tags.delete",
+        "title": "Delete Tags…",
+        "category": "Amon Hen"
+      },
+      {
+        "command": "amonhen.tags.deleteFromRemote",
+        "title": "Delete Tags from Remote…",
+        "category": "Amon Hen"
+      },
+      {
         "command": "amonhen.remote.add",
         "title": "Add Remote…",
         "category": "Amon Hen",
@@ -258,8 +293,18 @@
         "category": "Amon Hen"
       },
       {
+        "command": "amonhen.remote.editPushUrl",
+        "title": "Edit Push URL…",
+        "category": "Amon Hen"
+      },
+      {
+        "command": "amonhen.remote.checkConnection",
+        "title": "Check Connection",
+        "category": "Amon Hen"
+      },
+      {
         "command": "amonhen.remote.prune",
-        "title": "Prune",
+        "title": "Prune…",
         "category": "Amon Hen"
       },
       {
@@ -641,6 +686,11 @@
       {
         "command": "amonhen.nav.checkout",
         "title": "Checkout…",
+        "category": "Amon Hen"
+      },
+      {
+        "command": "amonhen.branch.openWorktree",
+        "title": "Open Worktree",
         "category": "Amon Hen"
       },
       {
@@ -1211,9 +1261,19 @@
           "group": "1_remote@2"
         },
         {
-          "command": "amonhen.remote.prune",
+          "command": "amonhen.remote.editPushUrl",
           "when": "view == amonhen.sidebar && viewItem == remote && amonhen.engine",
           "group": "1_remote@3"
+        },
+        {
+          "command": "amonhen.remote.checkConnection",
+          "when": "view == amonhen.sidebar && viewItem == remote && amonhen.engine",
+          "group": "1_remote@4"
+        },
+        {
+          "command": "amonhen.remote.prune",
+          "when": "view == amonhen.sidebar && viewItem == remote && amonhen.engine",
+          "group": "1_remote@5"
         },
         {
           "command": "amonhen.remote.remove",
@@ -1241,6 +1301,26 @@
           "group": "6_tag@2"
         },
         {
+          "command": "amonhen.tags.push",
+          "when": "view == amonhen.sidebar && viewItem =~ /^tag(;\\w+)*$/ && amonhen.engine && listMultiSelection",
+          "group": "5_tag@1"
+        },
+        {
+          "command": "amonhen.tags.replace",
+          "when": "view == amonhen.sidebar && viewItem =~ /^tag(;\\w+)*$/ && amonhen.engine && listMultiSelection",
+          "group": "5_tag@2"
+        },
+        {
+          "command": "amonhen.tags.delete",
+          "when": "view == amonhen.sidebar && viewItem =~ /^tag(;\\w+)*$/ && amonhen.engine && listMultiSelection",
+          "group": "6_tag@1"
+        },
+        {
+          "command": "amonhen.tags.deleteFromRemote",
+          "when": "view == amonhen.sidebar && viewItem =~ /^tag(;\\w+)*$/ && amonhen.engine && listMultiSelection",
+          "group": "6_tag@2"
+        },
+        {
           "command": "amonhen.amRetryThreeWay",
           "when": "view == amonhen.sidebar && viewItem == sequence.am.retry",
           "group": "inline@0"
@@ -1261,8 +1341,28 @@
           "group": "inline@2"
         },
         {
+          "command": "amonhen.branch.copyName",
+          "when": "view == amonhen.sidebar && viewItem =~ /^(branch(\\.current)?(;\\w+)*|remoteBranch)$/ && !listMultiSelection",
+          "group": "0_copy@1"
+        },
+        {
+          "command": "amonhen.tag.copyName",
+          "when": "view == amonhen.sidebar && viewItem =~ /^tag(;\\w+)*$/ && !listMultiSelection",
+          "group": "0_copy@1"
+        },
+        {
+          "command": "amonhen.refs.copyNames",
+          "when": "view == amonhen.sidebar && viewItem =~ /^(branch(\\.current)?(;\\w+)*|remoteBranch|tag(;\\w+)*)$/ && listMultiSelection",
+          "group": "0_copy@1"
+        },
+        {
           "command": "amonhen.nav.checkout",
-          "when": "view == amonhen.sidebar && viewItem =~ /^branch(;\\w+)*$/ && !listMultiSelection",
+          "when": "view == amonhen.sidebar && viewItem =~ /^branch(?!.*;elsewhere)(;\\w+)*$/ && !listMultiSelection",
+          "group": "1_ref@1"
+        },
+        {
+          "command": "amonhen.branch.openWorktree",
+          "when": "view == amonhen.sidebar && viewItem =~ /^branch(;\\w+)*;elsewhere/ && !listMultiSelection",
           "group": "1_ref@1"
         },
         {
@@ -1272,7 +1372,7 @@
         },
         {
           "command": "amonhen.nav.fastForward",
-          "when": "view == amonhen.sidebar && viewItem =~ /^branch;behind(;\\w+)*$/ && !listMultiSelection",
+          "when": "view == amonhen.sidebar && viewItem =~ /^branch;behind(?!.*;elsewhere)(;\\w+)*$/ && !listMultiSelection",
           "group": "1_ref@2"
         },
         {
@@ -1357,7 +1457,7 @@
         },
         {
           "command": "amonhen.submodule.open",
-          "when": "view == amonhen.sidebar && viewItem =~ /^submodule/",
+          "when": "view == amonhen.sidebar && viewItem =~ /^submodule.*;checkedOut/",
           "group": "1_submodule@2"
         },
         {
@@ -1833,7 +1933,39 @@
           "when": "false"
         },
         {
+          "command": "amonhen.branch.copyName",
+          "when": "false"
+        },
+        {
+          "command": "amonhen.branch.openWorktree",
+          "when": "false"
+        },
+        {
+          "command": "amonhen.tag.copyName",
+          "when": "false"
+        },
+        {
+          "command": "amonhen.refs.copyNames",
+          "when": "false"
+        },
+        {
           "command": "amonhen.tag.push",
+          "when": "false"
+        },
+        {
+          "command": "amonhen.tags.push",
+          "when": "false"
+        },
+        {
+          "command": "amonhen.tags.replace",
+          "when": "false"
+        },
+        {
+          "command": "amonhen.tags.delete",
+          "when": "false"
+        },
+        {
+          "command": "amonhen.tags.deleteFromRemote",
           "when": "false"
         },
         {
@@ -1858,6 +1990,14 @@
         },
         {
           "command": "amonhen.remote.prune",
+          "when": "false"
+        },
+        {
+          "command": "amonhen.remote.editPushUrl",
+          "when": "false"
+        },
+        {
+          "command": "amonhen.remote.checkConnection",
           "when": "false"
         },
         {
