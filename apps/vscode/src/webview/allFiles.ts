@@ -4,9 +4,10 @@
  * 足した行を緑、変えた行を青（前の行はツールチップ）、消したところに赤い印。画像は拡大縮小でき、SVG は絵・
  * テキスト・モバイル、Markdown は整形とテキストで見る。そのほかのバイナリはエディタで開く（アプリと同じ）
  */
-import type { FileView, ImageBlob, SvgCheckView, TreeEntry, ViewLine } from '../history/protocol.ts';
+import type { FileView, FileViewNote, ImageBlob, SvgCheckView, TreeEntry, ViewLine } from '../history/protocol.ts';
 import { el, post } from './api.ts';
 import { renderCode } from './diffView.ts';
+import { resolvePath } from '../history/repoPath.ts';
 
 /** コミットで変えたファイル（木の印） */
 export interface ChangedFile {
@@ -17,14 +18,33 @@ export interface ChangedFile {
 export interface AllFiles {
   readonly root: HTMLElement;
   showEntries(path: string, entries: TreeEntry[], error?: string): void;
-  showFile(path: string, view: FileView): void;
+  showFile(path: string, view: FileView & FileViewNote): void;
+  /** リストか木か（詳細の帯の List・Tree） */
+  setTree(tree: boolean): void;
 }
+
+/** すべてのファイルの持ち主から */
+export interface AllFilesOptions {
+  /** 木で見せるか（でなければ、すべてのファイルのパスを並べるリスト） */
+  tree: boolean;
+  /** 「Show This Change」: 変更の表示に戻り、そのファイルの差分を開く */
+  onShowChange?: (path: string) => void;
+}
+
+/** 見せ方（Markdown・SVG・モバイルの部品）は、ファイルを替えても覚えておく（アプリと同じ） */
+const lastMode: { markdown?: string; svg?: string } = {};
+let lastRenderer = 'android';
 
 /** 中身に並べる行の上限（それより長いファイルはエディタで） */
 const MAX_LINES = 20000;
 
-export function createAllFiles(oid: string, changes: readonly ChangedFile[]): AllFiles {
+export function createAllFiles(oid: string, changes: readonly ChangedFile[], options: AllFilesOptions = { tree: true }): AllFiles {
   const root = el('div', 'all-files');
+  let tree_ = options.tree;
+  /** リストのために読んだ、すべてのファイル（パス → 種類） */
+  const listed = new Map<string, TreeEntry['kind']>();
+  /** 読んでいる途中のフォルダの数（リストで、すべて読み終えたら並べる） */
+  let loading = 0;
   const tree = el('div', 'tree-pane');
   const pane = el('div', 'file-pane');
   pane.append(el('div', 'empty', 'Select a file to see its contents at this commit'));
@@ -43,14 +63,72 @@ export function createAllFiles(oid: string, changes: readonly ChangedFile[]): Al
     box.dataset.depth = String(depth);
     box.append(el('div', 'tree-note', 'Loading…'));
     folders.set(path, box);
+    loading++;
     post({ type: 'treeEntries', oid, path });
     return box;
   }
-  tree.append(folderBox('', 0));
+
+  /** 木（根から）かリスト（すべてのフォルダを読んで、パスの順に）を作り直す */
+  function rebuild(): void {
+    folders.clear();
+    listed.clear();
+    loading = 0;
+    tree.replaceChildren(folderBox('', 0));
+  }
+  rebuild();
+
+  /** リスト: 読んだファイルをパスの順に並べる（読み終えるまでは数だけ） */
+  function renderList(): void {
+    if (loading > 0) {
+      tree.replaceChildren(el('div', 'tree-note', `Loading… (${listed.size} files)`));
+      return;
+    }
+    const deleted = changes.filter((c) => c.status === 'D').map((c) => c.path);
+    const paths = [...new Set([...listed.keys(), ...deleted])].sort((a, b) => a.toLowerCase().localeCompare(b.toLowerCase()));
+    tree.replaceChildren(
+      ...paths.map((full) => {
+        const row = el('div', 'tree-row file');
+        row.style.paddingLeft = '6px';
+        row.title = full;
+        const mark = status.get(full);
+        row.append(el('span', 'chevron'), el('span', 'name', full));
+        if (mark) row.append(el('span', `status s-${mark}`, mark));
+        if (mark === 'D') row.classList.add('deleted');
+        if (listed.get(full) === 'submodule') row.classList.add('disabled');
+        else row.addEventListener('click', () => openFile(full, row));
+        if (full === selected) {
+          row.classList.add('active');
+          selectedRow = row;
+        }
+        return row;
+      }),
+    );
+  }
+
+  /** ファイルを開く（行を選んだ印にして、中身を拡張ホストに求める） */
+  function openFile(full: string, row?: HTMLElement): void {
+    selectedRow?.classList.remove('active');
+    row?.classList.add('active');
+    selectedRow = row;
+    selected = full;
+    pane.replaceChildren(el('div', 'empty', 'Loading…'));
+    post({ type: 'treeFile', oid, path: full });
+  }
 
   function showEntries(path: string, entries: TreeEntry[], error?: string): void {
     const box = folders.get(path);
     if (!box) return;
+    loading = Math.max(0, loading - 1);
+    if (!tree_) {
+      // リスト: フォルダはすべて読み、ファイルを覚える
+      const prefix = path ? `${path}/` : '';
+      for (const e of entries) {
+        if (e.kind === 'folder') folderBox(`${prefix}${e.name}`, 0);
+        else listed.set(`${prefix}${e.name}`, e.kind);
+      }
+      renderList();
+      return;
+    }
     const depth = Number(box.dataset.depth);
     const rows: Node[] = [];
     if (error) rows.push(el('div', 'tree-note', error));
@@ -71,7 +149,7 @@ export function createAllFiles(oid: string, changes: readonly ChangedFile[]): Al
         row.append(chevron, el('span', 'name', entry.name));
         if (touches(full)) row.classList.add('touched');
         let children: HTMLElement | undefined;
-        row.addEventListener('click', () => {
+        const toggle = () => {
           if (!children) {
             children = folderBox(full, depth + 1);
             row.after(children);
@@ -79,8 +157,11 @@ export function createAllFiles(oid: string, changes: readonly ChangedFile[]): Al
             children.hidden = !children.hidden;
           }
           chevron.textContent = children.hidden ? '▸' : '▾';
-        });
+        };
+        row.addEventListener('click', toggle);
         rows.push(row);
+        // このコミットで変えたファイルのあるフォルダは、最初から開く（アプリと同じ）
+        if (touches(full)) queueMicrotask(toggle);
         continue;
       }
       const mark = status.get(full);
@@ -91,14 +172,7 @@ export function createAllFiles(oid: string, changes: readonly ChangedFile[]): Al
         row.classList.add('disabled');
         row.title = `${full} (submodule)`;
       } else {
-        row.addEventListener('click', () => {
-          selectedRow?.classList.remove('active');
-          row.classList.add('active');
-          selectedRow = row;
-          selected = full;
-          pane.replaceChildren(el('div', 'empty', 'Loading…'));
-          post({ type: 'treeFile', oid, path: full });
-        });
+        row.addEventListener('click', () => openFile(full, row));
       }
       rows.push(row);
     }
@@ -106,10 +180,26 @@ export function createAllFiles(oid: string, changes: readonly ChangedFile[]): Al
     box.replaceChildren(...rows);
   }
 
-  function showFile(path: string, view: FileView): void {
+  function showFile(path: string, view: FileView & FileViewNote): void {
     if (path !== selected) return;
     const head = el('div', 'file-pane-head');
-    head.append(el('span', 'path', path));
+    // パスとコミット（アプリの「パス @ 短い ID」）。消したファイルは前の版を出すので、そう添える
+    head.append(el('span', 'path', path), el('span', 'at', `@ ${oid.slice(0, 7)}`));
+    if (view.deleted) head.append(el('span', 'note', '(deleted in this commit)'));
+    const tools = el('span', 'file-tools');
+    if (status.has(path) && options.onShowChange) {
+      const change = el('button', 'bar-button', 'Show This Change');
+      change.title = 'Show this file’s change in Changes';
+      change.addEventListener('click', () => options.onShowChange?.(path));
+      tools.append(change);
+    }
+    if (view.kind !== 'error' && view.kind !== 'binary') {
+      const open = el('button', 'bar-button', 'Open in Editor');
+      open.title = 'Open the file at this commit in VSCode';
+      open.addEventListener('click', () => post({ type: 'openTreeFile', oid, path }));
+      tools.append(open);
+    }
+    head.append(tools);
     const body = el('div', 'file-pane-body');
     pane.replaceChildren(head, body);
     switch (view.kind) {
@@ -129,21 +219,23 @@ export function createAllFiles(oid: string, changes: readonly ChangedFile[]): Al
         return;
       case 'text': {
         const modes: [string, string, () => Node][] = [];
-        if (view.markdown) modes.push(['Preview', 'Show the Markdown formatted', () => renderMarkdown(view.markdown!)]);
+        // Markdown の中の相対リンクは、このコミットのそのファイルを開く（アプリと同じ）
+        if (view.markdown) modes.push(['Preview', 'Show the Markdown formatted', () => renderMarkdown(view.markdown!, path, (to) => openFile(to))]);
         if (view.svg) {
           const svg = view.svg;
           modes.push(['Picture', 'Show the SVG as a picture', () => zoomableImage(svg.image)]);
+          if (svg.check) {
+            const check = svg.check;
+            modes.push(['Mobile', 'What breaks on a mobile SVG renderer, beside an approximation of it', () => renderSvgCheck(svg.image, check)]);
+          }
         }
         modes.push(['Text', 'Show the text with this commit’s changes marked', () => renderLines(view.lines, view.removedAtEnd)]);
-        if (view.svg?.check) {
-          const check = view.svg.check;
-          const image = view.svg.image;
-          modes.push(['Mobile', 'What breaks on mobile SVG renderers, with an approximation of each', () => renderSvgCheck(image, check)]);
-        }
+        const kind = view.markdown ? 'markdown' : view.svg ? 'svg' : undefined;
         if (modes.length > 1) {
           const switcher = el('span', 'segmented');
           const pick = (i: number) => {
             for (const [j, b] of [...switcher.children].entries()) b.classList.toggle('on', i === j);
+            if (kind) lastMode[kind] = modes[i]![0];
             body.replaceChildren(modes[i]![2]());
           };
           modes.forEach(([label, tip], i) => {
@@ -152,8 +244,10 @@ export function createAllFiles(oid: string, changes: readonly ChangedFile[]): Al
             b.addEventListener('click', () => pick(i));
             switcher.append(b);
           });
-          head.append(switcher);
-          pick(0);
+          head.insertBefore(switcher, tools);
+          // 前に選んだ見せ方で開く（アプリと同じ）
+          const remembered = kind ? modes.findIndex((m) => m[0] === lastMode[kind]) : -1;
+          pick(Math.max(0, remembered));
         } else {
           body.append(modes[0]![2]());
         }
@@ -161,7 +255,13 @@ export function createAllFiles(oid: string, changes: readonly ChangedFile[]): Al
     }
   }
 
-  return { root, showEntries, showFile };
+  function setTree(next: boolean): void {
+    if (next === tree_) return;
+    tree_ = next;
+    rebuild();
+  }
+
+  return { root, showEntries, showFile, setTree };
 }
 
 function sizeText(bytes: number): string {
@@ -267,39 +367,61 @@ const TARGET_NAMES: Record<string, string> = {
   reactNative: 'react-native-svg',
 };
 
-/** SVG のモバイルの確認: 崩れる機能と、部品ごとに元の絵と崩れ方の近似を並べる */
+/**
+ * SVG のモバイルの確認: 部品（Android・iOS・Flutter・React Native）を選び、その部品で崩れる機能と、元の絵と崩れ方の
+ * 近似を並べる（アプリと同じ。選んだ部品は覚える）
+ */
 function renderSvgCheck(image: ImageBlob, check: SvgCheckView): HTMLElement {
   const box = el('div', 'svg-check');
   if (check.issues.length === 0) {
     box.append(el('div', 'empty', 'Nothing here breaks on the mobile SVG renderers.'));
     return box;
   }
-  for (const [key, name] of Object.entries(TARGET_NAMES)) {
-    const issues = check.issues.filter((i) => i.targets.includes(key));
+  const switcher = el('span', 'segmented');
+  const body = el('div');
+  const SHORT: Record<string, string> = { android: 'Android', ios: 'iOS', flutter: 'Flutter', reactNative: 'React Native' };
+  const pick = (key: string) => {
+    lastRenderer = key;
+    for (const b of switcher.querySelectorAll<HTMLElement>('button')) b.classList.toggle('on', b.dataset.key === key);
+    body.replaceChildren(renderTarget(key));
+  };
+  for (const key of Object.keys(TARGET_NAMES)) {
+    const b = el('button', 'bar-button', SHORT[key] ?? key);
+    b.dataset.key = key;
+    b.title = TARGET_NAMES[key]!;
+    b.addEventListener('click', () => pick(key));
+    switcher.append(b);
+  }
+  box.append(switcher, body);
+  pick(TARGET_NAMES[lastRenderer] ? lastRenderer : 'android');
+  return box;
+
+  function renderTarget(key: string): HTMLElement {
+    const name = TARGET_NAMES[key]!;
     const section = el('section', 'svg-target');
+    const issues = check.issues.filter((i) => i.targets.includes(key));
     section.append(el('h4', '', `${name}${issues.length ? '' : ' — no problems'}`));
     if (issues.length) {
       const list = el('ul');
       for (const i of issues) list.append(el('li', '', `${i.feature}${i.count > 1 ? ` (×${i.count})` : ''}: ${i.message}`));
       section.append(list);
-      const pair = el('div', 'image-side');
-      const figure = (label: string, url: string) => {
-        const f = el('figure', 'image-figure');
-        const frame = el('div', 'checker');
-        const img = el('img');
-        img.src = url;
-        frame.append(img);
-        f.append(frame, el('div', 'image-caption', label));
-        return f;
-      };
-      const approx = check.approximations[key];
-      pair.append(figure('Original', image.url));
-      if (approx) pair.append(figure('Approximation', `data:image/svg+xml;base64,${base64(approx)}`));
-      section.append(pair);
     }
-    box.append(section);
+    const pair = el('div', 'image-side');
+    const figure = (label: string, url: string) => {
+      const f = el('figure', 'image-figure');
+      const frame = el('div', 'checker');
+      const img = el('img');
+      img.src = url;
+      frame.append(img);
+      f.append(frame, el('div', 'image-caption', label));
+      return f;
+    };
+    const approx = check.approximations[key];
+    pair.append(figure('Original', image.url));
+    if (approx) pair.append(figure(`How ${name} draws it (approximation)`, `data:image/svg+xml;base64,${base64(approx)}`));
+    section.append(pair);
+    return section;
   }
-  return box;
 }
 
 function base64(text: string): string {
@@ -361,11 +483,23 @@ type MdBlock =
   | { kind: 'htmlTable'; columns: number; rows: number; cells: MdCell[] };
 
 /** Markdown を整形して見せる（コアが読んだブロックから組み立てる。外からは何も読まない） */
-function renderMarkdown(blocks: readonly unknown[]): HTMLElement {
+function renderMarkdown(blocks: readonly unknown[], from?: string, onOpen?: (path: string) => void): HTMLElement {
   const box = el('div', 'markdown');
   box.append(...(blocks as MdBlock[]).map(renderBlock));
+  // 相対リンク（スキームのないもの）は、このコミットの中のファイルとして開く。外の URL はふつうに開く
+  if (from !== undefined && onOpen) {
+    box.addEventListener('click', (e) => {
+      const a = (e.target as Element).closest('a');
+      const href = a?.getAttribute('href');
+      if (!href || /^[a-z][a-z0-9+.-]*:/i.test(href) || href.startsWith('#')) return;
+      e.preventDefault();
+      const path = resolvePath(from, href.split('#')[0]!.split('?')[0]!);
+      if (path) onOpen(path);
+    });
+  }
   return box;
 }
+
 
 /** 今の外観が暗いか（`<picture>` の画像を選ぶ） */
 function darkTheme(): boolean {

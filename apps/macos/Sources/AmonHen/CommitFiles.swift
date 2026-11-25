@@ -636,6 +636,8 @@ final class CommitFilesBrowser: NSView, NSOutlineViewDataSource, NSOutlineViewDe
     private let markdownSwitch = NSSegmentedControl(
         labels: [L("Preview"), L("Text")], trackingMode: .selectOne, target: nil, action: nil)
     private var markdownView: MarkdownView?
+    /// 整形した Markdown が出たら探す文字（`--find` の確認用。読むのを待つ）。
+    private var pendingFind: String?
     /// Android の VectorDrawable の見せ方（絵・テキスト）。確かめる用に `-AMHDrawableView text`。
     private var drawableText = UserDefaults.standard.string(forKey: "AMHDrawableView") == "text"
     private let drawableSwitch = NSSegmentedControl(
@@ -1021,6 +1023,17 @@ final class CommitFilesBrowser: NSView, NSOutlineViewDataSource, NSOutlineViewDe
         if let openPath, let file = changedFiles[openPath] { onShowChange?(file) }
     }
 
+    /// 開いているファイルを探す（`--find` の確認用）。整形した Markdown がまだ読めていなければ、出たときに探す。
+    func find(_ query: String) {
+        if let markdownView {
+            markdownView.find(query)
+        } else if let openPath, MarkdownBlock.isMarkdown(openPath), !markdownText {
+            pendingFind = query
+        } else {
+            content.find(query)
+        }
+    }
+
     /// `path` の中身を出す（`line` があればその行へ）。変えたファイルは前後をファイル全体にした差分、変えていない
     /// ファイルはその時点の中身。
     func open(path: String, line: Int?) {
@@ -1076,6 +1089,11 @@ final class CommitFilesBrowser: NSView, NSOutlineViewDataSource, NSOutlineViewDe
                 markdownView = view
                 addSubview(view, positioned: .below, relativeTo: pathBar)
                 needsLayout = true
+                if let query = pendingFind {
+                    pendingFind = nil
+                    layoutSubtreeIfNeeded()
+                    view.find(query)
+                }
             }
             return
         }

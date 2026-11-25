@@ -3188,6 +3188,19 @@ body.wrap-lines .line .code {
   color: var(--vscode-descriptionForeground);
 }
 
+/* すべてのファイルの中身の見出し: パスとコミット、消したファイルの注記、Show This Change・Open in Editor */
+.file-pane-head .at,
+.file-pane-head .note {
+  margin-left: 6px;
+  color: var(--vscode-descriptionForeground);
+}
+
+.file-pane-head .file-tools {
+  margin-left: auto;
+  display: inline-flex;
+  gap: 4px;
+}
+
 /* コミットのメッセージは、既定ではふつうの字（アプリと同じ）。表示のメニューの Monospaced Commit Message で等幅に */
 .details-head pre.body {
   font-family: var(--vscode-font-family);

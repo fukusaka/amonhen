@@ -18,6 +18,7 @@ use crate::layout::{self, LabelSide, Route};
 use crate::record::{self, Field};
 use crate::route;
 use crate::shapes::{self, Geom, Kind};
+use crate::spline;
 use crate::text::{self, Font, Names, Text, color_attr, text_svg};
 
 /// patchwork の面積 1 の升の辺（Graphviz の絵に合わせた大きさ）。
@@ -1290,7 +1291,26 @@ pub fn render(
                     // 直角にできなかった線（仮のノードの上限を超えた長い線）
                     ctx.notes.insert(Note::Ortho);
                 }
-                if !(straight || curved || right_angles.is_some()) {
+                // dot の曲線は、通り道の中の最短の折れ線を引いてから避け、通り道に収まる曲線にする
+                let gates = lay.corridors.get(ei).map_or(&[][..], |g| &g[..]);
+                // ポートのある辺は前のまま（仮のノードを縦の向きで通る曲線。欄の中へ入る形を保つ）
+                let fitted = !(free || straight || curved || polyline || right_angles.is_some())
+                    && tail_port.is_none()
+                    && head_port.is_none();
+                if fitted {
+                    // samehead・sametail の辺は、会う点から引く
+                    let [meet_head, meet_tail] = meet[ei];
+                    let start = match meet_tail {
+                        Some((m, _)) if tail_port.is_none() => from_final(m),
+                        _ => pts[0],
+                    };
+                    let end = match meet_head {
+                        Some((m, _)) if head_port.is_none() => from_final(m),
+                        _ => pts[pts.len() - 1],
+                    };
+                    pts = spline::shortest(start, end, gates);
+                    obstacles.avoid(&mut pts, &[e.tail, e.head], false);
+                } else if !(straight || curved || right_angles.is_some()) {
                     // dot 以外は点の間を直線として避け、あとでなめらかにつなぐ
                     obstacles.avoid(&mut pts, &[e.tail, e.head], !polyline && !free);
                 }
@@ -1308,6 +1328,8 @@ pub fn render(
                     let (dx, dy) = (b0.0 - a0.0, b0.1 - a0.1);
                     let bend = (mx - dy * 0.2, my + dx * 0.2);
                     vec![Cubic(a0, bend, bend, b0)]
+                } else if fitted {
+                    spline::fit(&lp, gates)
                 } else {
                     curve::through(&lp, straight || polyline, true)
                 };
@@ -2193,6 +2215,7 @@ fn free_layout(model: &Model, placed: &engines::Placement) -> layout::Layout {
         width: w,
         height: h,
         crossings: 0,
+        corridors: vec![Vec::new(); model.edges.len()],
     }
 }
 
