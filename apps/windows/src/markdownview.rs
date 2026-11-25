@@ -282,6 +282,11 @@ pub type MdImages = std::collections::HashMap<String, MdImage>;
 /// 画像の幅の上限（GTK4 版と同じ 640）。
 const MAX_IMAGE_WIDTH: f64 = 640.0;
 
+/// 幅の割合（1〜100）を、`column` の幅に対する DIP にする。
+fn percent_width(percent: u32, column: f64) -> f64 {
+    (column * f64::from(percent.clamp(1, 100)) / 100.0).round()
+}
+
 /// `from`（Markdown のファイルのパス）から見た `link` の、リポジトリの根からのパス（外の URL・`#` だけは None。
 /// GTK4 版の `resolve`）。
 pub fn resolve(link: &str, from: &str) -> Option<String> {
@@ -464,13 +469,18 @@ impl Pictures<'_> {
     }
 
     /// 読めた画像の、HTML の `width`・`height`（片方なら比を保つ）か、もとの大きさ（幅は 640 まで）で見せる絵。
-    /// リンクの中の画像は押せる。
+    /// 幅の割合（`width="50%"`）は本文の欄の幅に対して決める（図と同じく欄の幅は決まった値）。リンクの中の画像は
+    /// 押せる。
     fn image(&self, run: &Run) -> Option<View> {
         let image = self.images.get(self.source(run)?)?;
         let ratio = image.height / image.width.max(1.0);
-        let (w, h) = match (run.width, run.height) {
-            (Some(w), Some(h)) => (f64::from(w), f64::from(h)),
-            (Some(w), None) => (f64::from(w), f64::from(w) * ratio),
+        let width = run.width.map(f64::from).or_else(|| {
+            run.width_percent
+                .map(|p| percent_width(p, f64::from(TEXT_WIDTH)))
+        });
+        let (w, h) = match (width, run.height) {
+            (Some(w), Some(h)) => (w, f64::from(h)),
+            (Some(w), None) => (w, w * ratio),
             (None, Some(h)) => (f64::from(h) / ratio.max(0.0001), f64::from(h)),
             (None, None) => (image.width, image.height),
         };
@@ -980,4 +990,19 @@ pub fn view(
             .padding(Thickness::new(24.0, 16.0, 24.0, 24.0))
             .content(content),
     )
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn percent_widths_follow_the_column() {
+        assert_eq!(percent_width(50, 852.0), 426.0);
+        assert_eq!(percent_width(25, 852.0), 213.0);
+        assert_eq!(percent_width(100, 852.0), 852.0);
+        // 範囲の外は 1〜100 に収める（コアも 100 で止める）
+        assert_eq!(percent_width(250, 852.0), 852.0);
+        assert_eq!(percent_width(0, 852.0), 9.0);
+    }
 }
