@@ -324,7 +324,7 @@ The GTK4 app aims to behave like the macOS app. These are the only intended diff
 | Resolve a file with Current / Incoming | ✓ | ✓ | ✓ | ✓ | △ | ✓ | CLI: Via `amonhen run`.<br>TUI: `o` `t` in the list. |
 | Open in an external merge tool | — | — | — | n/a | n/a | — |  |
 | Pop out the editor into a window | ✓ | ✓ | ✓ | n/a | n/a | n/a | Windows: A new window opens the same file; unsaved edits go with it. |
-| Continue / Skip / Abort | ✓ | ✓ | ✓ | ✓ | △ | ✓ | VSCode: On the sidebar's in-progress row.<br>CLI: Via `amonhen run`.<br>TUI: `C` `K` `A`. |
+| Continue / Skip / Abort | ✓ | ✓ | ✓ | ✓ | △ | ✓ | VSCode: On the sidebar's in-progress row; Skip and Abort don't ask first, as in the app.<br>CLI: Via `amonhen run`.<br>TUI: `C` `K` `A`. |
 
 ## 9. AI
 

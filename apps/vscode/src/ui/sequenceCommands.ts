@@ -36,19 +36,14 @@ async function continueSequence(manager: RepositoryManager): Promise<void> {
   }
 }
 
-/** 今当てているコミットを飛ばして続ける。そのコミットは結果に残らない */
+/**
+ * 今当てているコミットを飛ばして続ける。そのコミットは結果に残らない。アプリと同じく聞かずに行い、rebase・cherry-pick・
+ * am だけ（revert には出さない）
+ */
 async function skipSequence(manager: RepositoryManager): Promise<void> {
   const repo = manager.current;
   const sequence = repo?.current.sequence;
-  if (!repo || !sequence || sequence === 'merge') {
-    return;
-  }
-  const choice = await vscode.window.showWarningMessage(
-    'Skip the current commit and go on?',
-    { modal: true, detail: 'Its changes are left out of the result. To go back to where you started, use Abort.' },
-    'Skip',
-  );
-  if (choice !== 'Skip') {
+  if (!repo || (sequence !== 'rebase' && sequence !== 'cherry-pick' && sequence !== 'am')) {
     return;
   }
   try {
@@ -63,18 +58,11 @@ async function skipSequence(manager: RepositoryManager): Promise<void> {
   }
 }
 
+/** 始める前に戻す。アプリと同じく聞かずに行う */
 async function abortSequence(manager: RepositoryManager): Promise<void> {
   const repo = manager.current;
   const sequence = repo?.current.sequence;
   if (!repo || !sequence) {
-    return;
-  }
-  const choice = await vscode.window.showWarningMessage(
-    `Abort the ${sequence} and go back to where you started?`,
-    { modal: true },
-    'Abort',
-  );
-  if (choice !== 'Abort') {
     return;
   }
   try {

@@ -324,7 +324,7 @@ GTK4 のアプリは macOS のアプリと同じふるまいをめざす。わ�
 | ファイルを Current / Incoming で解く | ✓ | ✓ | ✓ | ✓ | △ | ✓ | CLI: `amonhen run` から。<br>TUI: 一覧で `o` `t`。 |
 | 外のマージツールで開く | — | — | — | n/a | n/a | — |  |
 | エディターを別の窓に出す | ✓ | ✓ | ✓ | n/a | n/a | n/a | Windows: 新しい窓で同じファイルを開く。保存していない編集も持って行く。 |
-| Continue / Skip / Abort | ✓ | ✓ | ✓ | ✓ | △ | ✓ | VSCode: サイドバーの進行中の行に出る。<br>CLI: `amonhen run` から。<br>TUI: `C` `K` `A`。 |
+| Continue / Skip / Abort | ✓ | ✓ | ✓ | ✓ | △ | ✓ | VSCode: サイドバーの進行中の行に出る。Skip と Abort は、アプリと同じく先に尋ねない。<br>CLI: `amonhen run` から。<br>TUI: `C` `K` `A`。 |
 
 ## 9. AI
 
