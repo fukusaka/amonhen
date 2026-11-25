@@ -1318,6 +1318,8 @@ First release.
 
 #### Added
 
+- All Files draws Mermaid and DOT diagrams and math in formatted Markdown, and Android VectorDrawables as pictures with a
+  Text switch, in the theme's colors (with the engine).
 - The Working Copy diff can ignore whitespace (at line ends, changes in amount or all), with the engine. Lines and
   hunks aren't staged or discarded meanwhile.
 - The commit details show the tags on the commit and the tags a merge took in, with their tagger, subject and
