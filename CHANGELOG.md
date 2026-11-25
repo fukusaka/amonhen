@@ -41,6 +41,8 @@ checkerboard behind transparent pictures can be switched between light and dark.
   the nodes around them, instead of bending at every rank.
 - DOT diagrams: same-rank edges that skip over nodes run just above their rank, as in Graphviz, instead of arching
   over the ranks above; overlapping arcs get their own heights and other edges keep clear of their labels.
+- DOT diagrams: `splines=ortho` in the dot layout spreads crowded edge ends across more of a node's side, takes the
+  outermost ones in from the left and right sides, and moves end lines apart when they would share a line.
 
 #### Changed
 
