@@ -10,6 +10,7 @@ import { daemonFor } from '../daemon/connection.ts';
 import { applySyntax, changedRows, readWorkingDiff, selectedRows, type DaemonDiff } from '../daemon/diff.ts';
 import { applyDiffSelection, computeDiff, type ComputedDiff } from '../diff/fileDiff.ts';
 import { discardFiles, discardLines } from '../state/discard.ts';
+import { failureCause } from '../failure/cause.ts';
 import { COMMIT_TYPES, fixupSubjects, templateMessage, type MessageParts } from '../workingCopy/commitMessage.ts';
 import type { DiffWhitespace } from '../history/protocol.ts';
 import type { FileStat, WorkingCopyHostMessage, WorkingCopyWebviewMessage } from '../workingCopy/protocol.ts';
@@ -234,6 +235,17 @@ export class WorkingCopyController implements vscode.Disposable {
       return;
     }
     this.selected = { group: change.group, path: change.path };
+    try {
+      await this.sendDiffOf(change);
+    } catch (err) {
+      // 空の差分や知らせにせず、差分の場所に読めなかった理由を出す（アプリと同じ）
+      if (this.selected?.path !== change.path) return;
+      const message = err instanceof Error ? err.message : String(err);
+      this.post({ type: 'wcDiffFailed', group: change.group, path: change.path, error: failureCause(message) });
+    }
+  }
+
+  private async sendDiffOf(change: Change): Promise<void> {
     // 読んでいる間に空白の扱いを選び直したら、この差分は送らない（選び直しで読み直した方を送る。古い差分に新しい
     // 扱いの札を付けない）
     const whitespace = this.whitespace;

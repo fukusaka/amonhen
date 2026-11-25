@@ -111,6 +111,8 @@ export function createWorkingCopyView(): View {
   let diff: FileDiff | undefined;
   /** diff のファイルが今あるグループ */
   let diffGroup: ChangeGroup | undefined;
+  /** 選んだファイルの差分を読めなかった理由（読めたら undefined） */
+  let diffError: string | undefined;
   /** 差分で無視している空白（エンジンで読んだときだけ。なければ選ぶ欄を出さない） */
   let whitespace: DiffWhitespace | undefined;
   /** 選んでいる行。キーは `old:12` / `new:7` */
@@ -378,7 +380,9 @@ export function createWorkingCopyView(): View {
 
   function renderDiff(): void {
     if (!diff) {
-      diffPane.replaceChildren(el('div', 'empty', files.length ? 'Select a file to see its diff' : ''));
+      // 読めなかったときは、空の差分にせず理由を出す（アプリと同じ）
+      const text = diffError ? `Can’t read the diff: ${diffError}` : files.length ? 'Select a file to see its diff' : '';
+      diffPane.replaceChildren(el('div', 'empty', text));
       return;
     }
     const d = diff;
@@ -778,10 +782,21 @@ export function createWorkingCopyView(): View {
           picked = new Set();
           anchor = undefined;
         }
+        diffError = undefined;
         diff = m.diff;
         diffGroup = m.group;
         whitespace = m.diff ? m.whitespace : whitespace;
         selected = m.diff ? { group: m.group!, path: m.diff.path } : undefined;
+        renderFiles();
+        renderDiff();
+        break;
+      case 'wcDiffFailed':
+        picked = new Set();
+        anchor = undefined;
+        diff = undefined;
+        diffGroup = m.group;
+        diffError = m.error;
+        selected = { group: m.group, path: m.path };
         renderFiles();
         renderDiff();
         break;
