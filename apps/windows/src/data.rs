@@ -1128,6 +1128,8 @@ pub struct Data {
     pub matches: Vec<u32>,
     /// History で複数選んでいる行（昇順。2 つ以上のときだけ）。描くときに塗る。
     pub multi: Vec<u32>,
+    /// History でコミットを運んでいる（描くときに、運ぶ先の印とつかんだ行を描く）。
+    pub drag: Option<RowDrag>,
     /// 複数選んだときの読み込みの番号（`commit_wanted` の鍵の上位ビットを立てて使う）。
     selection_seq: u32,
     /// 探している問い合わせ。
@@ -1175,6 +1177,30 @@ pub struct Data {
     scope: Arc<std::sync::Mutex<Scope>>,
     /// 範囲を変えた（作り直した History が届いたら、選んだ行を見せる）。
     pub scope_changed: bool,
+    /// History の上で編集している範囲の描き方（編集モードの間だけ。`render.rs` が描く）。
+    pub edit: Option<crate::historyedit::Overlay>,
+    /// 編集を始める前の範囲・折りたたみ・一致だけの表示（終えたら戻す）。
+    before_edit: Option<(Scope, bool, bool)>,
+}
+
+/// History でコミットを運んでいる間のこと（macOS 版・GTK4 版の、コミットを運んで落とす）。
+#[derive(Clone, Debug)]
+pub struct RowDrag {
+    /// つかんだ行。
+    pub row: u32,
+    /// 押した所の、行の上端からの高さと、今の指の高さ（History の窓の中の DIP）。
+    pub offset: f32,
+    pub y: f32,
+    /// 押した所（少し動かしたら運び始める）。
+    pub start: f32,
+    /// 運び始めた。
+    pub moving: bool,
+    /// History の窓の高さ（描く行の範囲）。
+    pub height: f32,
+    /// 落とす先（行と、その行に重ねるか。重ねないなら行の上の境目）。
+    pub target: Option<(u32, bool)>,
+    /// 編集できる並び（HEAD から first-parent で辿ったもの。読み終えるまでは None。落とせない行を薄くする）。
+    pub chain: Option<Arc<HashSet<amonhen_model::Oid>>>,
 }
 
 /// History の範囲（GTK4 版の `historydisplay::Scope`）。
@@ -1520,6 +1546,9 @@ impl Data {
             expanded,
             scope,
             scope_changed: false,
+            edit: None,
+            before_edit: None,
+            drag: None,
         }
     }
 
@@ -1821,6 +1850,13 @@ impl Data {
 
     /// History の範囲を変えて作り直す（GTK4 版の `set_scope`）。
     pub fn set_scope(&mut self, scope: Scope) {
+        // 編集の間は、今のブランチの全部の行のまま（サイドバーで ref を選んでも範囲は変えない）。
+        if self.before_edit.is_none() {
+            self.apply_scope(scope);
+        }
+    }
+
+    fn apply_scope(&mut self, scope: Scope) {
         {
             let mut current = self.scope.lock().unwrap();
             if *current == scope {
@@ -2891,6 +2927,49 @@ impl Data {
             }
         }
         self.worktree_labels = labels;
+    }
+
+    /// History の行に描いているコミットの行（編集で並べ替えていなければ同じ行）。
+    pub fn shown_row(&self, row: u32) -> u32 {
+        self.edit.as_ref().map_or(row, |e| e.shown_row(row))
+    }
+
+    /// History の上で編集を始める: 今のブランチの全部の行（たたまない・一致だけにしない）にする（GTK4 版の
+    /// `Shaper::begin_editing`）。
+    pub fn begin_editing(&mut self) {
+        if self.before_edit.is_some() {
+            return;
+        }
+        let fold = self.fold.load(std::sync::atomic::Ordering::Relaxed);
+        let (scope, only) = (self.scope(), self.matching_only);
+        if only {
+            self.set_matching_only(false);
+        }
+        if fold {
+            self.set_fold(false);
+        }
+        self.apply_scope(Scope::Current);
+        self.before_edit = Some((scope, fold, only));
+    }
+
+    /// 編集を終える（Apply・Cancel）: 範囲の描き方を消し、元の範囲・折りたたみ・一致だけの表示に戻す。
+    pub fn end_editing(&mut self) {
+        self.edit = None;
+        let Some((scope, fold, only)) = self.before_edit.take() else {
+            return;
+        };
+        if fold {
+            self.set_fold(true);
+        }
+        self.apply_scope(scope);
+        if only {
+            self.set_matching_only(true);
+        }
+    }
+
+    /// 編集している（範囲・折りたたみは選べない）。
+    pub fn editing(&self) -> bool {
+        self.before_edit.is_some()
     }
 
     /// コミットの行（今の History の）。

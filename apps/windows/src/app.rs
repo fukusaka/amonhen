@@ -97,7 +97,6 @@ thread_local! {
     /// 画像の比べる欄で引いているもの（ファイル、欄の最初の表示の行、引き方）。
     static IMAGE_DRAG: std::cell::Cell<Option<(usize, usize, ImageDrag)>> = const { std::cell::Cell::new(None) };
     /// History でコミットを運んでいる間（押した行、押した高さ、動かし始めたか）。
-    static HISTORY_DRAG: std::cell::Cell<Option<(u32, f64, bool)>> = const { std::cell::Cell::new(None) };
     /// マージエディタで、Ctrl+Z で戻せる・Ctrl+Y でやり直せる書き換えがあるか（描くたびに書き直す）。
     static MERGE_UNDO: std::cell::Cell<(bool, bool)> = const { std::cell::Cell::new((false, false)) };
     /// 右クリックで外しておいた差分のメニュー（作り直したら付き直す）。
@@ -546,6 +545,8 @@ struct Root {
     reflog: Option<Vec<crate::reflog::Entry>>,
     /// History の編集モード（開いている間）。
     edit: Option<crate::historyedit::State>,
+    /// 範囲の行の操作の印を押した（次に開く History のメニューは、その行ですることの一覧）。
+    edit_choices: Option<usize>,
     reflog_selected: Option<usize>,
     /// worktree（`worktrees` の答え。開いたリポジトリのもの）。
     worktrees: Vec<WorktreeInfo>,
@@ -664,8 +665,6 @@ enum Page {
     Repositories,
     Reflog,
     RangeDiff,
-    /// History の編集モード（History の画面と入れ替える）。
-    EditCommits,
 }
 
 /// 窓に重ねるダイアログ（macOS 版のシート、GTK4 版の `sheets`）。
@@ -813,16 +812,13 @@ enum Dialog {
         stash: String,
         name: String,
     },
-    /// コミットのメッセージを書き直す（Edit Message…）か、1 つ古いコミットとまとめる（Combine with Older
-    /// Commit…）。`squash` なら後者。GTK4 版は編集モードを開くが、ここではすぐ書き換える。
-    Reword {
-        repo: Arc<Repository>,
+    /// 編集モードで、範囲の `index` 番目の行のメッセージを直す（`combining` なら、まとめたコミットのメッセージ）。
+    /// Apply Changes まで何も変わらない（macOS 版・GTK4 版の `editMessage`）。
+    EditMessage {
+        index: usize,
         oid: String,
         message: String,
-        squash: bool,
-        /// 選んだ連続したコミットを 1 つにまとめる（Combine N Commits…）: いちばん新しいコミットと数。`oid` は
-        /// いちばん古いコミット。
-        last: Option<(String, usize)>,
+        combining: bool,
     },
     /// コミット（古い順）をパッチにする（GTK4 版の `patches::save`）。形・送り状・版を選んでから、書き出す場所を選ぶ。
     Patch {
@@ -1055,6 +1051,9 @@ enum Dialog {
         untracked: bool,
     },
 }
+
+/// 編集モードの範囲の行と、HEAD から first-parent で辿った並び（コミットと merge か）。
+type EditLoad = (Vec<crate::historyedit::Row>, Vec<(String, bool)>);
 
 enum Message {
     /// この窓が前に出た（窓で 1 つの値を書き直すため、描き直す）。
@@ -1339,20 +1338,32 @@ enum Message {
     Done(String),
     /// History の編集モードを開く（このコミットから HEAD まで、最初の変更）。
     EditOpen(String, Option<crate::historyedit::Preset>),
-    /// 編集モードの行を読んだ（読めなければ理由）。
-    EditLoaded(
-        Result<Vec<crate::historyedit::Row>, String>,
-        Option<crate::historyedit::Preset>,
-    ),
-    /// 編集モードで押したもの・選んだもの・打ったもの。
+    /// 編集モードの行と、HEAD から first-parent で辿った並びを読んだ（読めなければ理由）。
+    EditLoaded(Result<EditLoad, String>, Option<crate::historyedit::Preset>),
+    /// 編集モードの帯で押したもの。
     Edit(crate::historyedit::Event),
-    EditChoice(usize, Option<usize>),
-    EditText(String),
-    /// History でコミットを運んで落とした（動かすコミット、落とした行のコミット、最後の行の下か）。
-    HistoryDrop(String, Option<String>, bool),
+    /// 範囲の行の操作の印を押した（することの一覧を開く。None は右クリックで、ふつうのメニューに戻す）。
+    EditChoices(Option<usize>),
+    /// 範囲の行ですることを替えた（キー・一覧）。
+    EditChoose(usize, crate::historyedit::Action),
+    /// 範囲の行のメッセージを直す（ダブルクリック）。
+    EditReword(usize),
+    /// 範囲の行を運んで落とした。
+    EditDropped(crate::historyedit::Dropped),
+    /// 境目を引いて、範囲を HEAD から n 個にした。
+    EditResize(usize),
+    /// 範囲を広げて読み足した（読む前の数と、足す行）。
+    EditExtended(usize, Vec<crate::historyedit::Row>),
+    /// History でコミットを運んで落とした（動かすコミット、落とした行のコミット、最後の行の下か、行に重ねたか）。
+    HistoryDrop(String, Option<String>, bool, bool),
+    /// History でコミットを窓の外に落とした（取り除く）。
+    HistoryDropOutside(String),
+    /// コミットを運び始めた: 落とせる行（編集できる並び）を読む。
+    DragChainWanted,
+    /// 編集できる並びを読んだ（落とせない行を薄くする）。
+    DragChain(Arc<std::collections::HashSet<amonhen_model::Oid>>),
     /// 動かせない（ベルを鳴らす）。
     Bell,
-    EditReordered(Vec<String>),
     EditStacked(bool),
     /// 見通し（数と `rewritePreview` の info）。
     EditPreview(u64, Value),
@@ -1402,10 +1413,6 @@ enum Message {
     /// 入力の欄とチェックのダイアログ（`Dialog::Form`）の欄・チェックを変えた。
     FormField(usize, String),
     FormCheck(usize, bool),
-    /// まとめるときのメッセージの初期値を読んだ（コミット、メッセージ）。
-    SquashText(String, Result<String, String>),
-    /// まとめる連続したコミットの、いちばん古い・新しいコミット、数と、まとめたメッセージ（`squashRangeMessage`）。
-    CombineText(Result<(String, String, usize, String), String>),
     /// bundle に入るコミットを数えた（`bundlePreview` の答えと、書く命令）。
     /// archive・bundle を書く前に、手元にない中身の数を調べた（なければ None）。
     SaveChecked(PendingSave, Option<String>),
@@ -1671,6 +1678,7 @@ impl Component for Root {
             recent_messages: Vec::new(),
             reflog: None,
             edit: None,
+            edit_choices: None,
             range_diff: None,
             range_request: 0,
             reflog_selected: None,
@@ -2196,6 +2204,12 @@ impl Root {
         }
         match message {
             Message::WindowFocused => {}
+            // History の上で編集している間は、HEAD・作業ツリーを動かす操作を止める（macOS 版の `movesHead`）。
+            Message::Command(id)
+                if self.edit.is_some() && crate::historyedit::MOVES_HEAD.contains(&id.as_str()) =>
+            {
+                beep();
+            }
             Message::Command(id) if id.starts_with("focus-window:") => {
                 // Window メニューで選んだ窓を前に出す。
                 let hwnd = id["focus-window:".len()..]
@@ -2449,39 +2463,26 @@ impl Root {
                             );
                         }
                     }
-                    let chosen = &line[..=end];
-                    let ids: Vec<amonhen_model::Oid> = chosen
-                        .iter()
-                        .filter_map(|(o, _)| amonhen_model::Oid::from_hex(o))
-                        .collect();
-                    let texts = repo.commit_texts(&ids).unwrap_or_default();
-                    // 作者は mailmap で置き換えたもの（History・詳細と同じ）。
-                    let mailmap = repo.mailmap();
-                    let rows = chosen
-                        .iter()
-                        .enumerate()
-                        .map(|(i, (oid, merge))| {
-                            let message = amonhen_model::Oid::from_hex(oid)
-                                .and_then(|id| repo.commit_message(&id).ok())
-                                .unwrap_or_default();
-                            let author = texts
-                                .get(i)
-                                .map(|t| {
-                                    String::from_utf8_lossy(&t.author(mailmap.as_deref()).name)
-                                        .into_owned()
-                                })
-                                .unwrap_or_default();
-                            crate::historyedit::Row::new(oid.clone(), message, author, *merge)
-                        })
-                        .collect();
-                    Message::EditLoaded(Ok(rows), preset)
+                    let rows = read_edit_rows(&repo, &line[..=end]);
+                    Message::EditLoaded(Ok((rows, line)), preset)
                 });
             }
-            Message::EditLoaded(rows, preset) => match rows {
-                Ok(rows) if !rows.is_empty() && self.edit.is_none() => {
-                    self.edit = Some(crate::historyedit::State::new(rows, preset));
-                    self.page = Page::EditCommits;
-                    self.edit_preview(context);
+            Message::EditLoaded(loaded, preset) => match loaded {
+                Ok((rows, line)) if !rows.is_empty() && self.edit.is_none() => {
+                    let state = crate::historyedit::State::new(rows, line, preset.as_ref());
+                    let reword = match &preset {
+                        Some(crate::historyedit::Preset::Reword(oid)) => state.index(oid),
+                        _ => None,
+                    };
+                    self.edit = Some(state);
+                    self.edit_choices = None;
+                    // History の上でそのまま編集する（今のブランチの全部の行にし、範囲の行に操作の印、外は薄く）。
+                    self.show_page(Page::History);
+                    self.with_history(|h| h.session.data.begin_editing());
+                    self.edit_changed(context);
+                    if let Some(i) = reword {
+                        self.edit_message(i);
+                    }
                 }
                 Ok(_) => {}
                 Err(message) => {
@@ -2491,24 +2492,83 @@ impl Root {
                     });
                 }
             },
-            Message::EditChoice(row, Some(index)) => {
+            Message::EditChoices(index) => self.edit_choices = index,
+            Message::EditChoose(i, action) => {
                 let Some(state) = self.edit.as_mut() else {
                     return;
                 };
-                let Some(action) = crate::historyedit::chosen(state, row, index) else {
+                if state.busy {
+                    return beep();
+                }
+                match state.choose(i, action) {
+                    crate::historyedit::Chosen::Changed => self.edit_changed(context),
+                    crate::historyedit::Chosen::Message => self.edit_message(i),
+                    crate::historyedit::Chosen::Nothing => {}
+                }
+            }
+            Message::EditReword(i) => {
+                if self.edit.as_ref().is_some_and(|s| !s.busy) {
+                    self.edit_message(i);
+                }
+            }
+            Message::EditDropped(dropped) => {
+                let Some(state) = self.edit.as_mut().filter(|s| !s.busy) else {
                     return;
                 };
-                if state.rows.get(row).map(|r| r.action) == Some(action) {
+                let moved = match dropped {
+                    crate::historyedit::Dropped::Move(from, above) => state.move_row(from, above),
+                    crate::historyedit::Dropped::Squash(from, onto) => state.squash(from, onto),
+                };
+                if moved {
+                    self.edit_changed(context);
+                } else {
+                    beep();
+                }
+            }
+            // 範囲を HEAD から first-parent で n 個にする。広げるときは古い側に読み足し、狭めるときは外れる行が
+            // どれもそのまま（pick で、元の位置）のときだけ（macOS 版の `resize(to:)`）。
+            Message::EditResize(count) => {
+                let Some(state) = self.edit.as_mut() else {
+                    return;
+                };
+                if state.resizing || state.busy || state.line.is_empty() {
+                    self.show_edit();
                     return;
                 }
-                state.set_action(row, action);
-                self.edit_preview(context);
+                let count = count.clamp(1, state.line.len());
+                let len = state.rows.len();
+                if count < len {
+                    if !state.shrink(count) {
+                        beep();
+                    }
+                    self.edit_changed(context);
+                } else if count > len {
+                    let Some(repo) = self.repo.clone() else {
+                        return;
+                    };
+                    // 読み終えるまで、引いた境目のまま。
+                    state.resizing = true;
+                    let chosen = state.line[len..count].to_vec();
+                    context.spawn_background(move |_| {
+                        Message::EditExtended(len, read_edit_rows(&repo, &chosen))
+                    });
+                } else {
+                    self.show_edit();
+                }
             }
-            Message::EditChoice(_, None) => {}
+            Message::EditExtended(from, rows) => {
+                let Some(state) = self.edit.as_mut() else {
+                    return;
+                };
+                state.resizing = false;
+                state.extend(from, rows);
+                self.edit_changed(context);
+            }
             Message::Bell => beep(),
             // 編集できる並び（HEAD から最初の merge まで）の中なら、編集モードを開いて動かしておく（範囲は、動かす
-            // 2 か所の古い方から HEAD まで。GTK4 版の `move_by_drop`）。並びの外ならベル。
-            Message::HistoryDrop(oid, below, past_end) => {
+            // 2 か所の古い方から HEAD まで。行に重ねたら、そのすぐ上へ動かしてまとめる。GTK4 版の `move_by_drop`・
+            // `squash_by_drop`）。並びの外ならベル。
+            Message::HistoryDrop(oid, below, past_end, onto) => {
                 let (Some(repo), Some(below)) = (self.repo.clone(), below) else {
                     return beep();
                 };
@@ -2527,6 +2587,13 @@ impl Root {
                     let (Some(from), Some(mut to)) = (at(&oid), at(&below)) else {
                         return Message::Bell;
                     };
+                    if onto {
+                        if from == to {
+                            return Message::Performed(None);
+                        }
+                        let preset = crate::historyedit::Preset::Squash(oid, below);
+                        return Message::EditOpen(chain[from.max(to)].clone(), Some(preset));
+                    }
                     if past_end {
                         to = chain.len() - 1;
                     } else if from < to {
@@ -2539,23 +2606,41 @@ impl Root {
                     Message::EditOpen(chain[from.max(to)].clone(), Some(preset))
                 });
             }
-            Message::EditReordered(order) => {
-                if self.edit.as_mut().is_some_and(|s| s.reorder(&order)) {
-                    self.edit_preview(context);
-                }
+            // 窓の外に落とした: 取り除くものとして編集モードを開く（並びの外なら開くときに断る）。
+            Message::HistoryDropOutside(oid) => {
+                let preset = crate::historyedit::Preset::Drop(oid.clone());
+                self.update(Message::EditOpen(oid, Some(preset)), context);
             }
+            Message::DragChainWanted => {
+                let Some(repo) = self.repo.clone() else {
+                    return;
+                };
+                context.spawn_background(move |_| {
+                    let reply: Value =
+                        serde_json::from_str(&repo.run_json(r#"{"op":"editableCommits"}"#))
+                            .unwrap_or_default();
+                    let chain = reply["text"]
+                        .as_str()
+                        .unwrap_or_default()
+                        .lines()
+                        .filter_map(|l| amonhen_model::Oid::from_hex(l.split(' ').next()?))
+                        .collect();
+                    Message::DragChain(Arc::new(chain))
+                });
+            }
+            Message::DragChain(chain) => self.with_history(|h| {
+                if let Some(drag) = h.session.data.drag.as_mut() {
+                    drag.chain = Some(chain);
+                    h.session.invalidate();
+                }
+            }),
             Message::EditStacked(on) => {
                 let Some(state) = self.edit.as_mut() else {
                     return;
                 };
                 if state.moves_stacked() != on {
                     state.update_refs = Some(on);
-                    self.edit_preview(context);
-                }
-            }
-            Message::EditText(text) => {
-                if let Some(state) = self.edit.as_mut() {
-                    state.message_text = text;
+                    self.edit_changed(context);
                 }
             }
             Message::EditPreview(generation, info) => {
@@ -2563,6 +2648,8 @@ impl Root {
                     && state.generation == generation
                 {
                     state.take_preview(&info);
+                    // コンフリクトしそうな行の印を橙に。
+                    self.show_edit();
                 }
             }
             Message::Edit(event) => {
@@ -2571,22 +2658,10 @@ impl Root {
                     return;
                 };
                 match event {
-                    Event::Move(row, up) => {
-                        if !state.move_row(row, up) {
-                            return beep();
-                        }
-                    }
-                    Event::MessageDone(keep) => state.close_message(keep),
-                    Event::Cancel => {
-                        self.edit = None;
-                        self.page = Page::History;
-                        return;
-                    }
+                    Event::Cancel => self.finish_edit(),
                     Event::Apply => {
                         if !state.has_changes() {
-                            self.edit = None;
-                            self.page = Page::History;
-                            return;
+                            return self.finish_edit();
                         }
                         let Some(repo) = self.repo.clone() else {
                             return beep();
@@ -2602,12 +2677,11 @@ impl Root {
                                 command,
                             )
                         });
-                        return;
                     }
                 }
-                self.edit_preview(context);
             }
-            // 書き換えが終わってから編集モードを閉じる。書き換えられなければ編集モードと選んだものを残す。
+            // 書き換えが終わってから編集モードを閉じる。書き換えられなければ（失敗を知らせて）編集モードと選んだ
+            // ものを残す（閉じてしまうと、組んだ手順がすべて消える）。途中で止まったら（コンフリクト・edit）閉じる。
             Message::EditApplied(error, command) => {
                 if let Some(reply) = error {
                     if let Some(state) = self.edit.as_mut() {
@@ -2619,8 +2693,7 @@ impl Root {
                     }
                     return;
                 }
-                self.edit = None;
-                self.page = Page::History;
+                self.finish_edit();
                 let done = command["label"].as_str().unwrap_or_default().to_owned();
                 self.update(Message::Done(done), context);
             }
@@ -2865,7 +2938,7 @@ impl Root {
                 | Some(Dialog::Stash {
                     message: current, ..
                 })
-                | Some(Dialog::Reword {
+                | Some(Dialog::EditMessage {
                     message: current, ..
                 })
                 | Some(Dialog::Patch {
@@ -3316,6 +3389,10 @@ impl Root {
                 if self.search_only == on {
                     return;
                 }
+                // 編集の間は、今のブランチの全部の行のまま（GTK4 版と同じ）。
+                if self.edit.is_some() {
+                    return beep();
+                }
                 self.search_only = on;
                 self.with_history(|h| {
                     h.session.data.set_matching_only(on);
@@ -3475,6 +3552,16 @@ impl Root {
                     eprintln!("1 行表示を覚えられない: {e}");
                 }
                 self.with_history(|h| h.session.set_display(|| crate::render::set_one_line(value)));
+            }
+            // 編集の間は、History の範囲・折りたたみを選べない（今のブランチの全部の行のまま）。
+            Message::Command(id)
+                if self.edit.is_some()
+                    && matches!(
+                        id.as_str(),
+                        "scope-all" | "scope-current" | "fold-merged-branches"
+                    ) =>
+            {
+                beep();
             }
             // View の All Branches・Current Branch と、上の帯の All Branches（History の範囲）。
             Message::Command(id) if id == "scope-all" || id == "scope-current" => {
@@ -4706,52 +4793,13 @@ impl Root {
                     );
                 }
                 (
-                    Some(Dialog::Reword {
-                        repo,
-                        oid,
-                        message,
-                        last: Some((last, count)),
-                        ..
-                    }),
+                    Some(Dialog::EditMessage { index, message, .. }),
                     ContentDialogResult::Primary,
                 ) => {
-                    let label = tr!("Combine {count} Commits…", count = count)
-                        .trim_end_matches('…')
-                        .to_owned();
-                    perform(
-                        context,
-                        repo,
-                        json!({
-                            "op": "rewrite", "label": label,
-                            "edit": { "kind": "squashRange", "oid": oid, "last": last, "message": message },
-                        }),
-                        label.clone(),
-                    );
-                }
-                (
-                    Some(Dialog::Reword {
-                        repo,
-                        oid,
-                        message,
-                        squash,
-                        ..
-                    }),
-                    ContentDialogResult::Primary,
-                ) => {
-                    let (kind, label) = if squash {
-                        ("squash", tr!("Combine with Older"))
-                    } else {
-                        ("reword", tr!("Edit Message"))
-                    };
-                    perform(
-                        context,
-                        repo,
-                        json!({
-                            "op": "rewrite", "label": label,
-                            "edit": { "kind": kind, "oid": oid, "message": message },
-                        }),
-                        label.clone(),
-                    );
+                    if let Some(state) = self.edit.as_mut() {
+                        state.set_message(index, &message);
+                        self.edit_changed(context);
+                    }
                 }
                 (
                     Some(Dialog::Patch {
@@ -6170,44 +6218,21 @@ impl Root {
                     let start = ids.first().cloned().unwrap_or_default();
                     let preset = crate::historyedit::Preset::Combine(ids);
                     self.update(Message::EditOpen(start, Some(preset)), context);
+                } else if let Some(choice) = key.strip_prefix("edit-choose:") {
+                    // 編集の間のすることの一覧（`historyedit::State::choice_items`）。
+                    self.edit_choices = None;
+                    let chosen = choice.split_once(':').and_then(|(i, name)| {
+                        Some((
+                            i.parse().ok()?,
+                            crate::historyedit::Action::from_name(name)?,
+                        ))
+                    });
+                    if let Some((i, action)) = chosen {
+                        self.update(Message::EditChoose(i, action), context);
+                    }
                 } else if let Some(oid) = key.strip_prefix("edit-drop:") {
                     let preset = crate::historyedit::Preset::Drop(oid.to_owned());
                     self.update(Message::EditOpen(oid.to_owned(), Some(preset)), context);
-                } else if let Some(oid) = key.strip_prefix("reword:") {
-                    // 出している詳細のメッセージから（右クリックは先にその行を選ぶ）。
-                    let message = self
-                        .info
-                        .as_ref()
-                        .filter(|(info, _)| info["oid"].as_str() == Some(oid))
-                        .and_then(|(info, _)| info["message"].as_str().map(str::to_owned));
-                    match (self.repo.clone(), message) {
-                        (Some(repo), Some(message)) => {
-                            self.dialog = Some(Dialog::Reword {
-                                repo,
-                                oid: oid.to_owned(),
-                                message: message.trim_end().to_owned(),
-                                squash: false,
-                                last: None,
-                            });
-                            self.dialog_inputs += 1;
-                        }
-                        _ => beep(),
-                    }
-                } else if let Some(oid) = key.strip_prefix("squash:") {
-                    if let Some(repo) = self.repo.clone() {
-                        let oid = oid.to_owned();
-                        context.spawn_background(move |_| {
-                            let command = json!({ "op": "squashMessage", "oid": &oid });
-                            let reply: Value =
-                                serde_json::from_str(&repo.run_json(&command.to_string()))
-                                    .unwrap_or_default();
-                            let message = match reply["error"].as_str() {
-                                Some(e) => Err(e.to_owned()),
-                                None => Ok(reply["text"].as_str().unwrap_or_default().to_owned()),
-                            };
-                            Message::SquashText(oid, message)
-                        });
-                    }
                 } else if let Some(oid) = key.strip_prefix("patch:") {
                     if let Some(repo) = self.repo.clone() {
                         self.dialog = Some(Dialog::Patch {
@@ -6332,33 +6357,6 @@ impl Root {
                 } else if let Some(rev) = key.strip_prefix("merge:") {
                     self.integrate(rev.to_owned(), false);
                     self.load_integrate_drawing(context);
-                } else if let Some(ids) = key.strip_prefix("combine:") {
-                    // 選んだ連続したコミットを 1 つに（GTK4 版の Combine N Commits…。ここではダイアログで
-                    // メッセージを直して、すぐ書き換える）。
-                    if let Some(repo) = self.repo.clone() {
-                        let oids: Vec<String> = ids.split(',').map(str::to_owned).collect();
-                        context.spawn_background(move |_| {
-                            let command = json!({ "op": "squashRangeMessage", "oids": &oids });
-                            let reply: Value =
-                                serde_json::from_str(&repo.run_json(&command.to_string()))
-                                    .unwrap_or_default();
-                            Message::CombineText(match reply["error"].as_str() {
-                                Some(e) => Err(e.to_owned()),
-                                None => Ok((
-                                    reply["info"]["oldest"]
-                                        .as_str()
-                                        .unwrap_or_default()
-                                        .to_owned(),
-                                    reply["info"]["newest"]
-                                        .as_str()
-                                        .unwrap_or_default()
-                                        .to_owned(),
-                                    oids.len(),
-                                    reply["text"].as_str().unwrap_or_default().to_owned(),
-                                )),
-                            })
-                        });
-                    }
                 } else if let Some(ids) = key.strip_prefix("merge-several:") {
                     self.merge_several(ids.split(',').collect(), context);
                 } else if let Some(rev) = key.strip_prefix("rebase:") {
@@ -6906,46 +6904,6 @@ impl Root {
                     state.selected = index.and_then(|i| state.shown().get(i).map(|r| r.seq));
                 }
             }
-            Message::CombineText(answer) => match (self.repo.clone(), answer) {
-                (Some(repo), Ok((oldest, newest, count, message))) => {
-                    self.dialog = Some(Dialog::Reword {
-                        repo,
-                        oid: oldest,
-                        message,
-                        squash: true,
-                        last: Some((newest, count)),
-                    });
-                    self.dialog_inputs += 1;
-                }
-                (_, Err(message)) => {
-                    self.dialog = Some(Dialog::Failed {
-                        title: tr!("Combine {count} Commits…", count = self.multi.len())
-                            .trim_end_matches('…')
-                            .to_owned(),
-                        message,
-                    })
-                }
-                _ => {}
-            },
-            Message::SquashText(oid, message) => match (self.repo.clone(), message) {
-                (Some(repo), Ok(message)) => {
-                    self.dialog = Some(Dialog::Reword {
-                        repo,
-                        oid,
-                        message,
-                        squash: true,
-                        last: None,
-                    });
-                    self.dialog_inputs += 1;
-                }
-                (_, Err(message)) => {
-                    self.dialog = Some(Dialog::Failed {
-                        title: tr!("Combine with Older"),
-                        message,
-                    })
-                }
-                _ => {}
-            },
             Message::ArchiveFormat(Some(index)) => {
                 if let Some(Dialog::Archive { format, .. }) = &mut self.dialog {
                     *format = index;
@@ -9370,8 +9328,7 @@ impl Root {
         let right_covered = history_covered
             && matches!(
                 self.page,
-                Page::EditCommits
-                    | Page::Blame
+                Page::Blame
                     | Page::Merge
                     | Page::Settings
                     | Page::Activity
@@ -9698,7 +9655,7 @@ impl Root {
                 // いて、外すと止まる）。
                 working_copy,
                 self.stashes_view(context),
-                View::fragment((self.reflog_view(context), self.edit_view(context))),
+                self.reflog_view(context),
                 self.range_diff_view(context),
                 self.file_history_view(context),
                 self.blame_view(context),
@@ -10670,34 +10627,25 @@ impl Root {
                         )),
                     )
             }
-            Some(Dialog::Reword {
+            Some(Dialog::EditMessage {
                 oid,
                 message,
-                squash,
-                last,
+                combining,
                 ..
             }) => dialog
                 .is_open(true)
-                .title(match last {
-                    Some((_, count)) => tr!("Combine {count} Commits…", count = count)
-                        .trim_end_matches('…')
-                        .to_owned(),
-                    None if *squash => {
-                        tr!("Combine with Older Commit…").trim_end_matches('…').to_owned()
-                    }
-                    None => tr!("Edit Message"),
+                .title(if *combining {
+                    tr!("Message of the Combined Commit")
+                } else {
+                    tr!("Edit Message")
                 })
-                .primary_button_text(if *squash { "Combine" } else { "Save" })
+                .primary_button_text(tr!("Change"))
                 .close_button_text(tr!("Cancel"))
                 .is_primary_button_enabled(!message.trim().is_empty())
                 .content(
                     StackPanel::new().spacing(6.0).children((
                         TextBlock::new()
-                            .text(format!(
-                                "{} · {}",
-                                &oid[..oid.len().min(8)],
-                                tr!("You can Undo this (Ctrl+Alt+Z).")
-                            ))
+                            .text(oid[..oid.len().min(8)].to_owned())
                             .opacity(0.7)
                             .text_wrapping(TextWrapping::Wrap),
                         TextBox::new()
@@ -14238,6 +14186,7 @@ impl Root {
             published: entry.is_none_or(|e| e.detail.is_some() && !e.gone),
             no_remote,
             running: self.running,
+            editing: self.edit.is_some(),
         }
     }
 
@@ -14733,6 +14682,7 @@ impl Root {
             self.connection_band(context),
             self.failure_band(context),
             self.sequence_band(context),
+            self.edit_band(context),
             bar,
         ))
     }
@@ -16995,26 +16945,72 @@ impl Root {
         });
     }
 
-    /// History の編集モード（History と詳細の列に重ねる）。
-    fn edit_view(&self, context: &ViewContext<Self>) -> View {
-        let (Page::EditCommits, Some(state)) = (self.page, &self.edit) else {
+    /// 編集モードのステータスバーの帯（要約・見通し・Cancel・Apply Changes）。
+    fn edit_band(&self, context: &ViewContext<Self>) -> View {
+        let Some(state) = &self.edit else {
             return View::empty();
         };
-        let view = crate::historyedit::view(
+        crate::historyedit::bar(
             state,
             crate::historyedit::Callbacks {
                 event: Box::new(|event| context.callback(move |()| Message::Edit(event.clone()))),
-                choice: Box::new(|row| context.callback(move |i| Message::EditChoice(row, i))),
-                text: context.callback(Message::EditText),
-                reordered: context.callback(Message::EditReordered),
                 stacked: context.callback(Message::EditStacked),
             },
-        );
-        Border::new()
-            .background(Brush::Solid(crate::palette::background()))
-            .grid_column(1)
-            .grid_column_span(2)
-            .content(view)
+        )
+    }
+
+    /// 編集で決めたことを History に渡して描き直す。
+    fn show_edit(&self) {
+        let Some(state) = &self.edit else {
+            return;
+        };
+        let marks = state.marks();
+        self.with_history(|h| {
+            let data = &mut h.session.data;
+            data.edit = Some(crate::historyedit::Overlay::new(marks, data.edit.take()));
+            h.session.invalidate();
+            // 並べ替えて描くコミットが替わったら、詳細も選んでいる行に描くコミットに合わせる。
+            h.selected = None;
+        });
+    }
+
+    /// 編集で決めたことが変わった: History に渡し、見通しを読み直す。
+    fn edit_changed(&mut self, context: &ComponentContext<Self>) {
+        self.show_edit();
+        self.edit_preview(context);
+    }
+
+    /// 編集モードを終える（Apply・Cancel）。元の範囲・折りたたみ・一致だけの表示に戻す。
+    fn finish_edit(&mut self) {
+        self.edit = None;
+        self.edit_choices = None;
+        if matches!(self.dialog, Some(Dialog::EditMessage { .. })) {
+            self.dialog = None;
+        }
+        self.with_history(|h| {
+            h.session.data.end_editing();
+            h.session.invalidate();
+            h.selected = None;
+        });
+    }
+
+    /// 範囲の `i` 番目の行のメッセージを直すダイアログを開く（まとめる行なら、まとめたコミットのメッセージ）。
+    fn edit_message(&mut self, i: usize) {
+        let Some((combining, message)) = self.edit.as_ref().and_then(|s| s.message(i)) else {
+            return beep();
+        };
+        let oid = self
+            .edit
+            .as_ref()
+            .map(|s| s.rows[i].oid.clone())
+            .unwrap_or_default();
+        self.dialog = Some(Dialog::EditMessage {
+            index: i,
+            oid,
+            message,
+            combining,
+        });
+        self.dialog_inputs += 1;
     }
 
     /// 編集モードの見通しを読み直す（裏で。古い答えは数で捨てる）。
@@ -17025,6 +17021,7 @@ impl Root {
         state.generation += 1;
         if !state.has_changes() {
             state.preview = None;
+            state.conflicting.clear();
             return;
         }
         let (generation, command) = (state.generation, state.preview_command());
@@ -18266,6 +18263,25 @@ impl Root {
     /// History の右クリックのメニュー（GTK4 版の `commitops::menu`、macOS 版の `HistoryViewController` と同じ並び）。
     /// まだ動かない操作は出さない。右クリックは先に行を選ぶので、選んでいるコミットのメニューになる。
     fn history_menu(&self) -> Vec<MenuItem> {
+        // History の上で編集している間: 操作の印を押したらその行ですることの一覧、右クリックは範囲の行（merge で
+        // ないもの）ならすることの一覧とコミットの ID のコピー、ほかの行はコピーだけ（macOS 版・GTK4 版と同じ）。
+        if let Some(state) = &self.edit {
+            if let Some(i) = self.edit_choices {
+                return state.choice_items(i);
+            }
+            let Some((id, _)) = &self.selected else {
+                return Vec::new();
+            };
+            let mut items = state
+                .index(id)
+                .map(|i| state.choice_items(i))
+                .unwrap_or_default();
+            if !items.is_empty() {
+                items.push(MenuItem::separator("-edit"));
+            }
+            items.push(MenuItem::item(format!("copy:{id}"), tr!("Copy Commit ID")));
+            return items;
+        }
         // 複数選んでいれば、まとめて使える操作だけ（GTK4 版の `commitops::multi_menu` のうち、この FE にあるもの）。
         if self.multi.len() > 1 {
             let n = self.multi.len();
@@ -20670,9 +20686,11 @@ impl HistoryView {
             }
         }
         // 選んだコミットが変わったら、詳細と差分を読む。右クリックのメニューにも知らせる。
-        if s.selected != self.selected && s.data.multi.is_empty() {
-            self.selected = s.selected;
-            let selected = s.selected.and_then(|row| {
+        // 編集で並べ替えた行は、そこに描いているコミット。
+        let shown = s.selected.map(|row| s.data.shown_row(row));
+        if shown != self.selected && s.data.multi.is_empty() {
+            self.selected = shown;
+            let selected = shown.and_then(|row| {
                 let id = s
                     .data
                     .history
@@ -20684,7 +20702,7 @@ impl HistoryView {
                 Some((id, s.data.labels.get(&row).cloned().unwrap_or_default()))
             });
             self.sender.send(Message::Selected(selected));
-            if let Some(row) = s.selected {
+            if let Some(row) = shown {
                 s.data.want_commit(row);
             }
         }
@@ -22985,6 +23003,13 @@ fn attach_input(element: &IInspectable, target: Target) -> windows_core_reactor:
             with_history(|h| match target {
                 // 右クリックも、先にその行を選ぶ（メニューはそのコミットのもの）。
                 Target::History => {
+                    // 編集の間: 範囲の下の境目なら引き始め、行の操作の印ならすることの一覧（macOS 版・GTK4 版と同じ）。
+                    if left && edit_press(h, position, &source, args) {
+                        return;
+                    }
+                    if right && h.session.data.edit.is_some() {
+                        h.sender.send(Message::EditChoices(None));
+                    }
                     // 行の右端の CI の印なら、行を選ばずにチェックの吹き出し（GTK4 版と同じ）。
                     if left
                         && let Some(row) = h.session.row_at(position.Y)
@@ -23014,9 +23039,20 @@ fn attach_input(element: &IInspectable, target: Target) -> windows_core_reactor:
                         } else {
                             h.session.select(row);
                             // そのまま運べば、編集モードで動かす（GTK4 版・macOS 版の、コミットを運んで落とす）。
-                            if left {
-                                HISTORY_DRAG
-                                    .with(|d| d.set(Some((row, f64::from(position.Y), false))));
+                            // 編集の間は、範囲の行を並べ替えられるときだけ。
+                            let movable =
+                                h.session.data.edit.as_ref().is_none_or(|e| e.can_drag(row));
+                            if left && movable {
+                                h.session.data.drag = Some(crate::data::RowDrag {
+                                    row,
+                                    offset: position.Y - h.session.row_top(row),
+                                    y: position.Y,
+                                    start: position.Y,
+                                    moving: false,
+                                    height: h.session.height(),
+                                    target: None,
+                                    chain: None,
+                                });
                                 if let Ok(pointer) = args.Pointer() {
                                     let _ = source.CapturePointer(&pointer);
                                 }
@@ -23196,53 +23232,52 @@ fn attach_input(element: &IInspectable, target: Target) -> windows_core_reactor:
     );
 
     if target == Target::History {
-        // コミットを運ぶ: 少し動かしたら運び始め、離した行の上へ動かす（行の外の下なら最後へ）。
+        // コミットを運ぶ: 少し動かしたら運び始め、行の間に落とせば動かし、行に重ねればまとめ、窓の外なら取り除く。
+        // 編集の間は、範囲の下の境目も引ける。
         let source = ui.clone();
         revokers.push(
             ui.PointerMoved(move |_, args: Ref<xaml::PointerRoutedEventArgs>| {
                 let Some(args) = args.as_ref() else { return };
-                let Some((row, y, dragging)) = HISTORY_DRAG.with(std::cell::Cell::get) else {
-                    return;
-                };
                 let Ok(position) = args.GetCurrentPoint(&source).and_then(|p| p.Position()) else {
                     return;
                 };
-                if !dragging && (f64::from(position.Y) - y).abs() > 8.0 {
-                    HISTORY_DRAG.with(|d| d.set(Some((row, y, true))));
-                }
+                with_history(|h| history_drag_moved(h, position.Y));
             })?,
         );
         let source = ui.clone();
         revokers.push(
             ui.PointerReleased(move |_, args: Ref<xaml::PointerRoutedEventArgs>| {
                 let Some(args) = args.as_ref() else { return };
-                let Some((from, _, dragging)) = HISTORY_DRAG.with(std::cell::Cell::take) else {
-                    return;
-                };
-                if let Ok(pointer) = args.Pointer() {
+                let mut handled = false;
+                with_history(|h| handled = history_drag_released(h));
+                if handled && let Ok(pointer) = args.Pointer() {
                     let _ = source.ReleasePointerCapture(&pointer);
                 }
-                if !dragging {
-                    return;
-                }
-                let Ok(position) = args.GetCurrentPoint(&source).and_then(|p| p.Position()) else {
+            })?,
+        );
+        // 編集の間のダブルクリック: 範囲の行のメッセージを直す。
+        let source = ui.clone();
+        revokers.push(ui.DoubleTapped(
+            move |_, args: Ref<xaml::DoubleTappedRoutedEventArgs>| {
+                let Some(args) = args.as_ref() else { return };
+                let Ok(position) = args.GetPosition(&source) else {
                     return;
                 };
                 with_history(|h| {
-                    let count = h.session.data.row_count();
-                    let row = h.session.row_at(position.Y).unwrap_or(count);
-                    let ids = h.session.data.history.as_ref().map(|h| h.graph.ids());
-                    let id = |r: u32| ids.and_then(|i| i.get(r as usize)).map(ToString::to_string);
-                    if let Some(oid) = id(from)
-                        && row != from
-                    {
-                        let below = id(row.min(count.saturating_sub(1)));
-                        h.sender
-                            .send(Message::HistoryDrop(oid, below, row >= count));
+                    let Some(edit) = h.session.data.edit.as_ref() else {
+                        return;
+                    };
+                    let index = h
+                        .session
+                        .row_at(position.Y)
+                        .and_then(|row| edit.slots.get(&row).copied())
+                        .filter(|&i| edit.marks.rows.get(i).is_some_and(|r| !r.merge));
+                    if let Some(i) = index {
+                        h.sender.send(Message::EditReword(i));
                     }
                 });
-            })?,
-        );
+            },
+        )?);
         HISTORY_ELEMENT.with(|e| *e.borrow_mut() = Some(ui.clone()));
         // 右クリックで選び直す前のメニューが開かないよう、押したときにメニューを外してある。ここで位置を覚え、選んだ
         // 行のメニューに作り直してから開く（キーボードで開くときは、付いたままのメニューを WinUI が開く）。
@@ -23394,6 +23429,13 @@ fn attach_input(element: &IInspectable, target: Target) -> windows_core_reactor:
         let Ok(key) = args.Key() else { return };
         let handled = std::cell::Cell::new(true);
         with_history(|h| match target {
+            // 運んでいる間の Esc: 運ぶのをやめる（窓の外に落としたことにしない）。
+            Target::History if key == xaml::VirtualKey::Escape && h.session.data.drag.is_some() => {
+                h.session.data.drag = None;
+                h.session.invalidate();
+            }
+            // 編集の間、範囲の行を選んで p・r・s・f・d・e: することを替える。
+            Target::History if edit_key(h, key) => {}
             Target::History => {
                 let s = &mut h.session;
                 match key {
@@ -23453,6 +23495,250 @@ fn attach_input(element: &IInspectable, target: Target) -> windows_core_reactor:
 
     REVOKERS.with(|r| r.borrow_mut().extend(revokers));
     Ok(())
+}
+
+/// 編集の間に History を押した: 範囲の下の境目なら引き始め、行の操作の印ならその行を選んですることの一覧を
+/// 開く。扱ったら true。
+fn edit_press(
+    h: &mut HistoryView,
+    position: xaml::Point,
+    source: &xaml::UIElement,
+    args: &xaml::PointerRoutedEventArgs,
+) -> bool {
+    let scroll = -h.session.row_top(0);
+    let row = h.session.row_at(position.Y);
+    let Some(edit) = h.session.data.edit.as_mut() else {
+        return false;
+    };
+    if let Some(boundary) = edit.boundary_row()
+        && ((boundary + 1) as f32 * row_height() - scroll - position.Y).abs() <= 4.0
+    {
+        edit.dragging_boundary = true;
+        if let Ok(pointer) = args.Pointer() {
+            let _ = source.CapturePointer(&pointer);
+        }
+        return true;
+    }
+    let Some(row) = row else {
+        return false;
+    };
+    let Some(&(a, _)) = edit
+        .chips
+        .get(&row)
+        .filter(|(a, b)| (*a..=*b).contains(&position.X))
+    else {
+        return false;
+    };
+    let Some(&index) = edit.slots.get(&row) else {
+        return false;
+    };
+    h.session.select(row);
+    h.context_at = Some(xaml::Point {
+        X: a,
+        Y: h.session.row_top(row) + row_height(),
+    });
+    h.sender.send(Message::EditChoices(Some(index)));
+    true
+}
+
+/// 編集の間に、範囲の行を選んで p・r・s・f・d・e を押した（修飾キーなし）。扱ったら true。
+fn edit_key(h: &mut HistoryView, key: xaml::VirtualKey) -> bool {
+    let Some(edit) = h.session.data.edit.as_ref() else {
+        return false;
+    };
+    let letter = match key {
+        xaml::VirtualKey::P => 'p',
+        xaml::VirtualKey::R => 'r',
+        xaml::VirtualKey::S => 's',
+        xaml::VirtualKey::F => 'f',
+        xaml::VirtualKey::D => 'd',
+        xaml::VirtualKey::E => 'e',
+        _ => return false,
+    };
+    let down = |key: xaml::VirtualKey| {
+        xaml::InputKeyboardSource::GetKeyStateForCurrentThread(key)
+            .is_ok_and(|s| s.contains(xaml::CoreVirtualKeyStates::Down))
+    };
+    if down(xaml::VirtualKey::Control) || down(xaml::VirtualKey::Menu) {
+        return false;
+    }
+    let (Some(action), Some(index)) = (
+        crate::historyedit::Action::from_key(letter),
+        h.session
+            .selected
+            .and_then(|row| edit.slots.get(&row).copied()),
+    ) else {
+        return false;
+    };
+    h.sender.send(Message::EditChoose(index, action));
+    true
+}
+
+/// コミットを運んでいる・境目を引いている間に指が動いた（History の窓の中の高さ `y`）。
+fn history_drag_moved(h: &mut HistoryView, y: f32) {
+    let rh = row_height();
+    let scroll = -h.session.row_top(0);
+    if let Some(edit) = h.session.data.edit.as_mut().filter(|e| e.dragging_boundary) {
+        if edit.drag_boundary(y + scroll, rh) {
+            h.session.invalidate();
+        }
+        return;
+    }
+    let Some(mut drag) = h.session.data.drag.take() else {
+        return;
+    };
+    drag.y = y;
+    if !drag.moving && (y - drag.start).abs() > 8.0 {
+        drag.moving = true;
+        if h.session.data.edit.is_none() {
+            h.sender.send(Message::DragChainWanted);
+        }
+    }
+    if drag.moving {
+        drag.target = drop_target(&h.session.data, &drag, y + scroll);
+        h.session.invalidate();
+    }
+    h.session.data.drag = Some(drag);
+}
+
+/// 中身の高さ `y` に落とす先（行と、重ねるか）。行のまん中の半分なら重ね、上下の 4 分の 1 ならその側の境目。
+/// 落とせなければ None（編集の間は範囲の中だけ、外では編集できる並びの中だけ）。
+fn drop_target(
+    data: &crate::data::Data,
+    drag: &crate::data::RowDrag,
+    y: f32,
+) -> Option<(u32, bool)> {
+    let rh = row_height();
+    let count = data.row_count();
+    if y < 0.0 || count == 0 {
+        return None;
+    }
+    let at = ((y / rh).floor() as u32).min(count);
+    let within = y - at as f32 * rh;
+    let (row, onto) = if at >= count {
+        (count, false)
+    } else if within < rh * 0.25 {
+        (at, false)
+    } else if within > rh * 0.75 {
+        (at + 1, false)
+    } else {
+        (at, true)
+    };
+    if let Some(edit) = data.edit.as_ref() {
+        let &from = edit.slots.get(&drag.row)?;
+        return edit.drop_at(from, row, onto).map(|_| (row, onto));
+    }
+    if (onto && row == drag.row) || (!onto && (row == drag.row || row == drag.row + 1)) {
+        return None;
+    }
+    // 並びを読み終えていれば、並びの外には落とせない。
+    if let (Some(chain), Some(history)) = (drag.chain.as_ref(), data.history.as_ref()) {
+        let ids = history.graph.ids();
+        let on = |r: u32| ids.get(r as usize).is_some_and(|id| chain.contains(id));
+        let fits = if onto {
+            on(row)
+        } else {
+            on(row.min(count - 1)) || (row > 0 && on(row - 1))
+        };
+        if !on(drag.row) || !fits {
+            return None;
+        }
+    }
+    Some((row, onto))
+}
+
+/// 指を離した: 境目なら範囲を変え、運んでいたコミットなら落とす。指を離すのを扱ったら true（指を放す）。
+fn history_drag_released(h: &mut HistoryView) -> bool {
+    if let Some(edit) = h.session.data.edit.as_mut().filter(|e| e.dragging_boundary) {
+        edit.dragging_boundary = false;
+        let count = edit.preview.filter(|&c| c != edit.marks.rows.len());
+        if count.is_none() {
+            edit.preview = None;
+        }
+        h.session.invalidate();
+        // 範囲を変え終えたら（読み終えて印が来たら）、引いた境目を消す。
+        if let Some(count) = count {
+            h.sender.send(Message::EditResize(count));
+        }
+        return true;
+    }
+    let Some(drag) = h.session.data.drag.take() else {
+        return false;
+    };
+    h.session.invalidate();
+    if !drag.moving {
+        return true;
+    }
+    let outside = cursor_outside(h.hwnd.get());
+    let count = h.session.data.row_count();
+    let ids = h.session.data.history.as_ref().map(|h| h.graph.ids());
+    let id = |r: u32| ids.and_then(|i| i.get(r as usize)).map(ToString::to_string);
+    if let Some(edit) = h.session.data.edit.as_ref() {
+        let Some(&from) = edit.slots.get(&drag.row) else {
+            return true;
+        };
+        if outside {
+            if edit.marks.rows.get(from).is_some_and(|r| !r.merge) {
+                h.sender
+                    .send(Message::EditChoose(from, crate::historyedit::Action::Drop));
+            }
+            return true;
+        }
+        match drag
+            .target
+            .and_then(|(row, onto)| edit.drop_at(from, row, onto))
+        {
+            Some(dropped) => {
+                h.sender.send(Message::EditDropped(dropped));
+            }
+            None => beep(),
+        }
+        return true;
+    }
+    let Some(oid) = id(drag.row) else {
+        return true;
+    };
+    if outside {
+        h.sender.send(Message::HistoryDropOutside(oid));
+        return true;
+    }
+    match drag.target {
+        Some((row, onto)) => {
+            let below = id(row.min(count.saturating_sub(1)));
+            h.sender
+                .send(Message::HistoryDrop(oid, below, row >= count, onto));
+        }
+        None => beep(),
+    }
+    true
+}
+
+/// 指が窓 `hwnd` の外にあるか（コミットを窓の外に落としたか）。窓が分からなければ false。
+fn cursor_outside(hwnd: u64) -> bool {
+    use windows::Win32::Foundation::{HWND, POINT, RECT};
+    use windows::Win32::UI::WindowsAndMessaging::{GetCursorPos, GetWindowRect};
+    if hwnd == 0 {
+        return false;
+    }
+    let (mut p, mut r) = (POINT::default(), RECT::default());
+    unsafe {
+        GetCursorPos(&mut p).is_ok()
+            && GetWindowRect(HWND(hwnd as _), &mut r).is_ok()
+            && (p.x < r.left || p.x >= r.right || p.y < r.top || p.y >= r.bottom)
+    }
+}
+
+/// 編集モードの行にするコミット（16 進と merge か）のメッセージを読む（件名・作者は History が描く）。
+fn read_edit_rows(repo: &Repository, chosen: &[(String, bool)]) -> Vec<crate::historyedit::Row> {
+    chosen
+        .iter()
+        .map(|(oid, merge)| {
+            let message = amonhen_model::Oid::from_hex(oid)
+                .and_then(|id| repo.commit_message(&id).ok())
+                .unwrap_or_default();
+            crate::historyedit::Row::new(oid.clone(), message, *merge)
+        })
+        .collect()
 }
 
 /// 暦で選んだ日（WinUI の DateTime。選んだ日のこの機械の 0 時）を `YYYY-MM-DD` にする。
