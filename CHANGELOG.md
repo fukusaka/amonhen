@@ -80,6 +80,7 @@ checkerboard behind transparent pictures can be switched between light and dark.
 - DOT diagrams: `splines=ortho` in the dot layout spreads crowded edge ends across more of a node's side, takes the
   outermost ones in from the left and right sides, and moves end lines apart when they would share a line.
 - DOT diagrams: the dot layout orders nodes with fewer edge crossings.
+- DOT diagrams: edges to record fields and compass ports in the dot layout use the same smooth curves as other edges.
 
 #### Changed
 

@@ -1403,6 +1403,8 @@ pub fn render(
         let tail_clip = a.flag("tailclip").unwrap_or(true);
         let mut path: Vec<Cubic>;
         let mut label_at: Option<P>;
+        // 通り道の中の曲線で引いた（端の向きは道筋が決めた）
+        let mut routed = false;
         match &lay.routes[ei] {
             Route::Path { points, label } => {
                 let mut pts: Vec<P> = points.clone();
@@ -1412,20 +1414,69 @@ pub fn render(
                     ctx.notes.insert(Note::Ortho);
                 }
                 // dot の曲線は、通り道の中の最短の折れ線を引いてから避け、通り道に収まる曲線にする
-                let gates = lay.corridors.get(ei).map_or(&[][..], |g| &g[..]);
-                // ポートのある辺は前のまま（仮のノードを縦の向きで通る曲線。欄の中へ入る形を保つ）
+                // ポートのある端: レコード・表の内側の欄は、先に外形に触れる辺（向こうの端の側）へ付け替える。欄が
+                // 外形に触れていれば欄の幅の中から、向きのあるポートは向きが進む向きと合うか横ならその点から出入り
+                // する。向きが逆なら前のまま（仮のノードを縦の向きで通る曲線）
+                let mut gates: Vec<layout::Portal> =
+                    lay.corridors.get(ei).cloned().unwrap_or_default();
+                let down = lay.nodes[e.head].1 >= lay.nodes[e.tail].1;
+                if !(free || ortho) {
+                    outer_side(tv, &mut tail_port, hv.pos);
+                    outer_side(hv, &mut head_port, tv.pos);
+                }
+                let mut port_end =
+                    |port: &Option<Port>, view: &NodeView, tail: bool| -> Option<P> {
+                        let Some(p) = port else {
+                            return Some((f64::NAN, f64::NAN));
+                        };
+                        let at = from_final((view.pos.0 + p.at.0, view.pos.1 + p.at.1));
+                        let gate = if tail {
+                            gates.first_mut()?
+                        } else {
+                            gates.last_mut()?
+                        };
+                        // 出る向き（尾）・入る向き（頭）が配置の下向きか
+                        let outward_down = if tail { down } else { !down };
+                        if let Some(d) = p.dir {
+                            let o = from_final(view.pos);
+                            let q = from_final((view.pos.0 + d.0, view.pos.1 + d.1));
+                            let dy = q.1 - o.1;
+                            if dy.abs() > 1e-6 && (dy > 0.0) != outward_down {
+                                return None;
+                            }
+                            if dy.abs() > 1e-6 {
+                                gate.lo = at.0;
+                                gate.hi = at.0;
+                            }
+                        } else if let Some(b) = p.clip {
+                            let (c0, c1) = (
+                                from_final((view.pos.0 + b[0], view.pos.1 + b[1])),
+                                from_final((view.pos.0 + b[2], view.pos.1 + b[3])),
+                            );
+                            gate.lo = c0.0.min(c1.0);
+                            gate.hi = c0.0.max(c1.0);
+                        }
+                        Some(at)
+                    };
+                let tail_at = port_end(&tail_port, tv, true);
+                let head_at = port_end(&head_port, hv, false);
                 let fitted = !(free || straight || curved || polyline || right_angles.is_some())
-                    && tail_port.is_none()
-                    && head_port.is_none();
+                    && !gates.is_empty()
+                    && tail_at.is_some()
+                    && head_at.is_some();
+                let gates = &gates[..];
+                routed = fitted;
                 if fitted {
-                    // samehead・sametail の辺は、会う点から引く
+                    // samehead・sametail の辺は、会う点から引く。ポートのある端はポートの点から
                     let [meet_head, meet_tail] = meet[ei];
-                    let start = match meet_tail {
-                        Some((m, _)) if tail_port.is_none() => from_final(m),
+                    let start = match (meet_tail, tail_at) {
+                        (_, Some(p)) if !p.0.is_nan() => p,
+                        (Some((m, _)), _) => from_final(m),
                         _ => pts[0],
                     };
-                    let end = match meet_head {
-                        Some((m, _)) if head_port.is_none() => from_final(m),
+                    let end = match (meet_head, head_at) {
+                        (_, Some(p)) if !p.0.is_nan() => p,
+                        (Some((m, _)), _) => from_final(m),
                         _ => pts[pts.len() - 1],
                     };
                     pts = spline::shortest(start, end, gates);
@@ -1641,7 +1692,7 @@ pub fn render(
         if let Some(p) = &tail_port {
             let at = (tv.pos.0 + p.at.0, tv.pos.1 + p.at.1);
             path[0].0 = at;
-            if let Some(d) = p.dir.filter(|_| !ortho) {
+            if let Some(d) = p.dir.filter(|_| !ortho && !routed) {
                 path[0].1 = (at.0 + d.0 * reach, at.1 + d.1 * reach);
                 detour(&mut path, tv, d, reach);
             }
@@ -1650,7 +1701,7 @@ pub fn render(
             let last = path.len() - 1;
             let at = (hv.pos.0 + p.at.0, hv.pos.1 + p.at.1);
             path[last].3 = at;
-            if let Some(d) = p.dir.filter(|_| !ortho) {
+            if let Some(d) = p.dir.filter(|_| !ortho && !routed) {
                 path[last].2 = (at.0 + d.0 * reach, at.1 + d.1 * reach);
                 let mut rev = curve::reverse(&path);
                 detour(&mut rev, hv, d, reach);

@@ -1075,3 +1075,16 @@ fn dot_flat_arcs_stay_below_the_rank_above() {
         assert!(w[1] - w[0] >= 4.0, "{tops:?}");
     }
 }
+
+/// dot の曲線は、ポートのある端も通り道の中を進む: 下へ向くポートから出て上から入る線は、上から下へ一方向に進む。
+#[test]
+fn dot_port_edges_run_one_way() {
+    let src = "digraph { a -> {x y z}; a:s -> c:n; b:s -> c:n; {x y z} -> c }";
+    let svg = render(src).unwrap().svg;
+    let lines = edge_polylines(&svg);
+    for line in &lines[3..5] {
+        for w in line.windows(2) {
+            assert!(w[1].1 >= w[0].1 - 0.5, "{line:?}");
+        }
+    }
+}
