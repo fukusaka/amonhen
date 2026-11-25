@@ -844,6 +844,9 @@ fn dot_ortho_edges_do_not_share_segments() {
         "digraph { splines=ortho; rankdir=LR; node [shape=record]; s1 [label=\"<f0> left|<f1> mid|<f2> right\"]; s2 [label=\"{a|{b|<p> c}}\"]; s3 [label=\"<x> x|<y> y\"]; s1:f2 -> s2:p; s1:f0 -> s2; s1:f1 -> s3:y; s3:x -> s2:p:n }",
         "digraph { splines=ortho; a -> {b c d e f}; {b c d e f} -> g; b -> d; c -> f; a -> g; a -> h -> g }",
         "digraph { splines=ortho; rankdir=BT; a -> {b c}; b -> {d e}; c -> {d e}; a -> d; a -> e }",
+        // 真下に並ぶノードの尾と頭の端が同じ x にならない・込んだ側は横からも出る
+        "digraph { splines=ortho; node [shape=box]; {a b c} -> {d e f} }",
+        "digraph { splines=ortho; a -> {b c d e f g}; {b c d e f g} -> h }",
     ];
     for src in graphs {
         let svg = render(src).unwrap().svg;
