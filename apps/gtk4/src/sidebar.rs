@@ -2481,7 +2481,7 @@ impl Inner {
                         title: tr!("No changes"),
                         key: CLEAN_WORKTREES_KEY.into(),
                         item: Item::Folder,
-                        icon: icon::Kind::CheckCircle,
+                        icon: icon::Kind::Clean,
                         badge: clean.len().to_string(),
                         tooltip: Some(tr!("Worktrees with no changes (click to show)")),
                         ..Data::default()
