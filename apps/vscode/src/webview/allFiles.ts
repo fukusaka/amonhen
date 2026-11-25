@@ -4,12 +4,13 @@
  * 足した行を緑、変えた行を青（前の行はツールチップ）、消したところに赤い印。画像は拡大縮小でき、SVG は絵・
  * テキスト・モバイル、Markdown は整形とテキストで見る。そのほかのバイナリはエディタで開く（アプリと同じ）
  */
-import type { FileView, FileViewNote, ImageBlob, SvgCheckView, TreeEntry, ViewLine } from '../history/protocol.ts';
+import type { FileView, FileViewNote, ImageBlob, PictureColors, SvgCheckView, TreeEntry, ViewLine } from '../history/protocol.ts';
 import { el, post } from './api.ts';
 import { renderCode } from './diffView.ts';
 import { checkerToggle } from './imageDiff.ts';
 import { findAll, findCountText } from './textFind.ts';
 import { resolvePath } from '../history/repoPath.ts';
+import { hexColor } from '../history/cssColor.ts';
 
 /** コミットで変えたファイル（木の印） */
 export interface ChangedFile {
@@ -33,8 +34,8 @@ export interface AllFilesOptions {
   onShowChange?: (path: string) => void;
 }
 
-/** 見せ方（Markdown・SVG・モバイルの部品）は、ファイルを替えても覚えておく（アプリと同じ） */
-const lastMode: { markdown?: string; svg?: string } = {};
+/** 見せ方（Markdown・SVG・VectorDrawable・モバイルの部品）は、ファイルを替えても覚えておく（アプリと同じ） */
+const lastMode: { markdown?: string; svg?: string; drawable?: string } = {};
 let lastRenderer = 'android';
 
 /** 中身に並べる行の上限（それより長いファイルはエディタで） */
@@ -56,6 +57,17 @@ export function createAllFiles(oid: string, changes: readonly ChangedFile[], opt
   const folders = new Map<string, HTMLElement>();
   let selected: string | undefined;
   let selectedRow: HTMLElement | undefined;
+  /** 開いているファイルの絵（図・数式・VectorDrawable）が、画面の色で描いたものか（テーマが変わったら求め直す） */
+  let themed = false;
+  // テーマが変わったら、画面の色で描いた絵を描き直す（アプリと同じ）
+  const observer = new MutationObserver(() => {
+    if (!root.isConnected) {
+      observer.disconnect();
+      return;
+    }
+    if (themed && selected) requestFile(selected);
+  });
+  observer.observe(document.body, { attributes: true, attributeFilter: ['class'] });
 
   /** このフォルダの下に、このコミットで変えたファイルがあるか */
   const touches = (dir: string) => changes.some((c) => c.path.startsWith(`${dir}/`));
@@ -113,8 +125,14 @@ export function createAllFiles(oid: string, changes: readonly ChangedFile[], opt
     row?.classList.add('active');
     selectedRow = row;
     selected = full;
+    themed = false;
     pane.replaceChildren(el('div', 'empty', 'Loading…'));
-    post({ type: 'treeFile', oid, path: full });
+    requestFile(full);
+  }
+
+  /** ファイルの中身を求める（図・数式・VectorDrawable の絵は、今の画面の色と時間帯で描かせる） */
+  function requestFile(full: string): void {
+    post({ type: 'treeFile', oid, path: full, colors: pictureColors(), utcOffset: -new Date().getTimezoneOffset() });
   }
 
   function showEntries(path: string, entries: TreeEntry[], error?: string): void {
@@ -184,6 +202,7 @@ export function createAllFiles(oid: string, changes: readonly ChangedFile[], opt
 
   function showFile(path: string, view: FileView & FileViewNote): void {
     if (path !== selected) return;
+    themed = view.kind === 'text' && (view.drawable !== undefined || (view.markdown !== undefined && hasPictures(view.markdown)));
     const head = el('div', 'file-pane-head');
     // パスとコミット（アプリの「パス @ 短い ID」）。消したファイルは前の版を出すので、そう添える
     head.append(el('span', 'path', path), el('span', 'at', `@ ${oid.slice(0, 7)}`));
@@ -231,8 +250,16 @@ export function createAllFiles(oid: string, changes: readonly ChangedFile[], opt
             modes.push(['Mobile', 'What breaks on a mobile SVG renderer, beside an approximation of it', () => renderSvgCheck(svg.image, check)]);
           }
         }
-        modes.push(['Text', 'Show the text with this commit’s changes marked', () => renderLines(view.lines, view.removedAtEnd)]);
-        const kind = view.markdown ? 'markdown' : view.svg ? 'svg' : undefined;
+        if (view.drawable) {
+          const drawable = view.drawable;
+          modes.push(['Picture', 'Draw the VectorDrawable', () => drawablePicture(drawable.image, drawable.notes)]);
+        }
+        modes.push([
+          'Text',
+          view.drawable ? 'Show the XML source' : 'Show the text with this commit’s changes marked',
+          () => renderLines(view.lines, view.removedAtEnd),
+        ]);
+        const kind = view.markdown ? 'markdown' : view.svg ? 'svg' : view.drawable ? 'drawable' : undefined;
         if (modes.length > 1) {
           const switcher = el('span', 'segmented');
           const pick = (i: number) => {
@@ -296,8 +323,15 @@ function renderLines(lines: readonly ViewLine[], removedAtEnd?: number): HTMLEle
   return box;
 }
 
-/** 拡大縮小できる画像（ボタン、⌘・Ctrl を押してスクロール） */
-function zoomableImage(image: ImageBlob): HTMLElement {
+/** VectorDrawable の絵（大きさは dp）と、絵の下に添える説明（引けなかった色など。アプリと同じ） */
+function drawablePicture(image: ImageBlob, notes: readonly string[]): HTMLElement {
+  const box = zoomableImage(image, 'dp');
+  if (notes.length) box.append(el('div', 'image-footnote', notes.join('\n')));
+  return box;
+}
+
+/** 拡大縮小できる画像（ボタン、⌘・Ctrl を押してスクロール）。`unit` は大きさの単位（VectorDrawable の dp） */
+function zoomableImage(image: ImageBlob, unit = ''): HTMLElement {
   const box = el('div', 'zoom-image');
   const bar = el('div', 'zoom-bar');
   const frame = el('div', 'zoom-frame');
@@ -356,7 +390,7 @@ function zoomableImage(image: ImageBlob): HTMLElement {
   );
   const info = el('div', 'image-caption');
   img.addEventListener('load', () => {
-    info.textContent = `${img.naturalWidth} × ${img.naturalHeight} · ${sizeText(image.bytes)}`;
+    info.textContent = `${img.naturalWidth} × ${img.naturalHeight}${unit ? ` ${unit}` : ''} · ${sizeText(image.bytes)}`;
     apply();
   });
   apply();
@@ -466,8 +500,17 @@ interface MdRun {
   /** GitHub 独自の絵文字（`:octocat:` などの画像だけのもの）。`text` を薄い札で見せる */
   custom_emoji?: string;
   line_break?: boolean;
+  /** 文中の数式の絵（`text` は書いたままの原文で、`code` の印つき） */
+  math?: MdFormula;
   /** 文中の数式を描けなかった理由（`text` は書いたままの原文で、`code` の印つき） */
   math_error?: string;
+}
+/** コアが描いた数式（色は当ててある）。大きさは em（本文の字の大きさ × `MATH_SCALE`） */
+interface MdFormula {
+  svg: string;
+  width: number;
+  height: number;
+  depth: number;
 }
 type MdAlign = 'left' | 'center' | 'right';
 interface MdCell {
@@ -483,8 +526,8 @@ type MdBlock =
   | { kind: 'heading'; level: number; runs: MdRun[]; align?: MdAlign }
   | { kind: 'paragraph'; runs: MdRun[]; align?: MdAlign }
   | { kind: 'code'; language: string; text: string; syntax?: [number, number, number][][] }
-  | { kind: 'diagram'; language: string; text: string; error?: string }
-  | { kind: 'math'; text: string; error?: string }
+  | { kind: 'diagram'; language: string; text: string; svg?: string; note?: string; error?: string }
+  | ({ kind: 'math'; text: string; error?: string } & Partial<MdFormula>)
   | { kind: 'quote'; alert?: string; blocks: MdBlock[] }
   | { kind: 'list'; start?: number; items: { task?: boolean; blocks: MdBlock[] }[] }
   | { kind: 'table'; aligns: string[]; head: MdRun[][]; rows: MdRun[][][] }
@@ -705,6 +748,55 @@ function clearHighlights(): void {
 }
 
 
+/** 本文の字の大きさに対する数式の 1 em（コアの `math::FONT_SCALE`。KaTeX と同じ） */
+const MATH_SCALE = 1.21;
+
+/** 図・数式の絵があるか（テーマが変わったら描き直す） */
+function hasPictures(blocks: readonly unknown[]): boolean {
+  return JSON.stringify(blocks).includes('"svg":');
+}
+
+/** 図・数式・VectorDrawable の絵に当てる、今の画面の色（文字・地と、構文の種類の色） */
+function pictureColors(): PictureColors {
+  const probe = el('span');
+  probe.style.display = 'none';
+  document.body.append(probe);
+  const color = (className: string) => {
+    probe.className = className;
+    return hexColor(getComputedStyle(probe).color);
+  };
+  const text = color('');
+  probe.className = '';
+  probe.style.backgroundColor = 'var(--vscode-editor-background)';
+  const background = hexColor(getComputedStyle(probe).backgroundColor) ?? hexColor(getComputedStyle(document.body).backgroundColor);
+  probe.style.backgroundColor = '';
+  const kinds: Record<string, string> = {};
+  for (const kind of ['keyword', 'string', 'comment', 'number', 'function', 'type', 'constant', 'attribute', 'tag']) {
+    const c = color(`syn-${kind}`);
+    if (c) kinds[kind] = c;
+  }
+  probe.remove();
+  const dark = darkTheme();
+  return { dark, text: text ?? (dark ? '#cccccc' : '#333333'), background: background ?? (dark ? '#1e1e1e' : '#ffffff'), kinds };
+}
+
+/** 数式の絵（`display` ならブロックの組み方で中央に、でなければ文中で基線にそろえる） */
+function formulaImage(formula: MdFormula, tex: string, display: boolean): HTMLElement {
+  const img = el('img', display ? 'md-math-block' : 'md-math');
+  img.src = `data:image/svg+xml;base64,${base64(formula.svg)}`;
+  img.alt = tex;
+  img.title = tex;
+  img.style.width = `${formula.width * MATH_SCALE}em`;
+  img.style.height = `${(formula.height + formula.depth) * MATH_SCALE}em`;
+  if (!display) img.style.verticalAlign = `-${formula.depth * MATH_SCALE}em`;
+  return img;
+}
+
+/** 描けなかった図・数式の理由（誤りの位置を ^ で指すので等幅で。アプリと同じく赤） */
+function pictureError(error: string): HTMLElement {
+  return el('pre', 'md-picture-error', error);
+}
+
 /** 今の外観が暗いか（`<picture>` の画像を選ぶ） */
 function darkTheme(): boolean {
   return document.body.classList.contains('vscode-dark') || document.body.classList.contains('vscode-high-contrast');
@@ -739,6 +831,8 @@ function renderRuns(runs: readonly MdRun[]): Node[] {
       return linked(alt, run.link);
     }
     if (run.footnote) return el('sup', 'md-footnote', `[${run.footnote}]`);
+    // 文中の数式: 基線を本文にそろえる。原文は浮かぶ説明に（アプリと同じ）
+    if (run.math) return linked(formulaImage(run.math, run.text, false), run.link);
     if (run.custom_emoji) {
       // GitHub 独自の絵文字は画像を持たないので、名前を薄い札で見せる（アプリと同じ）
       const chip = el('span', 'md-emoji-chip', run.text);
@@ -746,7 +840,11 @@ function renderRuns(runs: readonly MdRun[]): Node[] {
       return chip;
     }
     let node: HTMLElement = el(run.kbd ? 'kbd' : run.code ? 'code' : 'span', '', run.text);
-    if (run.math_error) node.title = run.math_error;
+    if (run.math_error) {
+      // 描けなかった文中の数式は原文をコードとして見せ、理由を浮かぶ説明に（アプリと同じ）
+      node.classList.add('md-math-error');
+      node.title = run.math_error;
+    }
     if (run.bold) node = wrapIn('strong', node);
     if (run.italic) node = wrapIn('em', node);
     if (run.strike) node = wrapIn('s', node);
@@ -762,6 +860,17 @@ function renderRuns(runs: readonly MdRun[]): Node[] {
     }
     return node;
   });
+}
+
+/** コードとして見せる図・数式と、描けなかった理由 */
+function codeWithError(language: string, text: string, error: string | undefined): HTMLElement {
+  const pre = el('pre', 'md-code');
+  pre.title = language;
+  pre.append(el('code', '', text));
+  if (!error) return pre;
+  const box = el('div');
+  box.append(pre, pictureError(error));
+  return box;
 }
 
 function wrapIn(tag: 'strong' | 'em' | 's' | 'ins' | 'sub' | 'sup', child: Node): HTMLElement {
@@ -841,18 +950,28 @@ function renderBlock(block: MdBlock): HTMLElement {
       return table;
     }
     case 'diagram': {
-      // 図（mermaid など）は、まだ描かずにコードとして見せる
-      const pre = el('pre', 'md-code');
-      pre.title = block.error ? `Diagram (${block.language}): ${block.error}` : `Diagram (${block.language}), shown as its code`;
-      pre.append(el('code', '', block.text));
-      return pre;
+      if (block.svg) {
+        // コアが描いた図（列より広い図は縮める）。近いもので描いた図には、そのことを絵の下に添える（アプリと同じ）
+        const figure = el('div', 'md-diagram');
+        const img = el('img');
+        img.src = `data:image/svg+xml;base64,${base64(block.svg)}`;
+        img.alt = block.text;
+        figure.append(img);
+        if (block.note) figure.append(el('div', 'md-diagram-note', block.note));
+        return figure;
+      }
+      // 描けない図（描かない古いエンジンも）はコードとして見せ、理由を添える
+      return codeWithError(block.language, block.text, block.error);
     }
     case 'math': {
-      // 数式は、まだ描かずに TeX をコードとして見せる（文中の式は原文がコードの文字で来る）
-      const pre = el('pre', 'md-code');
-      pre.title = block.error ? `Math: ${block.error}` : 'Math, shown as its TeX';
-      pre.append(el('code', '', block.text));
-      return pre;
+      if (block.svg !== undefined && block.width !== undefined && block.height !== undefined && block.depth !== undefined) {
+        // 数式のブロックは中央に（原文は浮かぶ説明に）
+        const p = el('div', 'md-math-display');
+        p.append(formulaImage({ svg: block.svg, width: block.width, height: block.height, depth: block.depth }, block.text, true));
+        return p;
+      }
+      // 描けない数式（描かない古いエンジンも）は TeX をコードとして見せ、理由を添える
+      return codeWithError('math', block.text, block.error);
     }
     case 'rule':
       return el('hr');

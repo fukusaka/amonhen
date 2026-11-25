@@ -82,6 +82,23 @@ Diff line records: rows (diff line × number of rows), textLengths u32, text (UT
 
 `workingDiff`'s lineEndings (null for staged diffs, submodules and deleted files): index, worktree and checkout are each `none`, `lf`, `crlf` or `mixed` (what git stores, the working tree file, and what checkout would write); rule is the conversion in effect, written like `git check-attr` (`text=auto eol=crlf`, `-text`, `core.autocrlf=true`; empty if none or not notable); notable is true when the working tree and git differ in line endings or warning is true; warning is true when line endings are mixed, or the working tree has CRLF where checkout would write LF. Diffs compare what git stores on both sides, so these differences don't show as changed lines; front-ends show them beside the diff when notable.
 
+## The drawing helper (`amonhen-render`)
+
+The engine has no drawing features (see "Repository layout" in [design.md](design.md)). The VSCode extension draws All Files' Mermaid and DOT diagrams, math and Android VectorDrawable pictures, and checks SVGs for mobile renderers, with `amonhen-render` (`crates/render`), a separate executable bundled next to the engine as `bin/amonhen-render-<os>-<arch>` (under Remote-SSH it runs on the SSH host, like the engine). The extension starts it for each file it shows, with no arguments and `AMONHEN_LANG` set to its language, writes requests to its standard input and reads replies from its standard output, then closes the input; the helper answers what is left and exits. `amonhen-render --version` prints `amonhen-render <version>`.
+
+Every message is one line of JSON (UTF-8). Requests carry an `id` (any JSON value, returned as is) and an `op`, and may be sent all at once; they are answered in order:
+
+| `op` | Fields | Reply |
+|---|---|---|
+| `diagram` | language (the fence's word: `mermaid`, `dot`, `graphviz`, `neato` …), text, from? (the Markdown file's path from the repository root; DOT images are read relative to its folder), colors (dark, text, background, kinds: the screen's `#rrggbb` colors, kinds being syntax kinds such as `keyword`), utcOffset? (minutes, local time − UTC, for gantt dates; UTC without it) | svg (colored with the theme's syntax colors, or the diagram's own Mermaid theme) and note? (it's an approximation), or error (why it can't be drawn), or neither (not a diagram it draws: show the code) |
+| `math` | formulas (tex, display?: one Markdown file's formulas, in order, under the apps' per-file limits), color (`#rrggbb`) | formulas: for each, svg, width, height, depth (in em of the text size × 1.21), or error, or neither (show the TeX) |
+| `vectorDrawable` | path (from the repository root), data (the XML, base64), fallback? (the color for what can't be resolved) | svg (sized in dp), notes |
+| `svgCheck` | data (the SVG, base64) | issues (targets, feature, message, count), approximations (android, ios, flutter, reactNative: SVG text) |
+
+A reply is `{"id": …, "ok": true, …}` with the fields above, or `{"id": …, "ok": false, "message": …}` when the request itself fails (a line that isn't JSON gets `"id": null`).
+
+The helper never reads the repository. When a diagram's image or a VectorDrawable's resources are needed, it writes a question, `{"ask": n, "read": "path"}` for a file or `{"ask": n, "list": "folder"}` for a folder (the root is `""`), with paths from the repository root at the same commit, and waits for the answer, `{"answer": n, "data": "<base64>"}` (`null` when there is no such file) or `{"answer": n, "entries": [{"name": …, "folder": true|false}]}`. Questions come one at a time while a request is drawn; the extension reads the files from git and the folders with the engine's `treeEntries`, answering images over 1 MB as missing.
+
 ## Version
 
 When the shape of the API changes, bump `amonhen_front::VERSION` (check it with the version in the `hello` reply). The socket name includes the build fingerprint (`amonhen_remote::BUILD_ID`, a hash of the workspace's sources), so it never connects to a daemon of a different build.

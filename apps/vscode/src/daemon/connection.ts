@@ -6,6 +6,7 @@
 import * as vscode from 'vscode';
 import { DaemonClient } from './client.ts';
 import { prepareEngine } from './engine.ts';
+import { bundledRender, renderNextTo } from './render.ts';
 
 const clients = new Map<string, Promise<DaemonClient>>();
 let binDir: string | undefined;
@@ -32,6 +33,23 @@ export async function daemonPath(): Promise<string | undefined> {
     return path;
   }
   return prepared;
+}
+
+/**
+ * 絵の手伝い（`amonhen-render`。Markdown の図・数式などを描く）の場所。エンジンと同じく拡張に同梱したもので、
+ * Remote-SSH では SSH 先で動く。設定 `amonhen.daemon.path` でエンジンを指していれば、その隣のもの（開発中の
+ * ビルド）。daemon を使わない設定か、手伝いがなければ undefined（図・数式はコードのまま）
+ */
+export async function renderPath(): Promise<string | undefined> {
+  const config = vscode.workspace.getConfiguration('amonhen');
+  if (!config.get<boolean>('daemon.enabled', true)) {
+    return undefined;
+  }
+  const path = config.get<string>('daemon.path')?.trim();
+  if (path) {
+    return renderNextTo(path);
+  }
+  return binDir ? bundledRender(binDir) : undefined;
 }
 
 /** `root` のリポジトリを daemon で開いたつながり。daemon を使わないなら undefined */

@@ -71,9 +71,11 @@ pub struct Run {
     #[serde(skip_serializing_if = "Option::is_none")]
     pub math_error: Option<String>,
     /// 文中の数式の TeX（区切りの `$` を除いたもの）と、ブロックの組み方で描くか（`math::render_all` が描く）。
-    #[serde(skip)]
+    /// `math` フィーチャーのない作り（エンジン）でも書き出すので、絵を別に描く FE（VSCode 拡張の `amonhen-render`）は
+    /// これで文中の式を見分ける。
+    #[serde(skip_serializing_if = "Option::is_none")]
     pub(crate) math_tex: Option<String>,
-    #[serde(skip)]
+    #[serde(skip_serializing_if = "std::ops::Not::not")]
     pub(crate) math_display: bool,
 }
 
@@ -2115,6 +2117,25 @@ mod tests {
         );
         assert!(parse_json("# x", None).contains("\"kind\":\"heading\""));
         assert!(is_markdown("docs/README.MD") && !is_markdown("a.txt"));
+    }
+
+    #[test]
+    fn the_json_carries_inline_math_tex_for_front_ends_that_draw_it() {
+        // 描かない作り（エンジン）でも、文中の式の TeX を書き出す（VSCode 拡張が `amonhen-render` で描く）
+        let json: serde_json::Value =
+            serde_json::from_str(&parse_json("# Sum $$x$$\n\nArea $\\pi r^2$ here.\n", None))
+                .unwrap();
+        let math: Vec<_> = [&json[0]["runs"], &json[1]["runs"]]
+            .into_iter()
+            .flat_map(|runs| runs.as_array().unwrap())
+            .filter(|r| r["math_tex"].is_string())
+            .collect();
+        assert_eq!(math.len(), 2, "{json}");
+        assert_eq!(math[0]["math_tex"], "x");
+        assert_eq!(math[0]["math_display"], true, "{json}");
+        assert_eq!(math[1]["math_tex"], "\\pi r^2");
+        assert_eq!(math[1]["text"], "$\\pi r^2$");
+        assert!(math[1].get("math_display").is_none(), "{json}");
     }
 
     #[test]

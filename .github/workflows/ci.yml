@@ -141,6 +141,7 @@ jobs:
         working-directory: apps/vscode
         run: |
           cargo build -p amonhen-cli
+          cargo build -p amonhen-render
           npm ci
           export PATH="$HOME/git-minimum/bin:$PATH"
           git --version | grep -qx "git version $GIT_VERSION"
@@ -276,7 +277,8 @@ jobs:
       # runner の rustup で、その時点の stable を入れる。
       - run: rustup toolchain install stable --profile minimal && rustup default stable
       - uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0 # v2.9.3
-      - run: cargo build -p amonhen-cli
+      # 絵の手伝いは別に作る（一緒に作るとフィーチャーがエンジンに混ざる）。
+      - run: cargo build -p amonhen-cli && cargo build -p amonhen-render
       - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
         with:
           node-version: 24

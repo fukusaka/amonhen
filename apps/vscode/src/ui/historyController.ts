@@ -1,8 +1,9 @@
 import type { EditRow } from '../history/editPlan.ts';
 import { basename } from 'node:path';
 import * as vscode from 'vscode';
-import type { DaemonClient } from '../daemon/client.ts';
-import { daemonFor } from '../daemon/connection.ts';
+import { daemonLanguage, type DaemonClient } from '../daemon/client.ts';
+import { daemonFor, renderPath } from '../daemon/connection.ts';
+import { RenderSession } from '../daemon/render.ts';
 import { applySyntax, commitFiles, splitCommitDiff, textSyntaxByLine } from '../daemon/diff.ts';
 import { readRows, toRowData } from '../daemon/history.ts';
 import { contentsToFetch, searchesContents, searchHistory } from '../daemon/search.ts';
@@ -19,6 +20,7 @@ import type {
   FileView,
   HistoryHostMessage,
   ImageBlob,
+  PictureColors,
   SvgCheckView,
   TreeEntry,
   ViewLine,
@@ -58,6 +60,8 @@ import type { Repository, Section } from '../state/repository.ts';
 import { openCommitChanges, openCommitFile } from './commitChanges.ts';
 import { gitUri } from './uri.ts';
 import { repositorySlug } from '../git/github.ts';
+import { isVectorDrawable } from '../history/vectorDrawable.ts';
+import { drawMarkdownPictures } from '../history/markdownPictures.ts';
 import { onDidChangeSignatureConfig } from './signatureConfig.ts';
 import { showError } from './stageCommands.ts';
 
@@ -390,7 +394,7 @@ export class HistoryController implements vscode.Disposable {
         await this.sendTreeEntries(message.oid, message.path).catch(showError);
         break;
       case 'treeFile':
-        await this.sendTreeFile(message.oid, message.path).catch((err: unknown) =>
+        await this.sendTreeFile(message.oid, message.path, message.colors, message.utcOffset).catch((err: unknown) =>
           this.post({ type: 'treeFile', oid: message.oid, path: message.path, view: { kind: 'error', message: errorMessage(err) } }),
         );
         break;
@@ -877,9 +881,57 @@ export class HistoryController implements vscode.Disposable {
   /**
    * コミットのファイルの中身を送る（「すべてのファイル」。エンジンだけ）。このコミットで変えたファイルは、ファイル
    * 全体の差分から、足した行・変えた行・消したところに印を付ける。画像は絵、Markdown は整形のブロック、SVG は絵と
-   * モバイルの確認も
+   * モバイルの確認も。Markdown の図・数式、Android の VectorDrawable、SVG のモバイルの確認は、絵の手伝い
+   * （`amonhen-render`）が `colors`（Webview の画面の色）で作る（手伝いがない・失敗したときは、コードとテキストのまま）
    */
-  private async sendTreeFile(oid: string, path: string): Promise<void> {
+  private async sendTreeFile(oid: string, path: string, colors?: PictureColors, utcOffset?: number): Promise<void> {
+    const repo = this.repo;
+    const client = this.daemon?.client;
+    if (!repo || !client) return;
+    // 絵の手伝いは、要るときに 1 度だけ起動する（同じコミットのほかのファイルは、求められたら読んで渡す）
+    const at = this.details.get(oid)?.files.find((f) => f.path === path)?.status === 'D' ? this.details.get(oid)?.parents[0] : oid;
+    let helper: Promise<RenderSession | undefined> | undefined;
+    const render = async (op: string, fields: Record<string, unknown>): Promise<Record<string, unknown>> => {
+      helper ??= this.startRender(client, repo, at ?? oid);
+      const session = await helper;
+      if (!session) throw new Error('No drawing helper');
+      return session.request(op, fields);
+    };
+    try {
+      await this.sendTreeFileWith(oid, path, render, colors, utcOffset);
+    } finally {
+      void helper?.then((session) => session?.close());
+    }
+  }
+
+  /** 絵の手伝いを起動する。同じコミット `oid` のファイル・フォルダの求めには、git とエンジンで読んで答える */
+  private async startRender(client: DaemonClient, repo: Repository, oid: string): Promise<RenderSession | undefined> {
+    const program = await renderPath().catch(() => undefined);
+    if (!program) return undefined;
+    return new RenderSession(
+      program,
+      {
+        read: async (file) => {
+          const data = (await repo.backend.object(`${oid}:${file}`))?.data;
+          return data && data.length <= MAX_IMAGE_BYTES ? data : undefined;
+        },
+        list: async (folder) => {
+          const reply = await client.call({ op: 'run', command: { op: 'treeEntries', oid, path: folder } });
+          const entries = (reply.json['info'] as { entries?: TreeEntry[] } | undefined)?.entries ?? [];
+          return entries.map((e) => ({ name: e.name, folder: e.kind === 'folder' }));
+        },
+      },
+      { language: daemonLanguage() },
+    );
+  }
+
+  private async sendTreeFileWith(
+    oid: string,
+    path: string,
+    render: (op: string, fields: Record<string, unknown>) => Promise<Record<string, unknown>>,
+    colors?: PictureColors,
+    utcOffset?: number,
+  ): Promise<void> {
     const repo = this.repo;
     const client = this.daemon?.client;
     if (!repo || !client) return;
@@ -908,18 +960,40 @@ export class HistoryController implements vscode.Disposable {
       send(view);
       return;
     }
-    if (/\.(md|markdown)$/i.test(path)) {
+    // 消したファイルは前の版（最初の親のコミット）を読む
+    const at = deleted ? this.details.get(oid)?.parents[0] : oid;
+    if (/\.(md|markdown)$/i.test(path) && at) {
       const slug = repositorySlug(await repo.backend.remotes());
       const reply = await client.call({
         op: 'run',
-        command: { op: 'markdownBlocks', oid, path, ...(slug ? { github: `https://github.com/${slug}` } : {}) },
+        command: { op: 'markdownBlocks', oid: at, path, ...(slug ? { github: `https://github.com/${slug}` } : {}) },
       });
       const blocks = (reply.json['info'] as { blocks?: unknown[] } | undefined)?.blocks;
-      if (blocks) view.markdown = await this.colorCode(client, await this.inlineImages(repo, oid, path, blocks));
+      if (blocks) {
+        // 図と数式は絵の手伝いで描く（描けなかったものはコードのまま、構文の色を付ける）
+        if (colors) await drawMarkdownPictures(blocks, path, colors, utcOffset, render);
+        view.markdown = await this.colorCode(client, await this.inlineImages(repo, at, path, blocks));
+      }
+    }
+    // Android の VectorDrawable は絵にする（引けない色は画面の文字の色で。描けなければテキストだけ。アプリと同じ）
+    if (at && isVectorDrawable(path, data)) {
+      const reply = await render('vectorDrawable', { path, data: data.toString('base64'), ...(colors ? { fallback: colors.text } : {}) }).catch(
+        () => undefined,
+      );
+      const info = reply as { svg?: string; notes?: string[] } | undefined;
+      if (typeof info?.svg === 'string') {
+        view.drawable = {
+          image: { url: `data:image/svg+xml;base64,${Buffer.from(info.svg).toString('base64')}`, bytes: data.length },
+          notes: info.notes ?? [],
+        };
+      }
     }
     if (svg && data.length <= MAX_IMAGE_BYTES) {
-      const reply = await client.call({ op: 'run', command: { op: 'svgCheck', oid, path } }).catch(() => undefined);
-      const check = reply?.json['info'] as SvgCheckView | undefined;
+      const reply = await render('svgCheck', { data: data.toString('base64') }).catch(() => undefined);
+      const check: SvgCheckView | undefined =
+        reply && Array.isArray(reply['issues'])
+          ? { issues: reply['issues'] as SvgCheckView['issues'], approximations: (reply['approximations'] ?? {}) as SvgCheckView['approximations'] }
+          : undefined;
       view.svg = { image: { url: `data:image/svg+xml;base64,${data.toString('base64')}`, bytes: data.length }, ...(check ? { check } : {}) };
     }
     send(view);

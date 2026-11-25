@@ -1,7 +1,7 @@
 //! Markdown の数式（GitHub と同じ書き方: ```` ```math ````・`$$…$$` のブロックと、文中の `$…$`・`` $`…`$ ``）を描く
 //! （History の「すべてのファイル」の整形表示）。描くのは `amonhen-math`（RaTeX）で、`math` フィーチャーのときだけ入る
-//! （アプリ（FFI・GTK4）だけが入れ、エンジン（CLI・daemon）には入れない）。入れないときも書き方は読み、FE は原文を
-//! コードとして見せる。
+//! （アプリ（FFI・GTK4）と VSCode 拡張の絵の手伝い（amonhen-render）だけが入れ、エンジン（CLI・daemon）には入れない）。
+//! 入れないときも書き方は読み、FE は原文をコードとして見せる。
 //!
 //! 形と位置（SVG）は Markdown を読むときに一度だけ作る。色は CSS の変数 `--math-fg` のままなので、FE は描くときに
 //! `colorize` で文字の色を当てる（図と同じ `svgcss` の道。テーマや明るい・暗いを切り替えても、色だけを当て直せばよい）。
@@ -202,6 +202,13 @@ pub(crate) fn render_all(blocks: &mut [Block]) {
     }
     #[cfg(not(feature = "math"))]
     let _ = blocks;
+}
+
+/// 1 つの Markdown のファイルの式（TeX と、ブロックの組み方で描くか）を、出てくる順に描く（ファイルごとの上限つき。
+/// 色は `--math-fg` のまま）。Markdown を読まずに式だけを描く FE（VSCode 拡張の `amonhen-render`）が使う。
+#[cfg(feature = "math")]
+pub fn render_formulas(jobs: Vec<(String, bool)>) -> Vec<Result<MathPicture, String>> {
+    render_jobs(jobs)
 }
 
 /// 式を順に描く（大きなスタックの別スレッドで。上限を超えた分は描かない）。

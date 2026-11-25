@@ -77,6 +77,12 @@ Webview はローカルで描画され、拡張ホストとの通信だけが SS
   ではブランチの reflog（`git log -g`）を読んで `git range-diff` を自分で動かす。
 - エンジンのあとに足した機能は、エンジンだけで作る（`run` でコアの命令を使う）。エンジンがなければ、その行とコマンドは
   出さない（コンテキストキー `amonhen.engine`）。
+- エンジンは絵を描かない。すべてのファイルの Mermaid・DOT の図・数式・Android の VectorDrawable の絵と SVG のモバイル
+  向けの確認は、絵の手伝い `amonhen-render` が作る。エンジンの隣に同梱し（`bin/amonhen-render-<os>-<cpu>`。
+  `amonhen.daemon.path` でエンジンを指していればその隣）、見せるファイルごとに起動する（`src/daemon/render.ts`。
+  取り決めは [front.md](front.md#絵の手伝いamonhen-render)）。エンジンの `markdownBlocks` は Markdown を読むだけで、
+  拡張はその図のフェンスと式を Webview のテーマの色で手伝いに送り、手伝いが求める同じコミットの DOT の画像や
+  VectorDrawable の資源に答える。手伝いがない・失敗したときは、コードとテキストのまま。
 - サイドバーのセクションの下の Reflog は、メインビューのページを開く。左に HEAD の reflog（コアの `reflog`）、右に選んだ行の
   コミットを History と同じ詳細の欄に出す。どの ref からも辿れない行には「not on any branch」と付ける。ボタンと右クリック
   から、そこにブランチ・タグを作る、checkout する（detached）、そこへ reset する、History で見せる（今の範囲になければ
@@ -307,4 +313,5 @@ macOS アプリに追いつく（1 つの機能を 1 つの pull request で、�
 - [x] 93. Stashes・Restore・File History・進行中の操作の小さな差: Stash の選び方を組み合わせる、stash の行のいつ・元の ID・Copy Name、File History の Restore This Version… と Copy Short ID、Skip・Abort は尋ねない（revert に Skip なし）
 - [x] 94. サイドバーの小さな差: Copy Branch / Tag Name と Copy Names、いくつものタグの Push・Replace・削除、タグのフォルダ、中身のある節だけをアプリと同じ組み方で（Remotes はリモートのブランチから）、絞り込みは平らに、ほかで checkout しているブランチの Open Worktree、ブランチの印、先に聞く Prune、リモートの Edit Push URL… と Check Connection、取り出してある submodule だけの Open in New Window、ドラッグでの push の確認とアプリと同じ upstream の設定
 - [x] 95. 同期とブランチの操作の小さな差: メインビューなしでも Fast-Forward を尋ねる、いくつも消すときは未マージのコミットを添えて 1 度だけ尋ねる、上流のないブランチの Force Push は Publish、今のブランチの Rename Branch…、octopus merge の Change the Order…
+- [x] 96. すべてのファイルで Mermaid・DOT の図・数式・Android の VectorDrawable の絵を描く（エンジンの隣に同梱した絵の手伝い `amonhen-render` で。エンジンは絵の機能を持たない）
 - [x] 97. 絵の下の市松模様と整形した Markdown の検索: 絵の色から選ぶ明るい・暗い市松模様と切り替えのボタン、すべてのファイルの Markdown のプレビューの ⌘F（キーの札・表のマスも）

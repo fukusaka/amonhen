@@ -83,6 +83,13 @@ is in [front.md](front.md), and the design in item 18 of
   (`git log -g`) and runs `git range-diff` itself.
 - Features that came after the engine are built on the engine only (the core's commands through `run`); without it
   their sidebar rows and commands are hidden (the `amonhen.engine` context key).
+- The engine draws nothing: All Files' Mermaid and DOT diagrams, math, Android VectorDrawable pictures and the SVG
+  mobile check come from the drawing helper `amonhen-render`, bundled next to the engine
+  (`bin/amonhen-render-<os>-<cpu>`, or next to `amonhen.daemon.path`'s engine) and started for each file shown
+  (`src/daemon/render.ts`; the protocol is in [front.md](front.md#the-drawing-helper-amonhen-render)). The engine's
+  `markdownBlocks` only parses the Markdown; the extension sends its diagram fences and formulas to the helper with
+  the webview's theme colors and answers the helper's requests for DOT images and VectorDrawable resources from the
+  same commit. Without the helper, or when it fails, they stay as code and text.
 - Reflog, a sidebar row below the sections, opens a page of the main view with HEAD's reflog (the core's `reflog`) on the left
   and the selected entry's commit on the right, in the same details pane as History. Entries no ref reaches are marked
   "not on any branch". Its buttons and context menu create a branch or tag there, check it out (detached), reset to
@@ -317,4 +324,5 @@ left out for now: VSCode has its own extensions and settings for them.
 - [x] 93. Stashes, Restore, File History and sequence banners' small differences: Stash's combinable choices, a stash row's time, base ID and Copy Name, File History's Restore This Version… and Copy Short ID, and Skip / Abort without asking (no Skip for a revert)
 - [x] 94. The sidebar's small differences: Copy Branch / Tag Name and Copy Names, Push / Replace / Delete for several tags, tags in folders, groups only when not empty and built like the app's (Remotes from remote branches), flat filter results, Open Worktree for a branch checked out elsewhere, the branch marks, Prune asking first, Edit Push URL… and Check Connection on a remote, a submodule's Open in New Window only when checked out, and a push by dragging confirmed with the upstream set as in the app
 - [x] 95. Sync and branch operations' small differences: Fast-Forward asks without the main view, deleting several asks once with the unmerged commits, Force Push publishes a branch without an upstream, Rename Branch… for the current branch, and Change the Order… for an octopus merge
+- [x] 96. All Files draws Mermaid and DOT diagrams, math and Android VectorDrawable pictures, with the drawing helper `amonhen-render` bundled next to the engine (the engine has no drawing features)
 - [x] 97. The checkerboard behind pictures and Find in the formatted Markdown: a light or dark checkerboard chosen from the picture's colors with a button to switch it, and ⌘F in All Files' Markdown preview with key caps and table cells included

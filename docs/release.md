@@ -40,6 +40,8 @@ A snapshot is treated as a pre-release of the next patch (or of the version itse
 
 The engines bundled in a stable `.vsix` are built in snapshot mode (`vscode-release.yml`), since the extension is released
 apart from the engine: they carry a snapshot version, and the macOS one is still signed with Developer ID and notarized.
+The `.vsix` also bundles the drawing helper `amonhen-render` for each engine platform (`dist/render`, built and checked
+with the engines and signed and notarized the same way on macOS); it is never put in the app or the engine archives.
 
 Steps to cut a stable release:
 

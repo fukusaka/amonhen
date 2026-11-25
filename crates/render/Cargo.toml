@@ -1,0 +1,20 @@
+[package]
+name = "amonhen-render"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+publish.workspace = true
+license.workspace = true
+
+# VSCode 拡張の絵の手伝い（Markdown の図・数式、Android の VectorDrawable、SVG のモバイル向けの確認）。エンジン
+# （amonhen-cli）には入れない絵の機能を、拡張が 1 回ずつ起動して使う。取り決めは docs/front.md の
+# 「The drawing helper」。
+[[bin]]
+name = "amonhen-render"
+path = "src/main.rs"
+
+[dependencies]
+amonhen-core = { workspace = true, features = ["diagrams", "math"] }
+amonhen-model.workspace = true
+serde = { version = "1.0.229", features = ["derive"] }
+serde_json = "1.0.154"

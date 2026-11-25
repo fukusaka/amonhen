@@ -10,12 +10,12 @@ Building, testing, and launch options for checking. For the design see [design.m
 cargo test --workspace
 cargo clippy --workspace --all-targets -- -D warnings
 scripts/build-core.sh && (cd apps/macos && swift test)
-scripts/build-engine.sh          # engines into dist/engine (macOS, Linux; Linux needs brew install zig)
+scripts/build-engine.sh          # engines into dist/engine and the VSCode drawing helper into dist/render (macOS, Linux; Linux needs brew install zig)
 scripts/build-app.sh snapshot   # build the .app and zip into dist/ (compile-app.sh, Linux engines, package-app.sh)
-scripts/check-engine.sh dist/engine/amonhen-darwin-aarch64   # run a built engine once (version, reads this repository)
+scripts/check-engine.sh dist/engine/amonhen-darwin-aarch64   # run a built engine and its drawing helper in dist/render once (version, reads this repository, draws)
 scripts/third-party-notices.sh   # dist/THIRD-PARTY-NOTICES.md (cargo install --locked cargo-about --features cli)
 cargo deny check licenses        # dependencies use only the licenses allowed in deny.toml (cargo install --locked cargo-deny)
-cargo build -p amonhen-cli && (cd apps/vscode && npm ci && npm test)   # VSCode extension
+cargo build -p amonhen-cli && cargo build -p amonhen-render && (cd apps/vscode && npm ci && npm test)   # VSCode extension
 (cd apps/vscode && npm run test:e2e)   # VSCode extension in a real VSCode (after the line above)
 (cd apps/gtk4 && cargo clippy --all-targets -- -D warnings && cargo run --release -- <repo>)   # GTK4 app (needs GTK 4.14 or later and libadwaita: libgtk-4-dev libadwaita-1-dev, or brew install gtk4 libadwaita pkgconf)
 scripts/package-gtk4.sh          # GTK4 app into dist/amonhen-gtk-<version>-linux-<arch>.tar.gz (on Linux; includes dist/engine's Linux engines if built)
@@ -65,10 +65,11 @@ The GTK4 app (`apps/gtk4`): `amonhen-gtk <repo> --snapshot out.png` writes the w
 
 The design is in [vscode.md](vscode.md).
 
-The engine is built from the repository root (`cargo build -p amonhen-cli`; tests find it there). To bundle the
-engines into `bin/`, run `scripts/build-engine.sh` and `scripts/third-party-notices.sh` at the root, then
-`scripts/bundle-engine.sh` in `apps/vscode` (it also copies the licenses and `dist/THIRD-PARTY-NOTICES.md` into the
-extension's folder).
+The engine is built from the repository root (`cargo build -p amonhen-cli`; tests find it there), and so is the drawing
+helper (`cargo build -p amonhen-render`, in a separate run so its diagram and math features stay out of the engine).
+To bundle the engines and helpers into `bin/`, run `scripts/build-engine.sh` and `scripts/third-party-notices.sh` at
+the root, then `scripts/bundle-engine.sh` in `apps/vscode` (it also copies the licenses and
+`dist/THIRD-PARTY-NOTICES.md` into the extension's folder).
 
 ```sh
 cd apps/vscode

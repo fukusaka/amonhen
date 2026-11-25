@@ -264,6 +264,11 @@ export function setDaemonLanguage(value: string): void {
   language = value;
 }
 
+/** daemon と絵の手伝いに伝える言語 */
+export function daemonLanguage(): string {
+  return language;
+}
+
 /** つなぐ。daemon がいなければ、拡張と切り離して起動し、つながるまで待つ */
 async function connectOrLaunch(daemon: string, path: string): Promise<Socket> {
   const first = await tryConnect(path);
