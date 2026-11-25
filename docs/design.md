@@ -424,7 +424,7 @@ bookmark (the repository list's context menu, Window Background…).
 - **Where.** Nowhere (Standard) is macOS's standard window: the glass sidebar runs to the top of the window with the
   Sidebar and Repositories buttons over it, the toolbar sits over the content in the content's color, and the lists,
   diffs and commit form share one opaque color (`textBackgroundColor`). Before, each pane kept its own color, and the
-  window color (tinted by the wallpaper since macOS 26) sat next to the neutral diff, so four greys stood side by side.
+  window color (tinted by the wallpaper when that setting in Appearance is on) sat next to the neutral diff, so four greys stood side by side.
   Sidebar and Toolbar lets what is behind the window show through the sidebar and toolbar only, and gives the lists and
   diffs one opaque color, so reading areas never show through. Whole Window lays one layer under everything and has the
   panes paint nothing. The layer is `textBackgroundColor` at 1 − Transparency. In every case, the colors of changed
