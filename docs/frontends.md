@@ -80,7 +80,7 @@ The GTK4 app aims to behave like the macOS app. These are the only intended diff
 | Open windows and tabs restored at launch | ✓ | ✓ | ✓ | n/a | n/a | n/a |  |
 | Connecting tab for SSH and daemon repositories (Cancel, Try Again) | ✓ | ✓ | ✓ | n/a | n/a | n/a |  |
 | Title shows uncommitted ● and ahead/behind | ✓ | ✓ | ✓ | n/a | n/a | n/a | GTK4: On the tab names.<br>Windows: On the window title and each tab's name.<br>TUI: The top line shows the branch with ahead and behind. |
-| App keeps running after its last window closes | ✓ | — | — | n/a | n/a | n/a | GTK4: Quits, as GTK apps do by default. |
+| App keeps running after its last window closes | ✓ | — | — | n/a | n/a | n/a | GTK4: Quits, as GTK apps do by default.<br>Windows: Quits, as Windows apps do. |
 
 ## 2. Bookmarks (the repository list)
 
@@ -117,7 +117,7 @@ The GTK4 app aims to behave like the macOS app. These are the only intended diff
 | Git > Commits: shared message template library | ✓ | ✓ | ✓ | — | — | n/a |  |
 | Git > Programs: git, gpg, ssh-keygen, gpgsm | ✓ | ✓ | ✓ | n/a | △ | n/a | VSCode: The extension runs the git chosen here for the machine, and VSCode's `git.path` only when none is chosen; gpg and ssh-keygen come from git's settings.<br>CLI: Via `amonhen run` (`programs`, `setMachineGit`).<br>Windows: In Settings > Git. |
 | Git > Environment Variables of this machine (pass, masked secrets) | ✓ | ✓ | ✓ | n/a | n/a | n/a | VSCode: VSCode's own environment, which the extension passes to the daemon. |
-| Environment Variables: use the login shell's (Read Again, SSH agent) | ✓ | — | — | n/a | n/a | n/a | GTK4: Left out: Linux sessions already carry it.<br>VSCode: VSCode's own environment, which the extension passes to the daemon. |
+| Environment Variables: use the login shell's (Read Again, SSH agent) | ✓ | — | — | n/a | n/a | n/a | GTK4: Left out: Linux sessions already carry it.<br>Windows: Left out: Windows gives apps the user's environment without a login shell.<br>VSCode: VSCode's own environment, which the extension passes to the daemon. |
 | SSH Hosts: hosts with + / −, unreachable dimmed | ✓ | ✓ | ✓ | n/a | n/a | n/a | VSCode: Remote-SSH takes this role. |
 | SSH Hosts > Connection: state, Check Connection, engine | ✓ | ✓ | ✓ | n/a | n/a | n/a |  |
 | SSH Hosts > Connection: signature verification | ✓ | ✓ | ✓ | n/a | n/a | n/a |  |
@@ -241,7 +241,7 @@ The GTK4 app aims to behave like the macOS app. These are the only intended diff
 | Ignore whitespace (lines aren't staged or discarded meanwhile) | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | VSCode: With the engine; the diff of the chosen side (Changes or Staged) meanwhile.<br>CLI: `diff -w`, `-b`, `--ignore-space-at-eol` (not with `--combined`).<br>TUI: `w` in the diff goes through them in turn; one side at a time meanwhile (`s` switches). |
 | Discard lines, hunks and files (undoable) | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | CLI: `discard --rows`.<br>Windows: Click lines in the Working Copy diff to select them (Shift for a range, Ctrl to add or remove, a hunk header for its hunk), then right-click them for Discard Lines; right-clicking an unselected line or hunk header discards just that. |
 | Add to .gitignore | ✓ | ✓ | ✓ | ✓ | n/a | ✓ | VSCode: With the engine.<br>TUI: `i` on an untracked file, then `p` for its path or `e` for its extension. |
-| Conflicted files open the merge editor | ✓ | ✓ | △ | ✓ | n/a | n/a | macOS, GTK4: A file that isn't UTF-8 doesn't open in it; take one side.<br>VSCode: Opens VSCode's merge editor.<br>Windows: Selecting the file opens the merge editor over the page (not embedded)<br>TUI: The file's diff shows the markers, and `o` `t` `b` `a` resolve the conflict under the line. |
+| Conflicted files open the merge editor | ✓ | ✓ | ✓ | ✓ | n/a | n/a | macOS, GTK4: A file that isn't UTF-8 doesn't open in it; take one side.<br>VSCode: Opens VSCode's merge editor.<br>TUI: The file's diff shows the markers, and `o` `t` `b` `a` resolve the conflict under the line. |
 | Note above the list when only some folders are checked out | ✓ | ✓ | ✓ | ✓ | △ | ✓ | CLI: `status` notes a sparse checkout. |
 
 ## History

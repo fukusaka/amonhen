@@ -16,10 +16,14 @@ becomes the GitHub Release notes.
 
 #### Changed
 
+- Android VectorDrawables take their colors from `values-night*/` (and `color-night*/`, `drawable-night*/`) in the dark
+  appearance, picking qualified folders in Android's order.
 - Markdown math finds `$…$` by GitHub's rules: only at the start, after a space or after `(`, and not before a letter,
   digit or `_`, nor in italics, links or footnotes. So `a$x$b` and `日本語の$x$` stay text, as on GitHub.
 - Diagrams take Mermaid's colors for the appearance by default, closer to GitHub. The setting moved to Settings >
   Theme > Diagrams, and pele's colors are now called the Obsidian style.
+- Why a Markdown diagram can't be drawn is shown in Japanese too: every DOT error, and Mermaid's common ones (syntax
+  errors, unknown diagram types, limits).
 
 ### [0.2.15] - 2026-11-25
 
@@ -1408,6 +1412,7 @@ First release.
 
 #### Fixed
 
+- Starting VSCode no longer reports that a Copy Short IDs menu item has no title.
 - Restoring the version before a commit that renamed a file brings back the old name instead of only deleting the new
   one, and Restore This Version isn't offered for a file the commit deleted.
 - Renaming a branch without the engine can be undone, as it already could with the engine.

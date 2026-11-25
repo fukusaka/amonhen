@@ -1149,11 +1149,14 @@ final class CommitFilesBrowser: NSView, NSOutlineViewDataSource, NSOutlineViewDe
                 drawableSwitch.isHidden = false
                 drawableSwitch.selectedSegment = drawableText ? 1 : 0
                 if drawableText { return showFile(path: path, index: index, line: line, request: request) }
-                // 引けない色（Android のテーマ属性など）は、今の外観の文字の色で描く（外観が変わったら描き直す）
+                // 引けない色（Android のテーマ属性など）は、今の外観の文字の色で描く。色の資源も、暗い外観なら
+                // values-night などを先に引く（外観が変わったら描き直す）
                 var fallback = ""
                 effectiveAppearance.performAsCurrentDrawingAppearance { fallback = DiagramPicture.hex(.labelColor) }
+                let dark = effectiveAppearance.bestMatch(from: [.aqua, .darkAqua]) == .darkAqua
                 let picture = await Task.detached(priority: .userInitiated) { [fallback] in
-                    try? store.vectorDrawable(commit: commitID, path: path, data: data, fallback: fallback)
+                    try? store.vectorDrawable(
+                        commit: commitID, path: path, data: data, fallback: fallback, dark: dark)
                 }.value
                 guard request == self.request else { return }
                 // 描けないもの（参照した drawable がないなど）はテキストで見せる。
