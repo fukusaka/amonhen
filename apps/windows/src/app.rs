@@ -22443,6 +22443,7 @@ fn tip_sidebar_rows() {
                 if changed {
                     let _ = windows_reactor::set_tooltip_text(&item, tip.as_deref());
                 }
+                mark_sidebar_row(&item, &key);
             }
             return;
         }
@@ -22630,6 +22631,57 @@ fn fit_push_dialog(element: &IInspectable) {
     let _ = root.SetHeight((height * 0.85 - 140.0).max(340.0).min(height - 160.0));
 }
 
+/// サイドバーの行（TreeViewItem）の中身を、名前と右端の色の印にする（印のない行は名前の文字のまま）。TreeView は
+/// 項目の文字を中身に入れ、行を使い回すときに入れ直すので、そのたびにここで差し替える。
+fn mark_sidebar_row(item: &IInspectable, key: &str) {
+    // 印がなくなった行は、木を作り直したときに TreeView が名前の文字に戻している。
+    let Some((text, marks)) = sidebar::row_marks(key) else {
+        return;
+    };
+    let Ok(control) = item.cast::<xaml::ContentControl>() else {
+        return;
+    };
+    let shown = control
+        .Content()
+        .ok()
+        .as_ref()
+        .and_then(xaml::tag_text)
+        .filter(|t| t.starts_with("row:"));
+    let xaml_text = sidebar::row_xaml(&text, &marks);
+    // 同じ行・同じ印なら作り直さない（鍵と中身のハッシュで見分ける）。
+    let id = {
+        use std::hash::{Hash, Hasher};
+        let mut h = std::collections::hash_map::DefaultHasher::new();
+        xaml_text.hash(&mut h);
+        format!("row:{:x}:{key}", h.finish())
+    };
+    if shown.as_deref() == Some(id.as_str()) {
+        return;
+    }
+    let tagged = xaml_text.replacen(
+        r#"<Grid xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation""#,
+        &format!(
+            r#"<Grid xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation" Tag="{}""#,
+            id.replace('&', "&amp;")
+                .replace('"', "&quot;")
+                .replace('<', "&lt;")
+        ),
+        1,
+    );
+    match xaml::XamlReader::Load(&windows_core_reactor::HSTRING::from(tagged)) {
+        Ok(element) => {
+            // 項目の文字を描く ContentTemplate を外して、差し替えた部品をそのまま描かせる。
+            let _ = control.SetContentTemplate(None::<&xaml::DataTemplate>);
+            let _ = control.SetContent(&element);
+            // 中身を右端まで伸ばす（印を行の右端に寄せる）。
+            if let Ok(row) = item.cast::<xaml::Control>() {
+                let _ = row.SetHorizontalContentAlignment(xaml::HorizontalAlignment::Stretch);
+            }
+        }
+        Err(e) => eprintln!("サイドバーの行を作れない: {e}"),
+    }
+}
+
 /// 押した行 `key` の印（指がその印の上にあれば）と、サイドバーの中の位置。
 fn pressed_mark(key: &str) -> Option<(crate::sidebar::Mark, xaml::Point)> {
     SIDEBAR_MARK.with(|m| {
@@ -22640,33 +22692,13 @@ fn pressed_mark(key: &str) -> Option<(crate::sidebar::Mark, xaml::Point)> {
     })
 }
 
-/// 指が、木の行の文字（`original` が行の TextBlock のとき）の印の上にあれば、その印。印の字の位置は TextBlock の
-/// 中の字の矩形で求める（木の項目は文字だけで、印だけの部品がない）。
+/// 指が、木の行の右端の印の上にあれば、その印（印の部品の Tag `mark:…` で分かる。`sidebar::row_xaml`）。
 fn mark_under(
     original: &IInspectable,
-    key: &str,
-    args: &xaml::PointerRoutedEventArgs,
+    _key: &str,
+    _args: &xaml::PointerRoutedEventArgs,
 ) -> Option<crate::sidebar::Mark> {
-    let block: xaml::TextBlock = original.cast().ok()?;
-    let text = block.Text().ok()?.to_string_lossy();
-    let marks = crate::sidebar::marks_in(key, &text);
-    if marks.is_empty() {
-        return None;
-    }
-    let x = args.GetCurrentPoint(&block).ok()?.Position().ok()?.X;
-    let start = block.ContentStart().ok()?;
-    // TextBlock の中身は 1 つの Run で、字の位置は中身の始まりと Run の始まりの 2 つの記号の後から数える。
-    let rect = |offset: usize| {
-        start
-            .GetPositionAtOffset(offset as i32 + 2, xaml::LogicalDirection::Forward)
-            .and_then(|p| p.GetCharacterRect(xaml::LogicalDirection::Forward))
-            .ok()
-    };
-    marks.into_iter().find_map(|(mark, at, len)| {
-        let left = rect(at)?.X;
-        let right = rect(at + len).map_or(f32::MAX, |r| r.X);
-        (left - 2.0..right + 2.0).contains(&x).then_some(mark)
-    })
+    xaml::tag_up_with(original, "mark:", 8).and_then(|tag| crate::sidebar::Mark::from_tag(&tag))
 }
 
 /// 等幅の字（Windows の既定の等幅。なければ Consolas）。
@@ -22760,6 +22792,15 @@ fn retry_monospace() {
 fn tree_item_key(from: &IInspectable) -> Option<(xaml::UIElement, String)> {
     let mut node: xaml::DependencyObject = from.cast().ok()?;
     for _ in 0..32 {
+        // 印のある行は、中身を差し替えた部品（Tag `row:<ハッシュ>:<鍵>`。`mark_sidebar_row`）から鍵が分かる。
+        if let Some(key) = node
+            .cast::<IInspectable>()
+            .ok()
+            .and_then(|n| xaml::tag_text(&n))
+            .and_then(|t| Some(t.strip_prefix("row:")?.split_once(':')?.1.to_owned()))
+        {
+            return Some((node.cast().ok()?, key));
+        }
         if let Ok(element) = node.cast::<xaml::FrameworkElement>()
             && let Ok(context) = element.DataContext()
             && let Ok(unknown) = context.cast::<windows_core_reactor::IUnknown>()

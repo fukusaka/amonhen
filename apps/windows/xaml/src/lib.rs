@@ -24,6 +24,7 @@ pub use bindings::*;
 pub use fills::ControlFills;
 pub use list::{
     clear_drop_target, drag_some_tags, drag_tags, drop_on_rows, selected_tags, set_drop_target,
+    tag_text, tag_up_with, text_of, text_value,
 };
 pub use tabview::on_tab_moves;
 pub use textbox::{is_text_box, scroll_to_fraction, select_all, set_caret};

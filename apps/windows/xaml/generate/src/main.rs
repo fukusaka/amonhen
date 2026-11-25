@@ -88,7 +88,7 @@ const FILTER: &[&str] = &[
     "Microsoft.UI.Xaml.Controls.Control",
     "Microsoft.UI.Xaml.Controls.IControlFactory::{}",
     "Microsoft.UI.Xaml.Controls.IControlStatics::{}",
-    "Microsoft.UI.Xaml.Controls.IControl::{put_FontFamily}",
+    "Microsoft.UI.Xaml.Controls.IControl::{put_FontFamily,put_HorizontalContentAlignment}",
     // 境目のつまみの、左右・上下の矢印のカーソル（ProtectedCursor は派生した部品向けだが、インターフェースを
     // 引けば外から付けられる）。
     "Microsoft.UI.Xaml.IUIElementProtected::{put_ProtectedCursor}",
@@ -103,11 +103,21 @@ const FILTER: &[&str] = &[
     "Microsoft.UI.Xaml.Controls.Primitives.IButtonBaseFactory::{}",
     "Microsoft.UI.Xaml.Controls.Primitives.IButtonBaseStatics::{}",
     "Microsoft.UI.Xaml.Controls.IContentControlFactory::{}",
+    // サイドバーの行（TreeViewItem）の中身を、名前と右端の色の印に差し替える。
+    "Microsoft.UI.Xaml.Controls.IContentControl::{Content,put_Content,put_ContentTemplate}",
+    "Microsoft.UI.Xaml.DataTemplate",
+    "Microsoft.UI.Xaml.IDataTemplateFactory::{}",
+    "Microsoft.UI.Xaml.IDataTemplateStatics::{}",
+    "Microsoft.UI.Xaml.IFrameworkTemplateFactory::{}",
     "Microsoft.UI.Xaml.Controls.IContentControlStatics::{}",
     "Microsoft.UI.Xaml.HorizontalAlignment",
     "Microsoft.UI.Xaml.VerticalAlignment",
     "Microsoft.UI.Xaml.Thickness",
     "Microsoft.UI.Xaml.Visibility",
+    // サイドバーの行の中身（名前と、右端の色の印）を XAML から作る。
+    "Microsoft.UI.Xaml.Markup.XamlReader",
+    "Microsoft.UI.Xaml.Markup.IXamlReaderStatics::{Load}",
+    "Microsoft.UI.Xaml.Markup.IXamlReader::{}",
     // Push の確認（ContentDialog）で、Enter で押すボタン（Push は色付き、Force Push は色なし）。
     "Microsoft.UI.Xaml.Controls.ContentDialog",
     "Microsoft.UI.Xaml.Controls.IContentDialog::{put_DefaultButton}",

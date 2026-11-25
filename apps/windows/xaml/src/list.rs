@@ -28,6 +28,42 @@ fn find_list(element: &IInspectable) -> Option<ListViewBase> {
         .and_then(|node| find(&node, 8))
 }
 
+/// `from` から親をたどって（`depth` 段まで）、`prefix` で始まる文字の Tag を持つ最初の部品の Tag。
+pub fn tag_up_with(from: &IInspectable, prefix: &str, depth: u32) -> Option<String> {
+    let mut node: DependencyObject = from.cast().ok()?;
+    for _ in 0..depth {
+        if let Some(tag) = node.cast::<IInspectable>().ok().and_then(|n| tag_of(&n))
+            && tag.starts_with(prefix)
+        {
+            return Some(tag);
+        }
+        node = VisualTreeHelper::GetParent(&node).ok()?;
+    }
+    None
+}
+
+/// 文字を、部品の中身（Content）に入れられる値にする。
+pub fn text_value(text: &str) -> IInspectable {
+    windows_reference::IReference::from(HSTRING::from(text)).into()
+}
+
+/// 部品の中身（Content）が文字なら、その文字。
+pub fn text_of(value: &IInspectable) -> Option<String> {
+    Some(
+        value
+            .cast::<windows_reference::IReference<HSTRING>>()
+            .ok()?
+            .Value()
+            .ok()?
+            .to_string_lossy(),
+    )
+}
+
+/// 部品の Tag の文字。
+pub fn tag_text(item: &IInspectable) -> Option<String> {
+    tag_of(item)
+}
+
 /// 行（ListViewItem）の Tag の文字。
 fn tag_of(item: &IInspectable) -> Option<String> {
     let tag = item.cast::<FrameworkElement>().ok()?.Tag().ok()?;
