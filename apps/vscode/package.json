@@ -780,6 +780,12 @@
         "category": "Amon Hen"
       },
       {
+        "command": "amonhen.renameCurrentBranch",
+        "title": "Rename Branch…",
+        "category": "Amon Hen",
+        "enablement": "amonhen.hasRepository"
+      },
+      {
         "command": "amonhen.compareWithPrevious",
         "title": "Compare with Previous Version",
         "category": "Amon Hen"
@@ -839,6 +845,11 @@
       {
         "command": "amonhen.stash.show",
         "title": "Show Stash",
+        "category": "Amon Hen"
+      },
+      {
+        "command": "amonhen.stash.copyName",
+        "title": "Copy Name",
         "category": "Amon Hen"
       },
       {
@@ -1430,6 +1441,11 @@
           "group": "2_stash@1"
         },
         {
+          "command": "amonhen.stash.copyName",
+          "when": "view == amonhen.sidebar && viewItem == stash",
+          "group": "9_copy@1"
+        },
+        {
           "command": "amonhen.submodule.update",
           "when": "view == amonhen.sidebar && viewItem =~ /^submodule/",
           "group": "inline"
@@ -1733,6 +1749,10 @@
           "when": "false"
         },
         {
+          "command": "amonhen.renameCurrentBranch",
+          "when": "amonhen.hasRepository"
+        },
+        {
           "command": "amonhen.stash.apply",
           "when": "false"
         },
@@ -1750,6 +1770,10 @@
         },
         {
           "command": "amonhen.stash.show",
+          "when": "false"
+        },
+        {
+          "command": "amonhen.stash.copyName",
           "when": "false"
         },
         {
@@ -2271,6 +2295,11 @@
           "group": "9_copy@2"
         },
         {
+          "command": "amonhen.details.copyShortId",
+          "when": "webviewId == 'amonhen.main' && webviewSection == 'fileHistory'",
+          "group": "9_copy@1.5"
+        },
+        {
           "command": "amonhen.details.copySubject",
           "when": "webviewId == 'amonhen.main' && webviewSection == 'commitDetails'",
           "group": "9_copy@3"
@@ -2459,6 +2488,11 @@
           "command": "amonhen.restoreFile.versionBefore",
           "when": "webviewId == 'amonhen.main' && webviewSection == 'commitFile' && amonhen.engine",
           "group": "2_restore@2"
+        },
+        {
+          "command": "amonhen.restoreFile.thisVersion",
+          "when": "webviewId == 'amonhen.main' && webviewSection == 'fileHistory' && fileHistoryCurrent && amonhen.engine",
+          "group": "2_restore@1"
         },
         {
           "command": "amonhen.addToGitignore",

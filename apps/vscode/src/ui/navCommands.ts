@@ -133,32 +133,67 @@ function notMerged(err: unknown): boolean {
   return /not fully merged/.test(text);
 }
 
-/** いくつものブランチを、まとめて確かめてから消す。取り込んでいないものは、もう一度確かめて消す */
+/** 数えるコミットの上限（それより多ければ「100+」） */
+const UNIQUE_LIMIT = 100;
+
+/**
+ * ブランチにしかないコミットの数（アプリと同じく、今のブランチと上流のうち、取り込まれていないものが少ない方と
+ * 比べて）。git は、どちらかに取り込まれていれば `-d` で消せる。数えられなければ 0（消すときに git が断れば聞き直す）
+ */
+async function uniqueCount(repo: Repository, ref: string): Promise<number> {
+  const branch = (repo.current.branches ?? []).find((b) => b.name === ref);
+  const upstream = branch && !branch.gone ? branch.upstream : undefined;
+  const only = (base: string) =>
+    repo.backend
+      .log([`${base}..${ref}`], 0, UNIQUE_LIMIT)
+      .then((c) => c.length)
+      .catch(() => 0);
+  const fromHead = await only('HEAD');
+  if (fromHead === 0 || !upstream) return fromHead;
+  return Math.min(fromHead, await only(upstream));
+}
+
+/** 「3 commits」（上限に届いていれば「100+ commits」） */
+function commitCount(n: number): string {
+  return `${n >= UNIQUE_LIMIT ? `${UNIQUE_LIMIT}+` : n} ${n === 1 ? 'commit' : 'commits'}`;
+}
+
+/**
+ * いくつものブランチを、アプリと同じく 1 度だけ確かめてから消す。どこにも取り込まれていないコミットのあるものは、
+ * その数を並べて Delete Anyway で消す（1 本だけ断られて途中で止まることがない）
+ */
 async function deleteBranches(repo: Repository, refs: string[], mergedBy: MergedBy): Promise<void> {
-  const names = refs.map((ref) => {
+  const counts = await Promise.all(refs.map((ref) => (mergedBy(repo, shortName(ref)) === undefined ? uniqueCount(repo, ref) : 0)));
+  const names = refs.map((ref, i) => {
     const pr = mergedBy(repo, shortName(ref));
-    return pr === undefined ? shortName(ref) : `${shortName(ref)} (merged by pull request #${pr})`;
+    const count = counts[i] ?? 0;
+    if (pr !== undefined) return `${shortName(ref)} (merged by pull request #${pr})`;
+    return count > 0 ? `${shortName(ref)} (${commitCount(count)} only on it)` : shortName(ref);
   });
+  const anyway = counts.some((n) => n > 0);
+  const note = anyway ? 'Some commits are on no other branch; they go with the branch.\n' : '';
+  const ok = anyway ? 'Delete Anyway' : 'Delete';
   const choice = await vscode.window.showWarningMessage(
     `Delete ${names.length} branches?`,
-    { modal: true, detail: `${names.join('\n')}\n\nYou can undo this, one branch at a time.` },
-    'Delete',
+    { modal: true, detail: `${names.join('\n')}\n\n${note}You can undo this, one branch at a time.` },
+    ok,
   );
-  if (choice !== 'Delete') return;
+  if (choice !== ok) return;
   const remove = (ref: string, force: boolean) =>
     repo.undo.record(`Delete ${shortName(ref)}`, [ref], 'keep', () => repo.backend.deleteBranch(shortName(ref), force), {
       branches: [shortName(ref)],
     });
   const unmerged: string[] = [];
   try {
-    for (const ref of refs) {
+    for (const [i, ref] of refs.entries()) {
       try {
-        await remove(ref, mergedBy(repo, shortName(ref)) !== undefined);
+        await remove(ref, mergedBy(repo, shortName(ref)) !== undefined || (counts[i] ?? 0) > 0);
       } catch (err) {
         if (!notMerged(err)) throw err;
         unmerged.push(ref);
       }
     }
+    // 数えたときとは違い git が断ったものだけ、もう一度確かめる
     if (unmerged.length === 0) return;
     const force = await vscode.window.showWarningMessage(
       `${unmerged.map(shortName).join(', ')} ${unmerged.length === 1 ? 'has' : 'have'} commits that aren’t merged. Delete anyway?`,
@@ -174,14 +209,13 @@ async function deleteBranches(repo: Repository, refs: string[], mergedBy: Merged
 }
 
 /**
- * メインビューが開いていれば、アプリと同じく前と後の絵を見せて確かめる（先へ進めるだけで、Undo で戻せる。シートを
- * 出せなければ、これまでどおり確かめない）
+ * アプリと同じく、先に確かめる。メインビューが開いていれば前と後の絵を見せたシートで、でなければ modal で
  */
 async function confirmFastForward(repo: Repository, ref: string): Promise<boolean> {
   const upstream = (repo.current.branches ?? []).find((b) => b.name === ref)?.upstream;
   if (!upstream) return true;
   const name = shortName(ref);
-  const asked = await confirmInSheet(`Fast-forward ${name} to ${shortName(upstream)}?`, ['You can undo this.'], 'Fast-Forward', {
+  return confirmOperation(`Fast-forward ${name} to ${shortName(upstream)}?`, ['You can undo this.'], 'Fast-Forward', {
     drawing: async () =>
       moveDrawing(await repo.backend.graphPreview<MovePreview>({ op: 'movePreview', from: ref, to: upstream, branch: name }), {
         moving: name,
@@ -190,7 +224,6 @@ async function confirmFastForward(repo: Repository, ref: string): Promise<boolea
         lostNote: '',
       }),
   });
-  return asked ?? true;
 }
 
 /**
@@ -224,13 +257,22 @@ async function deleteBranch(repo: Repository, ref: string, mergedBy: MergedBy): 
   const pr = mergedBy(repo, name);
   const title = `Delete the branch ${name}?`;
   const detail = `${pr === undefined ? '' : `Merged by pull request #${pr}. `}You can undo this.`;
-  // シートに消えるコミットを描けば、アプリと同じくそこで Delete Anyway を聞き、git に断られてからもう一度は聞かない
+  // シートに消えるコミットを描けば、アプリと同じくそこで Delete Anyway を聞き、git に断られてからもう一度は聞かない。
+  // シートを出せなければ、ほかにないコミットを数えて modal で同じように聞く
   const drawing = MainPanel.active?.canAsk ? await deleteDrawing(repo, ref) : undefined;
-  const anyway = drawing !== undefined && pr === undefined;
+  let anyway = drawing !== undefined && pr === undefined;
   const lines = anyway ? [`Some commits are on no other branch; they go with the branch. ${detail}`] : [detail];
-  const ok =
-    (await confirmInSheet(title, lines, anyway ? 'Delete Anyway' : 'Delete', { drawing: async () => drawing })) ??
-    (await vscode.window.showWarningMessage(title, { modal: true, detail }, 'Delete')) === 'Delete';
+  const asked = drawing && (await confirmInSheet(title, lines, anyway ? 'Delete Anyway' : 'Delete', { drawing: async () => drawing }));
+  let ok = asked ?? false;
+  if (asked === undefined) {
+    const count = pr === undefined ? await uniqueCount(repo, ref) : 0;
+    anyway = count > 0;
+    const button = anyway ? 'Delete Anyway' : 'Delete';
+    const note = anyway
+      ? `${commitCount(count)} ${count === 1 ? 'is on no other branch; it goes' : 'are on no other branch; they go'} with the branch. `
+      : '';
+    ok = (await vscode.window.showWarningMessage(title, { modal: true, detail: note + detail }, button)) === button;
+  }
   if (!ok) return;
   const remove = (force: boolean) =>
     repo.undo.record(`Delete ${name}`, [ref], 'keep', () => repo.backend.deleteBranch(name, force), { branches: [name] });

@@ -50,9 +50,9 @@ export async function pushWithSheet(repo: Repository, request: PushRequest, publ
   }
   const name = shortName(branch);
   const target = await pushTarget(repo.backend, branch);
+  // 上流がなければ、アプリと同じく Force Push でも Publish に（置き換えるものがない）
   if (!target) {
-    if (!request.force) await publish(repo, branch);
-    else void vscode.window.showErrorMessage(`${name} has no upstream. Publish it first.`);
+    await publish(repo, branch);
     return;
   }
   const upstreamRef = `refs/remotes/${target.remote}/${target.branch}`;
