@@ -731,13 +731,6 @@ pub enum Command {
         #[serde(default)]
         github: Option<String>,
     },
-    /// コミット `oid` の SVG のファイル `path` の、モバイル向けの描画部品で崩れる機能（`info.issues`: targets・
-    /// feature・message・count）と、部品ごとの崩れ方の近似（`info.approximations`: android・ios・flutter・
-    /// reactNative の SVG の文字列）。History の「すべてのファイル」の SVG のモバイルの確認。
-    SvgCheck {
-        oid: String,
-        path: String,
-    },
     /// `on` なら、このリポジトリを git maintenance に登録して裏で手入れさせる（`git maintenance start`: ユーザー全体の
     /// `maintenance.repo` に足し、OS の予定がなければ作る）。でなければ登録を外す（`git maintenance unregister`。
     /// 予定はほかのリポジトリも使うので残し、自動の手入れを止める `maintenance.auto=false` は外す）。git を動かす機械
@@ -5220,43 +5213,6 @@ impl Repository {
                     ..Default::default()
                 })
             }
-            Command::SvgCheck { oid: o, path } => {
-                use crate::svglint::Target;
-                let data = self.file_at(&oid(&o)?, &path)?;
-                let issues: Vec<_> = crate::svglint::lint(&data)
-                    .into_iter()
-                    .map(|i| {
-                        serde_json::json!({
-                            "targets": i.targets.iter().map(|t| t.key()).collect::<Vec<_>>(),
-                            "feature": i.feature,
-                            "message": i.message,
-                            "count": i.count,
-                        })
-                    })
-                    .collect();
-                let approximations: serde_json::Map<_, _> = [
-                    Target::Android,
-                    Target::Ios,
-                    Target::Flutter,
-                    Target::ReactNative,
-                ]
-                .into_iter()
-                .map(|t| {
-                    let svg = crate::svgsim::approximate(&data, t);
-                    (
-                        t.key().to_owned(),
-                        String::from_utf8_lossy(&svg).into_owned().into(),
-                    )
-                })
-                .collect();
-                Ok(Response {
-                    ok: true,
-                    info: Some(
-                        serde_json::json!({ "issues": issues, "approximations": approximations }),
-                    ),
-                    ..Default::default()
-                })
-            }
             Command::TreeFolders { path, rev } => Ok(Response {
                 ok: true,
                 info: Some(self.tree_folders(ops, rev.as_deref().unwrap_or("HEAD"), &path)?),
@@ -5933,16 +5889,11 @@ mod tests {
     }
 
     #[test]
-    fn markdown_blocks_and_svg_check_read_a_file_at_a_commit() {
+    fn markdown_blocks_read_a_file_at_a_commit() {
         let (tmp, repo) = setup();
         let dir = tmp.path();
         std::fs::create_dir_all(dir.join("docs")).unwrap();
         std::fs::write(dir.join("docs/a.md"), "# Title\n\nFixes #12\n").unwrap();
-        std::fs::write(
-            dir.join("dot.svg"),
-            r#"<svg xmlns="http://www.w3.org/2000/svg"><style>circle{fill:red}</style><circle r="5"/></svg>"#,
-        )
-        .unwrap();
         git(dir, &["add", "."]);
         git(dir, &["commit", "-q", "-m", "files"]);
         let head = git(dir, &["rev-parse", "HEAD"]);
@@ -5958,28 +5909,6 @@ mod tests {
             md.to_string().contains("https://github.com/o/r/issues/12"),
             "{md}"
         );
-        let svg = run(
-            &repo,
-            &format!(r#"{{"op":"svgCheck","oid":"{head}","path":"dot.svg"}}"#),
-        );
-        assert!(
-            !svg["info"]["issues"].as_array().unwrap().is_empty(),
-            "{svg}"
-        );
-        for target in ["android", "ios", "flutter", "reactNative"] {
-            assert!(
-                svg["info"]["approximations"][target]
-                    .as_str()
-                    .unwrap()
-                    .contains("<svg"),
-                "{svg}"
-            );
-        }
-        let missing = run(
-            &repo,
-            &format!(r#"{{"op":"svgCheck","oid":"{head}","path":"none.svg"}}"#),
-        );
-        assert_eq!(missing["ok"], false);
     }
 
     #[test]

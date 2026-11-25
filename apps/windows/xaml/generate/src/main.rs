@@ -22,7 +22,7 @@ const FILTER: &[&str] = &[
     "Microsoft.UI.Xaml.DependencyObject",
     "Microsoft.UI.Xaml.Media.VisualTreeHelper",
     "Microsoft.UI.Xaml.Media.IVisualTreeHelperStatics::{GetParent,GetChild,GetChildrenCount}",
-    "Microsoft.UI.Xaml.IFrameworkElement::{DataContext,Tag,ActualWidth,ActualHeight,put_HorizontalAlignment,put_VerticalAlignment,put_Margin,\
+    "Microsoft.UI.Xaml.IFrameworkElement::{DataContext,Tag,ActualWidth,ActualHeight,put_HorizontalAlignment,put_VerticalAlignment,put_Margin,put_Width,put_Height,put_MaxWidth,put_MaxHeight,\
      Resources,RequestedTheme,put_RequestedTheme}",
     // Repositories の一覧で選んだ行（複数）。
     "Microsoft.UI.Xaml.Controls.ListViewBase",
@@ -88,7 +88,7 @@ const FILTER: &[&str] = &[
     "Microsoft.UI.Xaml.Controls.Control",
     "Microsoft.UI.Xaml.Controls.IControlFactory::{}",
     "Microsoft.UI.Xaml.Controls.IControlStatics::{}",
-    "Microsoft.UI.Xaml.Controls.IControl::{put_FontFamily}",
+    "Microsoft.UI.Xaml.Controls.IControl::{put_FontFamily,put_HorizontalContentAlignment}",
     // 境目のつまみの、左右・上下の矢印のカーソル（ProtectedCursor は派生した部品向けだが、インターフェースを
     // 引けば外から付けられる）。
     "Microsoft.UI.Xaml.IUIElementProtected::{put_ProtectedCursor}",
@@ -103,11 +103,27 @@ const FILTER: &[&str] = &[
     "Microsoft.UI.Xaml.Controls.Primitives.IButtonBaseFactory::{}",
     "Microsoft.UI.Xaml.Controls.Primitives.IButtonBaseStatics::{}",
     "Microsoft.UI.Xaml.Controls.IContentControlFactory::{}",
+    // サイドバーの行（TreeViewItem）の中身を、名前と右端の色の印に差し替える。
+    "Microsoft.UI.Xaml.Controls.IContentControl::{Content,put_Content,put_ContentTemplate}",
+    "Microsoft.UI.Xaml.DataTemplate",
+    "Microsoft.UI.Xaml.IDataTemplateFactory::{}",
+    "Microsoft.UI.Xaml.IDataTemplateStatics::{}",
+    "Microsoft.UI.Xaml.IFrameworkTemplateFactory::{}",
     "Microsoft.UI.Xaml.Controls.IContentControlStatics::{}",
     "Microsoft.UI.Xaml.HorizontalAlignment",
     "Microsoft.UI.Xaml.VerticalAlignment",
     "Microsoft.UI.Xaml.Thickness",
     "Microsoft.UI.Xaml.Visibility",
+    // サイドバーの行の中身（名前と、右端の色の印）を XAML から作る。
+    "Microsoft.UI.Xaml.Markup.XamlReader",
+    "Microsoft.UI.Xaml.Markup.IXamlReaderStatics::{Load}",
+    "Microsoft.UI.Xaml.Markup.IXamlReader::{}",
+    // Push の確認（ContentDialog）で、Enter で押すボタン（Push は色付き、Force Push は色なし）。
+    "Microsoft.UI.Xaml.Controls.ContentDialog",
+    "Microsoft.UI.Xaml.Controls.IContentDialog::{put_DefaultButton}",
+    "Microsoft.UI.Xaml.Controls.ContentDialogButton",
+    "Microsoft.UI.Xaml.Controls.IContentDialogFactory::{}",
+    "Microsoft.UI.Xaml.Controls.IContentDialogStatics::{}",
     // マージエディタの Result の欄（TextBox）を、選んだコンフリクトの行へスクロールする（中の ScrollViewer を動かす）。
     "Microsoft.UI.Xaml.Controls.ScrollViewer",
     "Microsoft.UI.Xaml.Controls.IScrollViewer::{ExtentHeight,ViewportHeight,ScrollToVerticalOffset}",
@@ -135,7 +151,7 @@ const FILTER: &[&str] = &[
      PointerMoved,remove_PointerMoved,PointerReleased,remove_PointerReleased,PointerWheelChanged,\
      remove_PointerWheelChanged,DoubleTapped,remove_DoubleTapped,ContextRequested,remove_ContextRequested,\
      IsTabStop,put_IsTabStop,Focus,CapturePointer,ReleasePointerCapture,ContextFlyout,put_ContextFlyout,PreviewKeyDown,remove_PreviewKeyDown,\
-     StartBringIntoView,put_IsHitTestVisible,put_Visibility,DragOver,remove_DragOver,Drop,remove_Drop,put_AllowDrop,XamlRoot}",
+     StartBringIntoView,StartBringIntoViewWithOptions,put_IsHitTestVisible,put_Visibility,DragOver,remove_DragOver,Drop,remove_Drop,put_AllowDrop,XamlRoot}",
     // 部品がどの窓のものか（窓の HWND。前に出ている窓の前のタブが、窓の入力の部品を持つ）。
     "Microsoft.UI.Xaml.XamlRoot",
     "Microsoft.UI.Xaml.IXamlRoot2::{ContentIslandEnvironment}",
@@ -146,7 +162,7 @@ const FILTER: &[&str] = &[
     // サイドバーの行の印を押したら吹き出しを出す（木の項目は文字だけなので、行の TextBlock の中で印の字の位置を
     // 求め、指がその上にあるかを見る）。
     "Microsoft.UI.Xaml.Controls.TextBlock",
-    "Microsoft.UI.Xaml.Controls.ITextBlock::{Text,ContentStart}",
+    "Microsoft.UI.Xaml.Controls.ITextBlock::{Text,ContentStart,Inlines,TextHighlighters}",
     "Microsoft.UI.Xaml.Controls.ITextBlockStatics::{}",
     "Microsoft.UI.Xaml.Documents.TextPointer",
     "Microsoft.UI.Xaml.Documents.ITextPointer::{GetPositionAtOffset,GetCharacterRect,Offset}",
@@ -193,6 +209,37 @@ const FILTER: &[&str] = &[
     "Microsoft.UI.Xaml.Media.ISolidColorBrushStatics::{}",
     "Microsoft.UI.Xaml.Media.IBrushFactory::{}",
     "Microsoft.UI.Xaml.Media.IBrushStatics::{}",
+    // History の「すべてのファイル」の整形した Markdown の中を探す（並んだ文字の部品の文字を読み、一致に
+    // TextHighlighter で色を付け、今の一致へ寄せる）。
+    "Microsoft.UI.Xaml.Controls.RichTextBlock",
+    "Microsoft.UI.Xaml.Controls.IRichTextBlock::{Blocks,TextHighlighters}",
+    "Microsoft.UI.Xaml.Controls.IRichTextBlockStatics::{}",
+    "Microsoft.UI.Xaml.Documents.Block",
+    "Microsoft.UI.Xaml.Documents.IBlockFactory::{}",
+    "Microsoft.UI.Xaml.Documents.IBlockStatics::{}",
+    "Microsoft.UI.Xaml.Documents.Paragraph",
+    "Microsoft.UI.Xaml.Documents.IParagraph::{Inlines}",
+    "Microsoft.UI.Xaml.Documents.IParagraphStatics::{}",
+    "Microsoft.UI.Xaml.Documents.Inline",
+    "Microsoft.UI.Xaml.Documents.IInlineFactory::{}",
+    "Microsoft.UI.Xaml.Documents.Run",
+    "Microsoft.UI.Xaml.Documents.IRun::{Text}",
+    "Microsoft.UI.Xaml.Documents.IRunStatics::{}",
+    "Microsoft.UI.Xaml.Documents.Span",
+    "Microsoft.UI.Xaml.Documents.ISpan::{Inlines}",
+    "Microsoft.UI.Xaml.Documents.ISpanFactory::{}",
+    "Microsoft.UI.Xaml.Documents.LineBreak",
+    "Microsoft.UI.Xaml.Documents.TextElement",
+    "Microsoft.UI.Xaml.Documents.ITextElement::{ContentStart}",
+    "Microsoft.UI.Xaml.Documents.ITextElementFactory::{}",
+    "Microsoft.UI.Xaml.Documents.ITextElementStatics::{}",
+    "Microsoft.UI.Xaml.Documents.TextHighlighter",
+    "Microsoft.UI.Xaml.Documents.ITextHighlighter::{Ranges,put_Background}",
+    "Microsoft.UI.Xaml.Documents.ITextHighlighterFactory::{CreateInstance}",
+    "Microsoft.UI.Xaml.Documents.ITextHighlighterStatics::{}",
+    "Microsoft.UI.Xaml.Documents.TextRange",
+    "Microsoft.UI.Xaml.BringIntoViewOptions",
+    "Microsoft.UI.Xaml.IBringIntoViewOptions::{put_TargetRect,put_VerticalAlignmentRatio}",
 ];
 
 fn main() {
@@ -221,11 +268,13 @@ fn main() {
             .map(|t| t.split_whitespace().collect::<String>()),
     );
     windows_bindgen::bindgen(&args);
-    drop_into_iterator(&out, "ResourceDictionary");
+    for name in ["ResourceDictionary", "BlockCollection", "InlineCollection"] {
+        drop_into_iterator(&out, name);
+    }
 }
 
 /// `name` の `impl IntoIterator`（値と参照の 2 つ）を取り除く。生成物は IIterable の `First` をクラスに付けずに
-/// 呼ぶので通らない（Resources に鍵を入れるだけで、繰り返しはしない）。
+/// 呼ぶので通らない（Resources に鍵を入れるだけ、文字の段落・飾りは `IVector` にして番号で読む）。
 fn drop_into_iterator(out: &Path, name: &str) {
     let mut text = std::fs::read_to_string(out).expect("生成したバインディングを読む");
     for head in [

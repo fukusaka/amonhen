@@ -83,6 +83,13 @@ is in [front.md](front.md), and the design in item 18 of
   (`git log -g`) and runs `git range-diff` itself.
 - Features that came after the engine are built on the engine only (the core's commands through `run`); without it
   their sidebar rows and commands are hidden (the `amonhen.engine` context key).
+- The engine draws nothing: All Files' Mermaid and DOT diagrams, math, Android VectorDrawable pictures and the SVG
+  mobile check come from the drawing helper `amonhen-render`, bundled next to the engine
+  (`bin/amonhen-render-<os>-<cpu>`, or next to `amonhen.daemon.path`'s engine) and started for each file shown
+  (`src/daemon/render.ts`; the protocol is in [front.md](front.md#the-drawing-helper-amonhen-render)). The engine's
+  `markdownBlocks` only parses the Markdown; the extension sends its diagram fences and formulas to the helper with
+  the webview's theme colors and answers the helper's requests for DOT images and VectorDrawable resources from the
+  same commit. Without the helper, or when it fails, they stay as code and text.
 - Reflog, a sidebar row below the sections, opens a page of the main view with HEAD's reflog (the core's `reflog`) on the left
   and the selected entry's commit on the right, in the same details pane as History. Entries no ref reaches are marked
   "not on any branch". Its buttons and context menu create a branch or tag there, check it out (detached), reset to
@@ -156,7 +163,7 @@ is in [front.md](front.md), and the design in item 18 of
 ### Conflict resolution
 
 - Reuse the standard 3-way merge editor. The extension is responsible for the list of conflicted files, taking ours / theirs per file (`checkout --ours/--theirs`), and the in-progress display and continue / abort / skip buttons during a merge / rebase.
-- There is no public API to open the merge editor, so open it with the internal command `_open.mergeEditor`, which the built-in Git extension also uses, passing base, input1 and input2 (index stages 1, 2 and 3 returned via `amonhen:`) and output (the real file). If that fails, or for a conflict where one side was deleted, open the file and leave it to the standard UI's "Resolve in Merge Editor" and the sidebar's Accept Current / Incoming.
+- There is no public API to open the merge editor, so open it with the internal command `_open.mergeEditor`, which the built-in Git extension also uses, passing base, input1 and input2 (index stages 1, 2 and 3 returned via `amonhen:`) and output (the real file). If that fails, or for a conflict where one side was deleted, open the file and leave it to the standard UI's "Resolve in Merge Editor" and the Working Copy's Take Current File / Take Incoming File.
 - When marking as resolved, ask for confirmation if conflict markers remain. During a rebase, show the progress (`rebase-merge/msgnum`, `end`) and allow Skip as well.
 
 ## Bringing the UI into one Webview
@@ -313,6 +320,9 @@ left out for now: VSCode has its own extensions and settings for them.
 - [x] 89. Image comparison as the app's: 2-Up, zoom (−, %, +, Fit, ⌘-scroll), the differing pixels' share, and an SVG as a picture with Show as Text
 - [x] 90. All Files as the app's: a list or a tree, changed folders open, a deleted file's version before, "@ commit", Show This Change, Open in Editor for any file, remembered views, the mobile check's renderer switch, and relative Markdown links
 - [x] 91. The details' small differences: a file header's Expand / Collapse, Open File at This Commit and Show Changes Only, the selection's file menu, parents not fetched, the bar's "All Folders" / "All Diffs", the empty text, and the display menu's Monospaced Commit Message and Changed Files as Tree
+- [x] 92. Working Copy's small differences: List and "File Name" for the file layouts, the file menu's items and order, "Delete …" for an untracked file, discarding lines without asking, a commit with only a description, "Amend Commit", the diff's read error in the pane, and Take Current / Incoming File asking only when something is lost
 - [x] 93. Stashes, Restore, File History and sequence banners' small differences: Stash's combinable choices, a stash row's time, base ID and Copy Name, File History's Restore This Version… and Copy Short ID, and Skip / Abort without asking (no Skip for a revert)
 - [x] 94. The sidebar's small differences: Copy Branch / Tag Name and Copy Names, Push / Replace / Delete for several tags, tags in folders, groups only when not empty and built like the app's (Remotes from remote branches), flat filter results, Open Worktree for a branch checked out elsewhere, the branch marks, Prune asking first, Edit Push URL… and Check Connection on a remote, a submodule's Open in New Window only when checked out, and a push by dragging confirmed with the upstream set as in the app
 - [x] 95. Sync and branch operations' small differences: Fast-Forward asks without the main view, deleting several asks once with the unmerged commits, Force Push publishes a branch without an upstream, Rename Branch… for the current branch, and Change the Order… for an octopus merge
+- [x] 96. All Files draws Mermaid and DOT diagrams, math and Android VectorDrawable pictures, with the drawing helper `amonhen-render` bundled next to the engine (the engine has no drawing features)
+- [x] 97. The checkerboard behind pictures and Find in the formatted Markdown: a light or dark checkerboard chosen from the picture's colors with a button to switch it, and ⌘F in All Files' Markdown preview with key caps and table cells included

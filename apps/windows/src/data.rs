@@ -119,6 +119,8 @@ pub struct DiffContent<'a> {
     pub mobile: Option<&'a MobileCheck>,
     /// 絵の下の説明を替えるもの（Android の VectorDrawable の「24 × 24 dp · 1 kB」）。
     pub picture_caption: Option<&'a str>,
+    /// 選んだ行（Working Copy の差分。地を塗る）。
+    pub selection: Option<&'a std::collections::BTreeSet<u32>>,
 }
 
 /// SVG の見せ方（macOS 版の `SVGView`、GTK4 版の `SvgView`）: 絵・モバイル（絵と、モバイル向けの描画部品で
@@ -410,6 +412,10 @@ pub struct WorkingShown {
     /// 長い行を折り返した表示の行の並びと、その桁の数。
     pub tree: Option<DiffTree>,
     pub wrap_cols: usize,
+    /// 選んだ行（差分の行の番号）と、Shift で続けて選ぶ起点。差分を読み直したら外れる（macOS 版・GTK4 版と同じ。
+    /// 読み直すと行の番号が別の行を指すことがある）。
+    pub selection: std::collections::BTreeSet<u32>,
+    pub anchor: Option<u32>,
 }
 
 impl WorkingShown {
@@ -431,7 +437,62 @@ impl WorkingShown {
             picture: None,
             mobile: None,
             picture_caption: None,
+            selection: Some(&self.selection),
         }
+    }
+
+    /// 行 `row` を選ぶ（macOS 版・GTK4 版と同じく前後の行も選べる）。hunk の見出しなら、その hunk の行をすべて。
+    /// `shift` で起点からの続いた行、`ctrl` で足す・外す（すべて選んでいれば外す）。
+    pub fn select(&mut self, row: u32, shift: bool, ctrl: bool) {
+        use amonhen_layout::DiffRow;
+        let rows = &self.diff.view.rows;
+        let Some(kind) = rows.get(row as usize).map(|r| r.kind) else {
+            return;
+        };
+        let picked: Vec<u32> = if kind == DiffRow::HUNK {
+            std::iter::once(row)
+                .chain((row + 1..rows.len() as u32).take_while(|&r| {
+                    !matches!(rows[r as usize].kind, DiffRow::HUNK | DiffRow::FILE)
+                }))
+                .collect()
+        } else {
+            vec![row]
+        };
+        match (shift, self.anchor) {
+            (true, Some(anchor)) => {
+                self.selection = (anchor.min(row)..=anchor.max(row)).collect();
+            }
+            _ if ctrl => {
+                if picked.iter().all(|r| self.selection.contains(r)) {
+                    for r in &picked {
+                        self.selection.remove(r);
+                    }
+                } else {
+                    self.selection.extend(picked);
+                }
+                self.anchor = Some(row);
+            }
+            _ => {
+                self.selection = picked.into_iter().collect();
+                self.anchor = Some(row);
+            }
+        }
+    }
+
+    /// 選んだ行のうち、変更の行（捨てるのはこの行）。
+    pub fn selected_changes(&self) -> Vec<usize> {
+        use amonhen_layout::DiffRow;
+        self.selection
+            .iter()
+            .filter(|&&r| {
+                self.diff
+                    .view
+                    .rows
+                    .get(r as usize)
+                    .is_some_and(|row| matches!(row.kind, DiffRow::ADDED | DiffRow::REMOVED))
+            })
+            .map(|&r| r as usize)
+            .collect()
     }
 }
 
@@ -491,6 +552,7 @@ impl FileShown {
                 .map(|p| (p.as_slice(), self.picture_view)),
             mobile: self.mobile.as_deref(),
             picture_caption: self.drawable.as_ref().map(|d| d.caption.as_str()),
+            selection: None,
         }
     }
 }
@@ -691,6 +753,7 @@ impl CommitShown {
             picture: None,
             mobile: None,
             picture_caption: None,
+            selection: None,
         }
     }
 
@@ -1128,6 +1191,8 @@ pub struct Data {
     pub matches: Vec<u32>,
     /// History で複数選んでいる行（昇順。2 つ以上のときだけ）。描くときに塗る。
     pub multi: Vec<u32>,
+    /// History でコミットを運んでいる（描くときに、運ぶ先の印とつかんだ行を描く）。
+    pub drag: Option<RowDrag>,
     /// 複数選んだときの読み込みの番号（`commit_wanted` の鍵の上位ビットを立てて使う）。
     selection_seq: u32,
     /// 探している問い合わせ。
@@ -1175,6 +1240,30 @@ pub struct Data {
     scope: Arc<std::sync::Mutex<Scope>>,
     /// 範囲を変えた（作り直した History が届いたら、選んだ行を見せる）。
     pub scope_changed: bool,
+    /// History の上で編集している範囲の描き方（編集モードの間だけ。`render.rs` が描く）。
+    pub edit: Option<crate::historyedit::Overlay>,
+    /// 編集を始める前の範囲・折りたたみ・一致だけの表示（終えたら戻す）。
+    before_edit: Option<(Scope, bool, bool)>,
+}
+
+/// History でコミットを運んでいる間のこと（macOS 版・GTK4 版の、コミットを運んで落とす）。
+#[derive(Clone, Debug)]
+pub struct RowDrag {
+    /// つかんだ行。
+    pub row: u32,
+    /// 押した所の、行の上端からの高さと、今の指の高さ（History の窓の中の DIP）。
+    pub offset: f32,
+    pub y: f32,
+    /// 押した所（少し動かしたら運び始める）。
+    pub start: f32,
+    /// 運び始めた。
+    pub moving: bool,
+    /// History の窓の高さ（描く行の範囲）。
+    pub height: f32,
+    /// 落とす先（行と、その行に重ねるか。重ねないなら行の上の境目）。
+    pub target: Option<(u32, bool)>,
+    /// 編集できる並び（HEAD から first-parent で辿ったもの。読み終えるまでは None。落とせない行を薄くする）。
+    pub chain: Option<Arc<HashSet<amonhen_model::Oid>>>,
 }
 
 /// History の範囲（GTK4 版の `historydisplay::Scope`）。
@@ -1520,6 +1609,9 @@ impl Data {
             expanded,
             scope,
             scope_changed: false,
+            edit: None,
+            before_edit: None,
+            drag: None,
         }
     }
 
@@ -1654,6 +1746,8 @@ impl Data {
                         syntax,
                         tree: None,
                         wrap_cols: 0,
+                        selection: Default::default(),
+                        anchor: None,
                     }))
                 }
                 Err(e) => {
@@ -1782,7 +1876,10 @@ impl Data {
         if working.diff.staged {
             return None;
         }
+        // 選んだ行の中を押したら、選んだ変更の行すべて（macOS 版・GTK4 版の Discard Lines）。
+        let selected = working.selected_changes();
         let rows = match working.diff.view.rows.get(row)?.kind {
+            _ if working.selection.contains(&(row as u32)) && !selected.is_empty() => selected,
             DiffRow::ADDED | DiffRow::REMOVED => vec![row],
             DiffRow::HUNK => hunk_rows(&working.diff.view.rows, row),
             _ => return None,
@@ -1821,6 +1918,13 @@ impl Data {
 
     /// History の範囲を変えて作り直す（GTK4 版の `set_scope`）。
     pub fn set_scope(&mut self, scope: Scope) {
+        // 編集の間は、今のブランチの全部の行のまま（サイドバーで ref を選んでも範囲は変えない）。
+        if self.before_edit.is_none() {
+            self.apply_scope(scope);
+        }
+    }
+
+    fn apply_scope(&mut self, scope: Scope) {
         {
             let mut current = self.scope.lock().unwrap();
             if *current == scope {
@@ -2891,6 +2995,49 @@ impl Data {
             }
         }
         self.worktree_labels = labels;
+    }
+
+    /// History の行に描いているコミットの行（編集で並べ替えていなければ同じ行）。
+    pub fn shown_row(&self, row: u32) -> u32 {
+        self.edit.as_ref().map_or(row, |e| e.shown_row(row))
+    }
+
+    /// History の上で編集を始める: 今のブランチの全部の行（たたまない・一致だけにしない）にする（GTK4 版の
+    /// `Shaper::begin_editing`）。
+    pub fn begin_editing(&mut self) {
+        if self.before_edit.is_some() {
+            return;
+        }
+        let fold = self.fold.load(std::sync::atomic::Ordering::Relaxed);
+        let (scope, only) = (self.scope(), self.matching_only);
+        if only {
+            self.set_matching_only(false);
+        }
+        if fold {
+            self.set_fold(false);
+        }
+        self.apply_scope(Scope::Current);
+        self.before_edit = Some((scope, fold, only));
+    }
+
+    /// 編集を終える（Apply・Cancel）: 範囲の描き方を消し、元の範囲・折りたたみ・一致だけの表示に戻す。
+    pub fn end_editing(&mut self) {
+        self.edit = None;
+        let Some((scope, fold, only)) = self.before_edit.take() else {
+            return;
+        };
+        if fold {
+            self.set_fold(true);
+        }
+        self.apply_scope(scope);
+        if only {
+            self.set_matching_only(true);
+        }
+    }
+
+    /// 編集している（範囲・折りたたみは選べない）。
+    pub fn editing(&self) -> bool {
+        self.before_edit.is_some()
     }
 
     /// コミットの行（今の History の）。

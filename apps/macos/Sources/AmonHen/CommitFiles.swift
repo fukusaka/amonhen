@@ -681,8 +681,8 @@ final class CommitFilesBrowser: NSView, NSOutlineViewDataSource, NSOutlineViewDe
         root = Node(name: "", path: "", isDirectory: true, oid: "")
         content = DiffViewController(renderer: renderer)
         super.init(frame: NSRect(x: 0, y: 0, width: 600, height: 400))
-        // gantt の時間帯（設定・OS）を変えたら、整形した Markdown を読み直す（日付の位置が変わる）。
-        for name in [Notification.Name.ganttTimeZoneChanged, .NSSystemTimeZoneDidChange] {
+        // gantt の時間帯（設定・OS）と数式の設定を変えたら、整形した Markdown を読み直す（日付の位置・式の大きさが変わる）。
+        for name in [Notification.Name.ganttTimeZoneChanged, .NSSystemTimeZoneDidChange, .mathSettingsChanged] {
             NotificationCenter.default.addObserver(self, selector: #selector(timeZoneChanged), name: name, object: nil)
         }
         for (i, item) in (changes?.items ?? []).enumerated() {

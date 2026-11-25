@@ -7,7 +7,8 @@ import type { Change, ChangeGroup } from '../state/changes.ts';
 import type { HostMessage } from '../view/protocol.ts';
 import type { DiffHunk, DiffLine, FileDiff, SelectedLine } from '../diff/fileDiff.ts';
 import type { Eol, LineEndings } from '../git/eol.ts';
-import { addTrailer, commitDisabledReason, lengthLevel, longestLine, messageLength, splitMessage, withType } from '../workingCopy/commitMessage.ts';
+import { ignorePatterns } from '../workingCopy/ignore.ts';
+import { addTrailer, commitDisabledReason, composeMessage, lengthLevel, longestLine, messageLength, splitMessage, withType } from '../workingCopy/commitMessage.ts';
 import { filesUnder, filterByPath, makeFileTree, type FileDir, type FileLayout } from '../workingCopy/fileList.ts';
 import { el, post, type View } from './api.ts';
 import { lineKey, renderDiffBody, whitespaceSelect, wrapButton } from './diffView.ts';
@@ -22,7 +23,7 @@ const GROUPS: { group: ChangeGroup; title: string }[] = [
 const LAYOUTS: { layout: FileLayout; label: string; title: string }[] = [
   { layout: 'list', label: 'List', title: 'Show files as a list of paths' },
   { layout: 'tree', label: 'Tree', title: 'Show files as a directory tree' },
-  { layout: 'flat', label: 'Name', title: 'Show the file name first and the parent directory dimmed' },
+  { layout: 'flat', label: 'File Name', title: 'Show the file name first and the parent directory dimmed' },
 ];
 
 export function createWorkingCopyView(): View {
@@ -76,7 +77,7 @@ export function createWorkingCopyView(): View {
   filter.setAttribute('aria-label', 'Filter by path');
   const layoutButtons = el('div', 'wc-layout');
   tools.append(filter, layoutButtons);
-  let layout: FileLayout = 'flat';
+  let layout: FileLayout = 'list';
   for (const { layout: value, label, title } of LAYOUTS) {
     const button = el('button', undefined, label);
     button.title = title;
@@ -111,6 +112,8 @@ export function createWorkingCopyView(): View {
   let diff: FileDiff | undefined;
   /** diff のファイルが今あるグループ */
   let diffGroup: ChangeGroup | undefined;
+  /** 選んだファイルの差分を読めなかった理由（読めたら undefined） */
+  let diffError: string | undefined;
   /** 差分で無視している空白（エンジンで読んだときだけ。なければ選ぶ欄を出さない） */
   let whitespace: DiffWhitespace | undefined;
   /** 選んでいる行。キーは `old:12` / `new:7` */
@@ -213,12 +216,16 @@ export function createWorkingCopyView(): View {
     row.dataset.vscodeContext = JSON.stringify({
       webviewSection: 'wcFile',
       path: f.path,
+      // Stage・Unstage・Discard… を出し分ける
+      wcGroup: f.group,
       // いくつも選んでいれば、その中で使えるもの（Stash…）だけを、選んだものすべてに
       ...(many ? { wcMulti: true, paths: [...new Set(targetsOf(f).map((x) => x.path))] } : {}),
       // コンフリクトのファイル（Stash… を出さない）
       ...(f.group === 'conflicts' ? { wcConflict: true } : {}),
-      // まだ履歴のないファイル（.gitignore に足せる）
-      ...(f.letter === 'U' ? { wcUntracked: true } : {}),
+      // まだ履歴のないファイル（.gitignore に足せる。拡張子があれば、そのパターンも）
+      ...(f.letter === 'U' ? { wcUntracked: true, ...(ignorePatterns(f.path).length > 1 ? { wcExtension: true } : {}) } : {}),
+      // 作業ツリーにないファイル（Blame・開く・ファイルマネージャーで見せるを出さない）
+      ...(f.letter === 'D' ? { wcDeleted: true } : {}),
       // rerere が解決を当てたコンフリクトのファイル（Forget Resolution を出す）
       ...(f.group === 'conflicts' && f.rerere ? { wcRerere: true } : {}),
       preventDefaultContextMenuItems: true,
@@ -378,7 +385,9 @@ export function createWorkingCopyView(): View {
 
   function renderDiff(): void {
     if (!diff) {
-      diffPane.replaceChildren(el('div', 'empty', files.length ? 'Select a file to see its diff' : ''));
+      // 読めなかったときは、空の差分にせず理由を出す（アプリと同じ）
+      const text = diffError ? `Can’t read the diff: ${diffError}` : files.length ? 'Select a file to see its diff' : '';
+      diffPane.replaceChildren(el('div', 'empty', text));
       return;
     }
     const d = diff;
@@ -561,8 +570,8 @@ export function createWorkingCopyView(): View {
     if (clean) buttons.append(resolved);
     for (const [action, label] of [
       ['merge', 'Open in Merge Editor'],
-      ['current', 'Accept Current'],
-      ['incoming', 'Accept Incoming'],
+      ['current', 'Take Current File'],
+      ['incoming', 'Take Incoming File'],
     ] as const) {
       const b = el('button', action === 'merge' && !clean ? undefined : 'secondary', label);
       b.addEventListener('click', () => post({ type: 'wcResolve', path: d.path, action }));
@@ -640,12 +649,12 @@ export function createWorkingCopyView(): View {
 
   function updateCommitButton(): void {
     const staged = stagedCount();
-    const reason = commitDisabledReason({ staged, amend: amend.checked, summary: subject.value, committing });
+    const reason = commitDisabledReason({ staged, amend: amend.checked, message: message(), committing });
     commitButton.disabled = reason !== undefined;
     // 押せないときは、ツールチップでわけを言う（アプリと同じ）
     commitButton.title = reason ?? 'Commit the checked files (⌘↩)';
     commitButton.textContent = amend.checked
-      ? 'Amend'
+      ? 'Amend Commit'
       : staged > 0
         ? `Commit ${staged} File${staged > 1 ? 's' : ''}`
         : 'Commit';
@@ -662,9 +671,9 @@ export function createWorkingCopyView(): View {
     lengthLabel.title = 'Length of the summary (yellow over 50, orange over 72), and of a description line over 72';
   }
 
+  /** Summary と Description をつないだメッセージ（どちらかだけでもコミットできる。アプリと同じ） */
   function message(): string {
-    const b = body.value.trim();
-    return b ? `${subject.value.trim()}\n\n${b}\n` : `${subject.value.trim()}\n`;
+    return composeMessage({ summary: subject.value, body: body.value });
   }
 
   function commit(push = false): void {
@@ -778,10 +787,21 @@ export function createWorkingCopyView(): View {
           picked = new Set();
           anchor = undefined;
         }
+        diffError = undefined;
         diff = m.diff;
         diffGroup = m.group;
         whitespace = m.diff ? m.whitespace : whitespace;
         selected = m.diff ? { group: m.group!, path: m.diff.path } : undefined;
+        renderFiles();
+        renderDiff();
+        break;
+      case 'wcDiffFailed':
+        picked = new Set();
+        anchor = undefined;
+        diff = undefined;
+        diffGroup = m.group;
+        diffError = m.error;
+        selected = { group: m.group, path: m.path };
         renderFiles();
         renderDiff();
         break;

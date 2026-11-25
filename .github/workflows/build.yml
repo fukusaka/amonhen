@@ -10,7 +10,8 @@ name: Build
 # app が false（拡張の正式版）なら、アプリは作らず、エンジンだけを作って macOS のものに署名する。
 #
 # 成果物 release: dist/ のアプリの zip、GTK4 のアプリの tar.gz（amonhen-gtk-*）、エンジンの tar.gz・zip、
-# dist/engine/（拡張に同梱するエンジン）、dist/THIRD-PARTY-NOTICES.md（依存のライセンスの一覧）。
+# dist/engine/（拡張に同梱するエンジン）、dist/render/（拡張に同梱する絵の手伝い amonhen-render）、
+# dist/THIRD-PARTY-NOTICES.md（依存のライセンスの一覧）。
 #
 # 配るものなので、キャッシュは使わない（ほかの実行が書いたキャッシュを読むと、それに中身を左右されうる）。
 on:
@@ -83,6 +84,13 @@ jobs:
           name: engine-${{ matrix.platform }}
           path: dist/engine/
           # Release に載せるまでの受け渡しだけなので、長く残さない。
+          retention-days: 7
+          if-no-files-found: error
+      # VSCode 拡張の絵の手伝い（エンジンには入れない。拡張に同梱するだけ）。
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: render-${{ matrix.platform }}
+          path: dist/render/
           retention-days: 7
           if-no-files-found: error
 
@@ -169,6 +177,7 @@ jobs:
           path: |
             dist/bin/
             dist/engine/
+            dist/render/
             dist/THIRD-PARTY-NOTICES.md
           # Release に載せるまでの受け渡しだけなので、長く残さない。
           retention-days: 7
@@ -212,6 +221,11 @@ jobs:
           pattern: engine-*
           merge-multiple: true
           path: dist/engine
+      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        with:
+          pattern: render-*
+          merge-multiple: true
+          path: dist/render
       - if: inputs.app
         uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
         with:
@@ -219,6 +233,10 @@ jobs:
           merge-multiple: true
           path: dist
       - run: scripts/import-signing-certificate.sh
+      # VSCode 拡張の絵の手伝いの macOS のもの（アプリには入れない）。
+      - run: |
+          chmod 755 dist/render/amonhen-render-*
+          scripts/codesign.sh dist/render/amonhen-render-darwin-aarch64
       - id: package
         if: inputs.app
         run: echo "zip=$(scripts/package-app.sh "$MODE" | tail -1)" >> "$GITHUB_OUTPUT"
@@ -230,7 +248,9 @@ jobs:
         run: |
           chmod 755 dist/engine/amonhen-*
           scripts/codesign.sh dist/engine/amonhen-darwin-aarch64
-          scripts/notarize.sh --engines dist/engine/amonhen-darwin-aarch64
+          scripts/notarize.sh --engines dist/engine/amonhen-darwin-aarch64 dist/render/amonhen-render-darwin-aarch64
+      - if: inputs.app
+        run: scripts/notarize.sh --engines dist/render/amonhen-render-darwin-aarch64
       - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
           name: release
@@ -238,6 +258,7 @@ jobs:
             dist/*.zip
             dist/*.tar.gz
             dist/engine/
+            dist/render/
             dist/THIRD-PARTY-NOTICES.md
           # Release に載せるまでの受け渡しだけなので、長く残さない。
           retention-days: 7

@@ -244,6 +244,16 @@ dependencies = [
 ]
 
 [[package]]
+name = "amonhen-render"
+version = "0.2.15"
+dependencies = [
+ "amonhen-core",
+ "amonhen-model",
+ "serde",
+ "serde_json",
+]
+
+[[package]]
 name = "amonhen-syntax"
 version = "0.2.15"
 dependencies = [

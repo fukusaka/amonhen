@@ -638,6 +638,12 @@ char *amonhen_math_colorize(const char *svg,
                             const char *fg);
 
 /**
+ * 1 つの Markdown のファイルで数式を描く時間の上限を、`seconds` 秒にする（0 は上限なし）。次に読む Markdown から効く
+ * （Settings > テーマ > 数式）。
+ */
+void amonhen_math_set_time_limit(uint64_t seconds);
+
+/**
  * 設定の見本の図の SVG（色は `amonhen_diagram_colorize` で当てる）。描けなければ NULL。`amonhen_string_free` で
  * 解放する。
  */

@@ -133,12 +133,15 @@ crates/
   cli/               CLI (amonhen)
   commands/          The command table shared by the FEs (menus, toolbar, shortcuts)
   assist/            AI calls through a local CLI (Claude Code, Codex), prompts and the result cache
+  render/            The VSCode extension's drawing helper (amonhen-render: diagrams, math, VectorDrawables, SVG mobile check)
 apps/
   macos/             SwiftPM package (AmonhenKit and the AppKit app)
   gtk4/              GTK4 app (gtk4-rs, a Cargo workspace of its own)
   vscode/            VSCode extension (TypeScript)
 ```
 To add later: `backend-git2/` (for mobile), bindings for Swift / Kotlin (not built: the C ABI and JSON commands are used instead).
+
+UI drawing features live in the apps and in the VSCode helper `amonhen-render`, not in the engine. Mermaid and DOT diagrams, math, Android VectorDrawable pictures and the SVG mobile check are built into the apps (the core's `diagrams` and `math` features, through the C ABI and in GTK4) and into `crates/render`, a separate executable the VSCode extension bundles next to the engine and starts for each file it shows (the contract is in [front.md](front.md#the-drawing-helper-amonhen-render)). The engine (`amonhen`: the CLI, the shared daemon and the SSH host's `--stdio`) keeps only what reads and writes repositories, such as parsing Markdown into blocks, so what is pushed to SSH hosts stays small.
 ## Data design
 
 ### Immutable snapshots

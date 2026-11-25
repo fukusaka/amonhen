@@ -362,6 +362,51 @@ const OPTIONAL: &[(&str, Symbol)] = &[
 
 /// 並びを置く設定の鍵（GTK4 版と同じ形: `,` でつなぎ、出さないものは `-` を前に付ける。`space` はスペース）。
 pub const TOOLBAR_KEY: &str = "toolbarItemsV3";
+/// ツールバーの見せ方を覚える鍵（`icon-text`・`icon`・`text`）。
+pub const TOOLBAR_DISPLAY_KEY: &str = "toolbarDisplay";
+
+/// ツールバーの見せ方（macOS 版の NSToolbar のカスタマイズのシートの「表示」）。
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Display {
+    IconAndText,
+    Icon,
+    Text,
+}
+
+impl Display {
+    pub const ALL: [Display; 3] = [Display::IconAndText, Display::Icon, Display::Text];
+
+    fn key(self) -> &'static str {
+        match self {
+            Display::IconAndText => "icon-text",
+            Display::Icon => "icon",
+            Display::Text => "text",
+        }
+    }
+
+    fn title(self) -> String {
+        match self {
+            Display::IconAndText => amonhen_model::tr!("Icon and Text"),
+            Display::Icon => amonhen_model::tr!("Icon Only"),
+            Display::Text => amonhen_model::tr!("Text Only"),
+        }
+    }
+}
+
+/// 覚えたツールバーの見せ方（なければアイコンとテキスト。macOS 版の既定と同じ）。
+pub fn toolbar_display() -> Display {
+    let key = crate::prefs::string(TOOLBAR_DISPLAY_KEY);
+    Display::ALL
+        .into_iter()
+        .find(|d| Some(d.key()) == key.as_deref())
+        .unwrap_or(Display::IconAndText)
+}
+
+pub fn set_toolbar_display(display: Display) {
+    if let Err(e) = crate::prefs::set_string(TOOLBAR_DISPLAY_KEY, display.key()) {
+        eprintln!("ツールバーの見せ方を覚えられない: {e}");
+    }
+}
 
 /// ツールバーの並びの 1 つ（GTK4 版の `toolbar::Entry` のうち、CommandBar で表せるもの）。
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -486,6 +531,8 @@ pub struct Tracking {
     pub no_remote: bool,
     /// 走っている操作の数（Activity のボタンが回る。macOS 版の Activity の項目の回る印）。
     pub running: usize,
+    /// History の上でコミットを編集している（HEAD を動かす操作は押せないように見せ、わけをツールチップに）。
+    pub editing: bool,
 }
 
 /// Push で送れるものがあるか（上流がなければ、送り先のリモートがあれば Publish できる）。なければツールバーの
@@ -612,7 +659,10 @@ pub fn toolbar(on_click: Callback<String>, tracking: Tracking) -> View {
                 icon_of(&id)?;
                 let command = toolbar_command(&id).to_owned();
                 let enabled = IMPLEMENTED.contains(&command.as_str());
+                let held =
+                    tracking.editing && crate::historyedit::MOVES_HEAD.contains(&command.as_str());
                 let (tooltip, count) = match id.as_str() {
+                    _ if held => (crate::historyedit::editing_hint(), 0),
                     "pull" => (pull_tooltip(tracking), tracking.behind),
                     "push" => (push_tooltip(tracking), tracking.ahead),
                     "activity" if tracking.running > 0 => (
@@ -626,7 +676,7 @@ pub fn toolbar(on_click: Callback<String>, tracking: Tracking) -> View {
                 };
                 // 送れないときは押せないように見せるだけにする（WinUI は押せない部品のツールチップを出さないので、
                 // 本当に押せなくするとわけが読めない。押せばベルが鳴る）。
-                let faded = !enabled || (id == "push" && !can_push(tracking));
+                let faded = !enabled || held || (id == "push" && !can_push(tracking));
                 // アイコンと、上流との差の数のバッジ（macOS 版の `setTracking` の `badge`。0 なら出さない）。
                 let badge: View = if count > 0 {
                     InfoBadge::new()
@@ -655,6 +705,7 @@ pub fn toolbar(on_click: Callback<String>, tracking: Tracking) -> View {
                 } else {
                     id.as_str()
                 };
+                let display = toolbar_display();
                 let icon = StackPanel::new()
                     .orientation(Orientation::Horizontal)
                     .spacing(4.0)
@@ -675,11 +726,24 @@ pub fn toolbar(on_click: Callback<String>, tracking: Tracking) -> View {
                             .spacing(2.0)
                             .horizontal_alignment(HorizontalAlignment::Center)
                             .children((
-                                icon,
-                                TextBlock::new()
-                                    .text(toolbar_name(shown))
-                                    .font_size(11.0)
-                                    .horizontal_alignment(HorizontalAlignment::Center),
+                                if display == Display::Text {
+                                    View::empty()
+                                } else {
+                                    icon
+                                },
+                                if display == Display::Icon {
+                                    View::empty()
+                                } else {
+                                    TextBlock::new()
+                                        .text(toolbar_name(shown))
+                                        .font_size(if display == Display::Text {
+                                            13.0
+                                        } else {
+                                            11.0
+                                        })
+                                        .horizontal_alignment(HorizontalAlignment::Center)
+                                        .into()
+                                },
                             )),
                     )
                     .tooltip(tooltip);
@@ -873,6 +937,7 @@ pub fn palette_tags() -> Vec<String> {
 pub fn toolbar_palette(
     palette: &ElementRef<Grid>,
     defaults: &ElementRef<Grid>,
+    on_display: Callback<Option<usize>>,
     on_done: Callback<()>,
 ) -> View {
     let tags = palette_tags();
@@ -914,11 +979,40 @@ pub fn toolbar_palette(
             Grid::new().element_ref(defaults).children((GridView::new()
                 .can_drag_items(true)
                 .collection_slot(GridViewSlot::Items, [("default".to_owned(), default_item)]),)),
-            Button::new()
-                .style(ButtonStyle::Accent)
-                .horizontal_alignment(HorizontalAlignment::Right)
-                .on_click(on_done)
-                .content(amonhen_model::tr!("Done")),
+            // 下の行: 左に見せ方（macOS 版のシートの「表示」）、右に Done。
+            Grid::new()
+                .columns([
+                    GridLength::Auto,
+                    GridLength::Auto,
+                    GridLength::Star(1.0),
+                    GridLength::Auto,
+                ])
+                .column_spacing(8.0)
+                .children((
+                    TextBlock::new()
+                        .text(amonhen_model::tr!("Show"))
+                        .vertical_alignment(VerticalAlignment::Center),
+                    ComboBox::new()
+                        .grid_column(1)
+                        .items_source(
+                            Display::ALL
+                                .into_iter()
+                                .map(Display::title)
+                                .collect::<Vec<_>>(),
+                        )
+                        .selected_index(
+                            Display::ALL
+                                .iter()
+                                .position(|d| *d == toolbar_display())
+                                .unwrap_or(0),
+                        )
+                        .on_selection_changed(on_display),
+                    Button::new()
+                        .grid_column(3)
+                        .style(ButtonStyle::Accent)
+                        .on_click(on_done)
+                        .content(amonhen_model::tr!("Done")),
+                )),
         )),))
 }
 

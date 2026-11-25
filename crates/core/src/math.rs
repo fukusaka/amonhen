@@ -1,7 +1,7 @@
 //! Markdown の数式（GitHub と同じ書き方: ```` ```math ````・`$$…$$` のブロックと、文中の `$…$`・`` $`…`$ ``）を描く
 //! （History の「すべてのファイル」の整形表示）。描くのは `amonhen-math`（RaTeX）で、`math` フィーチャーのときだけ入る
-//! （アプリ（FFI・GTK4）だけが入れ、エンジン（CLI・daemon）には入れない）。入れないときも書き方は読み、FE は原文を
-//! コードとして見せる。
+//! （アプリ（FFI・GTK4）と VSCode 拡張の絵の手伝い（amonhen-render）だけが入れ、エンジン（CLI・daemon）には入れない）。
+//! 入れないときも書き方は読み、FE は原文をコードとして見せる。
 //!
 //! 形と位置（SVG）は Markdown を読むときに一度だけ作る。色は CSS の変数 `--math-fg` のままなので、FE は描くときに
 //! `colorize` で文字の色を当てる（図と同じ `svgcss` の道。テーマや明るい・暗いを切り替えても、色だけを当て直せばよい）。
@@ -16,9 +16,36 @@ use crate::markdown::Run;
 /// 数式の色の CSS の変数（FE が文字の色を当てる。`amonhen_math::COLOR_VAR` と同じ）。
 pub const COLOR_VAR: &str = "--math-fg";
 
-/// 本文の字の大きさに対する、数式の 1 em の大きさ（KaTeX と同じ 1.21 倍。KaTeX のフォントは字が小さめなので、
-/// 本文の字とそろえるために大きくする）。
+/// 本文の字の大きさに対する、数式の 1 em の大きさの既定（KaTeX と同じ 1.21 倍。KaTeX のフォントは字が小さめなので、
+/// 本文の字とそろえるために大きくする）。FE の設定（Settings > テーマ > 数式 > 大きさ）で変えられる。
 pub const FONT_SCALE: f64 = 1.21;
+
+/// 設定で選べる大きさ（本文の字に対する倍率。`FONT_SCALE` が既定）。
+pub const FONT_SCALES: [f64; 6] = [1.0, 1.1, FONT_SCALE, 1.3, 1.4, 1.5];
+
+/// 設定で選べる、1 つのファイルで式を描く時間の上限（秒。0 は上限なし。2 が既定）。
+pub const TIME_LIMITS: [u64; 5] = [1, 2, 5, 10, 0];
+
+/// 1 つのファイルで式を描く時間の上限（ミリ秒。`u64::MAX` は上限なし）。
+static FILE_TIME_MS: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(2_000);
+
+/// 1 つのファイルで式を描く時間の上限を変える（FE の設定。`None` は上限なし）。次に読む Markdown から効く。
+/// 上限なしでも、式の数・原文と SVG の大きさの上限は残る。
+pub fn set_file_time_limit(limit: Option<std::time::Duration>) {
+    let ms = limit.map_or(u64::MAX, |d| {
+        u64::try_from(d.as_millis()).unwrap_or(u64::MAX - 1)
+    });
+    FILE_TIME_MS.store(ms, std::sync::atomic::Ordering::Relaxed);
+}
+
+/// 今の、1 つのファイルで式を描く時間の上限。
+#[cfg(feature = "math")]
+fn file_time_limit() -> std::time::Duration {
+    match FILE_TIME_MS.load(std::sync::atomic::Ordering::Relaxed) {
+        u64::MAX => std::time::Duration::MAX,
+        ms => std::time::Duration::from_millis(ms),
+    }
+}
 
 /// 描いた数式。大きさは em（本文の字の大きさ × `FONT_SCALE` を 1 とする）。
 #[derive(Clone, Debug, Serialize)]
@@ -60,17 +87,34 @@ pub fn colorize_for_coresvg(svg: &str, fg: &str) -> Option<String> {
     crate::svgcss::inline_slanted(svg, &[(COLOR_VAR, fg)])
 }
 
-/// 1 つの Markdown のファイルで描く式の数・原文と SVG の合計の大きさ・時間の上限。超えた分は描かずに原文を見せる（1 つの
-/// ファイルで整形表示が止まらないように）。
+/// 1 つの Markdown のファイルで描く式の数・原文と SVG の合計の大きさの上限（時間の上限は `set_file_time_limit`）。超えた
+/// 分は描かずに原文を見せる（1 つのファイルで整形表示が止まらないように）。
 #[cfg(feature = "math")]
-const MAX_FILE_FORMULAS: usize = 2_000;
+const MAX_FILE_FORMULAS: usize = 10_000;
 #[cfg(feature = "math")]
 const MAX_FILE_SOURCE: usize = 512 * 1024;
-/// SVG の合計（FE は式ごとに色を当てて画像にするので、JSON とその手間が大きくなりすぎないように）。
+/// SVG の合計（FE は式ごとに色を当てて画像にするので、JSON とその手間が大きくなりすぎないように）。小さな式でも字形を
+/// 持つので 1 式あたり 2〜4 KB になり、上の 1 万式が入る大きさにする（1 万式で約 44 MB）。
 #[cfg(feature = "math")]
-const MAX_FILE_SVG: usize = 8 << 20;
+const MAX_FILE_SVG: usize = 48 << 20;
+
+/// 1 つのファイルの上限の組（試験では小さくする）。
 #[cfg(feature = "math")]
-const MAX_FILE_TIME: std::time::Duration = std::time::Duration::from_secs(2);
+#[derive(Clone, Copy)]
+struct FileLimits {
+    formulas: usize,
+    source: usize,
+    svg: usize,
+    time: std::time::Duration,
+}
+
+#[cfg(feature = "math")]
+const FILE_LIMITS: FileLimits = FileLimits {
+    formulas: MAX_FILE_FORMULAS,
+    source: MAX_FILE_SOURCE,
+    svg: MAX_FILE_SVG,
+    time: std::time::Duration::from_secs(2),
+};
 /// 描くスレッドのスタック（RaTeX の入れ子の上限まで足りる大きさ。使った分だけ取られる）。
 #[cfg(feature = "math")]
 const STACK: usize = 64 << 20;
@@ -160,9 +204,31 @@ pub(crate) fn render_all(blocks: &mut [Block]) {
     let _ = blocks;
 }
 
+/// 1 つの Markdown のファイルの式（TeX と、ブロックの組み方で描くか）を、出てくる順に描く（ファイルごとの上限つき。
+/// 色は `--math-fg` のまま）。Markdown を読まずに式だけを描く FE（VSCode 拡張の `amonhen-render`）が使う。
+#[cfg(feature = "math")]
+pub fn render_formulas(jobs: Vec<(String, bool)>) -> Vec<Result<MathPicture, String>> {
+    render_jobs(jobs)
+}
+
 /// 式を順に描く（大きなスタックの別スレッドで。上限を超えた分は描かない）。
 #[cfg(feature = "math")]
 fn render_jobs(jobs: Vec<(String, bool)>) -> Vec<Result<MathPicture, String>> {
+    render_jobs_with(
+        jobs,
+        FileLimits {
+            time: file_time_limit(),
+            ..FILE_LIMITS
+        },
+    )
+}
+
+/// `render_jobs` を上限 `limits` で。
+#[cfg(feature = "math")]
+fn render_jobs_with(
+    jobs: Vec<(String, bool)>,
+    limits: FileLimits,
+) -> Vec<Result<MathPicture, String>> {
     let count = jobs.len();
     let worker = std::thread::Builder::new()
         .name("math".into())
@@ -174,10 +240,10 @@ fn render_jobs(jobs: Vec<(String, bool)>) -> Vec<Result<MathPicture, String>> {
                 .enumerate()
                 .map(|(i, (tex, display))| {
                     source += tex.len();
-                    if i >= MAX_FILE_FORMULAS
-                        || source > MAX_FILE_SOURCE
-                        || svg > MAX_FILE_SVG
-                        || started.elapsed() > MAX_FILE_TIME
+                    if i >= limits.formulas
+                        || source > limits.source
+                        || svg > limits.svg
+                        || started.elapsed() > limits.time
                     {
                         return Err(amonhen_model::tr!(
                             "This file has too many formulas to draw them all"
@@ -251,7 +317,11 @@ mod tests {
     }
 
     fn paragraphs(md: &str) -> Vec<String> {
-        parse(md)
+        paragraphs_of(&parse(md))
+    }
+
+    fn paragraphs_of(blocks: &[Block]) -> Vec<String> {
+        blocks
             .iter()
             .map(|b| match b {
                 Block::Paragraph { runs, .. } => line(runs),
@@ -264,10 +334,40 @@ mod tests {
     #[test]
     fn inline_math_follows_github() {
         assert_eq!(paragraphs("a $x^2$ b"), ["a [x^2] b"]);
+        // 開きの前は頭・空白・`(` だけ、閉じの後に英数字・`_` は続かない（GitHub の Markdown API で確かめた）
         assert_eq!(
             paragraphs("$a$$b$ and foo$y=x$bar"),
-            ["[a][b] and foo[y=x]bar"]
+            ["[a]$b$ and foo$y=x$bar"]
         );
+        assert_eq!(paragraphs("($x$), $y$. $z$-$w$"), ["([x]), [y]. [z]-$w$"]);
+        assert_eq!(paragraphs("$x$a $x$_ $x$です"), ["$x$a $x$_ [x]です"]);
+        assert_eq!(paragraphs("日本語の$x$ と $y$"), ["日本語の$x$ と [y]"]);
+        assert_eq!(
+            paragraphs(r#"a$x$b 5$x$ "$x$" [$x$]"#),
+            [r#"a$x$b 5$x$ "$x$" [$x$]"#]
+        );
+        assert_eq!(paragraphs("$x$y$ and $x$$$y$"), ["$x$y$ and [x]$$y$"]);
+        // 閉じの前の空白は、後が終わりか記号のときだけ
+        assert_eq!(paragraphs("$x $."), ["[x ]."]);
+        assert_eq!(paragraphs("a $y $ b and $x $a"), ["a $y $ b and $x $a"]);
+        // `\$` は `$` として組を探す
+        assert_eq!(paragraphs(r"\$x$ and $x\$"), ["[x] and [x]"]);
+        assert_eq!(paragraphs(r"$x\$ y$"), ["[x] y$"]);
+        assert_eq!(paragraphs(r"$\$$ and $\$x$"), ["$$$ and $$x$"]);
+        // 斜体・リンクの中は数式にしない。太字の中はする
+        assert_eq!(
+            paragraphs("*$x$* [$y$](https://example.com) **$z$**"),
+            ["$x$ $y$ [z]"]
+        );
+        // 脚注の中身も数式にしない
+        let blocks = parse("a $x$[^1]\n\n[^1]: $y$\n");
+        let Some(Block::Footnote { blocks: inner, .. }) = blocks.last() else {
+            panic!("{blocks:?}")
+        };
+        assert_eq!(paragraphs_of(inner), ["$y$"]);
+        // `` $`…`$ `` の中には `$` を書け、閉じの後は見ない
+        assert_eq!(paragraphs("$`a$b`$ and more"), ["[a$b] and more"]);
+        assert_eq!(paragraphs("a $`x`$b"), ["a [x]b"]);
         // GitHub の $`…`$（中は文字どおり。pulldown-cmark は中の $ で閉じるので、中に $ は書けない）
         assert_eq!(paragraphs("a $`x+y`$ b"), ["a [x+y] b"]);
         assert_eq!(paragraphs("a $`` x`y ``$ b"), ["a [x`y] b"]);
@@ -288,11 +388,14 @@ mod tests {
         assert_eq!(paragraphs("price: $3.50 or $4"), ["price: $3.50 or $4"]);
         // 閉じの $ の後が数字
         assert_eq!(paragraphs("$5/$10 each"), ["$5/$10 each"]);
-        // 開きの後・閉じの前が空白
-        assert_eq!(paragraphs("$ x$ and $x $"), ["$ x$ and $x $"]);
+        assert_eq!(
+            paragraphs("from $5 to $10, $5k-$10k"),
+            ["from $5 to $10, $5k-$10k"]
+        );
+        // 開きの後が空白
+        assert_eq!(paragraphs("$ x$ and $ x $"), ["$ x$ and $ x $"]);
         // \$ は文字
         assert_eq!(paragraphs(r"pay \$5 and \$6"), ["pay $5 and $6"]);
-        assert_eq!(paragraphs(r"\$x$ and $x\$"), ["$x$ and $x$"]);
         // コードの中
         assert_eq!(paragraphs("`$x$` code"), ["`$x$` code"]);
         // 閉じない
@@ -355,6 +458,17 @@ mod tests {
         assert_eq!(line(&rows[0][0]), "[y]");
         assert_eq!(line(&rows[0][1]), "[z]");
         assert!(rows[0][1][0].math_display && !rows[0][0][0].math_display);
+    }
+
+    /// 時間の上限は設定で変えられ、上限なしにもできる（ほかの試験に響かないよう、上限なしと既定だけを使う）。
+    #[cfg(feature = "math")]
+    #[test]
+    fn the_time_limit_can_be_set() {
+        set_file_time_limit(None);
+        assert_eq!(file_time_limit(), std::time::Duration::MAX);
+        set_file_time_limit(Some(std::time::Duration::from_secs(2)));
+        assert_eq!(file_time_limit(), std::time::Duration::from_secs(2));
+        assert!(FONT_SCALES.contains(&FONT_SCALE) && TIME_LIMITS.contains(&2));
     }
 
     #[test]
@@ -469,21 +583,33 @@ mod tests {
     #[cfg(feature = "math")]
     #[test]
     fn a_file_has_a_limit() {
-        let md: String = (0..MAX_FILE_FORMULAS + 5)
-            .map(|i| format!("$x_{{{i}}}$ "))
-            .collect();
+        // 上限を小さくして、上限を超えた式は描かずに断ることを見る（速さに左右されないように時間は長く）
+        let limits = FileLimits {
+            formulas: 3,
+            time: std::time::Duration::from_secs(600),
+            ..FILE_LIMITS
+        };
+        let jobs: Vec<(String, bool)> = (0..5).map(|i| (format!("x_{{{i}}}"), false)).collect();
+        let results = render_jobs_with(jobs, limits);
+        assert_eq!(results.len(), 5);
+        assert!(results[..3].iter().all(Result::is_ok));
+        assert!(results[3..].iter().all(Result::is_err));
+        // SVG の合計の上限も同じく止める
+        let limits = FileLimits {
+            svg: 1,
+            time: std::time::Duration::from_secs(600),
+            ..FILE_LIMITS
+        };
+        let jobs: Vec<(String, bool)> = (0..3).map(|i| (format!("x_{{{i}}}"), false)).collect();
+        let results = render_jobs_with(jobs, limits);
+        assert!(results[0].is_ok() && results[1..].iter().all(Result::is_err));
+        // Markdown の中の文中の式も、上限を超えた分は原文と理由になる
+        let md: String = (0..5).map(|i| format!("$x_{{{i}}}$ ")).collect();
         let blocks = parse(&md);
         let Block::Paragraph { runs, .. } = &blocks[0] else {
             panic!("{blocks:?}")
         };
-        let maths: Vec<&Run> = runs.iter().filter(|r| r.math_tex.is_some()).collect();
-        assert_eq!(maths.len(), MAX_FILE_FORMULAS + 5);
-        assert!(maths[..MAX_FILE_FORMULAS].iter().all(|r| r.math.is_some()));
-        assert!(
-            maths[MAX_FILE_FORMULAS..]
-                .iter()
-                .all(|r| r.math.is_none() && r.math_error.is_some())
-        );
+        assert_eq!(runs.iter().filter(|r| r.math.is_some()).count(), 5);
     }
 
     #[cfg(feature = "math")]

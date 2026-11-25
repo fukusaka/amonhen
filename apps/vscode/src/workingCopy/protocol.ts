@@ -19,6 +19,8 @@ export type WorkingCopyHostMessage =
    */
   | { type: 'wcDiff'; group: ChangeGroup; diff: FileDiff; whitespace?: DiffWhitespace }
   | { type: 'wcDiff'; group?: undefined; diff: undefined; whitespace?: undefined }
+  /** 選んでいるファイルの差分を読めなかった。差分の場所に理由を出す */
+  | { type: 'wcDiffFailed'; group: ChangeGroup; path: string; error: string }
   /** リポジトリを開いたときのコミット欄の中身（下書き、なければテンプレート） */
   | ({ type: 'wcMessage' } & MessageParts)
   /** 最近のコミットのメッセージ（新しい順。⌥↑・⌥↓ で呼び出す） */

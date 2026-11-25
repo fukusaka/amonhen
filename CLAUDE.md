@@ -25,9 +25,10 @@ Amon Hen（リポジトリは fukusaka/amonhen。もとの名前は amonhen-stan
 - `crates/watch`: リポジトリの変化の検知（notify、デスクトップ向け）
 - `crates/icons`: どの FE も同じ形で描くアイコン。`svg/` の SVG をビルドのときに線のパスに直す（決まりと経緯は `docs/icons.md`）
 - `crates/syntax`: tree-sitter による構文の色付け。文法が C なので、コアの `syntax` フィーチャーで切り離せる
-- `crates/pele`: pele（Obsidian の Mermaid の描き手）の移植。Markdown の図を描く。コアの `diagrams` フィーチャーで、アプリ（FFI・GTK4）だけが入れる
+- `crates/pele`: pele（Obsidian の Mermaid の描き手）の移植。Markdown の図を描く。コアの `diagrams` フィーチャーで、アプリ（FFI・GTK4）と `crates/render` だけが入れる
 - `crates/dot`: Graphviz の DOT の図を描く（自前の実装。Graphviz のコードは使わない。dot 以外の配置は `src/engines/`、公開の論文の手法）。pele の SVG・文字の部品を使い、色は pele と同じ CSS の変数。コアの `diagrams` フィーチャーで入る。集めた DOT を描いて確かめるのは `cargo run --release -p amonhen-dot --example corpus -- <dir>`
-- `crates/math`: Markdown の数式（TeX）を描く。読み取りと組版は RaTeX（`ratex-parser`・`ratex-layout`、版は固定）、SVG は自前で書く（字形は KaTeX のフォントの輪郭、色は CSS の変数 `--math-fg`）。コアの `math` フィーチャーで、アプリ（FFI・GTK4）だけが入れる。測るのは `cargo run --release -p amonhen-math --example corpus -- stress`
+- `crates/math`: Markdown の数式（TeX）を描く。読み取りと組版は RaTeX（`ratex-parser`・`ratex-layout`、版は固定）、SVG は自前で書く（字形は KaTeX のフォントの輪郭、色は CSS の変数 `--math-fg`）。コアの `math` フィーチャーで、アプリ（FFI・GTK4）と `crates/render` だけが入れる。測るのは `cargo run --release -p amonhen-math --example corpus -- stress`
+- `crates/render`: `amonhen-render`（VSCode 拡張の絵の手伝い）。Markdown の図・数式、Android の VectorDrawable の絵、SVG のモバイル向けの確認を作る別の実行ファイル。拡張がエンジンの隣に同梱し、ファイルごとに起動して JSON の行でやりとりする（取り決めは `docs/front.md`）。絵の機能はエンジン（`crates/cli`）には入れない
 - `crates/remote`: daemon との通信（フレーム・要求の形）、手元の `RemoteBackend` と daemon の `Server`
 - `crates/front`: FE 向けの窓口（命令と答えは JSON、大きなデータはレコード。取り決めは `docs/front.md`）。共有の daemon が出し、VSCode 拡張と CLI が使う。同じ処理を同じプロセスでも使える（`InProcess`）
 - `crates/daemon`: daemon（ライブラリ）。エンジンは CLI と 1 つの実行ファイル `amonhen` で、`--stdio <repo>` は SSH 先でリポジトリの git の操作を行い、`--serve` は手元に常駐する共有の daemon（Unix ドメインソケット。アプリ・CLI の `daemon:/path`・`daemon:ssh://host/path` がつなぐ。SSH 先は daemon が `--stdio` でつないで共有する）。配るエンジンは `scripts/build-engine.sh` で作る（darwin-aarch64、musl の linux-x86_64・linux-aarch64、windows-x86_64・windows-aarch64。CI は `.github/workflows/build.yml` で OS と CPU ごとにそのマシンで作り、`scripts/check-engine.sh` で動かして確かめる）。置き場所は `~/.local/share/amonhen`（`amonhen install`・`amonhen engine`、`crates/cli/src/install.rs`）
@@ -44,7 +45,7 @@ Amon Hen（リポジトリは fukusaka/amonhen。もとの名前は amonhen-stan
 - `cargo clippy --workspace --all-targets -- -D warnings`
 - `scripts/build-core.sh && (cd apps/macos && swift test)`
 - 見た目: `apps/macos/.build/debug/AmonHen <repo> --snapshot out.png`、速さ: `--measure-scroll`
-- VSCode 拡張: `cargo build -p amonhen-cli && (cd apps/vscode && npm ci && npm run typecheck && npm test)`
+- VSCode 拡張: `cargo build -p amonhen-cli && cargo build -p amonhen-render && (cd apps/vscode && npm ci && npm run typecheck && npm test)`
 - VSCode 拡張を実際の VSCode で: `(cd apps/vscode && npm run test:e2e)`（Linux で画面がなければ `xvfb-run -a`、Windows の実機に ssh からなら `scripts\e2e-windows.ps1`、画面で見るなら `-Desktop`）
 - GTK4 のアプリ: `(cd apps/gtk4 && cargo fmt --check && cargo clippy --all-targets -- -D warnings)`、見た目: `cargo run --release -- <repo> --snapshot out.png`、速さ: `--measure-scroll`
 - Windows のアプリ（Windows で）: `(cd apps/windows && cargo fmt --check && cargo clippy --all-targets -- -D warnings && cargo test)`

@@ -24,6 +24,7 @@ mod github;
 mod historyedit;
 mod imagediff;
 mod listen;
+mod markdownfind;
 mod markdownview;
 mod measure;
 mod menus;
@@ -368,7 +369,8 @@ impl Session {
         self.dirty = true;
     }
 
-    fn height(&self) -> f32 {
+    /// History の窓の高さ（DIP。まだ描いていなければ 0）。
+    pub fn height(&self) -> f32 {
         self.surface
             .as_ref()
             .map_or(0.0, |s| s.height as f32 / self.scale)

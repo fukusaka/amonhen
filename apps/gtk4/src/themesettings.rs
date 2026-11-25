@@ -286,7 +286,75 @@ pub fn sections() -> Vec<gtk::Box> {
         }
     });
     let (colors, mermaid) = syntax_section();
-    vec![backdrop, colors, mermaid]
+    vec![backdrop, colors, mermaid, math_section()]
+}
+
+/// 数式の欄（式の大きさ・1 つのファイルで描く時間の上限。macOS 版と同じ選択肢）。
+fn math_section() -> gtk::Box {
+    use amonhen_core::math::{FONT_SCALE, FONT_SCALES, TIME_LIMITS};
+    let scale_labels: Vec<String> = FONT_SCALES
+        .iter()
+        .map(|&scale| {
+            let text = format!("{}%", (scale * 100.0).round() as i64);
+            if scale == FONT_SCALE {
+                tr!("{scale} (KaTeX)", scale = text)
+            } else {
+                text
+            }
+        })
+        .collect();
+    let size =
+        gtk::DropDown::from_strings(&scale_labels.iter().map(String::as_str).collect::<Vec<_>>());
+    size.set_valign(gtk::Align::Center);
+    let current = theme::math_scale();
+    size.set_selected(
+        FONT_SCALES
+            .iter()
+            .position(|&s| (s - current).abs() < 1e-9)
+            .unwrap_or(2) as u32,
+    );
+    size.connect_selected_notify(|d| {
+        if let Some(&scale) = FONT_SCALES.get(d.selected() as usize)
+            && (scale - theme::math_scale()).abs() > 1e-9
+        {
+            settings::set_string(theme::MATH_SCALE, &scale.to_string());
+        }
+    });
+    let limit_labels: Vec<String> = TIME_LIMITS
+        .iter()
+        .map(|&s| {
+            if s == 0 {
+                tr!("No limit")
+            } else {
+                tr!("{s} s", s = s)
+            }
+        })
+        .collect();
+    let limit =
+        gtk::DropDown::from_strings(&limit_labels.iter().map(String::as_str).collect::<Vec<_>>());
+    limit.set_valign(gtk::Align::Center);
+    limit.set_selected(
+        TIME_LIMITS
+            .iter()
+            .position(|&s| s == theme::math_time_limit())
+            .unwrap_or(1) as u32,
+    );
+    limit.connect_selected_notify(|d| {
+        if let Some(&seconds) = TIME_LIMITS.get(d.selected() as usize)
+            && seconds != theme::math_time_limit()
+        {
+            settings::set_string(theme::MATH_TIME_LIMIT, &seconds.to_string());
+        }
+    });
+    // Markdown の数式
+    crate::reposettings::section(
+        Some(&tr!("Math")),
+        &[
+            row(&tr!("Formula size"), &size).upcast(),
+            row(&tr!("Time limit per file"), &limit).upcast(),
+            settings::note(&tr!("Formulas past the limit show their TeX.")).upcast(),
+        ],
+    )
 }
 
 /// 構文の色の欄（明るい外観・暗い外観のテーマ、見本、VSCode のテーマの読み込みと、読み込んだものの一覧）と、
@@ -351,8 +419,8 @@ fn syntax_section() -> (gtk::Box, gtk::Box) {
                 diagram.set_model(Some(&gtk::StringList::new(&labels)));
                 *keys.borrow_mut() = new_keys;
             }
-            let current =
-                settings::string(theme::DIAGRAM_COLORS).unwrap_or_else(|| "syntax".into());
+            let current = settings::string(theme::DIAGRAM_COLORS)
+                .unwrap_or_else(|| amonhen_core::diagram::DEFAULT_KEY.into());
             let index = keys
                 .borrow()
                 .iter()
@@ -379,7 +447,10 @@ fn syntax_section() -> (gtk::Box, gtk::Box) {
                     if settings::string(theme::DIAGRAM_COLORS).as_deref()
                         == Some(&format!("{IMPORTED_PREFIX}{name}"))
                     {
-                        settings::set_string(theme::DIAGRAM_COLORS, "syntax");
+                        settings::set_string(
+                            theme::DIAGRAM_COLORS,
+                            amonhen_core::diagram::DEFAULT_KEY,
+                        );
                     }
                     theme::set_imported_mermaid(&themes);
                 });
@@ -400,7 +471,7 @@ fn syntax_section() -> (gtk::Box, gtk::Box) {
             if let Some(key) = key
                 && settings::string(theme::DIAGRAM_COLORS)
                     .as_deref()
-                    .unwrap_or("syntax")
+                    .unwrap_or(amonhen_core::diagram::DEFAULT_KEY)
                     != key
             {
                 settings::set_string(theme::DIAGRAM_COLORS, &key);
@@ -524,9 +595,9 @@ fn syntax_section() -> (gtk::Box, gtk::Box) {
             imported.clone().upcast(),
         ],
     );
-    // Markdown の Mermaid の図
+    // Markdown の図（Mermaid・DOT）
     let mermaid_section = crate::reposettings::section(
-        Some("Mermaid"),
+        Some(&tr!("Diagrams")),
         &[
             row(&tr!("Colors"), &diagram).upcast(),
             diagram_sample.clone().upcast(),
@@ -852,7 +923,7 @@ fn diagram_scheme_label(scheme: amonhen_core::diagram::Scheme) -> String {
     use amonhen_core::diagram::Scheme;
     match scheme {
         Scheme::Syntax => tr!("Syntax colors"),
-        Scheme::Pele => "pele".into(),
+        Scheme::Pele => tr!("Obsidian style"),
         Scheme::Mermaid(None) => tr!("Mermaid (follows the appearance)"),
         Scheme::Mermaid(Some(theme)) => format!("Mermaid {}", theme.name()),
         // 読み込んだテーマは名前で出す（ここには来ない）

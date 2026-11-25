@@ -135,6 +135,8 @@ fn secondary() -> D2D1_COLOR_F {
 const MATCH: D2D1_COLOR_F = rgba(1.0, 0.80, 0.0, 0.22);
 /// 選んだ行の背景（Windows の既定のアクセントの色を薄く）。
 const SELECTION: D2D1_COLOR_F = rgba(0.0, 0.47, 0.84, 0.16);
+/// 編集の境目・運ぶ先の印の色（アクセント）。
+const ACCENT: D2D1_COLOR_F = rgba(0.21, 0.52, 0.89, 1.0);
 /// ref のラベルの色（ローカルブランチは青、リモートブランチは紫、タグは橙。macOS 版・GTK4 版と同じ）。地は薄く、
 /// チェックアウト中のブランチは濃く塗って白い文字にする。
 const LABEL_LOCAL: (f32, f32, f32) = (0.21, 0.52, 0.89);
@@ -688,6 +690,11 @@ impl Renderer {
             self.history = Some(history.clone());
         }
         let count = history.layout.nodes().len() as u32;
+        // History の上で編集しているなら、範囲の行と描くコミットをこの History の行で求める。
+        if let Some(edit) = data.edit.as_mut() {
+            edit.sync(&history);
+            edit.chips.clear();
+        }
         let first = ((scroll_y / row_height()).floor().max(0.0) as u32).min(count);
         let last = (((scroll_y + height) / row_height()).ceil() as u32 + 1).min(count);
         // 前後 1 画面分も読んでおく。
@@ -817,13 +824,27 @@ impl Renderer {
             self.rows_items = history_items();
         }
         for row in first..last {
-            let Some(chunk) = data.chunks.get(&(row / crate::data::CHUNK_ROWS)).cloned() else {
+            // 運んでいる行は空けておく（つかんだ行は指の所に描く）。
+            if data.drag.as_ref().is_some_and(|d| d.moving && d.row == row) {
+                continue;
+            }
+            // History の上で編集しているときは、範囲の行に並べ替えた後のコミットを描く（グラフはそのまま）。
+            let (src, edit_row) = match data.edit.as_ref() {
+                Some(e) => (
+                    e.shown_row(row),
+                    e.slots
+                        .get(&row)
+                        .and_then(|&i| e.marks.rows.get(i).cloned()),
+                ),
+                None => (row, None),
+            };
+            let Some(chunk) = data.chunks.get(&(src / crate::data::CHUNK_ROWS)).cloned() else {
                 continue;
             };
-            if !self.rows.contains_key(&row) {
+            if !self.rows.contains_key(&src) {
                 let made = std::time::Instant::now();
-                let text = self.row_text(&history, &chunk, row)?;
-                self.rows.insert(row, text);
+                let text = self.row_text(&history, &chunk, src)?;
+                self.rows.insert(src, text);
                 stages[2] += made.elapsed().as_secs_f64() * 1000.0;
             }
             let top = row as f32 * row_height() - scroll_y;
@@ -831,7 +852,7 @@ impl Renderer {
             let shown = history_items();
             // GitHub の CI の状態（知っていれば）。行の右端に置き、署名の印とは離す（GTK4 版と同じ）。
             let ci = (shown & items::CI != 0)
-                .then(|| data.ci.get(&history.graph.ids()[row as usize]).copied())
+                .then(|| data.ci.get(&history.graph.ids()[src as usize]).copied())
                 .flatten();
             let text_width = if ci.is_some() {
                 (text_width - CI_SPACE).max(0.0)
@@ -843,11 +864,11 @@ impl Renderer {
             } else {
                 2.0
             };
-            let signed = shown & items::SIGNATURE != 0 && chunk.signed(chunk.index(row));
+            let signed = shown & items::SIGNATURE != 0 && chunk.signed(chunk.index(src));
             let mark_width = if signed { 14.0 } else { 0.0 };
             // 1 行なら、作者・日時を右端に寄せ（GTK4 版の 1 行表示と同じく件名の右）、ラベルと件名はその手前まで。
             let (meta_x, meta_y, subject_right) = unsafe {
-                let meta = &self.rows[&row].meta;
+                let meta = &self.rows[&src].meta;
                 if compact {
                     meta.SetMaxWidth((text_width * 0.5 - mark_width).max(0.0))?;
                     let mut metrics = DWRITE_TEXT_METRICS::default();
@@ -859,14 +880,25 @@ impl Renderer {
                     (text_x, top + 20.0, text_x + text_width)
                 }
             };
+            // 操作の印（git の言葉の札）は、件名の場所の右端に（merge の行には出さない）。
+            let subject_right = match edit_row.as_ref().filter(|r| !r.merge) {
+                Some(r) => {
+                    let w = self.draw_edit_chip(r, subject_right, top + label_top)?;
+                    if let Some(edit) = data.edit.as_mut() {
+                        edit.chips.insert(row, (subject_right - w, subject_right));
+                    }
+                    subject_right - w - 8.0
+                }
+                None => subject_right,
+            };
             // ref のラベルを件名の前に並べる。
             let mut subject_x = text_x;
             // worktree の HEAD の札を先に。
             let labels = data
                 .worktree_labels
-                .get(&row)
+                .get(&src)
                 .into_iter()
-                .chain(data.labels.get(&row))
+                .chain(data.labels.get(&src))
                 .flatten()
                 .filter(|_| shown & items::REFS != 0);
             {
@@ -885,11 +917,22 @@ impl Renderer {
                 }
             }
             // 署名があれば、作者・日時の後ろに検証の結果の色の丸（GTK4 版・macOS 版の印）。
-            let mark = signed.then(|| data.signature_mark(history.graph.ids()[row as usize]));
-            let line = &self.rows[&row];
+            let mark = signed.then(|| data.signature_mark(history.graph.ids()[src as usize]));
+            // 直したメッセージは、その件名を描く。取り消す行は線で消す。まとめる行・取り消す行の件名は薄く。
+            let custom = match edit_row.as_ref() {
+                Some(r) if r.subject.is_some() || r.action == crate::historyedit::Action::Drop => {
+                    Some(self.edited_subject(r, &chunk, src)?)
+                }
+                _ => None,
+            };
+            let faint = edit_row.as_ref().is_some_and(|r| {
+                use crate::historyedit::Action;
+                matches!(r.action, Action::Drop | Action::Squash | Action::Fixup)
+            });
+            let line = &self.rows[&src];
+            let subject = custom.as_ref().unwrap_or(&line.subject);
             unsafe {
-                line.subject
-                    .SetMaxWidth((subject_right - subject_x).max(0.0))?;
+                subject.SetMaxWidth((subject_right - subject_x).max(0.0))?;
                 if let Some(mark) = mark {
                     let mut metrics = DWRITE_TEXT_METRICS::default();
                     line.meta.GetMetrics(&mut metrics)?;
@@ -903,10 +946,11 @@ impl Renderer {
                         &self.brush,
                     );
                 }
-                self.brush.SetColor(&foreground());
+                self.brush
+                    .SetColor(&if faint { secondary() } else { foreground() });
                 self.d2d.DrawTextLayout(
                     point(subject_x, top + if compact { 3.0 } else { 2.0 }),
-                    &line.subject,
+                    subject,
                     &self.brush,
                     D2D1_DRAW_TEXT_OPTIONS_NONE,
                 );
@@ -922,12 +966,319 @@ impl Renderer {
                 self.draw_ci(ci, text_x + text_width + 9.0, top + row_height() / 2.0);
             }
         }
+        self.draw_edit_overlay(data, first..last, scroll_y, width)?;
+        self.draw_drag(data, &history, scroll_y, width, graph_width)?;
         if profiling {
             unsafe { self.d2d.Flush(None, None)? };
         }
         stages[3] = lap(&mut t) - stages[2];
         // 描いた行で頼まれた署名を、裏で検証する。
         data.verify_signatures();
+        Ok(())
+    }
+
+    /// 編集の操作の印（git の言葉の札）を、右端 `right`・上端 `top` に描いて幅を返す。そのままは薄い灰色、取り消すは
+    /// 赤、ほかは濃い色、コンフリクトしそうなら橙（macOS 版の `drawEditChip`、GTK4 版の `draw_edit_chip`）。
+    fn draw_edit_chip(
+        &mut self,
+        row: &crate::historyedit::MarkRow,
+        right: f32,
+        top: f32,
+    ) -> Result<f32> {
+        use crate::historyedit::Action;
+        let (layout, w) = self.label(row.action.name())?;
+        let width = (w + 12.0).round();
+        let fg = foreground();
+        let (fill, ink) = if row.conflict {
+            (rgba(0.96, 0.55, 0.10, 0.85), rgba(1.0, 1.0, 1.0, 1.0))
+        } else {
+            match row.action {
+                Action::Pick => (with_alpha(fg, 0.08), with_alpha(fg, 0.6)),
+                Action::Drop => (rgba(0.90, 0.25, 0.25, 0.8), rgba(1.0, 1.0, 1.0, 1.0)),
+                _ => (with_alpha(fg, 0.7), background()),
+            }
+        };
+        let x = right - width;
+        unsafe {
+            self.brush.SetColor(&fill);
+            self.d2d.FillRoundedRectangle(
+                &D2D1_ROUNDED_RECT {
+                    rect: D2D_RECT_F {
+                        left: x,
+                        top,
+                        right,
+                        bottom: top + LABEL_HEIGHT,
+                    },
+                    radiusX: LABEL_HEIGHT / 2.0,
+                    radiusY: LABEL_HEIGHT / 2.0,
+                },
+                &self.brush,
+            );
+            self.brush.SetColor(&ink);
+            self.d2d.DrawTextLayout(
+                point(x + 6.0, top + 1.0),
+                &layout,
+                &self.brush,
+                D2D1_DRAW_TEXT_OPTIONS_NONE,
+            );
+        }
+        Ok(width)
+    }
+
+    /// 編集で直した件名（直していなければ元の件名）の文字の形。取り消す行は線で消す。
+    fn edited_subject(
+        &self,
+        row: &crate::historyedit::MarkRow,
+        chunk: &Chunk,
+        src: u32,
+    ) -> Result<IDWriteTextLayout> {
+        let text: Vec<u16> = match &row.subject {
+            Some(subject) => subject.encode_utf16().collect(),
+            None => {
+                let mut text = Vec::with_capacity(96);
+                chunk.push_utf16(chunk.subject(chunk.index(src)), &mut text);
+                text
+            }
+        };
+        let layout = unsafe {
+            self.dwrite
+                .CreateTextLayout(&text, &self.subject_format, 10000.0, row_height())?
+        };
+        if row.action == crate::historyedit::Action::Drop {
+            unsafe {
+                layout.SetStrikethrough(
+                    true,
+                    DWRITE_TEXT_RANGE {
+                        startPosition: 0,
+                        length: text.len() as u32,
+                    },
+                )?;
+            }
+        }
+        Ok(layout)
+    }
+
+    /// 編集の範囲の外の行をグラフごと薄くし（上に地の色を重ねる。macOS 版・GTK4 版と同じ）、範囲のいちばん下に
+    /// 境目（下へ引くと広げ、上へ引くと狭める）を引く。
+    fn draw_edit_overlay(
+        &self,
+        data: &Data,
+        rows: std::ops::Range<u32>,
+        scroll_y: f32,
+        width: f32,
+    ) -> Result<()> {
+        let Some(edit) = data.edit.as_ref() else {
+            return Ok(());
+        };
+        let veil = with_alpha(background(), 0.62);
+        unsafe {
+            self.brush.SetColor(&veil);
+            for row in rows.clone().filter(|r| !edit.slots.contains_key(r)) {
+                let top = row as f32 * row_height() - scroll_y;
+                self.d2d.FillRectangle(
+                    &D2D_RECT_F {
+                        left: 0.0,
+                        top,
+                        right: width,
+                        bottom: top + row_height(),
+                    },
+                    &self.brush,
+                );
+            }
+            if let Some(row) = edit.boundary_row().filter(|r| rows.contains(r)) {
+                let y = (row + 1) as f32 * row_height() - scroll_y;
+                self.brush.SetColor(&ACCENT);
+                self.d2d.FillRectangle(
+                    &D2D_RECT_F {
+                        left: 0.0,
+                        top: y - 1.0,
+                        right: width,
+                        bottom: y + 1.0,
+                    },
+                    &self.brush,
+                );
+                self.d2d.FillRoundedRectangle(
+                    &D2D1_ROUNDED_RECT {
+                        rect: D2D_RECT_F {
+                            left: 6.0,
+                            top: y - 4.0,
+                            right: 36.0,
+                            bottom: y + 4.0,
+                        },
+                        radiusX: 4.0,
+                        radiusY: 4.0,
+                    },
+                    &self.brush,
+                );
+            }
+        }
+        Ok(())
+    }
+
+    /// コミットを運んでいる間: 落とせない行を薄くし、行に重ねるならその行を囲み、行の間ならそこに線を引き、つかんだ
+    /// 行を指の所に描く（macOS 版・GTK4 版と同じ）。
+    fn draw_drag(
+        &mut self,
+        data: &Data,
+        history: &HistorySnapshot,
+        scroll_y: f32,
+        width: f32,
+        graph_width: f32,
+    ) -> Result<()> {
+        let Some(drag) = data.drag.as_ref().filter(|d| d.moving) else {
+            return Ok(());
+        };
+        let count = history.layout.nodes().len() as u32;
+        let first = ((scroll_y / row_height()).floor().max(0.0) as u32).min(count);
+        let last = (first + (drag.height / row_height()).ceil() as u32 + 2).min(count);
+        let rect = |row: u32| {
+            let top = row as f32 * row_height() - scroll_y;
+            D2D_RECT_F {
+                left: 0.0,
+                top,
+                right: width,
+                bottom: top + row_height(),
+            }
+        };
+        unsafe {
+            // 編集の外では、編集できる並びの外の行を薄くする（並びを読み終えるまでは薄くしない）。
+            if data.edit.is_none()
+                && let Some(chain) = drag.chain.as_ref()
+            {
+                let ids = history.graph.ids();
+                let movable = ids
+                    .get(drag.row as usize)
+                    .is_some_and(|id| chain.contains(id));
+                self.brush.SetColor(&with_alpha(background(), 0.62));
+                for row in first..last {
+                    if movable && ids.get(row as usize).is_some_and(|id| chain.contains(id)) {
+                        continue;
+                    }
+                    self.d2d.FillRectangle(&rect(row), &self.brush);
+                }
+            }
+            match drag.target {
+                Some((row, true)) => {
+                    let r = rect(row);
+                    self.brush.SetColor(&with_alpha(ACCENT, 0.18));
+                    self.d2d.FillRectangle(&r, &self.brush);
+                    self.brush.SetColor(&ACCENT);
+                    self.d2d.DrawRectangle(
+                        &D2D_RECT_F {
+                            left: r.left + 1.0,
+                            top: r.top + 1.0,
+                            right: r.right - 1.0,
+                            bottom: r.bottom - 1.0,
+                        },
+                        &self.brush,
+                        2.0,
+                        None,
+                    );
+                }
+                Some((row, false)) => {
+                    let y = row as f32 * row_height() - scroll_y;
+                    self.brush.SetColor(&ACCENT);
+                    self.d2d.FillRectangle(
+                        &D2D_RECT_F {
+                            left: graph_width,
+                            top: y - 1.0,
+                            right: width,
+                            bottom: y + 1.0,
+                        },
+                        &self.brush,
+                    );
+                    self.d2d.DrawEllipse(
+                        &D2D1_ELLIPSE {
+                            point: point(graph_width - 4.0, y),
+                            radiusX: 4.0,
+                            radiusY: 4.0,
+                        },
+                        &self.brush,
+                        2.0,
+                        None,
+                    );
+                }
+                None => {}
+            }
+        }
+        // つかんだ行（点・ラベル・件名・作者）を、指の所に浮かせて描く。
+        let src = data.shown_row(drag.row);
+        let Some(text) = self.rows.get(&src) else {
+            return Ok(());
+        };
+        let (subject, meta) = (text.subject.clone(), text.meta.clone());
+        let top = drag.y - drag.offset;
+        let text_x = graph_width + TEXT_INSET;
+        unsafe {
+            let card = D2D_RECT_F {
+                left: 2.0,
+                top,
+                right: width - 2.0,
+                bottom: top + row_height(),
+            };
+            self.brush.SetColor(&with_alpha(background(), 0.95));
+            self.d2d.FillRectangle(&card, &self.brush);
+            self.brush.SetColor(&with_alpha(ACCENT, 0.7));
+            self.d2d.DrawRectangle(&card, &self.brush, 1.0, None);
+            if let Some(node) = history.layout.nodes().get(src as usize) {
+                let x = LEFT_INSET + node.lane as f32 * LANE_WIDTH;
+                self.brush.SetColor(&palette(node.color, 1.0));
+                self.d2d.FillEllipse(
+                    &D2D1_ELLIPSE {
+                        point: point(x.min(graph_width - 6.0), top + row_height() / 2.0),
+                        radiusX: NODE_RADIUS,
+                        radiusY: NODE_RADIUS,
+                    },
+                    &self.brush,
+                );
+            }
+        }
+        let mut x = text_x;
+        let compact = compact();
+        let label_top = if compact {
+            (row_height() - LABEL_HEIGHT) / 2.0
+        } else {
+            2.0
+        };
+        if history_items() & items::REFS != 0 {
+            let labels: Vec<crate::data::RefLabel> = data
+                .worktree_labels
+                .get(&src)
+                .into_iter()
+                .chain(data.labels.get(&src))
+                .flatten()
+                .cloned()
+                .collect();
+            for label in &labels {
+                let (layout, w) = self.label(&label.name)?;
+                let pill = w + LABEL_PADDING * 2.0;
+                if x + pill > text_x + (width - text_x) * LABEL_SHARE {
+                    break;
+                }
+                self.draw_label(label, false, &layout, (x, top + label_top, pill))?;
+                x += pill + LABEL_GAP;
+            }
+        }
+        unsafe {
+            subject.SetMaxWidth((width - TEXT_INSET - x).max(0.0))?;
+            self.brush.SetColor(&foreground());
+            self.d2d.DrawTextLayout(
+                point(x, top + if compact { 3.0 } else { 2.0 }),
+                &subject,
+                &self.brush,
+                D2D1_DRAW_TEXT_OPTIONS_NONE,
+            );
+            if !compact {
+                meta.SetMaxWidth((width - TEXT_INSET - text_x).max(0.0))?;
+                self.brush.SetColor(&secondary());
+                self.d2d.DrawTextLayout(
+                    point(text_x, top + 20.0),
+                    &meta,
+                    &self.brush,
+                    D2D1_DRAW_TEXT_OPTIONS_NONE,
+                );
+            }
+        }
         Ok(())
     }
 
@@ -1224,6 +1575,11 @@ impl Renderer {
                 if let Some(fill) = fill {
                     self.brush.SetColor(&fill);
                     self.d2d.FillRectangle(&rect(0.0, width), &self.brush);
+                }
+                // 選んだ行（Working Copy の差分。macOS 版・GTK4 版の行の選択）。
+                if commit.selection.is_some_and(|s| s.contains(&i)) {
+                    self.brush.SetColor(&SELECTION);
+                    self.d2d.FillRectangle(&rect(left, width), &self.brush);
                 }
             }
             let title = self.header_title(&commit, i);
@@ -1673,6 +2029,7 @@ impl Renderer {
                 None => image::describe(Some(bytes), pixels.as_ref()),
             };
             let bitmap = pixels.as_ref().and_then(|p| self.bitmap(p).ok());
+            let tone = image::tone(&[pixels.as_ref()]);
             self.images.insert(
                 key,
                 ImageEntry {
@@ -1682,6 +2039,7 @@ impl Renderer {
                     after_bitmap: bitmap,
                     caption,
                     difference: None,
+                    tone,
                 },
             );
         }
@@ -1703,6 +2061,8 @@ impl Renderer {
         };
         let size = entry.after.as_ref().map_or((0.0, 0.0), |p| p.size());
         let mut caption = entry.caption.clone();
+        let tone = entry.tone;
+        let dark = image::dark_checker(&view, tone);
         let layout = image::single_layout(width, height);
         unsafe {
             self.d2d
@@ -1719,6 +2079,7 @@ impl Renderer {
                         .as_deref()
                         .and_then(|svg| self.rasterize_svg(svg).ok());
                     let bitmap = pixels.as_ref().and_then(|p| self.bitmap(p).ok());
+                    let tone = image::tone(&[pixels.as_ref()]);
                     self.images.insert(
                         mobile_key,
                         ImageEntry {
@@ -1728,6 +2089,7 @@ impl Renderer {
                             after_bitmap: bitmap,
                             caption: String::new(),
                             difference: None,
+                            tone,
                         },
                     );
                 }
@@ -1762,7 +2124,7 @@ impl Renderer {
                                 .PushAxisAlignedClip(&d2d_rect(area), D2D1_ANTIALIAS_MODE_ALIASED);
                         }
                         let rect = image::fit(size, area, &view);
-                        self.checker(rect);
+                        self.checker(rect, dark);
                         self.draw_bitmap(&bitmap, rect, 1.0);
                         unsafe { self.d2d.PopAxisAlignedClip() };
                     }
@@ -1770,7 +2132,7 @@ impl Renderer {
             }
             None => {
                 let rect = image::fit(size, layout.canvas, &view);
-                self.checker(rect);
+                self.checker(rect, dark);
                 self.draw_bitmap(&bitmap, rect, 1.0);
             }
         }
@@ -1793,6 +2155,7 @@ impl Renderer {
             }
             self.draw_centered(glyph, &icons, r, &foreground())?;
         }
+        self.draw_checker_button(layout.checker, tone, dark)?;
         self.draw_small(
             &caption,
             &self.meta_format.clone(),
@@ -1833,6 +2196,7 @@ impl Renderer {
             );
             let before_bitmap = before.as_ref().and_then(|p| self.bitmap(p).ok());
             let after_bitmap = after.as_ref().and_then(|p| self.bitmap(p).ok());
+            let tone = crate::imagediff::tone(&[before.as_ref(), after.as_ref()]);
             self.images.insert(
                 key,
                 ImageEntry {
@@ -1842,6 +2206,7 @@ impl Renderer {
                     after_bitmap,
                     caption,
                     difference: None,
+                    tone,
                 },
             );
         }
@@ -2063,6 +2428,8 @@ impl Renderer {
         );
         let (before, after) = (entry.before_bitmap.clone(), entry.after_bitmap.clone());
         let mut caption = entry.caption.clone();
+        let tone = entry.tone;
+        let dark = image::dark_checker(&view, tone);
         if mode == Mode::Difference {
             if entry.difference.is_none() {
                 let (pixels, changed, total) =
@@ -2080,6 +2447,7 @@ impl Renderer {
                 caption = image::difference_summary(*changed, *total);
             }
         }
+        self.draw_checker_button(layout.checker, tone, dark)?;
         let canvas = layout.canvas;
         unsafe {
             self.d2d
@@ -2117,7 +2485,7 @@ impl Renderer {
                                     );
                                 }
                                 let rect = image::fit(size, area, &view);
-                                self.checker(rect);
+                                self.checker(rect, dark);
                                 self.draw_bitmap(bitmap, rect, 1.0);
                                 unsafe {
                                     self.brush.SetColor(&color);
@@ -2155,7 +2523,7 @@ impl Renderer {
                 }
                 Mode::Swipe | Mode::Onion => {
                     let rect = image::fit(common, image::overlay_area(canvas), &view);
-                    self.checker(rect);
+                    self.checker(rect, dark);
                     let before_rect = image::fitted(common, before_size, rect);
                     let after_rect = image::fitted(common, after_size, rect);
                     if mode == Mode::Onion {
@@ -2180,7 +2548,7 @@ impl Renderer {
                             self.d2d
                                 .PushAxisAlignedClip(&d2d_rect(left), D2D1_ANTIALIAS_MODE_ALIASED);
                         }
-                        self.checker(rect);
+                        self.checker(rect, dark);
                         if let Some(b) = &before {
                             self.draw_bitmap(b, before_rect, 1.0);
                         }
@@ -2261,17 +2629,23 @@ impl Renderer {
     }
 
     /// 透けたところを見せる市松模様。
-    fn checker(&self, rect: crate::imagediff::Rect) {
+    /// 透けた絵の下の市松模様（`dark` なら暗い 2 色。色はコアの `checker` の、macOS 版・GTK4 版と同じもの）。
+    fn checker(&self, rect: crate::imagediff::Rect, dark: bool) {
+        self.checker_squares(rect, dark, 8.0);
+    }
+
+    fn checker_squares(&self, rect: crate::imagediff::Rect, dark: bool, s: f32) {
         if rect.w <= 0.0 || rect.h <= 0.0 {
             return;
         }
-        let gray = rgba(0.86, 0.86, 0.86, 1.0);
+        use amonhen_core::checker::{DARK, LIGHT};
+        let (a, b) = if dark { DARK } else { LIGHT };
+        let (a, b) = (a as f32, b as f32);
         unsafe {
-            self.brush.SetColor(&rgba(1.0, 1.0, 1.0, 1.0));
+            self.brush.SetColor(&rgba(a, a, a, 1.0));
             self.d2d.FillRectangle(&d2d_rect(rect), &self.brush);
-            self.brush.SetColor(&gray);
+            self.brush.SetColor(&rgba(b, b, b, 1.0));
         }
-        let s = 8.0;
         let (right, bottom) = (rect.x + rect.w, rect.y + rect.h);
         let mut y = rect.y;
         let mut row = 0;
@@ -2294,6 +2668,45 @@ impl Renderer {
             y += s;
             row += 1;
         }
+    }
+
+    /// 帯の市松模様の明暗の切り替え（透けた画素があるときだけ。暗くしている間は押した形）。
+    fn draw_checker_button(
+        &self,
+        r: crate::imagediff::Rect,
+        tone: amonhen_core::checker::Tone,
+        dark: bool,
+    ) -> Result<()> {
+        if !tone.transparent() {
+            return Ok(());
+        }
+        unsafe {
+            self.brush.SetColor(&if dark {
+                rgba(0.21, 0.52, 0.89, 0.35)
+            } else {
+                diff_file()
+            });
+            self.d2d.FillRectangle(&d2d_rect(r), &self.brush);
+        }
+        // 小さな市松模様（3 × 3）を、今の明暗で。
+        let icon = crate::imagediff::Rect {
+            x: r.x + (r.w - 12.0) / 2.0,
+            y: r.y + (r.h - 12.0) / 2.0,
+            w: 12.0,
+            h: 12.0,
+        };
+        self.checker_squares(icon, dark, 4.0);
+        unsafe {
+            self.brush.SetColor(&with_alpha(foreground(), 0.5));
+            self.d2d
+                .DrawRectangle(&d2d_rect(icon), &self.brush, 1.0, None::<&ID2D1StrokeStyle>);
+        }
+        Ok(())
+    }
+
+    /// 市松模様の明暗の既定と、透けた画素があるか（読んだ絵のもの。読んでいなければ None）。
+    pub fn image_tone(&self, key: u64, file: usize) -> Option<amonhen_core::checker::Tone> {
+        self.images.get(&(key, file)).map(|e| e.tone)
     }
 
     /// 点線の枠。
@@ -2847,6 +3260,8 @@ struct ImageEntry {
     after_bitmap: Option<ID2D1Bitmap1>,
     caption: String,
     difference: Option<(Option<ID2D1Bitmap1>, usize, usize)>,
+    /// 絵の明るさ（市松模様の明暗の既定と、透けた画素があるか）。
+    tone: amonhen_core::checker::Tone,
 }
 
 fn d2d_rect(r: crate::imagediff::Rect) -> D2D_RECT_F {

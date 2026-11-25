@@ -82,6 +82,23 @@ History と差分は番号（`history`・`diff`）で持つ。FE がスクロー
 
 `workingDiff` の lineEndings（stage 済みの差分・サブモジュール・消したファイルでは null）: index・worktree・checkout は、それぞれ git に入っている形・作業ツリーのファイル・checkout したときの形の改行で、`none`・`lf`・`crlf`・`mixed` のどれか。rule はかかっている変換で、`git check-attr` と同じ書き方（`text=auto eol=crlf`・`-text`・`core.autocrlf=true`。ない・見せないときは空）。notable は、作業ツリーと git で改行が違うか、warning のとき true。warning は、改行が混ざっているか、作業ツリーが CRLF なのに checkout すると LF になるとき true。差分は両側を git に入れる形で比べるので、こうした違いは変わった行として出ない。FE は notable のとき差分のそばに見せる。
 
+## 絵の手伝い（`amonhen-render`）
+
+エンジンは絵の機能を持たない（[design.md](design.md) の「リポジトリ構成」）。VSCode 拡張は、すべてのファイルの Mermaid・DOT の図・数式・Android の VectorDrawable の絵と SVG のモバイル向けの確認を、`amonhen-render`（`crates/render`）で作る。エンジンの隣に `bin/amonhen-render-<os>-<arch>` として同梱する別の実行ファイルで、Remote-SSH ではエンジンと同じく SSH 先で動く。拡張は見せるファイルごとに、引数なしで `AMONHEN_LANG` に言語を入れて起動し、標準入力に求めを書いて標準出力から答えを読み、最後に入力を閉じる。手伝いは残りに答えて終わる。`amonhen-render --version` は `amonhen-render <版>` を書く。
+
+やりとりはどれも JSON の 1 行（UTF-8）。求めには `id`（どんな JSON の値でもよく、そのまま返る）と `op` があり、まとめて送ってよい。答えは求めた順:
+
+| `op` | 中身 | 答え |
+|---|---|---|
+| `diagram` | language（フェンスの言葉: `mermaid`・`dot`・`graphviz`・`neato` など）・text・from?（Markdown のファイルのリポジトリの根からのパス。DOT の図の画像はそのフォルダから読む）・colors（dark・text・background・kinds: 画面の `#rrggbb` の色。kinds は `keyword` などの構文の種類）・utcOffset?（分、地方時 − UTC。gantt の日付。なければ UTC） | svg（テーマの構文の色か、図の中で指定した Mermaid のテーマで色を当てたもの）と note?（近いもので描いた）、か error（描けないわけ）、かどちらもない（描く図でない: コードとして見せる） |
+| `math` | formulas（tex・display?: 1 つの Markdown のファイルの式を出てくる順に。ファイルごとの上限はアプリと同じ）・color（`#rrggbb`） | formulas: それぞれ svg・width・height・depth（本文の字の大きさ × 1.21 を 1 とする em）か error、かどちらもない（TeX を見せる） |
+| `vectorDrawable` | path（リポジトリの根から）・data（XML の base64）・fallback?（引けない色を描く色） | svg（大きさは dp）・notes |
+| `svgCheck` | data（SVG の base64） | issues（targets・feature・message・count）・approximations（android・ios・flutter・reactNative の SVG の文字列） |
+
+答えは `{"id": …, "ok": true, …}`（上の中身つき）か、求めそのものが失敗したときの `{"id": …, "ok": false, "message": …}`（JSON でない行には `"id": null`）。
+
+手伝いはリポジトリを読まない。図の画像や VectorDrawable の資源が要るときは、問いを書いて答えを待つ。問いはファイルなら `{"ask": n, "read": "path"}`、フォルダなら `{"ask": n, "list": "folder"}`（根は `""`）で、パスは同じコミットのリポジトリの根から。答えは `{"answer": n, "data": "<base64>"}`（ないファイルは `null`）か `{"answer": n, "entries": [{"name": …, "folder": true|false}]}`。問いは 1 つの求めを描く間に 1 つずつ来る。拡張はファイルを git から、フォルダをエンジンの `treeEntries` で読み、1 MB を超える画像はないものとして答える。
+
 ## 版
 
 窓口の形を変えたら `amonhen_front::VERSION` を上げる（`hello` の答えの version で確かめる）。ソケットの名前にはビルドの指紋（`amonhen_remote::BUILD_ID`。ワークスペースのソースのハッシュ）が入るので、ビルドの違う daemon にはつながらない。

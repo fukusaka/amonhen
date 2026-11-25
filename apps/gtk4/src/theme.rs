@@ -25,6 +25,42 @@ pub const IMPORTED_MERMAID_THEMES: &str = "importedMermaidThemes";
 /// gantt の日付を数える時間帯（IANA の名前。空なら OS の時間帯。macOS 版と同じ鍵）。
 pub const GANTT_TIME_ZONE: &str = "ganttTimeZone";
 
+/// Markdown の数式の大きさ（本文の字に対する倍率。macOS 版と同じ鍵）。
+pub const MATH_SCALE: &str = "mathScale";
+/// 1 つの Markdown のファイルで数式を描く時間の上限（秒。0 は上限なし。macOS 版と同じ鍵）。
+pub const MATH_TIME_LIMIT: &str = "mathTimeLimit";
+
+/// 今の数式の大きさ（本文の字に対する倍率。読めなければ既定）。
+pub fn math_scale() -> f64 {
+    settings::string(MATH_SCALE)
+        .and_then(|s| s.parse::<f64>().ok())
+        .filter(|s| s.is_finite() && *s > 0.0)
+        .unwrap_or(amonhen_core::math::FONT_SCALE)
+}
+
+/// 今の、1 つのファイルで数式を描く時間の上限（秒。0 は上限なし）。
+pub fn math_time_limit() -> u64 {
+    settings::string(MATH_TIME_LIMIT)
+        .and_then(|s| s.parse::<u64>().ok())
+        .unwrap_or(2)
+}
+
+/// 数式の時間の上限を設定からコアに渡し、設定を変えたら合わせる（起動したときに一度呼ぶ）。
+pub fn apply_math_time_limit() {
+    let apply = || {
+        let seconds = math_time_limit();
+        amonhen_core::math::set_file_time_limit(
+            (seconds > 0).then(|| std::time::Duration::from_secs(seconds)),
+        );
+    };
+    apply();
+    settings::connect_changed(move |key| {
+        if key == MATH_TIME_LIMIT {
+            apply();
+        }
+    });
+}
+
 /// GLib の時間帯（gantt の日付を数える。pele の描画のスレッドから呼ばれる）。
 struct GlibZone(gtk::glib::TimeZone);
 

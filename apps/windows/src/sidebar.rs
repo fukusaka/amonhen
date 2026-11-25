@@ -19,6 +19,9 @@ thread_local! {
     static EXPAND: std::cell::Cell<bool> = const { std::cell::Cell::new(false) };
     /// 行のツールチップ（項目のキーごと。印の意味など）。`nodes` が作り直す。
     static TIPS: std::cell::RefCell<HashMap<String, String>> = std::cell::RefCell::new(HashMap::new());
+    /// 印のある行（鍵 → 名前と印）。`row_marks`。
+    static ROW_MARKS: std::cell::RefCell<HashMap<String, (String, Vec<RowMark>)>> =
+        std::cell::RefCell::new(HashMap::new());
     /// 取り込み済みのブランチ（名前 → 印のツールチップ）。`branch_rows` が作る間だけ。
     static MERGED: std::cell::RefCell<HashMap<String, String>> = std::cell::RefCell::new(HashMap::new());
 }
@@ -36,46 +39,116 @@ pub enum Mark {
     Checks,
 }
 
-/// `key` の行の文字 `text` にある印と、その位置（UTF-16 の単位で、始まりと長さ）。印は名前の後ろの 2 つの空白の
-/// 後にある（名前の中の同じ字は見ない）。プルリクエストの行だけは、印が番号の前（最初の 2 つの空白の前）にある
-/// （狭いサイドバーでも切れないよう）。
-pub fn marks_in(key: &str, text: &str) -> Vec<(Mark, usize, usize)> {
-    let candidates: &[(&str, Mark)] = match parse_ref_key(key) {
-        Some((kind, _)) if kind == RefKind::Local as u8 => {
-            &[("merged", Mark::Branch), ("gone", Mark::Branch)]
+/// 行の右端の印 1 つ（macOS 版の行の右端のアイコン）。`icon` は Segoe Fluent Icons の字（`None` は雲に斜線）か
+/// 文字、`color` は `#rrggbb`（`None` は薄い灰色）、`tip` はその印のツールチップ。
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct RowMark {
+    pub mark: Option<Mark>,
+    pub icon: Icon,
+    pub color: Option<String>,
+    pub tip: String,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub enum Icon {
+    Glyph(char),
+    /// 雲に斜線（macOS 版の icloud.slash。Segoe Fluent Icons にないので重ねて描く）。
+    CloudSlash,
+    Text(String),
+}
+
+impl Mark {
+    fn key(self) -> &'static str {
+        match self {
+            Self::Branch => "branch",
+            Self::Signature => "signature",
+            Self::TagRemotes => "tagremotes",
+            Self::Checks => "checks",
         }
-        Some((kind, _)) if kind == RefKind::Tag as u8 => &[
-            ("🔏", Mark::Signature),
-            ("🔓", Mark::Signature),
-            ("⚠", Mark::TagRemotes),
-            ("∅", Mark::TagRemotes),
-        ],
-        _ if key.starts_with("pr:") => &[
-            ("✓", Mark::Checks),
-            ("✗", Mark::Checks),
-            ("●", Mark::Checks),
-        ],
-        _ => return Vec::new(),
-    };
-    let Some(gap) = text.find("  ") else {
-        return Vec::new();
-    };
-    let (from, to) = if key.starts_with("pr:") {
-        (0, gap)
-    } else {
-        (gap, text.len())
-    };
-    let units = |s: &str| s.encode_utf16().count();
-    let mut found = Vec::new();
-    // 名前の後ろ（プルリクエストは番号の前）を空白で切った語のうち、印のもの（ref の名前に空白は入らない）。
-    let mut at = from;
-    for word in text[from..to].split(' ') {
-        if let Some((_, mark)) = candidates.iter().find(|(w, _)| *w == word) {
-            found.push((*mark, units(&text[..at]), units(word)));
-        }
-        at += word.len() + 1;
     }
-    found
+
+    /// 行の中身の Tag（`mark:…`）から。
+    pub fn from_tag(tag: &str) -> Option<Self> {
+        match tag.strip_prefix("mark:")? {
+            "branch" => Some(Self::Branch),
+            "signature" => Some(Self::Signature),
+            "tagremotes" => Some(Self::TagRemotes),
+            "checks" => Some(Self::Checks),
+            _ => None,
+        }
+    }
+}
+
+/// 灰色（macOS 版の secondaryLabelColor。明るい外観でも暗い外観でも読める）。
+const SECONDARY: &str = "#8a8a8a";
+
+/// XAML の属性の値に入れる文字（`&`・`<`・`>`・`"`）を逃がす。
+fn escape(text: &str) -> String {
+    text.replace('&', "&amp;")
+        .replace('<', "&lt;")
+        .replace('>', "&gt;")
+        .replace('"', "&quot;")
+}
+
+/// 印のある行の中身（XAML）: 名前（細ければ … で切る）と、右端に寄せた印。押した印は Tag（`mark:…`）で分かる。
+pub fn row_xaml(text: &str, marks: &[RowMark]) -> String {
+    let mut icons = String::new();
+    for m in marks {
+        let color = m.color.as_deref().unwrap_or(SECONDARY);
+        let inner = match &m.icon {
+            Icon::Glyph(c) => format!(
+                r#"<FontIcon Glyph="&#x{:X};" FontSize="13" Foreground="{color}"/>"#,
+                *c as u32
+            ),
+            Icon::CloudSlash => format!(
+                r#"<Grid><FontIcon Glyph="&#xE753;" FontSize="13" Foreground="{color}"/><Line X1="2" Y1="13" X2="13" Y2="2" Stroke="{color}" StrokeThickness="1.3"/></Grid>"#
+            ),
+            Icon::Text(t) => format!(
+                r#"<TextBlock Text="{}" FontSize="12" Foreground="{color}" VerticalAlignment="Center"/>"#,
+                escape(t)
+            ),
+        };
+        let tag = m
+            .mark
+            .map(|k| format!(r#" Tag="mark:{}""#, k.key()))
+            .unwrap_or_default();
+        let tip = if m.tip.is_empty() {
+            String::new()
+        } else {
+            format!(r#" ToolTipService.ToolTip="{}""#, escape(&m.tip))
+        };
+        icons.push_str(&format!(
+            r#"<Border Background="Transparent" Padding="2,0,2,0" VerticalAlignment="Center"{tag}{tip}>{inner}</Border>"#
+        ));
+    }
+    format!(
+        r#"<Grid xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation" HorizontalAlignment="Stretch"><Grid.ColumnDefinitions><ColumnDefinition Width="*"/><ColumnDefinition Width="Auto"/></Grid.ColumnDefinitions><TextBlock Text="{}" TextTrimming="CharacterEllipsis" VerticalAlignment="Center"/><StackPanel Grid.Column="1" Orientation="Horizontal" Spacing="2" Margin="8,0,2,0" VerticalAlignment="Center">{icons}</StackPanel></Grid>"#,
+        escape(text)
+    )
+}
+
+/// 印のある行（鍵 → 名前と印）。木を作るたびに作り直す。行の部品（TreeViewItem）が並んだ後、その中身を
+/// `row_xaml` で作ったものに差し替える（TreeView の項目は文字だけを持つ）。
+pub fn row_marks(key: &str) -> Option<(String, Vec<RowMark>)> {
+    ROW_MARKS.with(|m| m.borrow().get(key).cloned())
+}
+
+/// `node` に印を付ける（印がなければそのまま）。
+fn with_marks(node: TreeNode, key: &str, text: &str, marks: Vec<RowMark>) -> TreeNode {
+    if !marks.is_empty() {
+        ROW_MARKS.with(|m| {
+            m.borrow_mut()
+                .insert(key.to_owned(), (text.to_owned(), marks))
+        });
+    }
+    node
+}
+
+/// 署名の状態の色（`#rrggbb`。History の行の印と同じ。色のないものは灰色）。
+fn status_color(status: crate::signature::Status) -> Option<String> {
+    status
+        .color()
+        .map(|c| format!("#{:02x}{:02x}{:02x}", c.r, c.g, c.b))
 }
 
 /// 項目のツールチップ（GTK4 版の行のツールチップ: 印の意味と、submodule・subtree・タグの様子）。
@@ -249,6 +322,7 @@ pub fn nodes(
         pull_requests,
     } = marks;
     TIPS.with(|t| t.borrow_mut().clear());
+    ROW_MARKS.with(|m| m.borrow_mut().clear());
     let mut history_tips = Vec::new();
     if form.shallow {
         history_tips.push(tr!("Shallow clone: older history isn’t fetched"));
@@ -343,19 +417,38 @@ pub fn nodes(
         let rows = pull_requests.iter().map(|pr| {
             let key = format!("pr:{}", pr.number);
             set_tooltip(&key, vec![pr.tooltip()]);
-            let marks: Vec<&str> = [pr.is_draft.then_some("draft"), Some(pr.ci().mark())]
-                .into_iter()
-                .flatten()
-                .filter(|s| !s.is_empty())
-                .collect();
-            // 印は番号の前に置く（TreeView の行は文字だけで、macOS 版のように右端に寄せた印を置けない。後ろに
-            // 置くと、狭いサイドバーでは件名と一緒に切れて見えなくなる）。
-            let title = if marks.is_empty() {
-                format!("#{} {}", pr.number, pr.title)
-            } else {
-                format!("{}  #{} {}", marks.join(" "), pr.number, pr.title)
+            // 右端の印: draft と CI（✓ 緑・✗ 赤・● 橙。押すとチェックの一覧）。件名は細ければ … で切る。
+            let mut marks = Vec::new();
+            if pr.is_draft {
+                marks.push(RowMark {
+                    mark: None,
+                    icon: Icon::Text("draft".to_owned()),
+                    color: None,
+                    tip: String::new(),
+                });
+            }
+            let ci = pr.ci();
+            let ci_mark = match ci {
+                crate::github::Ci::Passing => Some(('\u{E73E}', "#2b9a45")),
+                crate::github::Ci::Failing => Some(('\u{E711}', "#d03333")),
+                crate::github::Ci::Pending => Some(('\u{EA3B}', "#d96b10")),
+                crate::github::Ci::None => None,
             };
-            TreeNode::new(key, title)
+            if let Some((glyph, color)) = ci_mark {
+                marks.push(RowMark {
+                    mark: Some(Mark::Checks),
+                    icon: Icon::Glyph(glyph),
+                    color: Some(color.to_owned()),
+                    tip: ci.label().to_owned(),
+                });
+            }
+            let title = format!("#{} {}", pr.number, pr.title);
+            with_marks(
+                TreeNode::new(key.clone(), title.clone()),
+                &key,
+                &title,
+                marks,
+            )
         });
         out.push(group("pull-requests", "Pull Requests", rows).expanded(true));
     }
@@ -384,25 +477,38 @@ pub fn nodes(
     let mut tags = Tree::default();
     for e in of(RefKind::Tag) {
         let parts: Vec<&str> = e.name.split('/').collect();
-        // 署名の印（検証できた署名は 🔏、それ以外の署名は 🔓。GTK4 版・macOS 版は状態の色の印）と、リモートの印。
-        let signature = tag_signatures.get(&e.name).map(|(status, _)| {
-            if matches!(status, crate::signature::Status::Verified(_)) {
-                "🔏"
-            } else {
-                "🔓"
-            }
-        });
-        let shown: Vec<&str> = signature
+        // 右端の印: 署名（状態の色の錠）と、リモートの様子（別のタグがある・どのリモートにもない）。macOS 版と同じ。
+        let mut marks: Vec<RowMark> = tag_signatures
+            .get(&e.name)
+            .map(|(status, _)| RowMark {
+                mark: Some(Mark::Signature),
+                icon: Icon::Glyph('\u{E72E}'),
+                color: status_color(*status),
+                tip: status.label().to_owned(),
+            })
             .into_iter()
-            .chain(tag_mark(tag_remotes, &e.name))
             .collect();
+        match tag_mark(tag_remotes, &e.name) {
+            Some("⚠") => marks.push(RowMark {
+                mark: Some(Mark::TagRemotes),
+                icon: Icon::Glyph('\u{E7BA}'),
+                color: Some("#e66100".to_owned()),
+                tip: tag_tooltip(tag_remotes, &e.name).join("\n"),
+            }),
+            Some(_) => marks.push(RowMark {
+                mark: Some(Mark::TagRemotes),
+                icon: Icon::CloudSlash,
+                color: None,
+                tip: tr!("Not on any remote (as of the last fetch)"),
+            }),
+            None => {}
+        }
         set_tooltip(&ref_key(e), tag_tooltip(tag_remotes, &e.name));
-        let title = if shown.is_empty() {
-            parts[parts.len() - 1].to_owned()
-        } else {
-            format!("{}  {}", parts[parts.len() - 1], shown.join(" "))
-        };
-        tags.insert(&parts, TreeNode::new(ref_key(e), title));
+        let name = parts[parts.len() - 1];
+        tags.insert(
+            &parts,
+            with_marks(TreeNode::new(ref_key(e), name), &ref_key(e), name, marks),
+        );
     }
     let tags = tags.into_nodes("tags");
     if !tags.is_empty() {
@@ -596,8 +702,7 @@ fn group(key: &str, title: &str, children: impl IntoIterator<Item = TreeNode>) -
 }
 
 /// ローカルブランチの行の文字。`title` は見せる名前（フォルダの中なら最後の部分）。チェックアウト中なら ✓、
-/// お気に入りなら ★、積んだブランチなら ↳、上流との差（↑ 先にある、↓ 取り込んでいない）、上流がなくなって
-/// いれば gone。
+/// お気に入りなら ★、積んだブランチなら ↳（上流との差は右端の札。`tracking_text`）。
 fn branch_text(e: &RefEntry, title: &str, head: Option<&str>, mark: Option<&str>) -> String {
     let mut text = String::new();
     if head == Some(e.name.as_str()) {
@@ -608,21 +713,62 @@ fn branch_text(e: &RefEntry, title: &str, head: Option<&str>, mark: Option<&str>
         text.push(' ');
     }
     text.push_str(title);
+    text
+}
+
+/// 上流との差の札（`↑2 ↓3`。差がなければ None）。
+fn tracking_text(e: &RefEntry) -> Option<String> {
+    let mut parts = Vec::new();
     if e.ahead > 0 {
-        text.push_str(&format!("  ↑{}", e.ahead));
+        parts.push(format!("↑{}", e.ahead));
     }
     if e.behind > 0 {
-        text.push_str(&format!("  ↓{}", e.behind));
+        parts.push(format!("↓{}", e.behind));
+    }
+    (!parts.is_empty()).then(|| parts.join(" "))
+}
+
+/// ローカルブランチの行（名前と、右端の印: 取り込み済み、上流がなくなった、上流との差。macOS 版と同じく灰色で、
+/// 意味はツールチップ。押すとブランチの様子の吹き出し）。
+fn branch_node(e: &RefEntry, title: &str, head: Option<&str>, mark: Option<&str>) -> TreeNode {
+    let mut marks = Vec::new();
+    // 取り込み済み（既定のブランチ、squash・rebase でマージしたプルリクエスト）。
+    if let Some(tip) = MERGED.with(|m| m.borrow().get(&e.name).cloned()) {
+        set_tooltip(&ref_key(e), vec![tip.clone()]);
+        marks.push(RowMark {
+            mark: Some(Mark::Branch),
+            icon: Icon::Glyph('\u{E8B1}'),
+            color: None,
+            tip,
+        });
     }
     if e.gone {
-        text.push_str("  gone");
+        marks.push(RowMark {
+            mark: Some(Mark::Branch),
+            icon: Icon::CloudSlash,
+            color: None,
+            tip: tr!(
+                "Its upstream {upstream} no longer exists on the remote",
+                upstream = e.detail.clone().unwrap_or_default()
+            ),
+        });
     }
-    // 取り込み済み（既定のブランチ、squash・rebase でマージしたプルリクエスト）。意味はツールチップに。
-    if let Some(tip) = MERGED.with(|m| m.borrow().get(&e.name).cloned()) {
-        text.push_str("  merged");
-        set_tooltip(&ref_key(e), vec![tip]);
+    // 上流との差は右端の札に（macOS 版のバッジと同じく、押すとブランチの様子の吹き出し）。
+    if let Some(counts) = tracking_text(e) {
+        marks.push(RowMark {
+            mark: Some(Mark::Branch),
+            icon: Icon::Text(counts),
+            color: None,
+            tip: String::new(),
+        });
     }
-    text
+    let text = branch_text(e, title, head, mark);
+    with_marks(
+        TreeNode::new(ref_key(e), text.clone()),
+        &ref_key(e),
+        &text,
+        marks,
+    )
 }
 
 /// 名前を `/` で切ったフォルダの木。フォルダは、中で最初に入れた項目の位置に出る。
@@ -682,8 +828,7 @@ fn branch_rows(
         let mut tree = Tree::default();
         for e in list {
             let parts: Vec<&str> = e.name.split('/').collect();
-            let text = branch_text(e, parts[parts.len() - 1], head, None);
-            tree.insert(&parts, TreeNode::new(ref_key(e), text));
+            tree.insert(&parts, branch_node(e, parts[parts.len() - 1], head, None));
         }
         tree.into_nodes("branches")
     };
@@ -775,9 +920,8 @@ fn branch_rows(
             return node;
         };
         node.expanded(true).children(children.iter().map(|child| {
-            let text = branch_text(child, &child.name, head, Some("↳"));
             attach(
-                TreeNode::new(ref_key(child), text),
+                branch_node(child, &child.name, head, Some("↳")),
                 &child.name,
                 stacked,
                 head,
@@ -786,7 +930,7 @@ fn branch_rows(
         }))
     }
     let tree = |e: &RefEntry, mark: Option<&str>| {
-        let node = TreeNode::new(ref_key(e), branch_text(e, &e.name, head, mark));
+        let node = branch_node(e, &e.name, head, mark);
         attach(node, &e.name, &stacked, head, 0)
     };
 
@@ -826,10 +970,7 @@ fn branch_rows(
     let mut active_tree = Tree::default();
     for e in &active {
         let parts: Vec<&str> = e.name.split('/').collect();
-        let node = TreeNode::new(
-            ref_key(e),
-            branch_text(e, parts[parts.len() - 1], head, None),
-        );
+        let node = branch_node(e, parts[parts.len() - 1], head, None);
         active_tree.insert(&parts, attach(node, &e.name, &stacked, head, 0));
     }
     rows.extend(active_tree.into_nodes("branches"));
@@ -855,27 +996,34 @@ fn branch_rows(
 #[cfg(test)]
 mod tests {
     #[test]
-    fn marks_are_found_after_the_name() {
-        let branch = format!("ref:{}:topic", RefKind::Local as u8);
-        assert_eq!(
-            marks_in(&branch, "✓ topic  ↑1  merged"),
-            [(Mark::Branch, 13, 6)]
-        );
-        // 名前の中の同じ語は印ではない。
-        assert_eq!(marks_in(&branch, "merged"), []);
-        let tag = format!("ref:{}:v1", RefKind::Tag as u8);
-        // 🔏 は UTF-16 で 2 つ。
-        assert_eq!(
-            marks_in(&tag, "v1  🔏 ⚠"),
-            [(Mark::Signature, 4, 2), (Mark::TagRemotes, 7, 1)]
-        );
-        // プルリクエストの印は番号の前。件名の中の同じ字は見ない。
-        assert_eq!(
-            marks_in("pr:3", "draft ✗  #3 Fix ✓"),
-            [(Mark::Checks, 6, 1)]
-        );
-        assert_eq!(marks_in("pr:3", "#3 Fix"), []);
-        assert_eq!(marks_in("page:history", "History  merged"), []);
+    fn row_marks_become_xaml() {
+        let marks = vec![
+            RowMark {
+                mark: Some(Mark::Branch),
+                icon: Icon::Glyph('\u{E8B1}'),
+                color: None,
+                tip: "Merged into main".into(),
+            },
+            RowMark {
+                mark: None,
+                icon: Icon::Text("draft".into()),
+                color: Some("#2b9a45".into()),
+                tip: String::new(),
+            },
+            RowMark {
+                mark: Some(Mark::TagRemotes),
+                icon: Icon::CloudSlash,
+                color: None,
+                tip: "a \"b\" <c> & d".into(),
+            },
+        ];
+        let xaml = row_xaml("feat/<x> & \"y\"", &marks);
+        assert!(xaml.contains(r#"Text="feat/&lt;x&gt; &amp; &quot;y&quot;""#));
+        assert!(xaml.contains(r#"Tag="mark:branch""#));
+        assert!(xaml.contains("&#xE8B1;"));
+        assert!(xaml.contains(r#"ToolTipService.ToolTip="a &quot;b&quot; &lt;c&gt; &amp; d""#));
+        assert_eq!(Mark::from_tag("mark:checks"), Some(Mark::Checks));
+        assert_eq!(Mark::from_tag("checks"), None);
     }
 
     use super::*;

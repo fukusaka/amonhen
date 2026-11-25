@@ -1301,10 +1301,10 @@ pub fn backdrop_section(b: &crate::backdrop::Backdrop, callbacks: &BackdropCallb
 fn mermaid_section(callbacks: &Callbacks) -> View {
     let schemes = crate::markdownview::diagram_schemes();
     let current = crate::prefs::string(crate::markdownview::DIAGRAM_COLORS)
-        .unwrap_or_else(|| "syntax".into());
+        .unwrap_or_else(|| amonhen_core::diagram::DEFAULT_KEY.into());
     let selected = schemes.iter().position(|(k, _)| *k == current).unwrap_or(0);
     StackPanel::new().spacing(8.0).children((
-        heading("Mermaid".to_owned()),
+        heading(tr!("Diagrams")),
         StackPanel::new()
             .orientation(Orientation::Horizontal)
             .spacing(12.0)

@@ -9,8 +9,17 @@ becomes the GitHub Release notes.
 
 ### Unreleased
 
+#### Added
+
+- Settings > Theme > Math sets the formula size and the time limit for drawing one file's formulas, or no limit
+  (macOS, GTK4).
+
 #### Changed
 
+- Markdown math finds `$…$` by GitHub's rules: only at the start, after a space or after `(`, and not before a letter,
+  digit or `_`, nor in italics, links or footnotes. So `a$x$b` and `日本語の$x$` stay text, as on GitHub.
+- Diagrams take Mermaid's colors for the appearance by default, closer to GitHub. The setting moved to Settings >
+  Theme > Diagrams, and pele's colors are now called the Obsidian style.
 - The toolbar draws new icons shared by every front end, also used for branches in the sidebar (macOS, GTK4; see `docs/icons.md`).
 
 ### [0.2.15] - 2026-11-25
@@ -49,6 +58,7 @@ checkerboard behind transparent pictures can be switched between light and dark.
   over the ranks above; overlapping arcs get their own heights and other edges keep clear of their labels.
 - DOT diagrams: `splines=ortho` in the dot layout spreads crowded edge ends across more of a node's side, takes the
   outermost ones in from the left and right sides, and moves end lines apart when they would share a line.
+- DOT diagrams: the dot layout orders nodes with fewer edge crossings.
 
 #### Changed
 
@@ -1323,6 +1333,8 @@ First release.
 
 #### Added
 
+- All Files draws Mermaid and DOT diagrams and math in formatted Markdown, and Android VectorDrawables as pictures with a
+  Text switch, in the theme's colors, with a drawing helper bundled next to the engine (`amonhen-render`).
 - The Working Copy diff can ignore whitespace (at line ends, changes in amount or all), with the engine. Lines and
   hunks aren't staged or discarded meanwhile.
 - The commit details show the tags on the commit and the tags a merge took in, with their tagger, subject and
@@ -1348,6 +1360,8 @@ First release.
 - In the edit mode, p, r, s, f, d and e choose the selected row's action, and dragging the line under the rows takes in
   older commits or leaves out the oldest unchanged ones, as in the app.
 - Markdown math (` ```math `, `$$…$$`, `$…$`) shows as its TeX code, with the engine.
+- Transparent pictures get a light or dark checkerboard chosen from their colors, with a button to switch it, and ⌘F
+  (Ctrl+F) finds in All Files' formatted Markdown, key caps and table cells included, as in the app.
 
 #### Changed
 
@@ -1379,6 +1393,9 @@ First release.
 - The sidebar follows the app in the small things: Copy Branch / Tag Name, menus for several tags, tags in `/`
   folders, only groups with rows, flat filter results, Open Worktree for a branch checked out elsewhere, and a
   confirmation before Prune or a push by dragging.
+- The Working Copy follows the app in the small things: List at first and "File Name", the file menu's Stage, Discard…
+  or Delete File…, both .gitignore items, Reveal and Open File, no question before discarding lines, a commit with only
+  a description, "Amend Commit", diff errors in the pane, and Take Current / Incoming File.
 
 #### Changed
 

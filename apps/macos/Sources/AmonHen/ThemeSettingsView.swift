@@ -118,10 +118,10 @@ struct SyntaxThemeSection: View {
             }
         }
         // Markdown の Mermaid の図（配色・gantt の時間帯・読み込んだテーマ）。
-        Section("Mermaid") {
+        Section(L("Diagrams")) {
             Picker(L("Colors"), selection: $model.diagramColors) {
                 Text(L("Syntax colors")).tag("syntax")
-                Text("pele").tag("pele")
+                Text(L("Obsidian style")).tag("pele")
                 Text(L("Mermaid (follows the appearance)")).tag("mermaid")
                 ForEach(["default", "neutral", "dark", "forest", "base"], id: \.self) { name in
                     Text("Mermaid \(name)").tag("mermaid-\(name)")
@@ -144,7 +144,7 @@ struct SyntaxThemeSection: View {
                     Spacer()
                     Button(L("Remove")) {
                         model.importedMermaidThemes[name] = nil
-                        if model.diagramColors == "mermaid-import:\(name)" { model.diagramColors = "syntax" }
+                        if model.diagramColors == "mermaid-import:\(name)" { model.diagramColors = "mermaid" }
                     }
                 }
             }
@@ -164,6 +164,26 @@ struct SyntaxThemeSection: View {
                 .fixedSize()
             }
         }
+        // Markdown の数式
+        Section(L("Math")) {
+            Picker(L("Formula size"), selection: $model.mathScale) {
+                ForEach(MarkdownBlock.Formula.fontScales, id: \.self) { scale in
+                    Text(Self.percent(scale)).tag(scale)
+                }
+            }
+            Picker(L("Time limit per file"), selection: $model.mathTimeLimit) {
+                ForEach(MarkdownBlock.Formula.timeLimits, id: \.self) { seconds in
+                    Text(seconds == 0 ? L("No limit") : L("%ld s", seconds)).tag(seconds)
+                }
+            }
+            Note(L("Formulas past the limit show their TeX."))
+        }
+    }
+
+    /// 本文の字に対する倍率（`1.21` → 「121%」）。既定には KaTeX と添える。
+    private static func percent(_ scale: Double) -> String {
+        let text = "\(Int((scale * 100).rounded()))%"
+        return scale == MarkdownBlock.Formula.fontScale ? L("%@ (KaTeX)", text) : text
     }
 
     @ViewBuilder private func options(dark: Bool) -> some View {
