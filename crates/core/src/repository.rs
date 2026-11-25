@@ -381,19 +381,29 @@ impl Repository {
             return Ok(());
         }
         if let Some(current) = self.history.load_full() {
-            let graph = topo::reorder(&current.graph, order);
-            let head_row = Self::head_row(&graph, current.head);
-            let layout = graph::layout(&graph, head_row);
-            let snapshot = self.publish(
-                current.tips.clone(),
-                current.shallow.clone(),
-                current.head,
-                graph,
-                layout,
-            );
-            self.schedule_cache(snapshot, order);
+            self.publish_reordered(&current, order);
         }
         Ok(())
+    }
+
+    /// 公開している History `current` を `order` に並べ直して公開する。
+    fn publish_reordered(
+        &self,
+        current: &HistorySnapshot,
+        order: HistoryOrder,
+    ) -> Arc<HistorySnapshot> {
+        let graph = topo::reorder(&current.graph, order);
+        let head_row = Self::head_row(&graph, current.head);
+        let layout = graph::layout(&graph, head_row);
+        let snapshot = self.publish(
+            current.tips.clone(),
+            current.shallow.clone(),
+            current.head,
+            graph,
+            layout,
+        );
+        self.schedule_cache(snapshot.clone(), order);
+        snapshot
     }
 
     fn head_row(graph: &CommitGraph, head: Option<Oid>) -> Option<u32> {
@@ -745,6 +755,12 @@ impl Repository {
         };
         let snapshot = self.publish(tips, shallow, head, graph, layout);
         self.schedule_cache(snapshot.clone(), order);
+        // 読んでいる間に並び順を替えられた: `set_history_order` はまだ公開していない History を並べ直せないので、
+        // ここで今の順に並べ直す（替えたのが公開の後なら、`set_history_order` が並べ直す）。
+        let now = self.history_order();
+        if now != order {
+            return Ok(self.publish_reordered(&snapshot, now));
+        }
         Ok(snapshot)
     }
 

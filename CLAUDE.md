@@ -23,6 +23,7 @@ Amon Hen（リポジトリは fukusaka/amonhen。もとの名前は amonhen-stan
 - `crates/platform`: `Platform` トレイト
 - `crates/backend-gix`: gix による `GitBackend`
 - `crates/watch`: リポジトリの変化の検知（notify、デスクトップ向け）
+- `crates/icons`: どの FE も同じ形で描くアイコン。`svg/` の SVG をビルドのときに線のパスに直す（決まりと経緯は `docs/icons.md`）
 - `crates/syntax`: tree-sitter による構文の色付け。文法が C なので、コアの `syntax` フィーチャーで切り離せる
 - `crates/pele`: pele（Obsidian の Mermaid の描き手）の移植。Markdown の図を描く。コアの `diagrams` フィーチャーで、アプリ（FFI・GTK4）と `crates/render` だけが入れる
 - `crates/dot`: Graphviz の DOT の図を描く（自前の実装。Graphviz のコードは使わない。dot 以外の配置は `src/engines/`、公開の論文の手法）。pele の SVG・文字の部品を使い、色は pele と同じ CSS の変数。コアの `diagrams` フィーチャーで入る。集めた DOT を描いて確かめるのは `cargo run --release -p amonhen-dot --example corpus -- <dir>`

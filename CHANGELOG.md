@@ -30,6 +30,7 @@ becomes the GitHub Release notes.
   picture's own size (macOS, GTK4, Windows).
 - Markdown previews decode all of HTML5's named character references (such as `&rarr;` or `&NotEqualTilde;`), and
   the old names without `;` (`&copy`, `&amp`) by HTML's rules, where they were limited to 27 common ones.
+- The toolbar draws new icons shared by every front end, also used for branches in the sidebar (macOS, GTK4; see `docs/icons.md`).
 - Fences named after a Graphviz engine, such as ` ```neato `, stay code, as on GitHub; ` ```dot `, ` ```graphviz `
   and ` ```gv ` are drawn, and `layout` still picks the engine.
 - DOT diagrams follow Graphviz's defaults: unfilled nodes and clusters stay transparent, cluster titles take the text
@@ -37,6 +38,11 @@ becomes the GitHub Release notes.
   ports, edges into a cluster cross its title, and invisible HTML-like tables and cells aren't drawn.
 - DOT diagrams note under the picture when a large graph's layout or edge routing is cut short at its work limit,
   and when its longest edges are drawn straight.
+
+#### Fixed
+
+- Exporting chosen folders as an archive in a partial clone fetches only the contents it asked about, not every missing
+  file of the commit (git 2.41 or later; older git fetches them all, and the question now counts them all).
 
 ### [0.2.15] - 2026-11-25
 
@@ -75,6 +81,7 @@ checkerboard behind transparent pictures can be switched between light and dark.
 - DOT diagrams: `splines=ortho` in the dot layout spreads crowded edge ends across more of a node's side, takes the
   outermost ones in from the left and right sides, and moves end lines apart when they would share a line.
 - DOT diagrams: the dot layout orders nodes with fewer edge crossings.
+- DOT diagrams: edges to record fields and compass ports in the dot layout use the same smooth curves as other edges.
 
 #### Changed
 
@@ -1381,6 +1388,7 @@ First release.
 
 #### Changed
 
+- The sidebar's title buttons and branch rows draw the icons shared by every front end (see `docs/icons.md`).
 - Copy Short ID copies 8 characters, as the app does.
 - The sidebar's in-progress row says what is being done where and the step, and why it stopped with what to do next
   (the commit, conflicts, a failed exec, a stop to edit), as the app's band does (with the engine); a revert has no
@@ -1425,6 +1433,8 @@ First release.
 
 #### Fixed
 
+- Exporting chosen folders as an archive in a partial clone fetches only the contents it asked about (with the
+  engine, git 2.41 or later).
 - Starting VSCode no longer reports that a Copy Short IDs menu item has no title.
 - Restoring the version before a commit that renamed a file brings back the old name instead of only deleting the new
   one, and Restore This Version isn't offered for a file the commit deleted.

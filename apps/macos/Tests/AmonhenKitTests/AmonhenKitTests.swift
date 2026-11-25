@@ -398,3 +398,20 @@ private func makeRepo() throws -> URL {
     #expect(kinds.contains(UInt8(AmonhenDiffRow_REMOVED)) && kinds.contains(UInt8(AmonhenDiffRow_ADDED)))
     #expect((0..<view.rowCount).map { view.text(row: $0) }.contains("+five"))
 }
+
+@Test func sharedIconsBecomePaths() throws {
+    // Pull はリモートの線・矢の軸・矢じり・コミットの丸の 4 本。丸は閉じたパス。
+    let pull = try #require(SharedIcons.strokes("pull"))
+    #expect(pull.count == 4)
+    for stroke in pull {
+        let box = stroke.path.boundingBox
+        #expect(box.minX >= 0 && box.maxX <= SharedIcons.grid && box.minY >= 0 && box.maxY <= SharedIcons.grid)
+    }
+    // Rebase の前の位置は点（破線）。
+    #expect(try #require(SharedIcons.strokes("rebase")).contains { !$0.dash.isEmpty })
+    #expect(SharedIcons.strokes("no-such-icon") == nil)
+    #expect(SharedIcons.strokeWidth == 1.5)
+    // 画素に合わせた線: 1 倍・太さ 1 なら Fetch の矢の軸（縦の線）は画素の中心（x = 8.5）。
+    let fetch = try #require(SharedIcons.strokes("fetch", size: 16, scale: 1, stroke: 1))
+    #expect(fetch[1].path.boundingBox.minX == 8.5)
+}

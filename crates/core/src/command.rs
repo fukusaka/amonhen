@@ -8593,7 +8593,9 @@ mod tests {
             &repo,
             r#"{"op":"archiveContents","rev":"HEAD~2","paths":["docs"]}"#,
         );
-        assert_eq!(need["info"]["count"], 1, "{need}");
+        // git 2.41 より前は、フォルダを選んでも git archive が tree の中身をすべて取るので、すべてを数える。
+        let narrows = amonhen_backend_cli::git_version().is_none_or(|(a, b, _)| (a, b) >= (2, 41));
+        assert_eq!(need["info"]["count"], if narrows { 1 } else { 2 }, "{need}");
         assert_eq!(
             run(&repo, r#"{"op":"archiveContents","rev":"HEAD"}"#)["info"]["count"],
             0
@@ -8611,6 +8613,65 @@ mod tests {
             run(&repo, r#"{"op":"archiveContents","rev":"HEAD~2"}"#)["info"]["count"],
             0
         );
+    }
+
+    /// フォルダを選んで書き出すときは、そのフォルダの中身と上の `.gitattributes` だけを取る（git 2.41 から。それより
+    /// 古い git は、git archive がコミットの tree の中身をすべて取るので、すべてを数えて取る）。
+    #[test]
+    fn fetches_only_the_chosen_folders_for_an_archive_in_a_partial_clone() {
+        let tmp = tempfile::tempdir().unwrap();
+        let src = tmp.path().join("src");
+        std::fs::create_dir(&src).unwrap();
+        git(&src, &["init", "-q"]);
+        std::fs::create_dir_all(src.join("docs")).unwrap();
+        std::fs::create_dir_all(src.join("other")).unwrap();
+        std::fs::write(src.join(".gitattributes"), "docs/skip.txt export-ignore\n").unwrap();
+        std::fs::write(src.join("a.txt"), "a").unwrap();
+        std::fs::write(src.join("docs/d.txt"), "d").unwrap();
+        std::fs::write(src.join("docs/skip.txt"), "skip").unwrap();
+        std::fs::write(src.join("other/o.txt"), "o").unwrap();
+        git(&src, &["add", "."]);
+        git(&src, &["commit", "-q", "-m", "c"]);
+        git(&src, &["config", "uploadpack.allowFilter", "true"]);
+        git(&src, &["config", "uploadpack.allowAnySHA1InWant", "true"]);
+        // 取り出さないので、5 つの中身はどれも手元にない。
+        git(
+            tmp.path(),
+            &[
+                "clone",
+                "-q",
+                "--no-checkout",
+                "--filter=blob:none",
+                &file_url_of(&src),
+                "partial",
+            ],
+        );
+        let dir = tmp.path().join("partial");
+        let repo = Repository::new(GixBackend::open(&dir).unwrap());
+        let missing =
+            || run(&repo, r#"{"op":"archiveContents","rev":"HEAD"}"#)["info"]["count"].clone();
+        assert_eq!(missing(), 5);
+
+        let narrows = amonhen_backend_cli::git_version().is_none_or(|(a, b, _)| (a, b) >= (2, 41));
+        let need = run(
+            &repo,
+            r#"{"op":"archiveContents","rev":"HEAD","paths":["docs"]}"#,
+        );
+        assert_eq!(need["info"]["count"], if narrows { 3 } else { 5 }, "{need}");
+
+        let file = tmp.path().join("docs.tar");
+        let r = run(
+            &repo,
+            &serde_json::json!({
+                "op": "archive", "rev": "HEAD", "format": "tar", "paths": ["docs"], "file": file,
+            })
+            .to_string(),
+        );
+        assert_eq!(r["ok"], true, "{r}");
+        // 属性は、選んだフォルダの外にある .gitattributes からもこれまでどおり読む。
+        assert_eq!(tar_list(&file, false), ["docs/d.txt"]);
+        // 数えたもののほかは取っていない。
+        assert_eq!(missing(), if narrows { 2 } else { 0 });
     }
 
     /// `file://` の URL（Windows は file:///C:/…）。

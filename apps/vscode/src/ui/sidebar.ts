@@ -5,6 +5,7 @@
 import { daemonFor } from '../daemon/connection.ts';
 import { sequenceDetail, sequenceTitle, type SequenceInfo } from '../state/sequenceText.ts';
 import * as vscode from 'vscode';
+import { sharedIcon } from './sharedIcons.ts';
 import type { Sequence } from '../git/backend.ts';
 import type { Ref, Remote, Stash } from '../git/refs.ts';
 import { splitRemoteRef } from '../git/refs.ts';
@@ -845,10 +846,15 @@ function branchItem(node: Extract<Node, { kind: 'branch' }>, other?: Worktree, f
     if (node.pinned && node.stackedOn) parts.push(`↳ ${node.stackedOn}`);
   }
   item.description = parts.join(' ') || undefined;
-  item.iconPath = new vscode.ThemeIcon(
-    ref.isHead ? 'check' : node.pinned ? 'star-full' : 'git-branch',
-    other && !other.main ? new vscode.ThemeColor('charts.green') : undefined,
-  );
+  // ブランチはどの FE でも同じ形のアイコン（ほかの worktree が checkout していれば緑）。今のブランチ・お気に入りは
+  // まだ codicon。
+  const elsewhere = !!other && !other.main;
+  item.iconPath =
+    (!ref.isHead && !node.pinned && sharedIcon('branch', elsewhere)) ||
+    new vscode.ThemeIcon(
+      ref.isHead ? 'check' : node.pinned ? 'star-full' : 'git-branch',
+      elsewhere ? new vscode.ThemeColor('charts.green') : undefined,
+    );
   const lines = [shortName(ref.name)];
   if (ref.upstream) lines.push(`upstream: ${ref.upstream.replace(/^refs\/remotes\//, '')}`);
   lines.push(`${ref.oid.slice(0, 8)}  ${ref.subject}`);

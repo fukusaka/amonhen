@@ -19,6 +19,7 @@ amonhen-backend-gix = { path = "crates/backend-gix" }
 amonhen-backend-cli = { path = "crates/backend-cli" }
 amonhen-ffi-c = { path = "crates/ffi-c" }
 amonhen-watch = { path = "crates/watch" }
+amonhen-icons = { path = "crates/icons" }
 amonhen-pele = { path = "crates/pele" }
 amonhen-math = { path = "crates/math" }
 amonhen-dot = { path = "crates/dot" }

@@ -1,0 +1,29 @@
+title	Amon Hen's shared icons — what each shape means
+legend	Rules (16×16 grid, 1.5 strokes, round ends and joins, one color: the text color)
+key	circle	circle = a commit
+key	line	top line = the remote
+key	arrow	arrow = which way it moves
+key	dot	dots = not there yet / before
+head	Talking to the remote	One skeleton (top line = remote, circle = local commit), four variations
+icon	fetch	Fetch	An arrow comes down from the remote but doesn't reach a local commit: fetching moves no local branch.
+icon	pull	Pull	The arrow reaches the local commit: fetch and bring it in. The circle is the only difference from Fetch.
+icon	push	Push	An arrow rises from the local commit to the remote: Pull upside down.
+icon	publish	Publish	Push with a dotted remote: there is no upstream yet.
+head	Branches	vertical line = trunk, circle = commit
+icon	branch	Branch	A branch leaves the trunk for a commit; the circle at the root shows it starts at a commit.
+icon	new-branch	New Branch	Branch with a + instead of the tip's circle: a branch about to be made.
+icon	merge	Merge	Branch turned upside down: a line from the right comes back into the trunk, and the circle on top is the merge commit. It pairs with Branch.
+icon	rebase	Rebase	A branch and its commit on top of the trunk, with dots where the branch used to start: its base moved up the trunk.
+head	Stash	a drawer = where things are put away
+icon	stash	Stash	An arrow into a drawer with a handle: put the changes away. Unlike a generic download mark.
+icon	pop	Pop	An arrow out of the drawer: take them back out. Pairs with Stash.
+head	Window and tools	Familiar shapes read fastest, so these stay conventional
+icon	sidebar	Sidebar	A window with a divider on the left: show or hide the left column.
+icon	repositories	Repositories	Books on a shelf: the library of repositories.
+icon	activity	Activity	A pulse trace: what runs in the background, and its log.
+icon	refresh	Refresh	An almost full circle with an arrow.
+icon	undo	Undo	An arrow back to the left that curls down: undo one step. Not circled, so it doesn't stand out in the toolbar.
+icon	search	Search	A magnifying glass.
+icon	terminal	Terminal	>_ in a window.
+icon	editor	Editor	</>: the tool for editing code.
+icon	files	Files	A sheet with a folded corner: one file.

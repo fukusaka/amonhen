@@ -187,6 +187,12 @@ pub enum Kind {
     Checkerboard,
     /// arrow.turn.down.left（差分の長い行を折り返す）
     WrapLines,
+    /// 共通のアイコンの repositories（Repositories の画面）
+    Repositories,
+    /// 共通のアイコンの new-branch
+    NewBranch,
+    /// 共通のアイコンの editor（エディタで開く）
+    Editor,
 }
 
 mod imp {
@@ -238,11 +244,22 @@ mod imp {
             } else if obj.has_css_class("caution") {
                 // 黄色（署名は正しいが、鍵の信用度が決まっていないなど）。
                 gdk::RGBA::new(0.85, 0.68, 0.0, 1.0)
+            } else if shared(self.kind.get()).is_some() {
+                // 共通のアイコンは文字の色のまま（Adwaita の記号のアイコンと同じ濃さ）。
+                fg
             } else {
                 gdk::RGBA::new(fg.red(), fg.green(), fg.blue(), fg.alpha() * 0.7)
             };
             let size = self.size();
-            if size != SIZE {
+            if let Some(name) = shared(self.kind.get()) {
+                draw_shared(
+                    snapshot,
+                    name,
+                    &color,
+                    size as f32,
+                    obj.scale_factor() as f32,
+                );
+            } else if size != SIZE {
                 let scale = size as f32 / SIZE as f32;
                 snapshot.save();
                 snapshot.scale(scale, scale);
@@ -348,14 +365,112 @@ pub fn draw_at(
         center.x() - size / 2.0,
         center.y() - size / 2.0,
     ));
+    if let Some(name) = shared(kind) {
+        draw_shared(snapshot, name, color, size, 1.0);
+        snapshot.restore();
+        return;
+    }
     let scale = size / SIZE as f32;
     snapshot.scale(scale, scale);
     draw(snapshot, kind, color);
     snapshot.restore();
 }
 
+/// 共通のアイコン（`amonhen-icons`、どの FE でも同じ形）で描く種類と、その名前。まだツールバーの分だけ。
+fn shared(kind: Kind) -> Option<&'static str> {
+    Some(match kind {
+        Kind::Sidebar => "sidebar",
+        Kind::Repositories => "repositories",
+        Kind::Branch => "branch",
+        Kind::NewBranch => "new-branch",
+        Kind::Fetch => "fetch",
+        Kind::Pull => "pull",
+        Kind::Push => "push",
+        Kind::Publish => "publish",
+        Kind::Merge => "merge",
+        Kind::Rebase => "rebase",
+        Kind::StashPush => "stash",
+        Kind::StashPop => "pop",
+        Kind::Activity => "activity",
+        Kind::Refresh => "refresh",
+        Kind::Undo => "undo",
+        Kind::Search => "search",
+        Kind::Terminal => "terminal",
+        Kind::Editor => "editor",
+        _ => return None,
+    })
+}
+
+/// 共通のアイコンの線の太さ（16px のとき）。Adwaita の記号のアイコンの線（2px）に合わせる。ほかの大きさでは
+/// 大きさに比べて同じ割合。
+const SHARED_STROKE: f32 = 2.0;
+
+thread_local! {
+    /// 作ったパス（名前・大きさ・画素の細かさごとに 1 度だけ作る）。
+    #[allow(clippy::type_complexity)]
+    static SHARED_PATHS: std::cell::RefCell<
+        std::collections::HashMap<(&'static str, u32, u32), Vec<(gsk::Path, Vec<f32>)>>,
+    > = Default::default();
+}
+
+/// 共通のアイコン `name` を、左上を原点に一辺 `size` px で線で引く。縦・横の線は画素（`scale` は画面の倍率）に
+/// 合わせる（`amonhen_icons::Icon::strokes`）。
+fn draw_shared(
+    snapshot: &gtk::Snapshot,
+    name: &'static str,
+    color: &gdk::RGBA,
+    size: f32,
+    scale: f32,
+) {
+    let Some(icon) = amonhen_icons::get(name) else {
+        return;
+    };
+    let width = SHARED_STROKE * size / SIZE as f32;
+    SHARED_PATHS.with_borrow_mut(|paths| {
+        let strokes = paths
+            .entry((name, size.to_bits(), scale.to_bits()))
+            .or_insert_with(|| {
+                icon.strokes(size, scale, width)
+                    .into_iter()
+                    .map(|s| (path_of(&s.segments), s.dash))
+                    .collect()
+            });
+        let stroke = gsk::Stroke::new(width);
+        stroke.set_line_cap(gsk::LineCap::Round);
+        stroke.set_line_join(gsk::LineJoin::Round);
+        for (path, dash) in strokes.iter() {
+            stroke.set_dash(dash);
+            snapshot.append_stroke(path, &stroke, color);
+        }
+    });
+}
+
+/// `amonhen_icons` の列（移動・直線・ベジェ・閉じる）を GSK のパスに。
+fn path_of(segments: &[f32]) -> gsk::Path {
+    let p = gsk::PathBuilder::new();
+    let mut i = 0;
+    while let Some(op) = segments
+        .get(i)
+        .and_then(|&c| amonhen_icons::Op::from_code(c))
+    {
+        let c = &segments[i + 1..i + 1 + op.arity()];
+        match op {
+            amonhen_icons::Op::Move => p.move_to(c[0], c[1]),
+            amonhen_icons::Op::Line => p.line_to(c[0], c[1]),
+            amonhen_icons::Op::Cubic => p.cubic_to(c[0], c[1], c[2], c[3], c[4], c[5]),
+            amonhen_icons::Op::Close => p.close(),
+        }
+        i += 1 + op.arity();
+    }
+    p.to_path()
+}
+
 /// 16×16 の中に描く。
 fn draw(snapshot: &gtk::Snapshot, kind: Kind, color: &gdk::RGBA) {
+    if let Some(name) = shared(kind) {
+        draw_shared(snapshot, name, color, SIZE as f32, 1.0);
+        return;
+    }
     let p = gsk::PathBuilder::new();
     let point = |x: f32, y: f32| graphene::Point::new(x, y);
     let mut fill = None;
@@ -363,6 +478,25 @@ fn draw(snapshot: &gtk::Snapshot, kind: Kind, color: &gdk::RGBA) {
     let mut knock: Option<gsk::PathBuilder> = None;
     match kind {
         Kind::None => return,
+        // 共通のアイコンで描く（上の `shared`）。
+        Kind::Sidebar
+        | Kind::Repositories
+        | Kind::Branch
+        | Kind::NewBranch
+        | Kind::Fetch
+        | Kind::Pull
+        | Kind::Push
+        | Kind::Publish
+        | Kind::Merge
+        | Kind::Rebase
+        | Kind::StashPush
+        | Kind::StashPop
+        | Kind::Activity
+        | Kind::Refresh
+        | Kind::Undo
+        | Kind::Search
+        | Kind::Terminal
+        | Kind::Editor => return,
         Kind::WorkingCopy => {
             // 鉛筆。
             p.move_to(3.0, 13.0);
@@ -391,16 +525,6 @@ fn draw(snapshot: &gtk::Snapshot, kind: Kind, color: &gdk::RGBA) {
             p.move_to(8.0, 5.5);
             p.line_to(8.0, 8.0);
             p.line_to(10.0, 9.3);
-        }
-        Kind::Branch => {
-            // 幹と、合流してくる枝。
-            p.add_circle(&point(5.0, 3.5), 1.6);
-            p.add_circle(&point(5.0, 12.5), 1.6);
-            p.add_circle(&point(11.0, 4.5), 1.6);
-            p.move_to(5.0, 5.1);
-            p.line_to(5.0, 10.9);
-            p.move_to(11.0, 6.1);
-            p.cubic_to(11.0, 9.0, 5.0, 8.0, 5.0, 10.9);
         }
         Kind::Remote => {
             // 地球。
@@ -523,18 +647,6 @@ fn draw(snapshot: &gtk::Snapshot, kind: Kind, color: &gdk::RGBA) {
             hub.add_circle(&point(8.0, 9.6), 1.1);
             fill = Some(hub);
         }
-        Kind::Terminal => {
-            // 角の丸い窓と、中の「>_」。
-            p.add_rounded_rect(&gsk::RoundedRect::from_rect(
-                graphene::Rect::new(2.0, 3.0, 12.0, 10.0),
-                1.8,
-            ));
-            p.move_to(4.6, 6.0);
-            p.line_to(6.6, 8.0);
-            p.line_to(4.6, 10.0);
-            p.move_to(8.0, 10.2);
-            p.line_to(11.0, 10.2);
-        }
         Kind::QuestionSquare => {
             // 点線の四角（辺ごとに 2 本）と、中の「?」。
             for (x0, y0, x1, y1) in [
@@ -556,87 +668,6 @@ fn draw(snapshot: &gtk::Snapshot, kind: Kind, color: &gdk::RGBA) {
             let dot = gsk::PathBuilder::new();
             dot.add_circle(&point(8.0, 11.2), 0.75);
             fill = Some(dot);
-        }
-        Kind::Fetch | Kind::Pull | Kind::Push => {
-            p.add_circle(&point(8.0, 8.0), 6.3);
-            let (top, bottom) = match kind {
-                Kind::Pull => (4.3, 9.6),
-                _ => (4.5, 11.5),
-            };
-            if kind == Kind::Push {
-                p.move_to(8.0, 11.5);
-                p.line_to(8.0, 4.5);
-                p.move_to(5.5, 7.0);
-                p.line_to(8.0, 4.5);
-                p.line_to(10.5, 7.0);
-            } else {
-                p.move_to(8.0, top);
-                p.line_to(8.0, bottom);
-                p.move_to(5.5, bottom - 2.5);
-                p.line_to(8.0, bottom);
-                p.line_to(10.5, bottom - 2.5);
-            }
-            if kind == Kind::Pull {
-                p.move_to(5.0, 11.8);
-                p.line_to(11.0, 11.8);
-            }
-        }
-        Kind::Merge => {
-            // 2 本が合流して 1 本になる。
-            p.move_to(4.0, 2.5);
-            p.line_to(4.0, 5.0);
-            p.cubic_to(4.0, 8.0, 8.0, 8.0, 8.0, 11.0);
-            p.line_to(8.0, 14.0);
-            p.move_to(12.0, 2.5);
-            p.line_to(12.0, 5.0);
-            p.cubic_to(12.0, 8.0, 8.0, 8.0, 8.0, 11.0);
-            p.move_to(9.8, 4.3);
-            p.line_to(12.0, 2.3);
-            p.line_to(14.2, 4.3);
-        }
-        Kind::Rebase => {
-            // 枝を幹の先へ載せ替える。
-            p.move_to(4.5, 14.0);
-            p.line_to(4.5, 2.5);
-            p.move_to(11.5, 14.0);
-            p.line_to(11.5, 9.0);
-            p.cubic_to(11.5, 6.0, 8.0, 5.0, 6.0, 4.0);
-            p.move_to(6.5, 6.6);
-            p.line_to(5.6, 3.8);
-            p.line_to(8.5, 3.0);
-        }
-        Kind::StashPush | Kind::StashPop => {
-            p.move_to(2.5, 9.0);
-            p.line_to(2.5, 13.5);
-            p.line_to(13.5, 13.5);
-            p.line_to(13.5, 9.0);
-            p.move_to(2.5, 9.0);
-            p.line_to(5.5, 9.0);
-            p.line_to(6.5, 10.5);
-            p.line_to(9.5, 10.5);
-            p.line_to(10.5, 9.0);
-            p.line_to(13.5, 9.0);
-            if kind == Kind::StashPush {
-                p.move_to(8.0, 1.8);
-                p.line_to(8.0, 7.5);
-                p.move_to(5.8, 5.3);
-                p.line_to(8.0, 7.5);
-                p.line_to(10.2, 5.3);
-            } else {
-                p.move_to(8.0, 7.5);
-                p.line_to(8.0, 1.8);
-                p.move_to(5.8, 4.0);
-                p.line_to(8.0, 1.8);
-                p.line_to(10.2, 4.0);
-            }
-        }
-        Kind::Refresh => {
-            // 右上を開けた円と、その端の矢じり。
-            p.move_to(13.0, 8.0);
-            p.svg_arc_to(5.0, 5.0, 0.0, true, true, 9.5, 3.2);
-            p.move_to(9.0, 1.2);
-            p.line_to(11.2, 3.4);
-            p.line_to(8.8, 5.4);
         }
         Kind::List | Kind::Tree => {
             let indent = if kind == Kind::Tree { 3.0 } else { 0.0 };
@@ -797,19 +828,6 @@ fn draw(snapshot: &gtk::Snapshot, kind: Kind, color: &gdk::RGBA) {
             p.move_to(8.0, 11.2);
             p.line_to(8.0, 11.3);
         }
-        Kind::Sidebar => {
-            p.add_rect(&graphene::Rect::new(2.5, 3.5, 11.0, 9.0));
-            p.move_to(6.5, 3.5);
-            p.line_to(6.5, 12.5);
-        }
-        Kind::Publish => {
-            cloud(&p);
-            p.move_to(8.0, 11.0);
-            p.line_to(8.0, 6.8);
-            p.move_to(6.3, 8.5);
-            p.line_to(8.0, 6.8);
-            p.line_to(9.7, 8.5);
-        }
         Kind::Scissors => {
             // 2 つの輪と、交わる 2 本の刃。
             p.add_circle(&point(4.5, 11.5), 2.0);
@@ -877,11 +895,6 @@ fn draw(snapshot: &gtk::Snapshot, kind: Kind, color: &gdk::RGBA) {
             p.line_to(11.5, 8.0);
             p.move_to(6.5, 11.5);
             p.line_to(9.5, 11.5);
-        }
-        Kind::Search => {
-            p.add_circle(&point(6.8, 6.8), 4.3);
-            p.move_to(10.0, 10.0);
-            p.line_to(13.8, 13.8);
         }
         Kind::WrapLines => {
             // 右上から下りて左へ曲がる矢印（改行の印）。
@@ -1069,16 +1082,6 @@ fn draw(snapshot: &gtk::Snapshot, kind: Kind, color: &gdk::RGBA) {
             p.move_to(5.0, 8.0);
             p.line_to(11.0, 8.0);
         }
-        Kind::Activity => {
-            // 心電図の波形。
-            p.move_to(1.5, 8.5);
-            p.line_to(4.5, 8.5);
-            p.line_to(6.0, 4.0);
-            p.line_to(8.5, 13.0);
-            p.line_to(10.5, 6.0);
-            p.line_to(11.5, 8.5);
-            p.line_to(14.5, 8.5);
-        }
         Kind::Warning => {
             // 角を丸めない三角と、中の「!」。
             p.move_to(8.0, 2.2);
@@ -1207,16 +1210,6 @@ fn draw(snapshot: &gtk::Snapshot, kind: Kind, color: &gdk::RGBA) {
             p.move_to(6.5, 7.7);
             p.line_to(9.5, 7.7);
         }
-        Kind::Undo => {
-            p.add_circle(&point(8.0, 8.0), 6.3);
-            p.move_to(10.8, 11.0);
-            p.line_to(10.8, 8.0);
-            p.svg_arc_to(2.4, 2.4, 0.0, false, false, 6.0, 8.0);
-            p.line_to(6.0, 10.0);
-            p.move_to(4.3, 8.4);
-            p.line_to(6.0, 10.2);
-            p.line_to(7.7, 8.4);
-        }
         Kind::ExpandVertical | Kind::CompressVertical => {
             // 真ん中の四角と、上下の矢印（開くなら外向き、畳むなら内向き）。
             p.add_rounded_rect(&gsk::RoundedRect::from_rect(
@@ -1310,4 +1303,37 @@ fn shield(p: &gsk::PathBuilder) {
     p.quad_to(2.8, 12.2, 2.8, 7.6);
     p.line_to(2.8, 3.8);
     p.close();
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// 共通のアイコンで描く種類は、どれも `amonhen-icons` にある（ないと何も描かれない）。
+    #[test]
+    fn shared_icons_exist() {
+        for kind in [
+            Kind::Sidebar,
+            Kind::Repositories,
+            Kind::Branch,
+            Kind::NewBranch,
+            Kind::Fetch,
+            Kind::Pull,
+            Kind::Push,
+            Kind::Publish,
+            Kind::Merge,
+            Kind::Rebase,
+            Kind::StashPush,
+            Kind::StashPop,
+            Kind::Activity,
+            Kind::Refresh,
+            Kind::Undo,
+            Kind::Search,
+            Kind::Terminal,
+            Kind::Editor,
+        ] {
+            let name = shared(kind).unwrap();
+            assert!(amonhen_icons::get(name).is_some(), "{name}");
+        }
+    }
 }
