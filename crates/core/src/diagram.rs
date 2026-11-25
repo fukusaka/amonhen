@@ -208,6 +208,9 @@ fn approximation_note(notes: &[amonhen_dot::Note]) -> String {
                 amonhen_model::tr!("unknown layout engines are drawn with the dot layout")
             }
             Note::LayoutOptions => amonhen_model::tr!("some layout options are approximated"),
+            Note::WorkLimit => {
+                amonhen_model::tr!("the layout and edge routing are cut short at their work limit")
+            }
         })
         .collect();
     amonhen_model::tr!(

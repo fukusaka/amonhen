@@ -260,6 +260,8 @@ pub fn solve(n: usize, edges: &[Edge], x: &mut [i64], max_iter: usize) {
     let mut search_from = 0usize;
     // 値の変わらない入れ替えが続けば止める（それ以上はほとんど良くならない）
     let mut flat = 0usize;
+    // 入れ替えの上限まで使い切ったら（まだ良くなるかもしれない）、打ち切ったと記す
+    let mut finished = false;
     for _ in 0..max_iter {
         // 切断の値が負の木の辺
         let m = edges.len();
@@ -272,7 +274,10 @@ pub fn solve(n: usize, edges: &[Edge], x: &mut [i64], max_iter: usize) {
                 break;
             }
         }
-        let Some(leave) = leave else { break };
+        let Some(leave) = leave else {
+            finished = true;
+            break;
+        };
         let le = edges[leave];
         // 木を切ったときの尾の側（根を含まないほう）を決める
         let (tail_side, flip) = if tree.lim[le.tail] > tree.lim[le.head] {
@@ -294,10 +299,14 @@ pub fn solve(n: usize, edges: &[Edge], x: &mut [i64], max_iter: usize) {
                 }
             }
         }
-        let Some((slack, enter)) = best else { break };
+        let Some((slack, enter)) = best else {
+            finished = true;
+            break;
+        };
         if slack == 0 {
             flat += 1;
             if flat > STALL {
+                finished = true;
                 break;
             }
         } else {
@@ -327,6 +336,9 @@ pub fn solve(n: usize, edges: &[Edge], x: &mut [i64], max_iter: usize) {
                 x[v] = x[e.tail] + e.minlen;
             }
         }
+    }
+    if !finished && (0..edges.len()).any(|i| tree.in_tree[i] && tree.cut[i] < -1e-9) {
+        crate::cut_short();
     }
 }
 

@@ -66,6 +66,23 @@ pub enum Note {
     OtherLayouts,
     /// 配置の属性のうち、近いもので済ませたもの（`overlap=compress`・`mode=hier`・`model=circuit` など）。
     LayoutOptions,
+    /// 配置・線の道筋を手間の上限で打ち切った（単体法の入れ替え、力・stress の回数、circo の入れ替え、重なりの
+    /// 押し離し、線の避け・直角の線の溝分けなど）。
+    WorkLimit,
+}
+
+thread_local! {
+    static CUT_SHORT: std::cell::Cell<bool> = const { std::cell::Cell::new(false) };
+}
+
+/// 配置・道筋を手間の上限で打ち切ったことを記す（描く間に `Note::WorkLimit` の注記になる）。
+pub(crate) fn cut_short() {
+    CUT_SHORT.with(|c| c.set(true));
+}
+
+/// 打ち切ったか（記しを消す）。
+pub(crate) fn take_cut_short() -> bool {
+    CUT_SHORT.with(|c| c.replace(false))
 }
 
 impl Note {
@@ -79,6 +96,7 @@ impl Note {
             Note::ColorSchemes => "unknown color schemes are drawn in the default color",
             Note::OtherLayouts => "unknown layout engines are drawn with the dot layout",
             Note::LayoutOptions => "some layout options are approximated",
+            Note::WorkLimit => "the layout and edge routing are cut short at their work limit",
         }
     }
 }

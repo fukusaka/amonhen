@@ -345,6 +345,8 @@ pub fn render(
     images: Option<&image::Loader>,
 ) -> String {
     let g = &model.attrs;
+    // 手間の上限で打ち切ったかは、配置・道筋の中で記し、最後に注記にする
+    crate::take_cut_short();
     let mut ctx = Ctx {
         model,
         notes,
@@ -2168,6 +2170,9 @@ pub fn render(
     let options = amonhen_pele::RenderOptions::default();
     let acc = Accessible::default();
     let _ = ctx.model;
+    if crate::take_cut_short() {
+        ctx.notes.insert(Note::WorkLimit);
+    }
     svg_document("dot", width, height, FONT_SIZE, &options, &acc, &content)
 }
 

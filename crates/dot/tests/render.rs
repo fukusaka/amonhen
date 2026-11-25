@@ -629,6 +629,10 @@ fn notes_approximations() {
     );
     // 大きさの属性は黙って無視する
     assert!(notes("digraph { size=\"4,4\"; ratio=fill; dpi=300; rotate=90; a }").is_empty());
+    // 見本の大きさの図は、手間の上限で打ち切らない
+    for (name, src) in SAMPLES {
+        assert!(!notes(src).contains(&Note::WorkLimit), "{name}");
+    }
 }
 
 #[test]
@@ -686,6 +690,14 @@ fn draws_big_graphs_in_time() {
         let started = std::time::Instant::now();
         let d = render(&format!("digraph {{ layout={engine}; {body} }}")).unwrap();
         assert!(d.svg.len() < amonhen_dot::MAX_OUTPUT);
+        // 手間の上限で打ち切った配置は注記する（dot は単体法の入れ替え、neato は stress の回数、fdp は力の回数）
+        if matches!(engine, "dot" | "neato" | "fdp") {
+            assert!(
+                d.notes.contains(&Note::WorkLimit),
+                "{engine}: {:?}",
+                d.notes
+            );
+        }
         assert!(
             started.elapsed() < std::time::Duration::from_secs(10),
             "{engine}"

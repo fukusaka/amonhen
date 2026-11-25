@@ -2519,3 +2519,4 @@
 "unknown color schemes are drawn in the default color" = "知らない配色の色は既定の色";
 "unknown layout engines are drawn with the dot layout" = "知らない配置は dot の配置";
 "some layout options are approximated" = "配置の属性の一部は近いもの";
+"the layout and edge routing are cut short at their work limit" = "配置と線の道筋は手間の上限で打ち切り";

@@ -256,6 +256,7 @@ impl Obstacles {
             return false;
         }
         if self.work == 0 {
+            crate::cut_short();
             return true;
         }
         let Some(ids) = self.query(b) else {
@@ -347,6 +348,9 @@ impl Obstacles {
                 _ => i += 1,
             }
         }
+        if self.work == 0 && i + 1 < points.len() {
+            crate::cut_short();
+        }
     }
 }
 
@@ -413,7 +417,11 @@ pub fn ortho_free(a: P, b: P, ha: P, hb: P, obstacles: &mut Obstacles, skip: &[u
     }
     // どれも当たるなら、間のノード・題の脇を通る Z（真ん中の線を箱の外へずらしたもの）。両端のノードの外にある所
     // だけ。手間の上限が尽きたら試さない
-    if best.as_ref().is_some_and(|(h, _)| *h > 0) && obstacles.work > 0 && obstacles.around > 0 {
+    let blocked = best.as_ref().is_some_and(|(h, _)| *h > 0);
+    if blocked && (obstacles.work == 0 || obstacles.around == 0) {
+        crate::cut_short();
+    }
+    if blocked && obstacles.work > 0 && obstacles.around > 0 {
         let bb = [a.0.min(b.0), a.1.min(b.1), a.0.max(b.0), a.1.max(b.1)];
         obstacles.around = obstacles.around.saturating_sub(obstacles.cells(bb));
         let between = obstacles.overlapping(bb, skip);
@@ -443,6 +451,7 @@ pub fn ortho_free(a: P, b: P, ha: P, hb: P, obstacles: &mut Obstacles, skip: &[u
         }
         for c in more {
             if obstacles.around == 0 {
+                crate::cut_short();
                 break;
             }
             for w in c.windows(2) {
@@ -621,10 +630,11 @@ pub fn ortho_free_all(edges: &[FreeEdge], obstacles: &mut Obstacles) -> Vec<Vec<
     let mut work = NUDGE_WORK;
     for i in 0..mids.len() {
         for j in i + 1..mids.len() {
-            if mids[j].vertical != mids[i].vertical
-                || mids[j].at - mids[i].at >= CHANNEL
-                || work == 0
-            {
+            if mids[j].vertical != mids[i].vertical || mids[j].at - mids[i].at >= CHANNEL {
+                break;
+            }
+            if work == 0 {
+                crate::cut_short();
                 break;
             }
             work -= 1;
@@ -1609,6 +1619,9 @@ fn separate(
         if !moved {
             break;
         }
+    }
+    if work == 0 {
+        crate::cut_short();
     }
 }
 
