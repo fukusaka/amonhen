@@ -557,6 +557,30 @@ const float *amonhen_icon_shape(const char *name,
                                 uintptr_t *dash_len);
 
 /**
+ * 共通のアイコン `name` を、一辺 `size`（描く単位）の正方形に太さ `stroke` で描く線。縦・横の線は画素
+ * （`pixel_scale` は描く単位あたりの画素の数）に合わせてある（`amonhen_icons::Icon::strokes`）。返す列は
+ * `[線の数, (列の長さ, 破線の長さの数, 列…, 破線…) × 線の数]`（列は `amonhen_icon_shape` と同じ形、座標は描く単位）
+ * で、長さを `len` に入れる。`amonhen_icon_strokes_free` で解放する。ないアイコンなら NULL。
+ *
+ * # Safety
+ * `name` は NUL 終わりの文字列、`len` は書けること。
+ */
+float *amonhen_icon_strokes(const char *name,
+                            float size,
+                            float pixel_scale,
+                            float stroke,
+                            uintptr_t *len);
+
+/**
+ * `amonhen_icon_strokes` が返した列を解放する。
+ *
+ * # Safety
+ * `ptr` と `len` は `amonhen_icon_strokes` が返したものであること（NULL なら何もしない）。
+ */
+void amonhen_icon_strokes_free(float *ptr,
+                               uintptr_t len);
+
+/**
  * 共通のアイコンの線の太さ（16×16 の格子の単位）。
  */
 float amonhen_icon_stroke_width(void);

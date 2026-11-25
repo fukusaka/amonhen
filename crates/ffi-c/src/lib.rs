@@ -419,6 +419,47 @@ pub unsafe extern "C" fn amonhen_icon_shape(
     shape.segments.as_ptr()
 }
 
+/// 共通のアイコン `name` を、一辺 `size`（描く単位）の正方形に太さ `stroke` で描く線。縦・横の線は画素
+/// （`pixel_scale` は描く単位あたりの画素の数）に合わせてある（`amonhen_icons::Icon::strokes`）。返す列は
+/// `[線の数, (列の長さ, 破線の長さの数, 列…, 破線…) × 線の数]`（列は `amonhen_icon_shape` と同じ形、座標は描く単位）
+/// で、長さを `len` に入れる。`amonhen_icon_strokes_free` で解放する。ないアイコンなら NULL。
+///
+/// # Safety
+/// `name` は NUL 終わりの文字列、`len` は書けること。
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn amonhen_icon_strokes(
+    name: *const c_char,
+    size: f32,
+    pixel_scale: f32,
+    stroke: f32,
+    len: *mut usize,
+) -> *mut f32 {
+    let Some(icon) = (unsafe { icon(name) }) else {
+        return std::ptr::null_mut();
+    };
+    let strokes = icon.strokes(size, pixel_scale, stroke);
+    let mut out = vec![strokes.len() as f32];
+    for s in &strokes {
+        out.extend([s.segments.len() as f32, s.dash.len() as f32]);
+        out.extend(&s.segments);
+        out.extend(&s.dash);
+    }
+    let out = out.into_boxed_slice();
+    unsafe { *len = out.len() };
+    Box::into_raw(out) as *mut f32
+}
+
+/// `amonhen_icon_strokes` が返した列を解放する。
+///
+/// # Safety
+/// `ptr` と `len` は `amonhen_icon_strokes` が返したものであること（NULL なら何もしない）。
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn amonhen_icon_strokes_free(ptr: *mut f32, len: usize) {
+    if !ptr.is_null() {
+        drop(unsafe { Box::from_raw(std::ptr::slice_from_raw_parts_mut(ptr, len)) });
+    }
+}
+
 /// 共通のアイコンの線の太さ（16×16 の格子の単位）。
 #[unsafe(no_mangle)]
 pub extern "C" fn amonhen_icon_stroke_width() -> f32 {
