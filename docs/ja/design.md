@@ -502,7 +502,8 @@ rebase と History の編集（reword・squash・fixup・drop・edit・split・m
 - パッチと同じく、ファイルはコアが動く機械に書く: バックエンドは `git archive` の中身（標準出力）を返し、コアが
   書く（`{"op":"archive"}`）。daemon 越しや SSH 先では中身を 1 つのフレームで返すので、1 GB を超えるアーカイブは
   送る前に断り、フォルダを選ぶか、リポジトリのある所で git archive を使うよう言う。
-- partial clone では、`git archive` は手元にない中身を 1 つずつ取りに行く。バックエンドが先に取らずに数え
+- partial clone では、`git archive` は手元にない中身を自分で取りに行く。git 2.33 からは、選んだパスによらず
+  コミットの木全体の手元にない中身をまとめて取り、それより前は 1 つずつ取る。バックエンドが先に取らずに数え
   （`rev-list --objects --missing=print --no-walk <rev>` でそのコミットの木の手元にない blob、`ls-tree -r` で選んだ
   フォルダに絞る）、アプリが取る前に確かめ（`{"op":"archiveContents"}`。50,000 まで数える）、バックエンドがまとめて
   取る（`fetch --filter=blob:none --stdin`。差分のときと同じ。git 2.29 から。それより前は git が 1 つずつ取る）。
