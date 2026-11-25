@@ -13,6 +13,7 @@ crate-type = ["staticlib", "rlib"]
 amonhen-backend-cli.workspace = true
 amonhen-backend-gix.workspace = true
 amonhen-core.workspace = true
+amonhen-icons.workspace = true
 amonhen-layout.workspace = true
 amonhen-model = { workspace = true, features = ["serde"] }
 amonhen-watch.workspace = true
