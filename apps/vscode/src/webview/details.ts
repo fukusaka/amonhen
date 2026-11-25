@@ -14,6 +14,8 @@ import type {
   PairMode,
   Person,
   SelectionView,
+  CommitSummaryView,
+  DetailsStyle,
   TagView,
   TreeEntry,
 } from '../history/protocol.ts';
@@ -107,6 +109,23 @@ export function setDetailsLayout(next: DetailsLayout): void {
   for (const apply of panes) apply(layout);
 }
 
+/** コミット情報の見せ方（簡潔・標準・詳細）。拡張ホストが覚え、すべての詳細の欄で同じにする */
+let style: DetailsStyle = 'standard';
+const restylers = new Set<() => void>();
+
+export function setDetailsStyle(next: DetailsStyle): void {
+  if (next === style) return;
+  style = next;
+  for (const restyle of restylers) restyle();
+}
+
+/** 表示の設定で選んだこと（高さを中身に合わせ直す・コミット情報だけを表示する）を、見えている詳細の欄に */
+const viewActions = new Set<(action: 'fit' | 'expand') => void>();
+
+export function detailsViewAction(action: 'fit' | 'expand'): void {
+  for (const act of viewActions) act(action);
+}
+
 /** 右クリックの Show Whole File: そのコミットを出している欄が、ファイル全体を頼む */
 const wholeFiles = new Set<(oid: string, path: string) => void>();
 
@@ -171,6 +190,24 @@ export function createDetailsPane(onParent?: (oid: string) => void, images = fal
   let diffObserver: IntersectionObserver | undefined;
   /** 出している詳細の作者などの並び（後から署名・子のコミットを足す） */
   let meta: HTMLElement | undefined;
+  /** 出している詳細と、届いた残り（見せ方を変えたら出し直す） */
+  let shownDetails: { d: CommitDetails; next?: DiffChoices } | undefined;
+  let shownExtras: DetailsExtras | undefined;
+  restylers.add(() => {
+    if (!shownDetails || shownDetails.d.oid !== shownOid) return;
+    const extras = shownExtras;
+    renderHead(shownDetails.d);
+    if (extras) showExtras(extras);
+  });
+  viewActions.add((action) => {
+    if (!root.isConnected || root.offsetParent === null) return;
+    if (action === 'fit') {
+      updateState({ detailsHeadHeight: undefined });
+      head.style.height = '';
+    } else {
+      head.querySelector<HTMLElement>('.expand-details')?.click();
+    }
+  });
   /** 差分を並べる枠と、その中身（見せ方を変えたら並べ直す） */
   let diffs: HTMLElement | undefined;
   /** 木で畳んだフォルダ（パス。見せ方を変えても、同じコミットのうちは保つ） */
@@ -288,9 +325,43 @@ export function createDetailsPane(onParent?: (oid: string) => void, images = fal
     const reopen = d.oid === shownOid ? openPaths() : [];
     shownOid = d.oid;
     choices = next;
+    shownDetails = { d, ...(next ? { next } : {}) };
+    shownExtras = undefined;
+    renderHead(d);
+    fileSections(d.oid, d.files, true, d.oid);
+    reopenFiles(reopen);
+    if (focus) {
+      const file = sections.get(focus);
+      if (file) {
+        file.chosen = true;
+        setCollapsed(file, false);
+        request(file);
+        file.section.scrollIntoView({ block: 'start' });
+      }
+    }
+  }
+
+  /**
+   * コミット情報の欄（見せ方による。アプリと同じ）。簡潔: 作者・日時・ref・親の 1 行と件名。標準: 作者・ID・署名・
+   * タグと本文。詳細: さらに子・HEAD からの道・含むブランチとタグ・前のタグ・push 済みか・取り込んだコミット・関係する
+   * コミット
+   */
+  function renderHead(d: CommitDetails): void {
     const [subject = '', ...rest] = d.message.replace(/\n+$/, '').split('\n');
     const body = rest.join('\n').replace(/^\n+/, '');
 
+    if (style === 'brief') {
+      const line = el('div', 'brief-line');
+      line.append(person(d.author.name, ''), `  ${formatDate(d.author.date)}`);
+      for (const ref of d.refs) line.append('  ', el('span', `ref ${ref.kind}${ref.current ? ' current' : ''}`, ref.name));
+      if (d.parents.length > 0) line.append(d.parents.length > 1 ? '  Parents ' : '  Parent ', commitLinks(d.parents));
+      const title = el('div', 'subject');
+      title.append(...richText(subject));
+      meta = undefined;
+      place([expandButton(), line, title]);
+      head.dataset.vscodeContext = JSON.stringify({ webviewSection: 'commitDetails', oid: d.oid, ...options.context?.(d.oid) });
+      return;
+    }
     const title = el('div', 'subject');
     for (const ref of d.refs) {
       title.append(el('span', `ref ${ref.kind}${ref.current ? ' current' : ''}`, ref.name));
@@ -340,24 +411,14 @@ export function createDetailsPane(onParent?: (oid: string) => void, images = fal
     // 見出しの右クリック: ID・件名・メッセージ・git show のコピー、編集できるコミットなら Edit Message…（アプリと同じ）。
     // 選んだ文字のコピーも残す（既定の項目を消さない）
     head.dataset.vscodeContext = JSON.stringify({ webviewSection: 'commitDetails', oid: d.oid, ...options.context?.(d.oid) });
-    fileSections(d.oid, d.files, true, d.oid);
-    reopenFiles(reopen);
-    if (focus) {
-      const file = sections.get(focus);
-      if (file) {
-        file.chosen = true;
-        setCollapsed(file, false);
-        request(file);
-        file.section.scrollIntoView({ block: 'start' });
-      }
-    }
   }
 
   /** 上の欄に並べる（高さは中身に合わせ直し、広げていれば戻す） */
   function place(message: Node[]): void {
     // 1 つのコミットの詳細（show）でなければ、見出しの右クリックは出さない。show が付け直す
     delete head.dataset.vscodeContext;
-    root.classList.remove('expanded');
+    // コミットを替えても、コミット情報だけを表示したまま（アプリと同じ）。何も出さないときだけ戻す
+    if (message.length === 0) root.classList.remove('expanded');
     root.classList.toggle('split', message.length > 0);
     const kept = getState().detailsHeadHeight;
     head.style.height = kept ? `${kept}px` : '';
@@ -371,7 +432,7 @@ export function createDetailsPane(onParent?: (oid: string) => void, images = fal
     const button = el('button', 'expand-details', '⤢');
     const label = () => {
       const expanded = root.classList.contains('expanded');
-      button.title = expanded ? 'Restore the details' : 'Expand the commit details to fill the right column (click again to restore)';
+      button.title = expanded ? 'Restore Commit Details' : 'Show Only Commit Details\nExpand the commit details to fill the right column (click again to restore)';
       button.classList.toggle('on', expanded);
     };
     label();
@@ -388,6 +449,13 @@ export function createDetailsPane(onParent?: (oid: string) => void, images = fal
     button.title = tip;
     button.addEventListener('click', click);
     return button;
+  }
+
+  /** 帯の右端の表示の設定（アプリの View Options。拡張ホストが一覧を出す） */
+  function viewOptionsButton(): HTMLElement {
+    return barButton('⚙︎', 'View Options', false, () =>
+      post({ type: 'detailsViewOptions', kept: getState().detailsHeadHeight !== undefined, expanded: root.classList.contains('expanded') }),
+    );
   }
 
   /** 差分の上の帯を作り直す（数と行数の合計、リストと木、フォルダ・差分をすべて開く・畳む、Open All） */
@@ -414,7 +482,7 @@ export function createDetailsPane(onParent?: (oid: string) => void, images = fal
     );
     if (canAll && page === 'all') {
       const spacer = el('span', 'spacer');
-      bar.replaceChildren(pages, spacer, switcher, wrapButton());
+      bar.replaceChildren(pages, spacer, switcher, wrapButton(), viewOptionsButton());
       return;
     }
     const total = el('span', 'files-total', `${files.length} file${files.length === 1 ? '' : 's'}`);
@@ -464,6 +532,7 @@ export function createDetailsPane(onParent?: (oid: string) => void, images = fal
       const all = barButton('Open All', 'Open every changed file in the multi-file diff editor', false, () => post({ type: 'open', oid }));
       items.push(all);
     }
+    items.push(viewOptionsButton());
     bar.replaceChildren(...items);
   }
 
@@ -825,6 +894,7 @@ export function createDetailsPane(onParent?: (oid: string) => void, images = fal
   }
 
   function showExtras(extras: DetailsExtras): void {
+    if (extras.oid === shownOid) shownExtras = extras;
     if (extras.oid !== shownOid || !meta || meta.querySelector('.extras')) return;
     const add = (label: string, value: Node) => {
       const dd = el('dd', 'extras');
@@ -858,9 +928,44 @@ export function createDetailsPane(onParent?: (oid: string) => void, images = fal
       return span;
     };
     for (const t of extras.tags ?? []) add('Tag', tagLine(t));
+    // 詳細（Full）だけの項目（アプリの renderDetailed と同じ並び）
+    const full = style === 'full' ? extras.full : undefined;
+    const text = (s: string) => document.createTextNode(s);
+    if (full) {
+      if (extras.children.length > 0) add(extras.children.length > 1 ? 'Children' : 'Child', commitLinks(extras.children));
+      if (full.headRev) add('Rev', el('code', '', full.headRev));
+      if (full.branches.length > 0) add('Branches', text(full.branches.join(', ')));
+      if (full.tagCount > 0) {
+        const more = full.tagCount > 12 ? ` and ${full.tagCount - 12} more tags` : '';
+        add('Tags', text(full.tags.slice(0, 12).join(', ') + more));
+      }
+      if (full.previousTag) add('Previous Tag', text(full.previousTag));
+      if (full.pushed) {
+        add('Pushed', full.pushed.length > 0 ? text(full.pushed.join(', ')) : el('span', 'unpushed', 'Not pushed (not on any remote branch)'));
+      }
+    }
     for (const t of extras.mergedTags ?? []) add('Merged Tag', tagLine(t));
-    if (extras.mergedCount) add('Merged', document.createTextNode(`${extras.mergedCount} commit${extras.mergedCount === 1 ? '' : 's'}`));
-    if (extras.children.length > 0) add(extras.children.length > 1 ? 'Children' : 'Child', commitLinks(extras.children));
+    const summary = (c: CommitSummaryView): Node => {
+      const line = el('div', 'summary-line');
+      line.append(commitLinks([c.oid]), c.subject, ...(c.author ? [el('span', 'recorded', ` — ${c.author}`)] : []));
+      return line;
+    };
+    // 取り込んだコミット: 標準は数だけ、詳細は 20 まで並べる
+    const mergedCount = extras.mergedCount ?? extras.full?.mergedCount ?? 0;
+    if (mergedCount > 0) {
+      const value = el('div');
+      value.append(`${mergedCount} commit${mergedCount === 1 ? '' : 's'}`);
+      if (full) {
+        value.append(...full.merged.map(summary));
+        if (mergedCount > full.merged.length) value.append(el('div', 'recorded', `and ${mergedCount - full.merged.length} more`));
+      }
+      add('Merged', value);
+    }
+    for (const r of full?.related ?? []) {
+      const value = el('span');
+      value.append(el('span', 'recorded', `${r.kind}  `), summary(r.commit));
+      add('Related', value);
+    }
     // git notes（refs/notes/commits）は、メッセージの後に
     if (extras.notes) {
       const notes = el('div', 'notes extras');

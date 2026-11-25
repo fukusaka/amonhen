@@ -136,8 +136,68 @@ struct Con {
     weight: f64,
 }
 
+/// 強連結成分の番号（Tarjan、明示のスタック）。
+fn components(units: usize, out: &[Vec<usize>], cons: &[Con]) -> Vec<usize> {
+    const NONE: usize = usize::MAX;
+    let mut index = vec![NONE; units];
+    let mut low = vec![0usize; units];
+    let mut on = vec![false; units];
+    let mut comp = vec![NONE; units];
+    let mut stack: Vec<usize> = Vec::new();
+    let mut next = 0;
+    let mut count = 0;
+    for root in 0..units {
+        if index[root] != NONE {
+            continue;
+        }
+        let mut call: Vec<(usize, usize)> = vec![(root, 0)];
+        index[root] = next;
+        low[root] = next;
+        next += 1;
+        stack.push(root);
+        on[root] = true;
+        while let Some(&mut (v, ref mut k)) = call.last_mut() {
+            if *k < out[v].len() {
+                let w = cons[out[v][*k]].head;
+                *k += 1;
+                if index[w] == NONE {
+                    index[w] = next;
+                    low[w] = next;
+                    next += 1;
+                    stack.push(w);
+                    on[w] = true;
+                    call.push((w, 0));
+                } else if on[w] {
+                    low[v] = low[v].min(index[w]);
+                }
+            } else {
+                call.pop();
+                if let Some(&(p, _)) = call.last() {
+                    low[p] = low[p].min(low[v]);
+                }
+                if low[v] == index[v] {
+                    while let Some(w) = stack.pop() {
+                        on[w] = false;
+                        comp[w] = count;
+                        if w == v {
+                            break;
+                        }
+                    }
+                    count += 1;
+                }
+            }
+        }
+    }
+    comp
+}
+
 /// 単位（`units` 個、番号は 0 から）のランクを解く。`cons` は閉路を作るものを逆にし、`fixed` はそのまま足す
 /// （`total` は `fixed` のノードを含めた数）。`first` があれば閉路を探す深さ優先をそこから始める。
+///
+/// `rigid` はクラスタをまとめた単位。それを含む閉路（強連結成分）に入る単位に触れる辺は、向きを強いずに
+/// `weight * |長さ - minlen|` を小さくする（クラスタの中のずれで成り立つ閉路は並べ、成り立たなければ重みの軽い辺が
+/// 逆を向き、外のノードへの辺も得なら横や上を向く。Graphviz の `newrank=false` の絵と同じで、説明書の「head が
+/// tail より上のランクになることがある」にあたる）。ほかの閉路は深さ優先で逆にする（Gansner ほか 1993）。
 fn solve_ranks(
     total: usize,
     units: usize,
@@ -145,11 +205,28 @@ fn solve_ranks(
     fixed: &[NsEdge],
     first: Option<usize>,
     iter: usize,
+    rigid: &[bool],
 ) -> Vec<i64> {
     let mut out: Vec<Vec<usize>> = vec![Vec::new(); units];
     for (i, c) in cons.iter().enumerate() {
         out[c.tail].push(i);
     }
+    // クラスタを含む閉路（強連結成分）に入る単位に触れる辺（向きを強いない）
+    let soft: Vec<bool> = if rigid.iter().any(|&r| r) {
+        let comp = components(units, &out, cons);
+        let mut size = vec![0usize; units];
+        let mut has_rigid = vec![false; units];
+        for u in 0..units {
+            size[comp[u]] += 1;
+            has_rigid[comp[u]] |= rigid.get(u).copied().unwrap_or(false);
+        }
+        let cyclic = |u: usize| size[comp[u]] > 1 && has_rigid[comp[u]];
+        cons.iter()
+            .map(|c| cyclic(c.tail) || cyclic(c.head))
+            .collect()
+    } else {
+        vec![false; cons.len()]
+    };
     let mut state = vec![0u8; units];
     let mut reverse = vec![false; cons.len()];
     for root in first.into_iter().chain(0..units) {
@@ -162,6 +239,9 @@ fn solve_ranks(
             if *k < out[v].len() {
                 let ei = out[v][*k];
                 *k += 1;
+                if soft[ei] {
+                    continue;
+                }
                 let w = cons[ei].head;
                 if state[w] == 1 {
                     reverse[ei] = true;
@@ -175,28 +255,48 @@ fn solve_ranks(
             }
         }
     }
-    let mut edges: Vec<NsEdge> = cons
-        .iter()
-        .zip(&reverse)
-        .map(|(c, &r)| {
-            if r {
-                NsEdge {
-                    tail: c.head,
-                    head: c.tail,
-                    minlen: c.rev,
-                    weight: c.weight,
-                }
-            } else {
-                NsEdge {
-                    tail: c.tail,
-                    head: c.head,
-                    minlen: c.fwd,
-                    weight: c.weight,
-                }
-            }
-        })
-        .collect();
+    let mut edges: Vec<NsEdge> = Vec::with_capacity(cons.len() + fixed.len());
+    // 向きを強いない辺は補助のノード z で |x_h - (x_t + d)| にする（z → t は c - d、z → h は c、c = max(d, 0)。
+    // z → t の重みは短すぎる（上を向く）分、z → h は長すぎる分）。同じ値の形がいくつもあれば、辺が下を向くほうを選び
+    // （短すぎる分をわずかに重く）、それでも同じなら書いた順で先の単位から後の単位への辺を下に向ける
+    let mut aux = total;
+    for ((c, &r), &s) in cons.iter().zip(&reverse).zip(&soft) {
+        if s {
+            let d = c.fwd;
+            let m = d.max(0);
+            let short = if c.tail < c.head { 1.00101 } else { 1.001 };
+            edges.push(NsEdge {
+                tail: aux,
+                head: c.tail,
+                minlen: m - d,
+                weight: c.weight * short,
+            });
+            edges.push(NsEdge {
+                tail: aux,
+                head: c.head,
+                minlen: m,
+                weight: c.weight,
+            });
+            aux += 1;
+        } else if r {
+            edges.push(NsEdge {
+                tail: c.head,
+                head: c.tail,
+                minlen: c.rev,
+                weight: c.weight,
+            });
+        } else {
+            edges.push(NsEdge {
+                tail: c.tail,
+                head: c.head,
+                minlen: c.fwd,
+                weight: c.weight,
+            });
+        }
+    }
     edges.extend_from_slice(fixed);
+    let real = total;
+    let total = aux;
     // 初めの値: 最長路（トポロジカル順）
     let mut x = vec![0i64; total];
     let mut indeg = vec![0usize; total];
@@ -220,6 +320,7 @@ fn solve_ranks(
         }
     }
     simplex::solve(total, &edges, &mut x, iter);
+    x.truncate(real);
     x
 }
 
@@ -277,6 +378,8 @@ fn rank(
     for v in 0..n {
         members[unit[v]].push(v);
     }
+    // クラスタをまとめた単位
+    let mut collapsed = vec![false; n];
     let min_u = min_any.map(|v| unit[v]);
     let max_u = max_any.map(|v| unit[v]);
     let min_u = if min_u.is_some() && min_u == max_u {
@@ -354,7 +457,8 @@ fn rank(
                     weight: 0.0,
                 })
                 .collect();
-            let x = solve_ranks(units + 1, units, &cons, &fixed, None, opt.rank_iter);
+            let inner: Vec<bool> = local.iter().map(|&u| collapsed[u]).collect();
+            let x = solve_ranks(units + 1, units, &cons, &fixed, None, opt.rank_iter, &inner);
             let low = x[..units].iter().copied().min().unwrap_or(0);
             let into = local[0];
             for (i, &u) in local.iter().enumerate() {
@@ -366,6 +470,7 @@ fn rank(
                 }
                 members[into].extend(moved);
             }
+            collapsed[into] = true;
         }
     }
 
@@ -454,7 +559,21 @@ fn rank(
         });
     }
     let total = units + 1 + clusters;
-    let x = solve_ranks(total, units, &cons, &fixed, min_c, opt.rank_iter);
+    let mut rigid_units = vec![false; units];
+    for u in 0..n {
+        if dense[u] != usize::MAX {
+            rigid_units[dense[u]] |= collapsed[u];
+        }
+    }
+    let x = solve_ranks(
+        total,
+        units,
+        &cons,
+        &fixed,
+        min_c,
+        opt.rank_iter,
+        &rigid_units,
+    );
     let r: Vec<i64> = (0..n).map(|v| x[dense[unit[v]]] + off[v]).collect();
     let low = r.iter().copied().min().unwrap_or(0);
     r.into_iter()
@@ -1364,6 +1483,110 @@ pub fn layout(
     }
 }
 
+/// 直角の線（`splines=ortho`）の段の場所をランクの間に空ける。ランクの間を横に動く線（仮のノードの間の横のずれ）の
+/// 重なりの最大から段の数を見積もり、`track` の間で並べて両側に `margin`（矢じりの分）を残せるだけ、下のランクを
+/// 下げる（ノード・道筋・ラベル・クラスタの箱の y と高さ）。1 つの間で下げるのは `most_add` まで（込んだ図が縦に
+/// 伸びすぎないように。足りない分は段の間を詰める）。`heights` はノードの高さ（配置の向き）。
+pub fn make_room_for_tracks(
+    lay: &mut Layout,
+    heights: &[f64],
+    track: f64,
+    margin: f64,
+    most_add: f64,
+) {
+    let key = |y: f64| (y * 64.0).round() as i64;
+    // ランクの行（中心の y → 上下の端）
+    let mut rows: Vec<(f64, f64, f64)> = Vec::new();
+    for (i, &(_, y)) in lay.nodes.iter().enumerate() {
+        let h = heights.get(i).copied().unwrap_or(0.0) / 2.0;
+        match rows.iter_mut().find(|r| key(r.0) == key(y)) {
+            Some(r) => {
+                r.1 = r.1.min(y - h);
+                r.2 = r.2.max(y + h);
+            }
+            None => rows.push((y, y - h, y + h)),
+        }
+    }
+    rows.sort_by(|a, b| a.0.total_cmp(&b.0));
+    if rows.len() < 2 {
+        return;
+    }
+    let row_of = |y: f64| rows.partition_point(|r| r.0 < y - 1e-6);
+    // ランクの間ごとの横の線の区間
+    let mut spans: Vec<Vec<(f64, f64)>> = vec![Vec::new(); rows.len()];
+    for r in &lay.routes {
+        if let Route::Path { points, .. } = r {
+            for w in points.windows(2) {
+                let (a, b) = (w[0], w[1]);
+                if (a.0 - b.0).abs() < 1e-6 || (a.1 - b.1).abs() < 1e-6 {
+                    continue;
+                }
+                let upper = row_of(a.1.min(b.1));
+                if upper + 1 < rows.len() && row_of(a.1.max(b.1)) == upper + 1 {
+                    spans[upper].push((a.0.min(b.0), a.0.max(b.0)));
+                }
+            }
+        }
+    }
+    // 下げる分（ランクの間ごと）
+    let mut add = vec![0f64; rows.len()];
+    for (g, list) in spans.iter_mut().enumerate() {
+        if list.len() < 2 || g + 1 >= rows.len() {
+            continue;
+        }
+        // 区間の重なりの最大（端の点を並べて数える）
+        let mut ev: Vec<(f64, i32)> = Vec::with_capacity(list.len() * 2);
+        for &(x0, x1) in list.iter() {
+            ev.push((x0 - 1.0, 1));
+            ev.push((x1 + 1.0, -1));
+        }
+        ev.sort_by(|a, b| a.0.total_cmp(&b.0).then(b.1.cmp(&a.1)));
+        let (mut now, mut most) = (0i32, 0i32);
+        for (_, d) in ev {
+            now += d;
+            most = most.max(now);
+        }
+        let gap = rows[g + 1].1 - rows[g].2;
+        let need = 2.0 * margin + (most.max(1) - 1) as f64 * track;
+        add[g] = (need - gap).clamp(0.0, most_add);
+    }
+    if add.iter().all(|&a| a <= 0.0) {
+        return;
+    }
+    // y を下げる: 行 i とその上の空きのものは add[..i] の和だけ（空きのものは上の行と、クラスタの箱の上の端は下の行と
+    // 動く）
+    let mut cum = vec![0f64; rows.len() + 1];
+    for i in 0..rows.len() {
+        cum[i + 1] = cum[i] + add[i];
+    }
+    let with_upper = |y: f64| -> f64 {
+        let i = rows.partition_point(|r| r.0 <= y + 1e-6);
+        y + cum[i.saturating_sub(1)]
+    };
+    let with_lower = |y: f64| -> f64 {
+        let i = rows.partition_point(|r| r.0 < y - 1e-6);
+        y + cum[i.min(rows.len() - 1)]
+    };
+    for p in &mut lay.nodes {
+        p.1 = with_upper(p.1);
+    }
+    for r in &mut lay.routes {
+        if let Route::Path { points, label } = r {
+            for p in points.iter_mut() {
+                p.1 = with_upper(p.1);
+            }
+            if let Some(l) = label {
+                l.1 = with_upper(l.1);
+            }
+        }
+    }
+    for b in lay.clusters.iter_mut().flatten() {
+        b[1] = with_lower(b[1]);
+        b[3] = with_upper(b[3]);
+    }
+    lay.height += cum[rows.len()];
+}
+
 /// 横の位置（補助グラフのネットワーク単体法）。ノードの x と、クラスタの左右の境を返す。
 fn place_x(
     nodes: &[LNode],
@@ -1788,6 +2011,78 @@ mod tests {
         };
         let l = layout(&nodes, &edges, &clusters, &[], &global);
         assert_eq!(l.ranks, [0, 1, 1, 2]);
+    }
+
+    #[test]
+    fn ranks_cycles_between_clusters_by_length() {
+        let cluster = || Cluster {
+            parent: None,
+            margin: 8.0,
+            label: (0.0, 0.0),
+            side: LabelSide::Top,
+        };
+        let clusters = vec![cluster(), cluster()];
+        let weighted = |t: usize, h: usize, w: f64| Edge {
+            weight: w,
+            ..edge(t, h)
+        };
+        // A = {0 → 1}, B = {2 → 3}, 0 → 3 and 2 → 1: the cycle fits side by side
+        let nodes = vec![node(Some(0)), node(Some(0)), node(Some(1)), node(Some(1))];
+        let edges = vec![edge(0, 1), edge(2, 3), edge(0, 3), edge(2, 1)];
+        let l = layout(&nodes, &edges, &clusters, &[], &opts());
+        assert_eq!(l.ranks, [0, 1, 0, 1]);
+        // A = {0 → 1 → 2}, B = {3}: without a cycle the edges between clusters point down
+        let nodes = vec![
+            node(Some(0)),
+            node(Some(0)),
+            node(Some(0)),
+            node(Some(1)),
+            node(Some(1)),
+        ];
+        let edges = vec![edge(0, 1), edge(1, 2), edge(3, 4), edge(2, 3), edge(0, 4)];
+        let l = layout(&nodes, &edges, &clusters, &[], &opts());
+        assert_eq!(l.ranks, [0, 1, 2, 3, 4]);
+        // a cycle that doesn't fit: the lighter edge turns up
+        let nodes = vec![node(Some(0)), node(Some(0)), node(Some(0)), node(Some(1))];
+        let chain = [edge(0, 1), edge(1, 2)];
+        let up = [
+            chain[0].clone(),
+            chain[1].clone(),
+            weighted(2, 3, 1.0),
+            weighted(3, 0, 5.0),
+        ];
+        let l = layout(&nodes, &up, &clusters, &[], &opts());
+        assert_eq!(l.ranks, [1, 2, 3, 0]);
+        let down = [
+            chain[0].clone(),
+            chain[1].clone(),
+            weighted(2, 3, 5.0),
+            weighted(3, 0, 1.0),
+        ];
+        let l = layout(&nodes, &down, &clusters, &[], &opts());
+        assert_eq!(l.ranks, [0, 1, 2, 3]);
+        // equal weights: the cluster written first stays on top
+        let tie = [chain[0].clone(), chain[1].clone(), edge(2, 3), edge(3, 0)];
+        let l = layout(&nodes, &tie, &clusters, &[], &opts());
+        assert_eq!(l.ranks, [0, 1, 2, 3]);
+        // A and B in a cycle that fits; x → a1, and b1 → x (heavier) pulls x below b1: x → a1 turns up
+        let nodes = vec![
+            node(Some(0)),
+            node(Some(0)),
+            node(Some(1)),
+            node(Some(1)),
+            node(None),
+        ];
+        let edges = vec![
+            edge(0, 1),
+            edge(2, 3),
+            edge(0, 3),
+            edge(2, 1),
+            edge(4, 0),
+            weighted(2, 4, 3.0),
+        ];
+        let l = layout(&nodes, &edges, &clusters, &[], &opts());
+        assert_eq!(l.ranks, [0, 1, 0, 1, 1]);
     }
 
     #[test]
