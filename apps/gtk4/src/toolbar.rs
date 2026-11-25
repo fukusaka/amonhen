@@ -359,20 +359,6 @@ fn icon_button(kind: icon::Kind, action: &str, tip: &str) -> gtk::Button {
     button
 }
 
-/// 文字のボタン（テーマにアイコンがあればアイコン）。
-fn text_button(icon_name: &str, label: &str, action: &str, tip: &str) -> gtk::Button {
-    let has_icon = gtk::gdk::Display::default()
-        .is_some_and(|d| gtk::IconTheme::for_display(&d).has_icon(icon_name));
-    let button = if has_icon {
-        gtk::Button::from_icon_name(icon_name)
-    } else {
-        gtk::Button::with_label(label)
-    };
-    button.set_action_name(Some(action));
-    button.set_tooltip_text(Some(tip));
-    button
-}
-
 /// 見出しの列: サイドバーの上の見出しに、動かさないメニュー（`lead`）と境目より前の項目（`side`）。中身の上の
 /// 見出しに、境目より後の項目（`items`）と動かさないメニュー（`trail`）。
 pub struct Bar {
@@ -484,25 +470,16 @@ pub fn install(side: &gtk::Box, row: &gtk::Box, given: Given) {
         )
         .upcast(),
     );
-    // 新しいブランチ: ブランチの印に ＋ を添える。
     let new_branch = icon_button(
-        icon::Kind::Branch,
+        icon::Kind::NewBranch,
         "win.new-branch",
         &tr!("New branch from HEAD (Ctrl+Alt+B)"),
     );
-    if let Some(icon) = new_branch.child() {
-        new_branch.set_child(None::<&gtk::Widget>);
-        let inner = gtk::Box::new(gtk::Orientation::Horizontal, 2);
-        inner.append(&icon);
-        inner.append(&gtk::Label::new(Some("+")));
-        new_branch.set_child(Some(&inner));
-    }
     buttons.insert("new-branch", new_branch.upcast());
     buttons.insert(
         "repositories",
-        text_button(
-            "view-grid-symbolic",
-            "Repositories",
+        icon_button(
+            icon::Kind::Repositories,
             "win.repositories",
             &tr!("Show the Repositories page (Ctrl+Shift+R)"),
         )
@@ -510,18 +487,16 @@ pub fn install(side: &gtk::Box, row: &gtk::Box, given: Given) {
     );
     buttons.insert(
         "terminal",
-        text_button(
-            "utilities-terminal-symbolic",
-            &tr!("Terminal"),
+        icon_button(
+            icon::Kind::Terminal,
             "win.open-in-terminal",
             &tr!("Open in Terminal"),
         )
         .upcast(),
     );
     // どのエディタで開くかは Settings で変わるので、出すたびにツールチップを直す。
-    let editor = text_button(
-        "accessories-text-editor-symbolic",
-        &tr!("Editor"),
+    let editor = icon_button(
+        icon::Kind::Editor,
         "win.open-in-editor",
         &crate::editor::tooltip(),
     );
@@ -829,7 +804,11 @@ fn preview(id: &str) -> gtk::Widget {
     }
     let kind = match id {
         "sidebar" => Some(icon::Kind::Sidebar),
-        "branch" | "new-branch" => Some(icon::Kind::Branch),
+        "branch" => Some(icon::Kind::Branch),
+        "new-branch" => Some(icon::Kind::NewBranch),
+        "repositories" => Some(icon::Kind::Repositories),
+        "terminal" => Some(icon::Kind::Terminal),
+        "editor" => Some(icon::Kind::Editor),
         "search" => Some(icon::Kind::Search),
         "fetch" => Some(icon::Kind::Fetch),
         "pull" => Some(icon::Kind::Pull),
@@ -849,21 +828,7 @@ fn preview(id: &str) -> gtk::Widget {
         (Some(kind), _) => {
             let icon = icon::Icon::default();
             icon.set(kind, false);
-            if id == "new-branch" {
-                let inner = gtk::Box::new(gtk::Orientation::Horizontal, 2);
-                inner.append(&icon);
-                inner.append(&gtk::Label::new(Some("+")));
-                button.set_child(Some(&inner));
-            } else {
-                button.set_child(Some(&icon));
-            }
-        }
-        (None, "repositories") => set_icon_or_label(&button, "view-grid-symbolic", "Repositories"),
-        (None, "terminal") => {
-            set_icon_or_label(&button, "utilities-terminal-symbolic", &tr!("Terminal"));
-        }
-        (None, "editor") => {
-            set_icon_or_label(&button, "accessories-text-editor-symbolic", &tr!("Editor"));
+            button.set_child(Some(&icon));
         }
         // リポジトリの名前。
         _ => {
@@ -877,15 +842,6 @@ fn preview(id: &str) -> gtk::Widget {
     button.set_halign(gtk::Align::Center);
     button.set_valign(gtk::Align::Center);
     button.upcast()
-}
-
-fn set_icon_or_label(button: &gtk::Button, icon_name: &str, label: &str) {
-    if gdk::Display::default().is_some_and(|d| gtk::IconTheme::for_display(&d).has_icon(icon_name))
-    {
-        button.set_icon_name(icon_name);
-    } else {
-        button.set_label(label);
-    }
 }
 
 /// パレットからドラッグできるようにする（`w` の見た目をドラッグの絵に）。

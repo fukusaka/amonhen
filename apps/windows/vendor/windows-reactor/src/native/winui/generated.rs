@@ -37,6 +37,7 @@ pub enum Handle {
     Rectangle(bindings::Rectangle),
     Ellipse(bindings::Ellipse),
     Line(bindings::Line),
+    Path(bindings::Path),
     SymbolIcon(bindings::SymbolIcon),
     ImageIcon(bindings::ImageIcon),
     FontIcon(bindings::FontIcon),
@@ -233,6 +234,7 @@ impl Handle {
             }
             MountedKind::Ellipse => Self::Ellipse(bindings::Ellipse::new().map_err(native_error)?),
             MountedKind::Line => Self::Line(bindings::Line::new().map_err(native_error)?),
+            MountedKind::Path => Self::Path(bindings::Path::new().map_err(native_error)?),
             MountedKind::SymbolIcon => {
                 Self::SymbolIcon(bindings::SymbolIcon::new().map_err(native_error)?)
             }
@@ -390,6 +392,7 @@ impl Handle {
             Self::Rectangle(value) => value.cast(),
             Self::Ellipse(value) => value.cast(),
             Self::Line(value) => value.cast(),
+            Self::Path(value) => value.cast(),
             Self::SymbolIcon(value) => value.cast(),
             Self::ImageIcon(value) => value.cast(),
             Self::FontIcon(value) => value.cast(),
@@ -472,6 +475,7 @@ impl Handle {
             Self::Rectangle(value) => value.cast(),
             Self::Ellipse(value) => value.cast(),
             Self::Line(value) => value.cast(),
+            Self::Path(value) => value.cast(),
             Self::SymbolIcon(value) => value.cast(),
             Self::ImageIcon(value) => value.cast(),
             Self::FontIcon(value) => value.cast(),
@@ -554,6 +558,7 @@ impl Handle {
             Self::Rectangle(_) => MountedKind::Rectangle,
             Self::Ellipse(_) => MountedKind::Ellipse,
             Self::Line(_) => MountedKind::Line,
+            Self::Path(_) => MountedKind::Path,
             Self::SymbolIcon(_) => MountedKind::SymbolIcon,
             Self::ImageIcon(_) => MountedKind::ImageIcon,
             Self::FontIcon(_) => MountedKind::FontIcon,
@@ -2256,6 +2261,64 @@ pub fn set_property(
             PropertyId::BitmapIconShowAsMonochrome,
             PropertyValue::Bool(value),
         ) => control.SetShowAsMonochrome(*value).map_err(native_error),
+        (Handle::Path(control), PropertyId::PathData, PropertyValue::Str(value)) => {
+            let type_name = TypeName {
+                name: "Microsoft.UI.Xaml.Media.Geometry".into(),
+                kind: TypeKind::Metadata,
+            };
+            let value =
+                windows_reference::IReference::<windows_core::HSTRING>::from(value.as_str());
+            let parsed = XamlBindingHelper::ConvertValue(&type_name, &value)
+                .and_then(|value| value.cast::<bindings::Geometry>())
+                .map_err(native_error)?;
+            control.SetData(&parsed).map_err(native_error)
+        }
+        (
+            Handle::Path(control),
+            PropertyId::PathStroke,
+            PropertyValue::Brush(crate::Brush::Solid(color)),
+        ) => {
+            let brush = SolidColorBrush::new().map_err(native_error)?;
+            brush
+                .SetColor(bindings::Color {
+                    a: color.a,
+                    r: color.r,
+                    g: color.g,
+                    b: color.b,
+                })
+                .map_err(native_error)?;
+            control
+                .cast::<IShape>()
+                .map_err(native_error)?
+                .SetStroke(&brush)
+                .map_err(native_error)
+        }
+        (Handle::Path(control), PropertyId::PathStrokeThickness, PropertyValue::F64(value)) => {
+            control
+                .cast::<IShape>()
+                .map_err(native_error)?
+                .SetStrokeThickness(*value)
+                .map_err(native_error)
+        }
+        (Handle::Path(control), PropertyId::PathStrokeDashArray, PropertyValue::Str(value)) => {
+            let type_name = TypeName {
+                name: "Microsoft.UI.Xaml.Media.DoubleCollection".into(),
+                kind: TypeKind::Metadata,
+            };
+            let value =
+                windows_reference::IReference::<windows_core::HSTRING>::from(value.as_str());
+            let parsed = XamlBindingHelper::ConvertValue(&type_name, &value)
+                .and_then(|value| value.cast::<bindings::DoubleCollection>())
+                .map_err(native_error)?;
+            control
+                .cast::<IShape>()
+                .map_err(native_error)?
+                .SetStrokeDashArray(&parsed)
+                .map_err(native_error)
+        }
+        (Handle::Path(control), PropertyId::PathRoundEnds, PropertyValue::Bool(value)) => {
+            set_round_ends(&control.cast::<IShape>().map_err(native_error)?, *value)
+        }
         (Handle::PathIcon(control), PropertyId::PathIconData, PropertyValue::Str(value)) => {
             let type_name = TypeName {
                 name: "Microsoft.UI.Xaml.Media.Geometry".into(),
@@ -3528,6 +3591,21 @@ pub fn clear_property(handle: &Handle, property: PropertyId) -> Result<(), Runti
         (Handle::Line(_), PropertyId::LineY2) => dependency_object
             .ClearValue(&bindings::Line::Y2Property().map_err(native_error)?)
             .map_err(native_error),
+        (Handle::Path(_), PropertyId::PathData) => dependency_object
+            .ClearValue(&bindings::Path::DataProperty().map_err(native_error)?)
+            .map_err(native_error),
+        (Handle::Path(_), PropertyId::PathStroke) => dependency_object
+            .ClearValue(&bindings::Shape::StrokeProperty().map_err(native_error)?)
+            .map_err(native_error),
+        (Handle::Path(_), PropertyId::PathStrokeThickness) => dependency_object
+            .ClearValue(&bindings::Shape::StrokeThicknessProperty().map_err(native_error)?)
+            .map_err(native_error),
+        (Handle::Path(_), PropertyId::PathStrokeDashArray) => dependency_object
+            .ClearValue(&bindings::Shape::StrokeDashArrayProperty().map_err(native_error)?)
+            .map_err(native_error),
+        (Handle::Path(control), PropertyId::PathRoundEnds) => {
+            set_round_ends(&control.cast::<IShape>().map_err(native_error)?, false)
+        }
         (Handle::SymbolIcon(_), PropertyId::SymbolIconSymbol) => dependency_object
             .ClearValue(&bindings::SymbolIcon::SymbolProperty().map_err(native_error)?)
             .map_err(native_error),
@@ -4490,6 +4568,7 @@ pub fn theme_style_info(kind: MountedKind) -> Option<(&'static str, &'static [&'
         MountedKind::Rectangle => Some(("Rectangle", &["Fill", "Stroke"])),
         MountedKind::Ellipse => Some(("Ellipse", &["Fill", "Stroke"])),
         MountedKind::Line => Some(("Line", &["Stroke"])),
+        MountedKind::Path => Some(("Path", &["Stroke"])),
         _ => None,
     }
 }
@@ -6450,4 +6529,17 @@ pub fn subscribe_event(
         .map_err(native_error),
         _ => Err(RuntimeError::UnsupportedKind),
     }
+}
+
+/// `Path::round_ends`: round caps at both ends and on dashes, and round joins (or the defaults, flat and miter).
+fn set_round_ends(shape: &IShape, round: bool) -> Result<(), RuntimeError> {
+    let (cap, join) = if round {
+        (bindings::PenLineCap::Round, bindings::PenLineJoin::Round)
+    } else {
+        (bindings::PenLineCap::Flat, bindings::PenLineJoin::Miter)
+    };
+    shape.SetStrokeStartLineCap(cap).map_err(native_error)?;
+    shape.SetStrokeEndLineCap(cap).map_err(native_error)?;
+    shape.SetStrokeDashCap(cap).map_err(native_error)?;
+    shape.SetStrokeLineJoin(join).map_err(native_error)
 }
