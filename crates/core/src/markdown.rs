@@ -9,6 +9,7 @@ use pulldown_cmark::{
 use serde::Serialize;
 
 mod dollars;
+mod entities;
 mod html;
 
 /// 文字の飾り（ひと続きの文字）。
