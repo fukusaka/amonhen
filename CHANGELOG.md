@@ -1361,6 +1361,8 @@ First release.
   This Commit and Show Changes Only, selected commits' headers have File History and Copy Path, parents not fetched are
   marked, the bar reads Expand All Folders / Diffs, and the display menu has Monospaced Commit Message (off at first,
   as in the app) and Changed Files as Tree.
+- Stashes, Restore and File History follow the app: Stash's choices combine, stash rows show the time and base ID
+  with Copy Name, File History rows have Restore This Version… and Copy Short ID, and Skip / Abort don't ask first.
 
 #### Changed
 

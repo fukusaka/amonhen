@@ -303,3 +303,4 @@ macOS アプリに追いつく（1 つの機能を 1 つの pull request で、�
 - [x] 89. 画像の比べ方をアプリと同じに: 2-Up、拡大縮小（−・倍率・+・合わせる・⌘ スクロール）、違うピクセルの割合、SVG は絵で出して Show as Text
 - [x] 90. すべてのファイルをアプリと同じに: リストか木、変えたフォルダを開く、消したファイルは前の版、「@ コミット」、Show This Change、どのファイルも Open in Editor、見方を覚える、モバイルの確認の部品の切り替え、Markdown の相対リンク
 - [x] 91. 詳細の小さな差: ファイルの見出しの Expand・Collapse、Open File at This Commit、Show Changes Only、選んだときのファイルのメニュー、取っていない親、帯の「All Folders」「All Diffs」、空のときの文言、表示のメニューの Monospaced Commit Message と Changed Files as Tree
+- [x] 93. Stashes・Restore・File History・進行中の操作の小さな差: Stash の選び方を組み合わせる、stash の行のいつ・元の ID・Copy Name、File History の Restore This Version… と Copy Short ID、Skip・Abort は尋ねない（revert に Skip なし）
