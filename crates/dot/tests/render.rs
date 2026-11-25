@@ -424,6 +424,28 @@ fn uses_theme_variables_and_given_colors() {
 }
 
 #[test]
+fn edges_cross_the_title_above_their_node() {
+    // 題の真下のノードへの線は、題の脇に回らずまっすぐ（Graphviz と同じ）。ortho も
+    for splines in ["", "splines=ortho;"] {
+        let svg = render(&format!(
+            "digraph {{ {splines} x; subgraph cluster_a {{ label=\"A long cluster title\"; a }} x -> a }}"
+        ))
+        .unwrap()
+        .svg;
+        let d = part(&svg, "x-&gt;a").split("d=\"M").nth(1).unwrap();
+        let d = d.split('"').next().unwrap();
+        let xs: Vec<f64> = d
+            .split(['C', 'L', ' '])
+            .filter_map(|p| p.split(',').next()?.parse().ok())
+            .collect();
+        assert!(
+            xs.iter().all(|x| (x - xs[0]).abs() < 0.01),
+            "{splines}: {svg}"
+        );
+    }
+}
+
+#[test]
 fn ortho_edges_ignore_ports() {
     // Graphviz と同じく、splines=ortho の線はポートを見ない: `a:y:e` からの線も下の辺から出て、`b:n` への輪も
     // 右に回る（ポートの側から出るなら、a の右の辺から出て、輪は上に回る）

@@ -922,8 +922,8 @@ pub fn render(
         let fb = [p.0.min(q.0), p.1.min(q.1), p.0.max(q.0), p.1.max(q.1)];
         cluster_boxes[ci] = Some(fb);
     }
-    // クラスタの題の箱（絵の座標。辺が避ける）
-    let mut title_rects: Vec<[f64; 4]> = Vec::new();
+    // クラスタの題の箱（絵の座標）とクラスタ。辺が避ける（そのクラスタの中のノードへの辺は避けない）
+    let mut title_rects: Vec<([f64; 4], usize)> = Vec::new();
     let mut corder: Vec<usize> = (0..model.clusters.len()).collect();
     let cdepth = |mut c: usize| {
         let mut d = 0;
@@ -1044,12 +1044,15 @@ pub fn render(
             } else {
                 b[1] + margin / 2.0 + 2.0 + t.height / 2.0
             };
-            title_rects.push([
-                cx - t.fit_width() / 2.0 - 4.0,
-                cy - t.height / 2.0 - 1.0,
-                cx + t.fit_width() / 2.0 + 4.0,
-                cy + t.height / 2.0 + 1.0,
-            ]);
+            title_rects.push((
+                [
+                    cx - t.fit_width() / 2.0 - 4.0,
+                    cy - t.height / 2.0 - 1.0,
+                    cx + t.fit_width() / 2.0 + 4.0,
+                    cy + t.height / 2.0 + 1.0,
+                ],
+                ci,
+            ));
             clusters_out.push_str(&text_svg(
                 t,
                 cx,
@@ -1073,13 +1076,39 @@ pub fn render(
             Dir::RL => (f.1, lh - f.0),
         }
     };
-    let titles: Vec<route::Rect> = title_rects
+    // 題の箱の持ち主の番号はノードの後ろ（ノードの数 + クラスタ）
+    let title_owner = |ci: usize| views.len() + ci;
+    let titles: Vec<(route::Rect, usize)> = title_rects
         .iter()
-        .map(|r| {
+        .map(|(r, ci)| {
             let (p, q) = (from_final((r[0], r[1])), from_final((r[2], r[3])));
-            [p.0.min(q.0), p.1.min(q.1), p.0.max(q.0), p.1.max(q.1)]
+            (
+                [p.0.min(q.0), p.1.min(q.1), p.0.max(q.0), p.1.max(q.1)],
+                title_owner(*ci),
+            )
         })
         .collect();
+    // 辺が避けない箱: 両端のノードと、両端のノードのあるクラスタ（外のクラスタも）の題。クラスタの中のノードへの
+    // 線は題を横切る（題の真下のノードへの線を脇に回さない。Graphviz と同じ）
+    let edge_skip = |ei: usize| -> Vec<usize> {
+        let e = &model.edges[ei];
+        let mut skip = vec![e.tail, e.head];
+        for v in [e.tail, e.head] {
+            let mut c = model.nodes[v].cluster;
+            let mut depth = 0;
+            while let Some(ci) = c {
+                if !skip.contains(&title_owner(ci)) {
+                    skip.push(title_owner(ci));
+                }
+                c = model.clusters[ci].parent;
+                depth += 1;
+                if depth > 10_000 {
+                    break;
+                }
+            }
+        }
+        skip
+    };
     // 間を越える同じランクの弧（隣でない組と、隣でも 2 本目から）が水平に進む高さ（配置の座標）。ランクのすぐ上の
     // 空きを通り、同じランクの間のノードの上を越える（上のランクのノードは越えない。Graphviz と同じ）。同じランクで
     // 横の範囲が重なる弧は、短いものから置き、中に収まる弧より 1 段（8）上、一部だけ重なる弧とは別の高さにする
@@ -1173,8 +1202,8 @@ pub fn render(
             let (w, h) = (lnodes[i].w / 2.0 + NODE_PAD, lnodes[i].h / 2.0 + NODE_PAD);
             rects.push(([x - w, y - h, x + w, y + h], Some(i)));
         }
-        for r in &titles {
-            rects.push((*r, None));
+        for (r, owner) in &titles {
+            rects.push((*r, Some(*owner)));
         }
         // 配置が場所を空けた辺のラベル（仮のノードの脇と、隣どうしの同じランクの線の上）。ほかの辺はここを通らない
         if !free {
@@ -1230,6 +1259,7 @@ pub fn render(
                     hb: (lnodes[e.head].w / 2.0, lnodes[e.head].h / 2.0),
                     tail: e.tail,
                     head: e.head,
+                    skip: edge_skip(ei),
                 });
             }
         }
@@ -1264,6 +1294,7 @@ pub fn render(
                     tail_end: end("sametail"),
                     head_end: end("samehead"),
                     keep: label,
+                    skip: edge_skip(ei),
                 }
             })
             .collect();
@@ -1392,10 +1423,10 @@ pub fn render(
                         _ => pts[pts.len() - 1],
                     };
                     pts = spline::shortest(start, end, gates);
-                    obstacles.avoid(&mut pts, &[e.tail, e.head], false);
+                    obstacles.avoid(&mut pts, &edge_skip(ei), false);
                 } else if !(straight || curved || right_angles.is_some()) {
                     // dot 以外は点の間を直線として避け、あとでなめらかにつなぐ
-                    obstacles.avoid(&mut pts, &[e.tail, e.head], !polyline && !free);
+                    obstacles.avoid(&mut pts, &edge_skip(ei), !polyline && !free);
                 }
                 let angled = right_angles.is_some();
                 let mut lp: Vec<P> = right_angles.unwrap_or_else(|| pts.clone());

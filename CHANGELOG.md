@@ -22,7 +22,8 @@ becomes the GitHub Release notes.
   and ` ```gv ` are drawn, and `layout` still picks the engine.
 - DOT diagrams follow Graphviz's defaults: nodes and clusters without a fill are transparent, cluster titles are in the
   text color, and the margin is `pad` (4 points by default). `fontname` picks the typeface, falling back to the
-  renderer's sans-serif, serif or monospace. `splines=ortho` edges ignore ports.
+  renderer's sans-serif, serif or monospace. `splines=ortho` edges ignore ports, and edges to a node
+  in a cluster cross its title instead of going around it.
 
 ### [0.2.15] - 2026-11-25
 
