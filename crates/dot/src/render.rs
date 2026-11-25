@@ -1248,8 +1248,9 @@ pub fn render(
             .enumerate()
             .map(|(ei, e)| {
                 let a = &e.attrs;
-                let end = |port: Option<&str>, view: &NodeView, same: &str| route::OrthoEnd {
-                    port: ortho_port(view, port, dir),
+                // ortho の線はポートを見ない（Graphviz と同じ）
+                let end = |same: &str| route::OrthoEnd {
+                    port: route::OrthoPort::Free,
                     same: a.get(same).filter(|v| !v.is_empty()).map(str::to_owned),
                 };
                 let (points, label) = match &lay.routes[ei] {
@@ -1260,16 +1261,8 @@ pub fn render(
                     points,
                     tail: e.tail,
                     head: e.head,
-                    tail_end: end(
-                        a.get("tailport").or(e.tail_port.as_deref()),
-                        &views[e.tail],
-                        "sametail",
-                    ),
-                    head_end: end(
-                        a.get("headport").or(e.head_port.as_deref()),
-                        &views[e.head],
-                        "samehead",
-                    ),
+                    tail_end: end("sametail"),
+                    head_end: end("samehead"),
                     keep: label,
                 }
             })
@@ -1363,8 +1356,12 @@ pub fn render(
         };
         let tv = &views[e.tail];
         let hv = &views[e.head];
-        let mut tail_port = port_of(tv, a.get("tailport").or(e.tail_port.as_deref()));
-        let mut head_port = port_of(hv, a.get("headport").or(e.head_port.as_deref()));
+        // ortho の線はポートを見ない（Graphviz と同じ）
+        let port = |v: &NodeView, key: &str, own: Option<&str>| {
+            port_of(v, a.get(key).or(own)).filter(|_| !ortho)
+        };
+        let mut tail_port = port(tv, "tailport", e.tail_port.as_deref());
+        let mut head_port = port(hv, "headport", e.head_port.as_deref());
         let head_clip = a.flag("headclip").unwrap_or(true);
         let tail_clip = a.flag("tailclip").unwrap_or(true);
         let mut path: Vec<Cubic>;
@@ -1448,16 +1445,16 @@ pub fn render(
                     // ランクのすぐ上を、上がる・水平に進む・下りる（角は丸める）
                     let top = flat_top[ei].unwrap_or(pa.1 - h_a - 10.0);
                     path = if ortho {
-                        // ポートの側から出て、上を越える
+                        // 上から出て、上を越える（ポートは見ない）
                         let (ca, cb) = (lay.nodes[e.tail], lay.nodes[e.head]);
                         let half = |v: usize| (lnodes[v].w / 2.0, lnodes[v].h / 2.0);
                         let pts = route::ortho_flat(
                             ca,
                             half(e.tail),
-                            &ortho_port(tv, a.get("tailport").or(e.tail_port.as_deref()), dir),
+                            &route::OrthoPort::Free,
                             cb,
                             half(e.head),
-                            &ortho_port(hv, a.get("headport").or(e.head_port.as_deref()), dir),
+                            &route::OrthoPort::Free,
                             top,
                             route::STUB,
                         );
@@ -1488,12 +1485,14 @@ pub fn render(
                 let c = lay.nodes[e.tail];
                 let ln = &lnodes[e.tail];
                 let size = 18.0 + 8.0 * *index as f64;
-                // 輪の側: 向きのあるポートがあればその側（尾が先）、なければ配置の右（Graphviz と同じ）
+                // 輪の側: 向きのあるポートがあればその側（尾が先）、なければ配置の右（Graphviz と同じ）。
+                // ortho はポートを見ない
                 let port_side = [
                     a.get("tailport").or(e.tail_port.as_deref()),
                     a.get("headport").or(e.head_port.as_deref()),
                 ]
                 .into_iter()
+                .filter(|_| !ortho)
                 .find_map(|p| match ortho_port(tv, p, dir) {
                     route::OrthoPort::Point { dir: d, .. } => {
                         Some(if d.0.abs() > d.1.abs() + 1e-6 {

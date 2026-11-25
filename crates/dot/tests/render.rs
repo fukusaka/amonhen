@@ -424,6 +424,30 @@ fn uses_theme_variables_and_given_colors() {
 }
 
 #[test]
+fn ortho_edges_ignore_ports() {
+    // Graphviz と同じく、splines=ortho の線はポートを見ない: `a:y:e` からの線も下の辺から出て、`b:n` への輪も
+    // 右に回る（ポートの側から出るなら、a の右の辺から出て、輪は上に回る）
+    let svg = render(
+        "digraph { splines=ortho; node [shape=record]; a [label=\"<x> x|<y> y\"]; b; c; a:y:e -> b; a -> c; b -> b:n }",
+    )
+    .unwrap()
+    .svg;
+    let start = |id: &str| {
+        let d = part(&svg, id).split("d=\"M").nth(1).unwrap();
+        let mut it = d.split(['C', ',']);
+        let x: f64 = it.next().unwrap().parse().unwrap();
+        let y: f64 = it.next().unwrap().parse().unwrap();
+        (x, y)
+    };
+    let (x, y) = start("a-&gt;b");
+    assert!(x > 0.5 && x < 53.5 && (y - 36.0).abs() < 0.01, "{svg}");
+    let (x, _) = start("b-&gt;b");
+    let b = part(&svg, "b");
+    let right = attr_num(b, "x") + attr_num(b, "width");
+    assert!((x - right).abs() < 0.01, "{svg}");
+}
+
+#[test]
 fn fontname_picks_the_typeface() {
     let svg = render(
         "digraph { node [fontname=\"Helvetica,Arial,sans-serif\"]; a; b [fontname=\"Courier-Bold\"]; c [label=<x <font face=\"Times\">y</font>>] }",
