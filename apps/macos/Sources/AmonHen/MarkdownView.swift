@@ -341,6 +341,17 @@ nonisolated final class KeyCapLayoutManager: NSLayoutManager {
     /// 札の左右に空ける幅（字送りで空ける）。
     static let room = padding + margin
 
+    /// 行が札で始まるときに文字を送るもの（NSLayoutManager は delegate を弱く持つので、ここで持つ）。
+    private let lineStart = KeyCapLineStart()
+
+    override init() {
+        super.init()
+        delegate = lineStart
+    }
+
+    @available(*, unavailable)
+    required init?(coder: NSCoder) { fatalError() }
+
     override func drawBackground(forGlyphRange glyphsToShow: NSRange, at origin: NSPoint) {
         super.drawBackground(forGlyphRange: glyphsToShow, at: origin)
         guard let storage = textStorage, glyphsToShow.length > 0 else { return }
@@ -413,6 +424,33 @@ nonisolated final class KeyCapLayoutManager: NSLayoutManager {
         path.lineWidth = 1
         path.stroke()
     }
+}
+
+/// 行が札で始まるとき（段落・表の升の頭、折り返した札の続き）、その行だけ文字を枠の内側の空きの分だけ右へ送る。
+/// 枠の左の端が、ほかの行の文字の始まりにそろう（字送りでは行の頭に空きを作れない）。
+nonisolated final class KeyCapLineStart: NSObject, NSLayoutManagerDelegate {
+    func layoutManager(
+        _ layoutManager: NSLayoutManager, shouldSetLineFragmentRect lineFragmentRect: UnsafeMutablePointer<NSRect>,
+        lineFragmentUsedRect: UnsafeMutablePointer<NSRect>, baselineOffset: UnsafeMutablePointer<CGFloat>,
+        in textContainer: NSTextContainer, forGlyphRange glyphRange: NSRange
+    ) -> Bool {
+        guard glyphRange.length > 0, let storage = layoutManager.textStorage else { return false }
+        let first = layoutManager.characterIndexForGlyph(at: glyphRange.location)
+        guard first < storage.length, storage.attribute(.amonhenKeyCap, at: first, effectiveRange: nil) != nil,
+            !CharacterSet.whitespacesAndNewlines.contains((storage.string as NSString).character(at: first).scalar)
+        else { return false }
+        // 行の右の端は動かさない（表の升の枠は行の大きさから決まる）。
+        let shift = KeyCapLayoutManager.padding
+        lineFragmentRect.pointee.origin.x += shift
+        lineFragmentRect.pointee.size.width -= shift
+        lineFragmentUsedRect.pointee.origin.x += shift
+        lineFragmentUsedRect.pointee.size.width = min(lineFragmentUsedRect.pointee.width, lineFragmentRect.pointee.width)
+        return true
+    }
+}
+
+private extension unichar {
+    nonisolated var scalar: Unicode.Scalar { Unicode.Scalar(self) ?? " " }
 }
 
 /// ブロックを文字に組み立てる。

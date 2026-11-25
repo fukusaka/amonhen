@@ -74,3 +74,42 @@ import Testing
     // 行ごとに縦にずれる。
     #expect(Set(rects.map(\.minY)).count == rects.count)
 }
+
+/// 行の頭の札（段落の頭・折り返した続き・表の升の頭）は、枠の左の端がほかの行の文字の始まりにそろい、文字は枠に付かない。
+@MainActor @Test func keyCapsAtLineStartAlignWithText() throws {
+    let keys = Array(repeating: "Shift", count: 30).joined(separator: " + ")
+    let blocks = MarkdownBlock.parse(
+        "Plain text.\n\n<kbd>Esc</kbd> first.\n\nHold <kbd>\(keys)</kbd> now.\n\n"
+            + "| key |\n|---|\n| plain |\n| <kbd>Tab</kbd> |\n")
+    let view = MarkdownView(blocks: blocks, path: "README.md") { _ in nil }
+    view.frame = NSRect(x: 0, y: 0, width: 300, height: 400)
+    view.layoutSubtreeIfNeeded()
+    let layout = try #require(view.text.layoutManager as? KeyCapLayoutManager)
+    layout.ensureLayout(for: try #require(view.text.textContainer))
+    let string = view.text.string as NSString
+    /// 文字 `index` の左の端（入れ物の中の位置）。
+    func start(_ index: Int) -> CGFloat {
+        let glyph = layout.glyphIndexForCharacter(at: index)
+        return layout.lineFragmentRect(forGlyphAt: glyph, effectiveRange: nil).minX + layout.location(forGlyphAt: glyph).x
+    }
+    let line = start(string.range(of: "Plain").location)
+
+    // 段落の頭。
+    let esc = string.range(of: "Esc")
+    let escBox = try #require(layout.capRects(esc).first)
+    #expect(abs(escBox.minX - line) < 0.5)
+    #expect(start(esc.location) - escBox.minX >= KeyCapLayoutManager.padding - 0.5)
+
+    // 折り返した続きの行（最初の行は文の途中なので、今まで通り左へはみ出す）。
+    let wrapped = layout.capRects(string.range(of: keys))
+    #expect(wrapped.count > 2)
+    #expect(wrapped[0].minX > line + 10)
+    for box in wrapped.dropFirst() { #expect(abs(box.minX - line) < 0.5) }
+
+    // 表の升の頭: 同じ列のほかの升の文字の始まりにそろう。
+    let tab = string.range(of: "Tab")
+    let cell = start(string.range(of: "plain").location)
+    let tabBox = try #require(layout.capRects(tab).first)
+    #expect(abs(tabBox.minX - cell) < 0.5)
+    #expect(start(tab.location) - tabBox.minX >= KeyCapLayoutManager.padding - 0.5)
+}
