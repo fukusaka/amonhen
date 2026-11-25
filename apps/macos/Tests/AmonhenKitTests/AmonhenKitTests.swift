@@ -411,4 +411,7 @@ private func makeRepo() throws -> URL {
     #expect(try #require(SharedIcons.strokes("rebase")).contains { !$0.dash.isEmpty })
     #expect(SharedIcons.strokes("no-such-icon") == nil)
     #expect(SharedIcons.strokeWidth == 1.5)
+    // 画素に合わせた線: 1 倍・太さ 1 なら Fetch の矢の軸（縦の線）は画素の中心（x = 8.5）。
+    let fetch = try #require(SharedIcons.strokes("fetch", size: 16, scale: 1, stroke: 1))
+    #expect(fetch[1].path.boundingBox.minX == 8.5)
 }
