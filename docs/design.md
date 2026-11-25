@@ -853,7 +853,8 @@ Working Copy status (`crates/core/examples/status.rs`, second run onward):
 
 - Most of the time goes to finding untracked files (373 ms on linux). The untracked cache is not used unless `status.showUntrackedFiles` agrees with `--untracked-files=all`, so both are passed.
 - A normal status does not take the index lock (so it does not fight with the user's git), so the cache is not written back. It is written back the first time, and after that only once every 60 seconds.
-- On macOS and Windows, fsmonitor is `git fsmonitor--daemon`, which stays resident per repository. On Linux and the BSDs, where git has none, it is Watchman when installed: `git status` gets the engine (`amonhen fsmonitor-watchman`, git's hook protocol version 2) as `core.fsmonitor` for that run only, never in the repository's config. It can be turned off in the app's settings (on by default).
+- On macOS and Windows, fsmonitor is `git fsmonitor--daemon`, which stays resident per repository. On Linux and the BSDs it is Watchman when installed (git has none on the BSDs, and on Linux only from 2.55, which is
+  not used yet): `git status` gets the engine (`amonhen fsmonitor-watchman`, git's hook protocol version 2) as `core.fsmonitor` for that run only, never in the repository's config. It can be turned off in the app's settings (on by default).
 - Reloads do not run overlapping. If a change notice arrives midway, it reloads only once after finishing.
 
 Ancestor emphasis (`crates/core/src/lineage.rs`, `crates/core/examples/lineage.rs`):
