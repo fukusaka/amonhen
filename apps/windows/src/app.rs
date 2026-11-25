@@ -86,6 +86,9 @@ thread_local! {
         std::cell::Cell::new((crate::prefs::auto_fetch_minutes(), Instant::now()));
     /// サイドバーのメニューを付けておく、押されない空の Grid。
     static SIDEBAR_MENU_HOST: RefCell<Option<xaml::UIElement>> = const { RefCell::new(None) };
+    /// 最後にサイドバーを右クリックした所（サイドバーの中。キーボードで開いたなら None）。メニューから開く吹き出しの
+    /// 置き場所。
+    static SIDEBAR_POINT: std::cell::Cell<Option<xaml::Point>> = const { std::cell::Cell::new(None) };
     static SIDEBAR_AT: RefCell<Option<(xaml::UIElement, Option<xaml::Point>)>> =
         const { RefCell::new(None) };
     /// 差分の欄と、右クリックした位置（メニューを作り直してから、そこで開く）。
@@ -5737,11 +5740,26 @@ impl Root {
                     copy_text(text);
                 } else if let Some(name) = key.strip_prefix("branch-status:") {
                     let (actions, forecast) = self.branch_status(name, context);
-                    self.dialog = Some(Dialog::BranchStatus {
-                        name: name.to_owned(),
-                        actions,
-                        forecast,
-                    });
+                    match SIDEBAR_POINT.with(std::cell::Cell::take) {
+                        // 右クリックした行の所に、印を押したときと同じ吹き出し（macOS 版・GTK4 版と同じ）。
+                        Some(at) => {
+                            self.mark_popover = Some(MarkPopover::Branch {
+                                name: name.to_owned(),
+                                actions,
+                                forecast,
+                            });
+                            self.mark_at = at;
+                            self.mark_opened += 1;
+                        }
+                        // キーボードで開いたメニューからは、置き場所がないのでダイアログ。
+                        None => {
+                            self.dialog = Some(Dialog::BranchStatus {
+                                name: name.to_owned(),
+                                actions,
+                                forecast,
+                            });
+                        }
+                    }
                 } else if let Some(id) = key.strip_prefix("command:") {
                     self.update(Message::Command(id.to_owned()), context);
                 } else if let Some(name) = key.strip_prefix("create-pr:") {
@@ -22417,6 +22435,7 @@ fn attach_sidebar(element: &IInspectable) -> windows_core_reactor::Result<()> {
         } else {
             (item, None)
         };
+        SIDEBAR_POINT.with(|p| p.set(place.1));
         SIDEBAR_AT.with(|a| *a.borrow_mut() = Some(place));
         with_history(|h| {
             h.sender.send(Message::SidebarMenu(key));
