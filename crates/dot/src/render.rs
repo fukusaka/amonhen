@@ -34,7 +34,6 @@ const CLUSTER_MARGIN: f64 = 8.0;
 
 const LINE: &str = "var(--_l)";
 const BORDER: &str = "var(--_b)";
-const SURFACE: &str = "var(--_s)";
 const SURFACE_ALT: &str = "var(--_a)";
 const MUTED: &str = "var(--_m)";
 
@@ -570,17 +569,16 @@ pub fn render(
                 Some(t) => paint("fill", ctx.first_color(t, scheme.as_deref()), SURFACE_ALT),
                 None => format!(" fill=\"{SURFACE_ALT}\""),
             }
-        } else if matches!(spec.kind, Kind::Plain) {
-            " fill=\"none\"".to_owned()
         } else {
-            format!(" fill=\"{SURFACE}\"")
+            // 塗りの指定がなければ塗らない（Graphviz と同じく透明）
+            " fill=\"none\"".to_owned()
         };
         if invis {
             fill = " fill=\"none\"".to_owned();
         }
-        // 自分の塗りのないノード（plaintext・plain・none）は、外の地の上で読める色で描く
+        // 自分の塗りのないノードは、外の地（文が決めたクラスタの塗り・グラフの bgcolor）の上で読める色で描く
         let ground_ink = grounds.at(node.cluster).1.and_then(Color::ink);
-        let bare = !filled && !point && matches!(spec.kind, Kind::Plain);
+        let bare = !filled && !point;
         let stroke = format!(
             "{}{}",
             paint(

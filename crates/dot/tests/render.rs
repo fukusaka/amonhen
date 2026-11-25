@@ -232,10 +232,15 @@ fn defaults_stay_readable_on_given_grounds() {
             .contains("fill=\"#1f1f1f\""),
         "{svg}"
     );
-    // 文の色が勝ち、塗りのあるノードはそのまま
+    // 文の色が勝つ。塗りの指定のない枠のノードも塗らないので、枠と文字は地の上で読める色
     assert!(part(&svg, "c").contains("fill=\"#ff0000\""), "{svg}");
     assert!(!part(&svg, "c").contains("#1f1f1f"), "{svg}");
-    assert!(!part(&svg, "d").contains("#1f1f1f"), "{svg}");
+    let d = part(&svg, "d");
+    assert!(
+        d.contains("fill=\"none\" stroke=\"#1f1f1f\"")
+            && d.contains("class=\"dot-label\" fill=\"#1f1f1f\""),
+        "{svg}"
+    );
     assert!(
         part(&svg, "b-&gt;c").contains("stroke=\"#0000ff\""),
         "{svg}"
@@ -395,8 +400,15 @@ fn uses_theme_variables_and_given_colors() {
         .svg;
     assert!(svg.contains("stroke=\"#ff0000\""), "{svg}");
     assert!(svg.contains("fill=\"#00ff00\""));
-    assert!(svg.contains("var(--_l)") && svg.contains("var(--_b)") && svg.contains("var(--_s)"));
+    assert!(svg.contains("var(--_l)") && svg.contains("var(--_b)"));
     assert!(svg.contains(">a</text>") && svg.contains(">b</text>"));
+    // 塗りの指定のないノードは塗らない（Graphviz と同じく透明）
+    assert!(
+        !svg.contains("var(--_s)") && !svg.contains("var(--_a)"),
+        "{svg}"
+    );
+    let filled = render("digraph { a [style=filled] }").unwrap().svg;
+    assert!(filled.contains("fill=\"var(--_a)\""), "{filled}");
 }
 
 /// `>word<` を中に持つ `<text …>` の開きの札。

@@ -20,6 +20,7 @@ becomes the GitHub Release notes.
   digit or `_`, nor in italics, links or footnotes. So `a$x$b` and `日本語の$x$` stay text, as on GitHub.
 - Fences named after a Graphviz engine, such as ` ```neato `, stay code, as on GitHub; ` ```dot `, ` ```graphviz `
   and ` ```gv ` are drawn, and `layout` still picks the engine.
+- DOT diagrams follow Graphviz's defaults: nodes without a fill are transparent.
 
 ### [0.2.15] - 2026-11-25
 
