@@ -331,9 +331,9 @@ enum Settings {
         }
     }
 
-    /// Markdown の図の配色（`syntax`: 構文の色のテーマから、`pele`、`mermaid`）。変えたら `syntaxThemeChanged` を知らせる。
+    /// Markdown の図の配色（`syntax`: 構文の色のテーマから、`pele`、`mermaid`: 外観に合わせる。既定）。変えたら `syntaxThemeChanged` を知らせる。
     static var diagramColors: String {
-        get { UserDefaults.standard.string(forKey: "diagramColors") ?? "syntax" }
+        get { UserDefaults.standard.string(forKey: "diagramColors") ?? "mermaid" }
         set {
             UserDefaults.standard.set(newValue, forKey: "diagramColors")
             NotificationCenter.default.post(name: .syntaxThemeChanged, object: nil)
