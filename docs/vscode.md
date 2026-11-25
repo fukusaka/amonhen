@@ -156,7 +156,7 @@ is in [front.md](front.md), and the design in item 18 of
 ### Conflict resolution
 
 - Reuse the standard 3-way merge editor. The extension is responsible for the list of conflicted files, taking ours / theirs per file (`checkout --ours/--theirs`), and the in-progress display and continue / abort / skip buttons during a merge / rebase.
-- There is no public API to open the merge editor, so open it with the internal command `_open.mergeEditor`, which the built-in Git extension also uses, passing base, input1 and input2 (index stages 1, 2 and 3 returned via `amonhen:`) and output (the real file). If that fails, or for a conflict where one side was deleted, open the file and leave it to the standard UI's "Resolve in Merge Editor" and the sidebar's Accept Current / Incoming.
+- There is no public API to open the merge editor, so open it with the internal command `_open.mergeEditor`, which the built-in Git extension also uses, passing base, input1 and input2 (index stages 1, 2 and 3 returned via `amonhen:`) and output (the real file). If that fails, or for a conflict where one side was deleted, open the file and leave it to the standard UI's "Resolve in Merge Editor" and the Working Copy's Take Current File / Take Incoming File.
 - When marking as resolved, ask for confirmation if conflict markers remain. During a rebase, show the progress (`rebase-merge/msgnum`, `end`) and allow Skip as well.
 
 ## Bringing the UI into one Webview
@@ -313,3 +313,4 @@ left out for now: VSCode has its own extensions and settings for them.
 - [x] 89. Image comparison as the app's: 2-Up, zoom (−, %, +, Fit, ⌘-scroll), the differing pixels' share, and an SVG as a picture with Show as Text
 - [x] 90. All Files as the app's: a list or a tree, changed folders open, a deleted file's version before, "@ commit", Show This Change, Open in Editor for any file, remembered views, the mobile check's renderer switch, and relative Markdown links
 - [x] 91. The details' small differences: a file header's Expand / Collapse, Open File at This Commit and Show Changes Only, the selection's file menu, parents not fetched, the bar's "All Folders" / "All Diffs", the empty text, and the display menu's Monospaced Commit Message and Changed Files as Tree
+- [x] 92. Working Copy's small differences: List and "File Name" for the file layouts, the file menu's items and order, "Delete …" for an untracked file, discarding lines without asking, a commit with only a description, "Amend Commit", the diff's read error in the pane, and Take Current / Incoming File asking only when something is lost

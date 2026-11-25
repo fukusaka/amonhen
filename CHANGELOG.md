@@ -1361,6 +1361,9 @@ First release.
   This Commit and Show Changes Only, selected commits' headers have File History and Copy Path, parents not fetched are
   marked, the bar reads Expand All Folders / Diffs, and the display menu has Monospaced Commit Message (off at first,
   as in the app) and Changed Files as Tree.
+- The Working Copy follows the app in the small things: List at first and "File Name", the file menu's Stage, Discard…
+  or Delete File…, both .gitignore items, Reveal and Open File, no question before discarding lines, a commit with only
+  a description, "Amend Commit", diff errors in the pane, and Take Current / Incoming File.
 
 #### Changed
 

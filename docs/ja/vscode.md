@@ -147,7 +147,7 @@ Webview はローカルで描画され、拡張ホストとの通信だけが SS
 ### コンフリクト解決
 
 - 標準の 3-way マージエディタを流用する。拡張側は、コンフリクト中のファイル一覧、ファイル単位の ours / theirs 採用（`checkout --ours/--theirs`）、merge / rebase 中の表示と continue / abort / skip ボタンを担当する。
-- マージエディタを開く公開 API は無いので、組み込みの Git 拡張も使っている内部コマンド `_open.mergeEditor` に、base・input1・input2（index の stage 1・2・3 を `amonhen:` で返す）と output（実ファイル）を渡して開く。失敗したら、または片側で削除されたコンフリクトなら、ファイルを開いて標準 UI の「Resolve in Merge Editor」とサイドバーの Accept Current / Incoming に任せる。
+- マージエディタを開く公開 API は無いので、組み込みの Git 拡張も使っている内部コマンド `_open.mergeEditor` に、base・input1・input2（index の stage 1・2・3 を `amonhen:` で返す）と output（実ファイル）を渡して開く。失敗したら、または片側で削除されたコンフリクトなら、ファイルを開いて標準 UI の「Resolve in Merge Editor」と Working Copy の Take Current File・Take Incoming File に任せる。
 - 解決済みにするとき、コンフリクトのマーカーが残っていれば確認する。rebase 中は進み具合（`rebase-merge/msgnum`・`end`）を表示し、Skip もできるようにする。
 
 ## UI を 1 つの Webview にまとめる
@@ -303,3 +303,4 @@ macOS アプリに追いつく（1 つの機能を 1 つの pull request で、�
 - [x] 89. 画像の比べ方をアプリと同じに: 2-Up、拡大縮小（−・倍率・+・合わせる・⌘ スクロール）、違うピクセルの割合、SVG は絵で出して Show as Text
 - [x] 90. すべてのファイルをアプリと同じに: リストか木、変えたフォルダを開く、消したファイルは前の版、「@ コミット」、Show This Change、どのファイルも Open in Editor、見方を覚える、モバイルの確認の部品の切り替え、Markdown の相対リンク
 - [x] 91. 詳細の小さな差: ファイルの見出しの Expand・Collapse、Open File at This Commit、Show Changes Only、選んだときのファイルのメニュー、取っていない親、帯の「All Folders」「All Diffs」、空のときの文言、表示のメニューの Monospaced Commit Message と Changed Files as Tree
+- [x] 92. Working Copy の小さな差: ファイルの並べ方の List と「File Name」、ファイルのメニューの項目と並び、untracked のファイルの「Delete …」、行の破棄は確かめない、Description だけのコミット、「Amend Commit」、差分を読めないわけは差分の場所に、Take Current・Incoming File は失うものがあるときだけ確かめる
