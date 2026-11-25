@@ -7,7 +7,11 @@ becomes the GitHub Release notes.
 
 ## App and engine
 
-### Unreleased
+### [0.2.15] - 2026-11-25
+
+Markdown previews draw math and the HTML GitHub renders, and DOT diagrams draw images, gradients and more of
+Graphviz's styles, with better ortho edges and cluster placement. All Files draws Android VectorDrawables, and the
+checkerboard behind transparent pictures can be switched between light and dark.
 
 #### Added
 
