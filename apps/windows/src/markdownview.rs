@@ -62,7 +62,7 @@ pub fn diagram_schemes() -> Vec<(String, String)> {
         .map(|scheme| {
             let label = match scheme {
                 Scheme::Syntax => tr!("Syntax colors"),
-                Scheme::Pele => "pele".into(),
+                Scheme::Pele => tr!("Obsidian style"),
                 Scheme::Mermaid(None) => tr!("Mermaid (follows the appearance)"),
                 Scheme::Mermaid(Some(theme)) => format!("Mermaid {}", theme.name()),
                 Scheme::Imported => "Mermaid".into(),

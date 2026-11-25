@@ -118,10 +118,10 @@ struct SyntaxThemeSection: View {
             }
         }
         // Markdown の Mermaid の図（配色・gantt の時間帯・読み込んだテーマ）。
-        Section("Mermaid") {
+        Section(L("Diagrams")) {
             Picker(L("Colors"), selection: $model.diagramColors) {
                 Text(L("Syntax colors")).tag("syntax")
-                Text("pele").tag("pele")
+                Text(L("Obsidian style")).tag("pele")
                 Text(L("Mermaid (follows the appearance)")).tag("mermaid")
                 ForEach(["default", "neutral", "dark", "forest", "base"], id: \.self) { name in
                     Text("Mermaid \(name)").tag("mermaid-\(name)")
@@ -144,7 +144,7 @@ struct SyntaxThemeSection: View {
                     Spacer()
                     Button(L("Remove")) {
                         model.importedMermaidThemes[name] = nil
-                        if model.diagramColors == "mermaid-import:\(name)" { model.diagramColors = "syntax" }
+                        if model.diagramColors == "mermaid-import:\(name)" { model.diagramColors = "mermaid" }
                     }
                 }
             }

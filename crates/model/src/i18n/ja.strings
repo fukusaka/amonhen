@@ -2316,7 +2316,9 @@
 "Toolbar tint" = "ツールバーの色の濃さ";
 "Color Theme" = "配色テーマ";
 "Use standard colors for diffs" = "差分は標準の色を使う";
-"Colors" = "配色";
+"Colors" = "色";
+"Diagrams" = "図";
+"Obsidian style" = "Obsidian 風";
 "Time zone" = "時間帯";
 "System time zone" = "OS の時間帯";
 "Math" = "数式";
@@ -2516,6 +2518,6 @@
 "unknown shapes are drawn as boxes" = "知らない形は箱";
 "orthogonal edges are drawn as polylines" = "直角の線（ortho）は折れ線";
 "unknown colors are drawn in the default color" = "読めない色は既定の色";
-"unknown color schemes are drawn in the default color" = "知らない配色の色は既定の色";
+"unknown color schemes are drawn in the default color" = "知らない色の組の色は既定の色";
 "unknown layout engines are drawn with the dot layout" = "知らない配置は dot の配置";
 "some layout options are approximated" = "配置の属性の一部は近いもの";
