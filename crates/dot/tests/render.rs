@@ -698,6 +698,13 @@ fn draws_big_graphs_in_time() {
                 d.notes
             );
         }
+        // 仮のノードの上限を超えた長い辺は直線にして注記する（dot だけ）
+        assert_eq!(
+            d.notes.contains(&Note::LongEdges),
+            engine == "dot",
+            "{engine}: {:?}",
+            d.notes
+        );
         assert!(
             started.elapsed() < std::time::Duration::from_secs(10),
             "{engine}"

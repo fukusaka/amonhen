@@ -862,6 +862,10 @@ pub fn render(
         free_layout(model, &placed)
     } else {
         let mut lay = layout::layout(&lnodes, &ledges, &lclusters, &sets, &lopt);
+        // 仮のノードの上限を超えて直線にした長い辺（ortho では直角にできなかった線の注記になる）
+        if lay.straightened && !ortho {
+            ctx.notes.insert(Note::LongEdges);
+        }
         if ortho {
             // 直角の線の段の場所をランクの間に空ける（縁から 4 まで使い、1 つの間で足すのは ranksep まで）
             let heights: Vec<f64> = lnodes.iter().map(|n| n.h).collect();
@@ -2359,6 +2363,7 @@ fn free_layout(model: &Model, placed: &engines::Placement) -> layout::Layout {
         height: h,
         crossings: 0,
         corridors: vec![Vec::new(); model.edges.len()],
+        straightened: false,
     }
 }
 

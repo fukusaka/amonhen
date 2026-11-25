@@ -198,6 +198,7 @@ fn approximation_note(notes: &[amonhen_dot::Note]) -> String {
             }
             Note::UnknownShapes => amonhen_model::tr!("unknown shapes are drawn as boxes"),
             Note::Ortho => amonhen_model::tr!("orthogonal edges are drawn as polylines"),
+            Note::LongEdges => amonhen_model::tr!("some long edges are drawn as straight lines"),
             Note::UnknownColors => {
                 amonhen_model::tr!("unknown colors are drawn in the default color")
             }

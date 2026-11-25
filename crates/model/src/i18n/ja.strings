@@ -2515,6 +2515,7 @@
 "images that can’t be read are drawn as empty frames" = "読めない画像は空の枠";
 "unknown shapes are drawn as boxes" = "知らない形は箱";
 "orthogonal edges are drawn as polylines" = "直角の線（ortho）は折れ線";
+"some long edges are drawn as straight lines" = "長い線の一部は直線";
 "unknown colors are drawn in the default color" = "読めない色は既定の色";
 "unknown color schemes are drawn in the default color" = "知らない配色の色は既定の色";
 "unknown layout engines are drawn with the dot layout" = "知らない配置は dot の配置";

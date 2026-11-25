@@ -58,6 +58,8 @@ pub enum Note {
     UnknownShapes,
     /// `splines=ortho` の線のうち、直角にできなかったもの（仮のノードの上限を超えた長い線）は折れ線にした。
     Ortho,
+    /// dot の配置で、仮のノードの上限を超えたので長い線の一部を直線にした（ortho は `Ortho`）。
+    LongEdges,
     /// 読めない色は既定の色にした。
     UnknownColors,
     /// 持たない配色の色は既定の色にした。
@@ -92,6 +94,7 @@ impl Note {
             Note::Images => "images that can’t be read are drawn as empty frames",
             Note::UnknownShapes => "unknown shapes are drawn as boxes",
             Note::Ortho => "orthogonal edges are drawn as polylines",
+            Note::LongEdges => "some long edges are drawn as straight lines",
             Note::UnknownColors => "unknown colors are drawn in the default color",
             Note::ColorSchemes => "unknown color schemes are drawn in the default color",
             Note::OtherLayouts => "unknown layout engines are drawn with the dot layout",
