@@ -16,9 +16,36 @@ use crate::markdown::Run;
 /// 数式の色の CSS の変数（FE が文字の色を当てる。`amonhen_math::COLOR_VAR` と同じ）。
 pub const COLOR_VAR: &str = "--math-fg";
 
-/// 本文の字の大きさに対する、数式の 1 em の大きさ（KaTeX と同じ 1.21 倍。KaTeX のフォントは字が小さめなので、
-/// 本文の字とそろえるために大きくする）。
+/// 本文の字の大きさに対する、数式の 1 em の大きさの既定（KaTeX と同じ 1.21 倍。KaTeX のフォントは字が小さめなので、
+/// 本文の字とそろえるために大きくする）。FE の設定（Settings > テーマ > 数式 > 大きさ）で変えられる。
 pub const FONT_SCALE: f64 = 1.21;
+
+/// 設定で選べる大きさ（本文の字に対する倍率。`FONT_SCALE` が既定）。
+pub const FONT_SCALES: [f64; 6] = [1.0, 1.1, FONT_SCALE, 1.3, 1.4, 1.5];
+
+/// 設定で選べる、1 つのファイルで式を描く時間の上限（秒。0 は上限なし。2 が既定）。
+pub const TIME_LIMITS: [u64; 5] = [1, 2, 5, 10, 0];
+
+/// 1 つのファイルで式を描く時間の上限（ミリ秒。`u64::MAX` は上限なし）。
+static FILE_TIME_MS: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(2_000);
+
+/// 1 つのファイルで式を描く時間の上限を変える（FE の設定。`None` は上限なし）。次に読む Markdown から効く。
+/// 上限なしでも、式の数・原文と SVG の大きさの上限は残る。
+pub fn set_file_time_limit(limit: Option<std::time::Duration>) {
+    let ms = limit.map_or(u64::MAX, |d| {
+        u64::try_from(d.as_millis()).unwrap_or(u64::MAX - 1)
+    });
+    FILE_TIME_MS.store(ms, std::sync::atomic::Ordering::Relaxed);
+}
+
+/// 今の、1 つのファイルで式を描く時間の上限。
+#[cfg(feature = "math")]
+fn file_time_limit() -> std::time::Duration {
+    match FILE_TIME_MS.load(std::sync::atomic::Ordering::Relaxed) {
+        u64::MAX => std::time::Duration::MAX,
+        ms => std::time::Duration::from_millis(ms),
+    }
+}
 
 /// 描いた数式。大きさは em（本文の字の大きさ × `FONT_SCALE` を 1 とする）。
 #[derive(Clone, Debug, Serialize)]
@@ -60,8 +87,8 @@ pub fn colorize_for_coresvg(svg: &str, fg: &str) -> Option<String> {
     crate::svgcss::inline_slanted(svg, &[(COLOR_VAR, fg)])
 }
 
-/// 1 つの Markdown のファイルで描く式の数・原文と SVG の合計の大きさ・時間の上限。超えた分は描かずに原文を見せる（1 つの
-/// ファイルで整形表示が止まらないように）。
+/// 1 つの Markdown のファイルで描く式の数・原文と SVG の合計の大きさの上限（時間の上限は `set_file_time_limit`）。超えた
+/// 分は描かずに原文を見せる（1 つのファイルで整形表示が止まらないように）。
 #[cfg(feature = "math")]
 const MAX_FILE_FORMULAS: usize = 10_000;
 #[cfg(feature = "math")]
@@ -70,8 +97,6 @@ const MAX_FILE_SOURCE: usize = 512 * 1024;
 /// 持つので 1 式あたり 2〜4 KB になり、上の 1 万式が入る大きさにする（1 万式で約 44 MB）。
 #[cfg(feature = "math")]
 const MAX_FILE_SVG: usize = 48 << 20;
-#[cfg(feature = "math")]
-const MAX_FILE_TIME: std::time::Duration = std::time::Duration::from_secs(2);
 
 /// 1 つのファイルの上限の組（試験では小さくする）。
 #[cfg(feature = "math")]
@@ -88,7 +113,7 @@ const FILE_LIMITS: FileLimits = FileLimits {
     formulas: MAX_FILE_FORMULAS,
     source: MAX_FILE_SOURCE,
     svg: MAX_FILE_SVG,
-    time: MAX_FILE_TIME,
+    time: std::time::Duration::from_secs(2),
 };
 /// 描くスレッドのスタック（RaTeX の入れ子の上限まで足りる大きさ。使った分だけ取られる）。
 #[cfg(feature = "math")]
@@ -182,7 +207,13 @@ pub(crate) fn render_all(blocks: &mut [Block]) {
 /// 式を順に描く（大きなスタックの別スレッドで。上限を超えた分は描かない）。
 #[cfg(feature = "math")]
 fn render_jobs(jobs: Vec<(String, bool)>) -> Vec<Result<MathPicture, String>> {
-    render_jobs_with(jobs, FILE_LIMITS)
+    render_jobs_with(
+        jobs,
+        FileLimits {
+            time: file_time_limit(),
+            ..FILE_LIMITS
+        },
+    )
 }
 
 /// `render_jobs` を上限 `limits` で。
@@ -420,6 +451,17 @@ mod tests {
         assert_eq!(line(&rows[0][0]), "[y]");
         assert_eq!(line(&rows[0][1]), "[z]");
         assert!(rows[0][1][0].math_display && !rows[0][0][0].math_display);
+    }
+
+    /// 時間の上限は設定で変えられ、上限なしにもできる（ほかの試験に響かないよう、上限なしと既定だけを使う）。
+    #[cfg(feature = "math")]
+    #[test]
+    fn the_time_limit_can_be_set() {
+        set_file_time_limit(None);
+        assert_eq!(file_time_limit(), std::time::Duration::MAX);
+        set_file_time_limit(Some(std::time::Duration::from_secs(2)));
+        assert_eq!(file_time_limit(), std::time::Duration::from_secs(2));
+        assert!(FONT_SCALES.contains(&FONT_SCALE) && TIME_LIMITS.contains(&2));
     }
 
     #[test]

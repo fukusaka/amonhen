@@ -7,6 +7,8 @@ extension Notification.Name {
     static let syntaxThemeChanged = Notification.Name("syntaxThemeChanged")
     /// gantt の時間帯の設定を変えた。
     static let ganttTimeZoneChanged = Notification.Name("ganttTimeZoneChanged")
+    /// Markdown の数式の設定（大きさ・時間の上限）が変わった。
+    static let mathSettingsChanged = Notification.Name("mathSettingsChanged")
 }
 
 /// 構文の種類ごとの色（差分・マージエディタで共通）。明るい・暗い外観で、それぞれ選んだテーマの色になる。

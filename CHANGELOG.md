@@ -9,6 +9,11 @@ becomes the GitHub Release notes.
 
 ### Unreleased
 
+#### Added
+
+- Settings > Theme > Math sets the formula size and the time limit for drawing one file's formulas, or no limit
+  (macOS, GTK4).
+
 #### Changed
 
 - Markdown math finds `$…$` by GitHub's rules: only at the start, after a space or after `(`, and not before a letter,
