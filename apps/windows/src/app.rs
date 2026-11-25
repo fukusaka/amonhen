@@ -20166,6 +20166,7 @@ fn resize_surface(
             );
         }
     }
+    crate::menus::set_display_scale(scale);
     surface
         .as_ref()
         .expect("surface")

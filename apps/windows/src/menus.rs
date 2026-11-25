@@ -544,29 +544,47 @@ fn toolbar_icon(id: &str) -> View {
     let Some(icon) = amonhen_icons::get(id).filter(|_| id != "files") else {
         return FontIcon::new().glyph(glyph_of(id)).into();
     };
-    let scale = TOOLBAR_ICON_SIZE / amonhen_icons::GRID;
-    let thickness = amonhen_icons::STROKE_WIDTH * scale;
-    let strokes = icon.shapes.iter().enumerate().map(|(i, shape)| {
-        let mut path = Path::new()
-            .data(shape.markup(TOOLBAR_ICON_SIZE))
-            .stroke(Brush::Theme(ThemeBrush::PrimaryText))
-            .stroke_thickness(f64::from(thickness))
-            .round_ends(true);
-        if !shape.dash.is_empty() {
-            // XAML の破線は線の太さを 1 とした長さ（形の破線は格子の長さ）。
-            let dash: Vec<String> = shape
-                .dash
-                .iter()
-                .map(|d| format!("{}", d / amonhen_icons::STROKE_WIDTH))
-                .collect();
-            path = path.stroke_dash_array(dash.join(" "));
-        }
-        (i.to_string(), View::from(path))
-    });
+    let scale = DISPLAY_SCALE.get();
+    let strokes = icon
+        .strokes(TOOLBAR_ICON_SIZE, scale, TOOLBAR_STROKE)
+        .into_iter()
+        .enumerate()
+        .map(|(i, stroke)| {
+            let mut path = Path::new()
+                .data(stroke.markup())
+                .stroke(Brush::Theme(ThemeBrush::PrimaryText))
+                .stroke_thickness(f64::from(TOOLBAR_STROKE))
+                .round_ends(true);
+            if !stroke.dash.is_empty() {
+                // XAML の破線は線の太さを 1 とした長さ。
+                let dash: Vec<String> = stroke
+                    .dash
+                    .iter()
+                    .map(|d| format!("{}", d / TOOLBAR_STROKE))
+                    .collect();
+                path = path.stroke_dash_array(dash.join(" "));
+            }
+            (i.to_string(), View::from(path))
+        });
     Grid::new()
         .width(f64::from(TOOLBAR_ICON_SIZE))
         .height(f64::from(TOOLBAR_ICON_SIZE))
         .children((View::keyed_fragment(strokes),))
+}
+
+/// ツールバーのアイコンの線の太さ。Segoe Fluent Icons の線（100% で 1px）に合わせる。
+const TOOLBAR_STROKE: f32 = 1.0;
+
+thread_local! {
+    /// 窓の画面の倍率（100% なら 1）。共通のアイコンの縦・横の線を画素に合わせるのに使う。
+    static DISPLAY_SCALE: std::cell::Cell<f32> = const { std::cell::Cell::new(1.0) };
+}
+
+/// 窓の画面の倍率を覚える（History の描画の大きさを決めるときに知らされる）。
+pub fn set_display_scale(scale: f32) {
+    if scale > 0.0 {
+        DISPLAY_SCALE.set(scale);
+    }
 }
 
 fn glyph_of(id: &str) -> &'static str {
