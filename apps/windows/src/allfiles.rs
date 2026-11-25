@@ -329,9 +329,12 @@ pub fn list(
             .margin(Thickness::new(r.depth as f64 * 14.0, 0.0, 0.0, 0.0))
             .children((
                 Border::new().width(14.0).content(chevron),
-                FontIcon::new()
-                    .glyph(if n.is_dir { "\u{E8B7}" } else { "\u{E8A5}" })
-                    .opacity(if n.is_dir { 1.0 } else { 0.6 }),
+                Grid::new()
+                    .opacity(if n.is_dir { 1.0 } else { 0.6 })
+                    .children((crate::icons::icon(
+                        if n.is_dir { "folder" } else { "files" },
+                        16.0,
+                    ),)),
                 folder,
                 name,
                 mark,
@@ -402,7 +405,7 @@ pub fn path_bar(
                 .grid_column(0)
                 .style(ButtonStyle::Subtle)
                 .on_click(back)
-                .content(FontIcon::new().glyph("\u{E72B}"))
+                .content(crate::icons::icon("back", 16.0))
                 .tooltip(tr!("Back to the files")),
             StackPanel::new()
                 .grid_column(1)

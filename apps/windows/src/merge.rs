@@ -638,7 +638,7 @@ pub fn view(state: &State, callbacks: Callbacks) -> View {
                         .grid_column(1)
                         .vertical_alignment(VerticalAlignment::Center)
                         .margin(Thickness::new(0.0, 6.0, 8.0, 6.0))
-                        .content(FontIcon::new().glyph("\u{E9E9}"))
+                        .content(crate::icons::icon("display-options", 16.0))
                         .tooltip(tr!("View Options"))
                         .menu(Menu::new(view_options_items(), callbacks.option.clone())),
                 )),

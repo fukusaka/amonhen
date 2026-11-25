@@ -288,22 +288,47 @@ impl Icon {
 }
 
 /// VSCode 拡張の `media/icons/` に置く SVG（パスと中身）。VSCode は拡張の SVG を画像として描き、テーマの色を受け継げ
-/// ないので、ライトとダークの 2 枚に色を書き込む（VSCode の `icon.foreground` と `charts.green` の既定の色）。大きさは
-/// 16、線は codicon と同じ 1px で、1 倍の画面に合わせて画素に乗せる（2 倍の画面でもそのまま画素に乗る）。
+/// ないので、ライトとダークの 2 枚に色を書き込む（VSCode の `icon.foreground` の既定の色）。大きさは 16、線は codicon と
+/// 同じ 1px で、1 倍の画面に合わせて画素に乗せる（2 倍の画面でもそのまま画素に乗る）。状態の色が付く印は、その色の
+/// 写しも作る（`<名前>-<色>.svg`、VSCode の `charts.*`・`list.warningForeground` の既定の色）。
 pub fn vscode_files() -> Vec<(String, String)> {
-    let colors = [
-        ("light", "", "#424242"),
-        ("light", "-green", "#388A34"),
-        ("dark", "", "#C5C5C5"),
-        ("dark", "-green", "#89D185"),
+    // 色の名前、ライト、ダーク。
+    const COLORS: &[(&str, &str, &str)] = &[
+        ("", "#424242", "#C5C5C5"),
+        ("green", "#388A34", "#89D185"),
+        ("yellow", "#BF8803", "#CCA700"),
+        ("orange", "#D18616", "#D18616"),
+        ("red", "#E51400", "#F14C4C"),
+        ("warning", "#855F00", "#CCA700"),
+    ];
+    // 色の写しが要る印。
+    const VARIANTS: &[(&str, &str)] = &[
+        ("branch", "green"),
+        ("conflict", "warning"),
+        ("signed", "green"),
+        ("trust-unknown", "yellow"),
+        ("signer-mismatch", "yellow"),
+        ("expired-key", "orange"),
+        ("revoked-key", "red"),
+        ("bad-signature", "red"),
     ];
     let mut files = Vec::new();
     for (name, icon) in ICONS {
-        for (theme, suffix, color) in colors {
-            files.push((
-                format!("{theme}/{name}{suffix}.svg"),
-                icon.svg(16.0, 1.0, 1.0, color),
-            ));
+        for (color, light, dark) in COLORS {
+            if !color.is_empty() && !VARIANTS.contains(&(name, color)) {
+                continue;
+            }
+            let suffix = if color.is_empty() {
+                String::new()
+            } else {
+                format!("-{color}")
+            };
+            for (theme, value) in [("light", light), ("dark", dark)] {
+                files.push((
+                    format!("{theme}/{name}{suffix}.svg"),
+                    icon.svg(16.0, 1.0, 1.0, value),
+                ));
+            }
         }
     }
     files

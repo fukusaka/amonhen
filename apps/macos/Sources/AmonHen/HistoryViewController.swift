@@ -491,7 +491,7 @@ final class HistoryViewController: NSViewController, NSTableViewDataSource, NSTa
         ] {
             button.bezelStyle = .accessoryBarAction
             button.isBordered = false
-            button.image = NSImage(systemSymbolName: symbol, accessibilityDescription: tip)
+            button.image = AppIcons.image(symbol: symbol, label: tip)
             button.toolTip = tip
             button.target = self
             button.action = action
@@ -1740,9 +1740,7 @@ final class HistoryViewController: NSViewController, NSTableViewDataSource, NSTa
         matchOnlyButton.isEnabled = searchQuery != nil || baseHistory != nil
         // 入っているときは塗りつぶしの印と強調の色で見せる。
         let on = matchOnlyButton.state == .on
-        matchOnlyButton.image = NSImage(
-            systemSymbolName: on ? "line.3.horizontal.decrease.circle.fill" : "line.3.horizontal.decrease.circle",
-            accessibilityDescription: matchOnlyButton.toolTip)
+        matchOnlyButton.image = AppIcons.image(symbol: on ? "line.3.horizontal.decrease.circle.fill" : "line.3.horizontal.decrease.circle", label: matchOnlyButton.toolTip)
         matchOnlyButton.contentTintColor = on ? .controlAccentColor : nil
     }
 

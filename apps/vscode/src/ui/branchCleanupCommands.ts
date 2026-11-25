@@ -4,6 +4,7 @@
  * 共有の daemon のコアで行う
  */
 import * as vscode from 'vscode';
+import { sharedIcon } from './sharedIcons.ts';
 import { GhMissingError, type MergedPullRequest, mergedPullRequests, pullRequestTarget, repositorySlug } from '../git/github.ts';
 import type { RepositoryManager } from '../state/manager.ts';
 import { runEngine } from './engine.ts';
@@ -60,7 +61,7 @@ export function registerBranchCleanupCommands(manager: RepositoryManager): vscod
           items.push({
             label: b.name,
             description: b.pullRequest !== null ? `#${b.pullRequest}` : reason === 'gone' && b.upstream ? b.upstream : undefined,
-            iconPath: new vscode.ThemeIcon('git-branch'),
+            iconPath: sharedIcon('branch') ?? new vscode.ThemeIcon('git-branch'),
             picked: b.checked,
             branch: b,
           });

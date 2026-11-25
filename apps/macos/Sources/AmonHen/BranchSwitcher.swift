@@ -190,7 +190,7 @@ final class BranchSwitcherPanel: NSObject, NSSearchFieldDelegate, NSTableViewDat
         case let .remote(name): ("network", name + L("  · creates a tracking branch"), .secondaryLabelColor)
         case let .create(name): ("plus.circle", L("Create branch %@ and switch to it", name), .controlAccentColor)
         }
-        cell.imageView?.image = NSImage(systemSymbolName: symbol, accessibilityDescription: nil)
+        cell.imageView?.image = AppIcons.image(symbol: symbol)
         cell.imageView?.contentTintColor = color
         cell.textField?.stringValue = title
         cell.textField?.textColor = color

@@ -1,12 +1,104 @@
 import AmonhenKit
 import AppKit
+import SwiftUI
 
 /// どの FE でも同じ形のアイコン（`crates/icons`、`docs/icons.md`）を、AppKit の画像にする。テンプレート画像なので、
 /// 色はツールバーや行が付ける（SF Symbols と同じ）。
 enum AppIcons {
-    /// SF Symbols の名前から、同じ意味の共通のアイコンへ（置き換えたものだけ）。
-    private static let bySymbol: [String: String] = [
+    /// SF Symbols の名前（と、SF Symbols にない形の `amonhen.` の名前）から、同じ意味の共通のアイコンへ。ここにない
+    /// 記号（標準の部品の ▾・×・＋ など）は SF Symbols のまま。Pull request（arrow.triangle.pull）も GitHub の印のまま。
+    static let bySymbol: [String: String] = [
         "arrow.triangle.branch": "branch",
+        "square.and.pencil": "working-copy",
+        "clock": "history",
+        "clock.arrow.circlepath": "reflog",
+        "network": "remote",
+        "tag": "tag",
+        "tray.2": "stashes",
+        "tray": "stashes",
+        "shippingbox": "submodule",
+        "square.stack.3d.down.right": "subtree",
+        "folder": "folder",
+        "folder.fill": "folder",
+        "line.3.horizontal.decrease": "filter",
+        "line.3.horizontal.decrease.circle": "filter",
+        "line.3.horizontal.decrease.circle.fill": "filter",
+        "list.bullet": "list",
+        "list.bullet.indent": "tree",
+        "doc": "files",
+        "doc.text": "files",
+        "doc.plaintext": "files",
+        "arrow.left.arrow.right": "range-diff",
+        "arrow.up.arrow.down": "ahead-behind",
+        "person.crop.circle": "account",
+        "paintbrush": "appearance",
+        "swatchpalette": "theme",
+        "speedometer": "performance",
+        "apple.terminal": "terminal",
+        "terminal": "terminal",
+        "questionmark.square.dashed": "unknown-file",
+        "slider.horizontal.3": "display-options",
+        "location": "go-to-head",
+        "star": "favorite",
+        "star.fill": "favorite",
+        "arrow.turn.down.right": "stacked",
+        "icloud.slash": "upstream-gone",
+        "exclamationmark.icloud": "remote-conflict",
+        "house": "main-worktree",
+        "checkmark.circle": "ci-passed",
+        "amonhen.clean": "clean",
+        "amonhen.current-branch": "current-branch",
+        "gearshape": "settings",
+        "exclamationmark.triangle": "conflict",
+        "exclamationmark.triangle.fill": "conflict",
+        "plus.circle": "new-branch-row",
+        "pencil.circle": "edited-worktree",
+        "checkmark.seal": "signed",
+        "checkmark.seal.fill": "signed",
+        "xmark.seal": "bad-signature",
+        "xmark.seal.fill": "bad-signature",
+        "questionmark.circle": "missing-key",
+        "checkmark.shield": "trust-unknown",
+        "exclamationmark.shield.fill": "revoked-key",
+        "person.crop.circle.badge.questionmark": "signer-mismatch",
+        "clock.badge.exclamationmark": "expired-key",
+        "exclamationmark.circle": "cannot-verify",
+        "sparkles": "ai",
+        "character.bubble": "translate",
+        "scissors": "shallow",
+        "icloud.and.arrow.down": "partial",
+        "folder.badge.minus": "sparse",
+        "circle.dashed": "not-checked-out",
+        "pencil": "modified",
+        "pencil.and.list.clipboard": "edit-mode",
+        "xmark.octagon.fill": "failed",
+        "stop.circle": "cancelled",
+        "bolt.horizontal.circle": "disconnected",
+        "checkmark.circle.fill": "ci-passed",
+        "xmark.circle.fill": "ci-failed",
+        "circle.fill": "ci-running",
+        "circle": "ci-none",
+        "slash.circle": "ci-cancelled",
+        "arrow.up.left.and.arrow.down.right": "expand",
+        "arrow.down.right.and.arrow.up.left": "restore",
+        "rectangle.expand.vertical": "expand-all",
+        "rectangle.compress.vertical": "collapse-all",
+        "amonhen.back": "back",
+        "rectangle.split.2x1": "side-by-side",
+        "rectangle.righthalf.inset.filled": "swipe",
+        "circle.lefthalf.filled": "onion-skin",
+        "plus.forwardslash.minus": "changed-pixels",
+        "space": "whitespace",
+        "eye": "preview",
+        "minus.magnifyingglass": "zoom-out",
+        "plus.magnifyingglass": "zoom-in",
+        "arrow.up.left.and.down.right.magnifyingglass": "zoom-fit",
+        "checkerboard.rectangle": "checkerboard",
+        "arrow.turn.down.left": "wrap-lines",
+        "magnifyingglass": "search",
+        "waveform.path.ecg": "activity",
+        "arrow.clockwise": "refresh",
+        "arrow.triangle.merge": "merge",
     ]
     private static var cache: [String: NSImage] = [:]
 
@@ -48,6 +140,25 @@ enum AppIcons {
     static func image(symbol: String, size: CGFloat = 16, label: String? = nil) -> NSImage? {
         if let name = bySymbol[symbol], let image = image(name, size: size, label: label) { return image }
         return NSImage(systemSymbolName: symbol, accessibilityDescription: label)
+    }
+}
+
+extension AppIcons {
+    /// 大きさを決めた SF Symbols の代わり（`pointSize` の文字と並ぶ大きさ）。共通のアイコンがなければ SF Symbols を
+    /// `config` で描く。
+    static func image(symbol: String, pointSize: CGFloat, config: NSImage.SymbolConfiguration, label: String? = nil) -> NSImage? {
+        if let name = bySymbol[symbol], let image = image(name, size: (pointSize * 1.2).rounded(), label: label) { return image }
+        return NSImage(systemSymbolName: symbol, accessibilityDescription: label)?.withSymbolConfiguration(config)
+    }
+}
+
+extension AppIcons {
+    /// SwiftUI の `Image(systemName:)` の代わり。共通のアイコンがあればそれを（色は前景の色）。
+    static func swiftUI(_ symbol: String) -> Image {
+        if bySymbol[symbol] != nil, let image = image(symbol: symbol) {
+            return Image(nsImage: image).renderingMode(.template)
+        }
+        return Image(systemName: symbol)
     }
 }
 

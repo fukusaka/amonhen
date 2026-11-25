@@ -319,7 +319,7 @@ final class HistoryEditController: NSObject {
     // MARK: - 要約と実行
 
     private func makeBar() -> NSView {
-        let icon = NSImageView(image: NSImage(systemSymbolName: "pencil.and.list.clipboard", accessibilityDescription: nil) ?? NSImage())
+        let icon = NSImageView(image: AppIcons.image(symbol: "pencil.and.list.clipboard") ?? NSImage())
         icon.contentTintColor = .controlAccentColor
         summary.font = .systemFont(ofSize: NSFont.smallSystemFontSize)
         summary.lineBreakMode = .byTruncatingTail

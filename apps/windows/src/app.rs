@@ -18172,6 +18172,8 @@ impl Root {
         };
         let small = |text: String| TextBlock::new().text(text).font_size(12.0);
         let icon = |glyph: &'static str| FontIcon::new().glyph(glyph);
+        // どの FE でも同じ形のアイコン（Segoe にない形・Git の形）。
+        let shared = |name: &str| crate::icons::icon(name, 16.0);
         let tree = crate::prefs::bool(crate::prefs::HISTORY_FILE_TREE);
         // 変更／すべてのファイル（その時点の木は 1 つのコミットにだけある。押して外したときはそのまま）。
         let mut single = false;
@@ -18226,7 +18228,7 @@ impl Root {
                             Message::DiffFilesToggled
                         }
                     }))
-                    .content(icon("\u{E8FD}"))
+                    .content(shared("list"))
                     .tooltip(tr!("Show the changed files as a list")),
                 ToggleButton::new()
                     .is_checked(tree)
@@ -18237,7 +18239,7 @@ impl Root {
                             Message::DiffFilesToggled
                         }
                     }))
-                    .content(icon("\u{ED41}"))
+                    .content(shared("tree"))
                     .tooltip(tr!("Show the changed files as a tree")),
             ));
         // フォルダをすべて開く・畳む（木のときだけ。macOS 版と同じ）。すべてのファイルでは、その木のフォルダ。
@@ -18250,7 +18252,7 @@ impl Root {
             Button::new()
                 .style(ButtonStyle::Subtle)
                 .on_click(context.callback(|()| Message::ToggleAllFolders))
-                .content(icon(if folders_open { "\u{E838}" } else { "\u{E8B7}" }))
+                .content(shared("folder"))
                 .tooltip(if folders_open {
                     tr!("Collapse All Folders")
                 } else {
@@ -18272,10 +18274,10 @@ impl Root {
         let find = Button::new()
             .style(ButtonStyle::Subtle)
             .on_click(context.callback(|()| Message::DiffFindOpen(true)))
-            .content(icon("\u{E721}"))
+            .content(shared("search"))
             .tooltip(tr!("Find in the diff (Ctrl+F)"));
         let options = DropDownButton::new()
-            .content(icon("\u{E9E9}"))
+            .content(shared("display-options"))
             .tooltip(tr!("View Options"))
             .menu(Menu::new(
                 self.view_options_items(),
@@ -20449,7 +20451,7 @@ fn resize_surface(
             );
         }
     }
-    crate::menus::set_display_scale(scale);
+    crate::icons::set_display_scale(scale);
     surface
         .as_ref()
         .expect("surface")

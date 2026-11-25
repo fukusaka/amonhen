@@ -428,7 +428,7 @@ extension Actions {
             note.heightAnchor.constraint(equalToConstant: height).isActive = true
             let blockedTitle = NSTextField(labelWithString: L("Can’t pull"))
             blockedTitle.font = .boldSystemFont(ofSize: 15)
-            let blockedIcon = NSImageView(image: NSImage(systemSymbolName: "exclamationmark.triangle.fill", accessibilityDescription: nil)
+            let blockedIcon = NSImageView(image: AppIcons.image(symbol: "exclamationmark.triangle.fill")
                 ?? NSImage())
             blockedIcon.symbolConfiguration = .init(pointSize: 15, weight: .regular)
             blockedIcon.contentTintColor = .systemYellow
