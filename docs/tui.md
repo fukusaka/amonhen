@@ -265,7 +265,8 @@ Left and right margins, for a pane with others beside it:
 
 - When it takes the terminal, the TUI asks whether the terminal knows mode 69 (`DECLRMM`, by `DECRQM`) and then sends the question every terminal answers (`DA1`); the mode's answer has to come before that one. It waits 300 ms at most, on Unix only (elsewhere it does not ask, and only full-width panes scroll in the terminal).
 - If the terminal knows the mode, a pane that scrolled is scrolled there too: the mode on, the region's lines (`DECSTBM`) and its left and right margins (`DECSLRM`), the scroll, and everything reset, with the mode on only for that long because it changes what `CSI s` means.
-- Checked against the terminal model in the tests (the pane's cells move, the cells beside it do not, the margins and the mode end reset), and in tmux, which answers that it does not know the mode: the question at startup leaves nothing on the screen or in the input, and nothing is scrolled with margins. **Not checked in any terminal that has margins**, and not measured: none was at hand. `Ctrl-l` redraws if a terminal gets it wrong.
+- Checked against the terminal model in the tests (the pane's cells move, the cells beside it do not, the margins and the mode end reset), and in tmux, which answers that it does not know the mode: the question at startup leaves nothing on the screen or in the input, and nothing is scrolled with margins. **Not checked in any terminal that has margins**, and not measured. GNOME Terminal on Ubuntu 24.04 (VTE 0.76) has them
+(it answers that it knows the mode, and text wraps at the margins), so it can be checked there; Terminal.app has none. `Ctrl-l` redraws if a terminal gets it wrong.
 
 Lighting the graph's lines along the ancestry, the same Mac, this repository (3,748 commits), 200 × 60, the build before and the build after run in turn, five times each (median and 95% frame time, the range over the five runs):
 
