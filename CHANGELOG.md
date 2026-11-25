@@ -18,6 +18,7 @@ becomes the GitHub Release notes.
 
 - Markdown math finds `$…$` by GitHub's rules: only at the start, after a space or after `(`, and not before a letter,
   digit or `_`, nor in italics, links or footnotes. So `a$x$b` and `日本語の$x$` stay text, as on GitHub.
+- Markdown previews no longer turn bare URLs inside HTML into links; as on GitHub, only those in Markdown text are.
 
 ### [0.2.15] - 2026-11-25
 

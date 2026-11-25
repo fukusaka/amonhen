@@ -77,6 +77,9 @@ pub struct Run {
     pub(crate) math_tex: Option<String>,
     #[serde(skip_serializing_if = "std::ops::Not::not")]
     pub(crate) math_display: bool,
+    /// HTML の中の文字（Markdown として読んだ文でない）。GitHub と同じく、素の URL はリンクにしない。
+    #[serde(skip)]
+    pub(crate) html: bool,
 }
 
 /// リストの 1 項目。
@@ -353,6 +356,7 @@ fn same_style(a: &Run, b: &Run) -> bool {
         a.sup,
         a.underline,
         &a.link,
+        a.html,
     ) == (
         b.bold,
         b.italic,
@@ -363,6 +367,7 @@ fn same_style(a: &Run, b: &Run) -> bool {
         b.sup,
         b.underline,
         &b.link,
+        b.html,
     )
 }
 
@@ -635,6 +640,11 @@ impl Builder {
     }
 
     fn push_run(&mut self, text: &str, code: bool) {
+        self.push_text(text, code, false);
+    }
+
+    /// 文字を足す。`html` は HTML の中の文字（素の URL をリンクにしない）。
+    fn push_text(&mut self, text: &str, code: bool, html: bool) {
         let s = &self.style;
         let mut run = Run {
             text: text.to_owned(),
@@ -647,6 +657,7 @@ impl Builder {
             sup: s.sup > 0,
             underline: s.underline > 0,
             link: s.links.last().cloned(),
+            html,
             ..Run::default()
         };
         if let Some(url) = &self.style.image {
@@ -909,7 +920,7 @@ impl Builder {
         {
             return;
         }
-        self.push_run(&collapsed, false);
+        self.push_text(&collapsed, false, true);
     }
 
     /// 要素を開く（深すぎれば開かない）。
@@ -1882,7 +1893,7 @@ fn linkify_text(runs: Vec<Run>, github: Option<&str>) -> Vec<Run> {
         }
         let text = emojify(&run.text);
         let mut last = 0;
-        for (start, end, url) in find_links(&text, github) {
+        for (start, end, url) in find_links(&text, github, !run.html) {
             if start > last {
                 out.push(Run {
                     text: text[last..start].to_owned(),
@@ -1934,8 +1945,9 @@ fn emojify(text: &str) -> String {
     out
 }
 
-/// 文の中のリンクにする所（始まり・終わり・リンク先）。
-fn find_links(text: &str, github: Option<&str>) -> Vec<(usize, usize, String)> {
+/// 文の中のリンクにする所（始まり・終わり・リンク先）。`urls` が false なら素の URL はリンクにしない（HTML の中の
+/// 文字。GitHub の URL の自動リンクは Markdown の文の中だけで、`#123`・`@user` などは HTML の中でもリンクにする）。
+fn find_links(text: &str, github: Option<&str>, urls: bool) -> Vec<(usize, usize, String)> {
     let bytes = text.as_bytes();
     let mut found = Vec::new();
     let mut i = 0;
@@ -1951,7 +1963,8 @@ fn find_links(text: &str, github: Option<&str>) -> Vec<(usize, usize, String)> {
     };
     while i < bytes.len() {
         let rest = &text[i..];
-        if at_word(i)
+        if urls
+            && at_word(i)
             && ["https://", "http://", "www."]
                 .iter()
                 .any(|p| rest.starts_with(p))
@@ -2192,6 +2205,42 @@ mod tests {
         assert!(
             runs.iter()
                 .any(|r| r.text.contains(":nope:") && r.text.contains("😄"))
+        );
+    }
+
+    #[test]
+    fn bare_urls_in_html_stay_text() {
+        // GitHub と同じく、URL の自動リンクは Markdown の文の中だけ（`#12`・`@dev` は HTML の中でもリンク）。
+        let blocks = parse_with(
+            "<p>See https://a.org and www.b.org, #12 by @dev</p>\n\n\
+             <div>\n\nMarkdown https://c.org\n\n</div>\n\n\
+             Text <b>https://d.org</b> and <span>https://e.org</span>\n",
+            Some("https://github.com/o/r"),
+        );
+        let links = |block: &Block| -> Vec<String> {
+            paragraph(block)
+                .0
+                .iter()
+                .filter_map(|r| r.link.clone())
+                .collect()
+        };
+        assert_eq!(
+            links(&blocks[0]),
+            vec![
+                "https://github.com/o/r/issues/12".to_owned(),
+                "https://github.com/dev".to_owned(),
+            ]
+        );
+        assert_eq!(
+            text(paragraph(&blocks[0]).0),
+            "See https://a.org and www.b.org, #12 by @dev"
+        );
+        // HTML の中でも、空行を挟んで Markdown として読む所はリンクにする。
+        assert_eq!(links(&blocks[1]), vec!["https://c.org".to_owned()]);
+        // Markdown の段落の中のタグの中身は Markdown の文。
+        assert_eq!(
+            links(&blocks[2]),
+            vec!["https://d.org".to_owned(), "https://e.org".to_owned()]
         );
     }
 
