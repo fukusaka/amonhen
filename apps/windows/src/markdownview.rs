@@ -572,6 +572,8 @@ fn inlines(runs: &[Run], bold: bool) -> Vec<RichTextInline> {
                 is_italic: r.italic || r.image.is_some(),
                 foreground,
                 is_monospace: r.code || r.kbd,
+                // `<kbd>` はキーの札（枠と地のある小さな札。macOS 版・GTK4 版と同じ）。
+                is_key_cap: r.kbd,
                 is_strikethrough: r.strike,
                 // `<sup>`・`<sub>` は上付き・下付き（GitHub と同じく小さく、上・下にずらす）。
                 variant: if r.sup {
