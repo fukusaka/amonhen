@@ -253,6 +253,7 @@ impl Ctx<'_> {
                     break 'passes;
                 }
                 if self.work < cost {
+                    crate::cut_short();
                     break 'passes;
                 }
                 self.work -= cost;

@@ -30,6 +30,8 @@ pub struct Font {
     pub sup: bool,
     /// 文が決めた色（なければテーマの文字の色）。
     pub color: Option<Color>,
+    /// `fontname` の書体（SVG の `font-family` の並び。最後は描き手の既定の書体）。None はアプリの書体。
+    pub family: Option<String>,
 }
 
 impl Font {
@@ -45,10 +47,12 @@ impl Font {
             sub: false,
             sup: false,
             color: None,
+            family: None,
         }
     }
 
-    /// `fontname` の名前から（太字・斜体・等幅だけを見る。書体そのものはアプリの書体）。
+    /// `fontname` の名前から: 書体（`family`）と、太字・斜体・等幅。幅の見積もりは等幅かどうかだけを見る（ほかは
+    /// Arial の送り。Times などの serif は Arial より狭いので、枠には収まる）。
     pub fn with_name(mut self, name: &str) -> Self {
         let n = name.to_ascii_lowercase();
         if n.contains("bold") || n.contains("black") || n.contains("heavy") {
@@ -57,14 +61,21 @@ impl Font {
         if n.contains("italic") || n.contains("oblique") {
             self.italic = true;
         }
-        if n.contains("courier")
-            || n.contains("mono")
-            || n.contains("consol")
-            || n.contains("menlo")
-        {
-            self.mono = true;
+        if !n.trim().is_empty() {
+            let (family, kind) = font_family(name);
+            self.mono = kind == Generic::Mono;
+            self.family = family;
         }
         self
+    }
+
+    /// SVG の `font-family` の値（書体の並びか、等幅ならアプリの等幅の書体。どちらもなければ None）。
+    pub fn family_css(&self) -> Option<&str> {
+        match &self.family {
+            Some(f) => Some(f),
+            None if self.mono => Some("var(--_fm)"),
+            None => None,
+        }
     }
 
     fn bits(&self) -> u32 {
@@ -73,6 +84,191 @@ impl Font {
             | (if self.sub { style::SUB } else { 0 })
             | (if self.sup { style::SUP } else { 0 })
     }
+}
+
+/// 書体の大まかな種類（並びの最後に置く描き手の既定の書体）。
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum Generic {
+    Sans,
+    Serif,
+    Mono,
+}
+
+impl Generic {
+    fn css(self) -> &'static str {
+        match self {
+            Generic::Sans => "sans-serif",
+            Generic::Serif => "serif",
+            // アプリの等幅の書体（なければ monospace）
+            Generic::Mono => "var(--_fm)",
+        }
+    }
+}
+
+/// 名前の後ろの太さ・形の言葉（`Helvetica-Bold`・`Arial Bold Italic`・`Times-Roman` の後ろ）。
+const STYLE_WORDS: &[&str] = &[
+    "bold",
+    "italic",
+    "oblique",
+    "bolditalic",
+    "boldoblique",
+    "roman",
+    "regular",
+    "book",
+    "normal",
+    "light",
+    "medium",
+    "semibold",
+    "demibold",
+    "demi",
+    "black",
+    "heavy",
+    "thin",
+    "condensed",
+];
+
+/// 書体の名前の種類（名前から分かる範囲で）。
+fn kind_of(name: &str) -> Generic {
+    let n = name.to_lowercase();
+    let has = |words: &[&str]| words.iter().any(|w| n.contains(w));
+    if has(&[
+        "courier",
+        "mono",
+        "consol",
+        "menlo",
+        "code",
+        "typewriter",
+        "fixed",
+    ]) {
+        Generic::Mono
+    } else if n.contains("sans") {
+        Generic::Sans
+    } else if has(&[
+        "times",
+        "serif",
+        "georgia",
+        "garamond",
+        "palatino",
+        "bookman",
+        "schoolbook",
+        "century",
+        "cambria",
+        "baskerville",
+        "didot",
+        "minion",
+        "charter",
+        "mincho",
+        "明朝",
+    ]) {
+        Generic::Serif
+    } else {
+        Generic::Sans
+    }
+}
+
+/// 1 つの書体の名前を `font-family` の名前に: fontconfig の `:style=…` と、後ろの太さ・形の言葉を除く。描き手が
+/// 持たないことの多い PostScript の名前には、よくある同じ形の書体を足す。使えない文字を含む名前は捨てる。
+fn family_names(name: &str) -> Vec<String> {
+    let mut n = name.split(':').next().unwrap_or("").trim();
+    n = n.trim_matches(|c| c == '\'' || c == '"').trim();
+    // `Helvetica-Bold`・`Times-Roman`: 後ろの言葉がすべて太さ・形なら除く
+    if let Some((head, tail)) = n.rsplit_once('-')
+        && !head.trim().is_empty()
+        && is_style_run(tail)
+    {
+        n = head.trim();
+    }
+    // `Arial Bold Italic`（`Times New Roman` の Roman は名前のうち）
+    let mut words: Vec<&str> = n.split_whitespace().collect();
+    while words.len() > 1 && {
+        let w = words[words.len() - 1];
+        STYLE_WORDS
+            .iter()
+            .any(|s| w.eq_ignore_ascii_case(s) && !matches!(*s, "roman" | "book" | "normal"))
+    } {
+        words.pop();
+    }
+    let n = words.join(" ");
+    if n.is_empty()
+        || !n
+            .chars()
+            .all(|c| c.is_alphanumeric() || matches!(c, ' ' | '-' | '_' | '.'))
+    {
+        return vec![];
+    }
+    let also: &[&str] = match n.to_ascii_lowercase().as_str() {
+        "times" => &["Times New Roman"],
+        "helvetica" => &["Arial"],
+        "courier" => &["Courier New"],
+        _ => &[],
+    };
+    std::iter::once(n.clone())
+        .chain(also.iter().map(|s| s.to_string()))
+        .collect()
+}
+
+/// `BoldItalic` のように太さ・形の言葉だけが続くか。
+fn is_style_run(s: &str) -> bool {
+    let mut rest = s.to_ascii_lowercase();
+    while !rest.is_empty() {
+        match STYLE_WORDS.iter().find(|w| rest.starts_with(**w)) {
+            Some(w) => rest = rest[w.len()..].to_owned(),
+            None => return false,
+        }
+    }
+    !s.is_empty()
+}
+
+/// 総称の書体の名前か（`sans-serif` など）。
+fn generic(name: &str) -> Option<Generic> {
+    match name.trim().to_ascii_lowercase().as_str() {
+        "sans" | "sans-serif" | "system-ui" | "ui-sans-serif" => Some(Generic::Sans),
+        "serif" | "ui-serif" => Some(Generic::Serif),
+        "mono" | "monospace" | "ui-monospace" => Some(Generic::Mono),
+        _ => None,
+    }
+}
+
+/// `fontname` を `font-family` の並びにする（最後に名前の種類の総称の書体を置き、なければ描き手の既定に落ちる）。
+/// `Helvetica,Arial,sans-serif` のような並びも読む。総称の書体だけ（`sans-serif` など）なら、sans はアプリの書体
+/// （None）、等幅はアプリの等幅の書体。返す種類は並びの最初の書体のもの。
+fn font_family(name: &str) -> (Option<String>, Generic) {
+    let parts: Vec<&str> = name.split(',').filter(|p| !p.trim().is_empty()).collect();
+    let mut names: Vec<String> = Vec::new();
+    let mut kind = None;
+    let mut last = None;
+    for p in &parts {
+        if let Some(g) = generic(p.trim_matches(|c: char| c == '\'' || c == '"' || c == ' ')) {
+            kind.get_or_insert(g);
+            last = Some(g);
+            break;
+        }
+        for n in family_names(p) {
+            kind.get_or_insert_with(|| kind_of(&n));
+            if !names.contains(&n) {
+                names.push(n);
+            }
+        }
+    }
+    let kind = kind.unwrap_or(Generic::Sans);
+    if names.is_empty() {
+        return match kind {
+            Generic::Serif => (Some(Generic::Serif.css().to_owned()), kind),
+            _ => (None, kind),
+        };
+    }
+    let quoted: Vec<String> = names
+        .iter()
+        .map(|n| {
+            if n.contains(' ') {
+                format!("'{n}'")
+            } else {
+                n.clone()
+            }
+        })
+        .collect();
+    let tail = last.unwrap_or(kind).css();
+    (Some(format!("{}, {tail}", quoted.join(", "))), kind)
 }
 
 #[derive(Clone, Debug, PartialEq)]
@@ -673,8 +869,10 @@ fn span_attrs(font: &Font, root: &Font, out: &mut String) {
     if font.italic && !root.italic {
         out.push_str(" font-style=\"italic\"");
     }
-    if font.mono && !root.mono {
-        out.push_str(" font-family=\"var(--_fm)\"");
+    if font.family_css() != root.family_css() {
+        // 外の書体に戻る span はアプリの書体
+        let css = font.family_css().unwrap_or("var(--pele-font,sans-serif)");
+        out.push_str(&format!(" font-family=\"{}\"", esc(css)));
     }
     if font.color != root.color
         && let Some(c) = &font.color
@@ -876,6 +1074,56 @@ pub fn text_svg(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn names_fonts_for_svg() {
+        let f = |n: &str| Font::new(14.0).with_name(n);
+        assert_eq!(
+            f("Helvetica").family.as_deref(),
+            Some("Helvetica, Arial, sans-serif")
+        );
+        let bold = f("Helvetica-Bold");
+        assert!(bold.bold && bold.family.as_deref() == Some("Helvetica, Arial, sans-serif"));
+        assert_eq!(
+            f("Times-Roman").family.as_deref(),
+            Some("Times, 'Times New Roman', serif")
+        );
+        assert_eq!(
+            f("Times New Roman").family.as_deref(),
+            Some("'Times New Roman', serif")
+        );
+        let mono = f("Courier");
+        assert!(mono.mono);
+        assert_eq!(
+            mono.family_css(),
+            Some("Courier, 'Courier New', var(--_fm)")
+        );
+        assert_eq!(
+            f("Arial Bold Italic").family.as_deref(),
+            Some("Arial, sans-serif")
+        );
+        assert_eq!(
+            f("DejaVu Sans:style=Bold").family.as_deref(),
+            Some("'DejaVu Sans', sans-serif")
+        );
+        // 並び: 総称の書体で終わる
+        assert_eq!(
+            f("Helvetica,Arial,sans-serif").family.as_deref(),
+            Some("Helvetica, Arial, sans-serif")
+        );
+        assert_eq!(
+            f("Fira Code, monospace").family_css(),
+            Some("'Fira Code', var(--_fm)")
+        );
+        // 総称の書体だけ: sans はアプリの書体、等幅はアプリの等幅の書体
+        assert_eq!(f("sans-serif").family_css(), None);
+        assert_eq!(f("monospace").family_css(), Some("var(--_fm)"));
+        assert_eq!(f("serif").family_css(), Some("serif"));
+        // 使えない文字の名前は捨てる
+        assert_eq!(f("x\";y").family_css(), None);
+        // 等幅の幅で測る
+        assert!(measure("iiii", &f("Courier")) > measure("iiii", &f("Helvetica")));
+    }
 
     #[test]
     fn splits_escaped_lines() {

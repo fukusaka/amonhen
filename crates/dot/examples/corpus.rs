@@ -5,7 +5,7 @@
 //! ```
 //!
 //! `<dir>` の `*.dot`・`*.gv` を名前の順に描く。`<svg-out-dir>` があれば、描いた SVG をそこに書く。`--layout` は
-//! `layout` の属性のない図の配置（` ```neato ` のフェンスと同じ）。
+//! `layout` の属性のない図の配置。
 
 use std::alloc::{GlobalAlloc, Layout, System};
 use std::sync::atomic::{AtomicUsize, Ordering};

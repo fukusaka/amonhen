@@ -203,7 +203,11 @@ impl System {
             Repulsion::Grid => n * 100 + self.edges.len(),
             Repulsion::Tree => n * 150 + self.edges.len(),
         };
+        let want = iters;
         let iters = iters.min(*budget / per.max(1)).max(1);
+        if iters < want {
+            crate::cut_short();
+        }
         let mut force = vec![(0.0, 0.0); n];
         for it in 0..iters {
             *budget = budget.saturating_sub(per);
@@ -898,6 +902,9 @@ fn local_stress(x: &mut [P], edges: &[(usize, usize, f64)]) {
         .collect();
     let pairs: usize = peers.iter().map(Vec::len).sum::<usize>().max(1);
     let iters = LOCAL_ITERS.min(LOCAL_WORK / pairs);
+    if iters < LOCAL_ITERS {
+        crate::cut_short();
+    }
     for _ in 0..iters {
         for v in 0..n {
             let (mut sx, mut sy, mut sw) = (0.0, 0.0, 0.0);

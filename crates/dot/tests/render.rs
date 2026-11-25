@@ -232,10 +232,15 @@ fn defaults_stay_readable_on_given_grounds() {
             .contains("fill=\"#1f1f1f\""),
         "{svg}"
     );
-    // 文の色が勝ち、塗りのあるノードはそのまま
+    // 文の色が勝つ。塗りの指定のない枠のノードも塗らないので、枠と文字は地の上で読める色
     assert!(part(&svg, "c").contains("fill=\"#ff0000\""), "{svg}");
     assert!(!part(&svg, "c").contains("#1f1f1f"), "{svg}");
-    assert!(!part(&svg, "d").contains("#1f1f1f"), "{svg}");
+    let d = part(&svg, "d");
+    assert!(
+        d.contains("fill=\"none\" stroke=\"#1f1f1f\"")
+            && d.contains("class=\"dot-label\" fill=\"#1f1f1f\""),
+        "{svg}"
+    );
     assert!(
         part(&svg, "b-&gt;c").contains("stroke=\"#0000ff\""),
         "{svg}"
@@ -395,8 +400,113 @@ fn uses_theme_variables_and_given_colors() {
         .svg;
     assert!(svg.contains("stroke=\"#ff0000\""), "{svg}");
     assert!(svg.contains("fill=\"#00ff00\""));
-    assert!(svg.contains("var(--_l)") && svg.contains("var(--_b)") && svg.contains("var(--_s)"));
+    assert!(svg.contains("var(--_l)") && svg.contains("var(--_b)"));
     assert!(svg.contains(">a</text>") && svg.contains(">b</text>"));
+    // 塗りの指定のないノードは塗らない（Graphviz と同じく透明）
+    assert!(
+        !svg.contains("var(--_s)") && !svg.contains("var(--_a)"),
+        "{svg}"
+    );
+    let filled = render("digraph { a [style=filled] }").unwrap().svg;
+    assert!(filled.contains("fill=\"var(--_a)\""), "{filled}");
+    // クラスタも塗りの指定がなければ塗らない
+    let svg = render("digraph { subgraph cluster_a { a } subgraph cluster_b { style=filled; b } }")
+        .unwrap()
+        .svg;
+    assert!(
+        part(&svg, "cluster_a").contains("fill=\"none\" stroke=\"var(--_b)\""),
+        "{svg}"
+    );
+    assert!(
+        part(&svg, "cluster_b").contains("fill=\"var(--_a)\" stroke"),
+        "{svg}"
+    );
+}
+
+#[test]
+fn edges_cross_the_title_above_their_node() {
+    // 題の真下のノードへの線は、題の脇に回らずまっすぐ（Graphviz と同じ）。ortho も
+    for splines in ["", "splines=ortho;"] {
+        let svg = render(&format!(
+            "digraph {{ {splines} x; subgraph cluster_a {{ label=\"A long cluster title\"; a }} x -> a }}"
+        ))
+        .unwrap()
+        .svg;
+        let d = part(&svg, "x-&gt;a").split("d=\"M").nth(1).unwrap();
+        let d = d.split('"').next().unwrap();
+        let xs: Vec<f64> = d
+            .split(['C', 'L', ' '])
+            .filter_map(|p| p.split(',').next()?.parse().ok())
+            .collect();
+        assert!(
+            xs.iter().all(|x| (x - xs[0]).abs() < 0.01),
+            "{splines}: {svg}"
+        );
+    }
+}
+
+#[test]
+fn ortho_edges_ignore_ports() {
+    // Graphviz と同じく、splines=ortho の線はポートを見ない: `a:y:e` からの線も下の辺から出て、`b:n` への輪も
+    // 右に回る（ポートの側から出るなら、a の右の辺から出て、輪は上に回る）
+    let svg = render(
+        "digraph { splines=ortho; node [shape=record]; a [label=\"<x> x|<y> y\"]; b; c; a:y:e -> b; a -> c; b -> b:n }",
+    )
+    .unwrap()
+    .svg;
+    let start = |id: &str| {
+        let d = part(&svg, id).split("d=\"M").nth(1).unwrap();
+        let mut it = d.split(['C', ',']);
+        let x: f64 = it.next().unwrap().parse().unwrap();
+        let y: f64 = it.next().unwrap().parse().unwrap();
+        (x, y)
+    };
+    let (x, y) = start("a-&gt;b");
+    assert!(x > 0.5 && x < 53.5 && (y - 36.0).abs() < 0.01, "{svg}");
+    let (x, _) = start("b-&gt;b");
+    let b = part(&svg, "b");
+    let right = attr_num(b, "x") + attr_num(b, "width");
+    assert!((x - right).abs() < 0.01, "{svg}");
+}
+
+#[test]
+fn fontname_picks_the_typeface() {
+    let svg = render(
+        "digraph { node [fontname=\"Helvetica,Arial,sans-serif\"]; a; b [fontname=\"Courier-Bold\"]; c [label=<x <font face=\"Times\">y</font>>] }",
+    )
+    .unwrap()
+    .svg;
+    assert!(
+        text_tag(&svg, "a").contains("font-family=\"Helvetica, Arial, sans-serif\""),
+        "{svg}"
+    );
+    let b = text_tag(&svg, "b");
+    assert!(
+        b.contains("font-weight=\"bold\"")
+            && b.contains("font-family=\"Courier, 'Courier New', var(--_fm)\""),
+        "{svg}"
+    );
+    assert!(
+        svg.contains("font-family=\"Times, 'Times New Roman', serif\">y</tspan>"),
+        "{svg}"
+    );
+}
+
+#[test]
+fn pads_the_drawing_as_graphviz_does() {
+    // 既定は 4 点、`pad` はインチ（x,y か 1 つ）
+    let size = |src: &str| {
+        let svg = render(src).unwrap().svg;
+        let view = svg.split("viewBox=\"0 0 ").nth(1).unwrap();
+        let mut it = view.split('"').next().unwrap().split(' ');
+        let w: f64 = it.next().unwrap().parse().unwrap();
+        let h: f64 = it.next().unwrap().parse().unwrap();
+        (w, h)
+    };
+    assert_eq!(size("digraph { a }"), (62.0, 44.0));
+    assert_eq!(size("digraph { pad=\"1,0.5\"; a }"), (198.0, 108.0));
+    assert_eq!(size("digraph { pad=0; a }"), (54.0, 36.0));
+    assert_eq!(size("digraph { pad=nope; a }"), (62.0, 44.0));
 }
 
 /// `>word<` を中に持つ `<text …>` の開きの札。
@@ -436,7 +546,7 @@ fn text_on_explicit_fills_stays_readable() {
         given.contains("fill=\"#ffff00\"") && given.matches("fill=").count() == 1,
         "{svg}"
     );
-    // クラスタの題: 塗りか bgcolor の上なら読める色、なければ控えめな色
+    // クラスタの題: 塗りか bgcolor の上なら読める色、なければ文字の色（fill を書かず、図の文字の色を継ぐ）
     let svg = render(
         "digraph { subgraph cluster_a { label=\"Filled\"; style=filled; fillcolor=\"#202060\"; a } subgraph cluster_b { label=\"Back\"; bgcolor=\"#ffeecc\"; b } subgraph cluster_c { label=\"Plain\"; c } subgraph cluster_d { label=\"Own\"; bgcolor=black; fontcolor=red; d } }",
     )
@@ -447,10 +557,7 @@ fn text_on_explicit_fills_stays_readable() {
         "{svg}"
     );
     assert!(text_tag(&svg, "Back").contains("fill=\"#1f1f1f\""), "{svg}");
-    assert!(
-        text_tag(&svg, "Plain").contains("fill=\"var(--_m)\""),
-        "{svg}"
-    );
+    assert!(!text_tag(&svg, "Plain").contains("fill="), "{svg}");
     let own = text_tag(&svg, "Own");
     assert!(
         own.contains("fill=\"#ff0000\"") && own.matches("fill=").count() == 1,
@@ -522,6 +629,10 @@ fn notes_approximations() {
     );
     // 大きさの属性は黙って無視する
     assert!(notes("digraph { size=\"4,4\"; ratio=fill; dpi=300; rotate=90; a }").is_empty());
+    // 見本の大きさの図は、手間の上限で打ち切らない
+    for (name, src) in SAMPLES {
+        assert!(!notes(src).contains(&Note::WorkLimit), "{name}");
+    }
 }
 
 #[test]
@@ -585,6 +696,21 @@ fn draws_big_graphs_in_time() {
         let started = std::time::Instant::now();
         let d = render(&format!("digraph {{ layout={engine}; {body} }}")).unwrap();
         assert!(d.svg.len() < amonhen_dot::MAX_OUTPUT);
+        // 手間の上限で打ち切った配置は注記する（dot は単体法の入れ替え、neato は stress の回数、fdp は力の回数）
+        if matches!(engine, "dot" | "neato" | "fdp") {
+            assert!(
+                d.notes.contains(&Note::WorkLimit),
+                "{engine}: {:?}",
+                d.notes
+            );
+        }
+        // 仮のノードの上限を超えた長い辺は直線にして注記する（dot だけ）
+        assert_eq!(
+            d.notes.contains(&Note::LongEdges),
+            engine == "dot",
+            "{engine}: {:?}",
+            d.notes
+        );
         assert!(
             started.elapsed() < std::time::Duration::from_secs(10),
             "{engine}"

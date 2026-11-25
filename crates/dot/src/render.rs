@@ -25,7 +25,8 @@ use crate::text::{self, Font, Names, Text, color_attr, text_svg};
 const PATCH: f64 = 40.0;
 /// 点（Graphviz の 1 インチ = 72）。
 const INCH: f64 = 72.0;
-const PAD: f64 = 8.0;
+/// 絵の余白の既定（Graphviz の `pad` の既定 0.0555 インチ）。
+const PAD: f64 = 4.0;
 const FONT_SIZE: f64 = 14.0;
 /// クラスタの題の左右の余白（アプリの書体のゆとりとは別に）。
 const TITLE_PAD: f64 = 8.0;
@@ -34,9 +35,7 @@ const CLUSTER_MARGIN: f64 = 8.0;
 
 const LINE: &str = "var(--_l)";
 const BORDER: &str = "var(--_b)";
-const SURFACE: &str = "var(--_s)";
 const SURFACE_ALT: &str = "var(--_a)";
-const MUTED: &str = "var(--_m)";
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 enum Dir {
@@ -346,6 +345,8 @@ pub fn render(
     images: Option<&image::Loader>,
 ) -> String {
     let g = &model.attrs;
+    // 手間の上限で打ち切ったかは、配置・道筋の中で記し、最後に注記にする
+    crate::take_cut_short();
     let mut ctx = Ctx {
         model,
         notes,
@@ -570,17 +571,16 @@ pub fn render(
                 Some(t) => paint("fill", ctx.first_color(t, scheme.as_deref()), SURFACE_ALT),
                 None => format!(" fill=\"{SURFACE_ALT}\""),
             }
-        } else if matches!(spec.kind, Kind::Plain) {
-            " fill=\"none\"".to_owned()
         } else {
-            format!(" fill=\"{SURFACE}\"")
+            // 塗りの指定がなければ塗らない（Graphviz と同じく透明）
+            " fill=\"none\"".to_owned()
         };
         if invis {
             fill = " fill=\"none\"".to_owned();
         }
-        // 自分の塗りのないノード（plaintext・plain・none）は、外の地の上で読める色で描く
+        // 自分の塗りのないノードは、外の地（文が決めたクラスタの塗り・グラフの bgcolor）の上で読める色で描く
         let ground_ink = grounds.at(node.cluster).1.and_then(Color::ink);
-        let bare = !filled && !point && matches!(spec.kind, Kind::Plain);
+        let bare = !filled && !point;
         let stroke = format!(
             "{}{}",
             paint(
@@ -862,6 +862,10 @@ pub fn render(
         free_layout(model, &placed)
     } else {
         let mut lay = layout::layout(&lnodes, &ledges, &lclusters, &sets, &lopt);
+        // 仮のノードの上限を超えて直線にした長い辺（ortho では直角にできなかった線の注記になる）
+        if lay.straightened && !ortho {
+            ctx.notes.insert(Note::LongEdges);
+        }
         if ortho {
             // 直角の線の段の場所をランクの間に空ける（縁から 4 まで使い、1 つの間で足すのは ranksep まで）
             let heights: Vec<f64> = lnodes.iter().map(|n| n.h).collect();
@@ -924,8 +928,8 @@ pub fn render(
         let fb = [p.0.min(q.0), p.1.min(q.1), p.0.max(q.0), p.1.max(q.1)];
         cluster_boxes[ci] = Some(fb);
     }
-    // クラスタの題の箱（絵の座標。辺が避ける）
-    let mut title_rects: Vec<[f64; 4]> = Vec::new();
+    // クラスタの題の箱（絵の座標）とクラスタ。辺が避ける（そのクラスタの中のノードへの辺は避けない）
+    let mut title_rects: Vec<([f64; 4], usize)> = Vec::new();
     let mut corder: Vec<usize> = (0..model.clusters.len()).collect();
     let cdepth = |mut c: usize| {
         let mut d = 0;
@@ -985,7 +989,8 @@ pub fn render(
                 a.num("gradientangle").unwrap_or(0.0),
             )
         } else {
-            format!(" fill=\"{SURFACE_ALT}\" fill-opacity=\"0.5\"")
+            // 塗りの指定がなければ塗らない（Graphviz と同じ）
+            " fill=\"none\"".to_owned()
         };
         let peripheries = a.num("peripheries").unwrap_or(1.0);
         let stroke = if peripheries < 1.0 {
@@ -1045,12 +1050,15 @@ pub fn render(
             } else {
                 b[1] + margin / 2.0 + 2.0 + t.height / 2.0
             };
-            title_rects.push([
-                cx - t.fit_width() / 2.0 - 4.0,
-                cy - t.height / 2.0 - 1.0,
-                cx + t.fit_width() / 2.0 + 4.0,
-                cy + t.height / 2.0 + 1.0,
-            ]);
+            title_rects.push((
+                [
+                    cx - t.fit_width() / 2.0 - 4.0,
+                    cy - t.height / 2.0 - 1.0,
+                    cx + t.fit_width() / 2.0 + 4.0,
+                    cy + t.height / 2.0 + 1.0,
+                ],
+                ci,
+            ));
             clusters_out.push_str(&text_svg(
                 t,
                 cx,
@@ -1058,7 +1066,8 @@ pub fn render(
                 0.0,
                 &cv.font,
                 &format!(" class=\"dot-cluster-label\"{}", font_attrs(&cv.font)),
-                Some(ground.and_then(Color::ink).unwrap_or(MUTED)),
+                // 地がなければ文字の色（Graphviz と同じくほかのラベルと同じ色）
+                ground.and_then(Color::ink),
             ));
         }
         clusters_out.push_str("</g>");
@@ -1073,13 +1082,39 @@ pub fn render(
             Dir::RL => (f.1, lh - f.0),
         }
     };
-    let titles: Vec<route::Rect> = title_rects
+    // 題の箱の持ち主の番号はノードの後ろ（ノードの数 + クラスタ）
+    let title_owner = |ci: usize| views.len() + ci;
+    let titles: Vec<(route::Rect, usize)> = title_rects
         .iter()
-        .map(|r| {
+        .map(|(r, ci)| {
             let (p, q) = (from_final((r[0], r[1])), from_final((r[2], r[3])));
-            [p.0.min(q.0), p.1.min(q.1), p.0.max(q.0), p.1.max(q.1)]
+            (
+                [p.0.min(q.0), p.1.min(q.1), p.0.max(q.0), p.1.max(q.1)],
+                title_owner(*ci),
+            )
         })
         .collect();
+    // 辺が避けない箱: 両端のノードと、両端のノードのあるクラスタ（外のクラスタも）の題。クラスタの中のノードへの
+    // 線は題を横切る（題の真下のノードへの線を脇に回さない。Graphviz と同じ）
+    let edge_skip = |ei: usize| -> Vec<usize> {
+        let e = &model.edges[ei];
+        let mut skip = vec![e.tail, e.head];
+        for v in [e.tail, e.head] {
+            let mut c = model.nodes[v].cluster;
+            let mut depth = 0;
+            while let Some(ci) = c {
+                if !skip.contains(&title_owner(ci)) {
+                    skip.push(title_owner(ci));
+                }
+                c = model.clusters[ci].parent;
+                depth += 1;
+                if depth > 10_000 {
+                    break;
+                }
+            }
+        }
+        skip
+    };
     // 間を越える同じランクの弧（隣でない組と、隣でも 2 本目から）が水平に進む高さ（配置の座標）。ランクのすぐ上の
     // 空きを通り、同じランクの間のノードの上を越える（上のランクのノードは越えない。Graphviz と同じ）。同じランクで
     // 横の範囲が重なる弧は、短いものから置き、中に収まる弧より 1 段（8）上、一部だけ重なる弧とは別の高さにする
@@ -1173,8 +1208,8 @@ pub fn render(
             let (w, h) = (lnodes[i].w / 2.0 + NODE_PAD, lnodes[i].h / 2.0 + NODE_PAD);
             rects.push(([x - w, y - h, x + w, y + h], Some(i)));
         }
-        for r in &titles {
-            rects.push((*r, None));
+        for (r, owner) in &titles {
+            rects.push((*r, Some(*owner)));
         }
         // 配置が場所を空けた辺のラベル（仮のノードの脇と、隣どうしの同じランクの線の上）。ほかの辺はここを通らない
         if !free {
@@ -1230,6 +1265,7 @@ pub fn render(
                     hb: (lnodes[e.head].w / 2.0, lnodes[e.head].h / 2.0),
                     tail: e.tail,
                     head: e.head,
+                    skip: edge_skip(ei),
                 });
             }
         }
@@ -1248,8 +1284,9 @@ pub fn render(
             .enumerate()
             .map(|(ei, e)| {
                 let a = &e.attrs;
-                let end = |port: Option<&str>, view: &NodeView, same: &str| route::OrthoEnd {
-                    port: ortho_port(view, port, dir),
+                // ortho の線はポートを見ない（Graphviz と同じ）
+                let end = |same: &str| route::OrthoEnd {
+                    port: route::OrthoPort::Free,
                     same: a.get(same).filter(|v| !v.is_empty()).map(str::to_owned),
                 };
                 let (points, label) = match &lay.routes[ei] {
@@ -1260,17 +1297,10 @@ pub fn render(
                     points,
                     tail: e.tail,
                     head: e.head,
-                    tail_end: end(
-                        a.get("tailport").or(e.tail_port.as_deref()),
-                        &views[e.tail],
-                        "sametail",
-                    ),
-                    head_end: end(
-                        a.get("headport").or(e.head_port.as_deref()),
-                        &views[e.head],
-                        "samehead",
-                    ),
+                    tail_end: end("sametail"),
+                    head_end: end("samehead"),
                     keep: label,
+                    skip: edge_skip(ei),
                 }
             })
             .collect();
@@ -1363,8 +1393,12 @@ pub fn render(
         };
         let tv = &views[e.tail];
         let hv = &views[e.head];
-        let mut tail_port = port_of(tv, a.get("tailport").or(e.tail_port.as_deref()));
-        let mut head_port = port_of(hv, a.get("headport").or(e.head_port.as_deref()));
+        // ortho の線はポートを見ない（Graphviz と同じ）
+        let port = |v: &NodeView, key: &str, own: Option<&str>| {
+            port_of(v, a.get(key).or(own)).filter(|_| !ortho)
+        };
+        let mut tail_port = port(tv, "tailport", e.tail_port.as_deref());
+        let mut head_port = port(hv, "headport", e.head_port.as_deref());
         let head_clip = a.flag("headclip").unwrap_or(true);
         let tail_clip = a.flag("tailclip").unwrap_or(true);
         let mut path: Vec<Cubic>;
@@ -1395,10 +1429,10 @@ pub fn render(
                         _ => pts[pts.len() - 1],
                     };
                     pts = spline::shortest(start, end, gates);
-                    obstacles.avoid(&mut pts, &[e.tail, e.head], false);
+                    obstacles.avoid(&mut pts, &edge_skip(ei), false);
                 } else if !(straight || curved || right_angles.is_some()) {
                     // dot 以外は点の間を直線として避け、あとでなめらかにつなぐ
-                    obstacles.avoid(&mut pts, &[e.tail, e.head], !polyline && !free);
+                    obstacles.avoid(&mut pts, &edge_skip(ei), !polyline && !free);
                 }
                 let angled = right_angles.is_some();
                 let mut lp: Vec<P> = right_angles.unwrap_or_else(|| pts.clone());
@@ -1448,16 +1482,16 @@ pub fn render(
                     // ランクのすぐ上を、上がる・水平に進む・下りる（角は丸める）
                     let top = flat_top[ei].unwrap_or(pa.1 - h_a - 10.0);
                     path = if ortho {
-                        // ポートの側から出て、上を越える
+                        // 上から出て、上を越える（ポートは見ない）
                         let (ca, cb) = (lay.nodes[e.tail], lay.nodes[e.head]);
                         let half = |v: usize| (lnodes[v].w / 2.0, lnodes[v].h / 2.0);
                         let pts = route::ortho_flat(
                             ca,
                             half(e.tail),
-                            &ortho_port(tv, a.get("tailport").or(e.tail_port.as_deref()), dir),
+                            &route::OrthoPort::Free,
                             cb,
                             half(e.head),
-                            &ortho_port(hv, a.get("headport").or(e.head_port.as_deref()), dir),
+                            &route::OrthoPort::Free,
                             top,
                             route::STUB,
                         );
@@ -1488,12 +1522,14 @@ pub fn render(
                 let c = lay.nodes[e.tail];
                 let ln = &lnodes[e.tail];
                 let size = 18.0 + 8.0 * *index as f64;
-                // 輪の側: 向きのあるポートがあればその側（尾が先）、なければ配置の右（Graphviz と同じ）
+                // 輪の側: 向きのあるポートがあればその側（尾が先）、なければ配置の右（Graphviz と同じ）。
+                // ortho はポートを見ない
                 let port_side = [
                     a.get("tailport").or(e.tail_port.as_deref()),
                     a.get("headport").or(e.head_port.as_deref()),
                 ]
                 .into_iter()
+                .filter(|_| !ortho)
                 .find_map(|p| match ortho_port(tv, p, dir) {
                     route::OrthoPort::Point { dir: d, .. } => {
                         Some(if d.0.abs() > d.1.abs() + 1e-6 {
@@ -2090,10 +2126,11 @@ pub fn render(
             cy + t.height / 2.0,
         );
     }
-    let dx = PAD - bbox.x0;
-    let dy = PAD - bbox.y0;
-    let width = (bbox.x1 - bbox.x0 + 2.0 * PAD).ceil().max(1.0);
-    let height = (bbox.y1 - bbox.y0 + 2.0 * PAD).ceil().max(1.0);
+    let (pad_x, pad_y) = pad(g.get("pad"));
+    let dx = pad_x - bbox.x0;
+    let dy = pad_y - bbox.y0;
+    let width = (bbox.x1 - bbox.x0 + 2.0 * pad_x).ceil().max(1.0);
+    let height = (bbox.y1 - bbox.y0 + 2.0 * pad_y).ceil().max(1.0);
     let mut content = String::new();
     // グラフの地（色の並びはグラデーション）
     let ground = g
@@ -2137,7 +2174,31 @@ pub fn render(
     let options = amonhen_pele::RenderOptions::default();
     let acc = Accessible::default();
     let _ = ctx.model;
+    if crate::take_cut_short() {
+        ctx.notes.insert(Note::WorkLimit);
+    }
     svg_document("dot", width, height, FONT_SIZE, &options, &acc, &content)
+}
+
+/// 絵の余白（点。`pad` はインチで、`x,y` か 1 つの値。`!` は読まない）。既定は Graphviz と同じ 4 点。
+fn pad(s: Option<&str>) -> (f64, f64) {
+    let read = |v: &str| {
+        v.trim()
+            .trim_end_matches('!')
+            .parse::<f64>()
+            .ok()
+            .filter(|v| v.is_finite())
+            .map(|v| v.clamp(0.0, 10.0) * INCH)
+    };
+    let Some(s) = s else {
+        return (PAD, PAD);
+    };
+    let mut it = s.trim().trim_end_matches('!').split(',');
+    match (it.next().and_then(read), it.next().and_then(read)) {
+        (Some(x), Some(y)) => (x, y),
+        (Some(x), None) => (x, x),
+        _ => (PAD, PAD),
+    }
 }
 
 /// `imagepos` の置き場所（横と縦: -1 は左・上、0 は中、1 は右・下）。既定は中央。
@@ -2302,6 +2363,7 @@ fn free_layout(model: &Model, placed: &engines::Placement) -> layout::Layout {
         height: h,
         crossings: 0,
         corridors: vec![Vec::new(); model.edges.len()],
+        straightened: false,
     }
 }
 
@@ -2438,8 +2500,8 @@ fn font_attrs(f: &Font) -> String {
     if f.italic {
         s.push_str(" font-style=\"italic\"");
     }
-    if f.mono {
-        s.push_str(" font-family=\"var(--_fm)\"");
+    if let Some(css) = f.family_css() {
+        s.push_str(&format!(" font-family=\"{}\"", esc(css)));
     }
     if let Some(c) = &f.color {
         s.push_str(&color_attr("fill", c));
