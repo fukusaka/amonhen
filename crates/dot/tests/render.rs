@@ -876,3 +876,30 @@ fn dot_ortho_edges_do_not_share_segments() {
         }
     }
 }
+
+/// dot の ortho で、1 つのランクの間に段が多く要るときは間を広げ、違う辺の横の線を段の間（6pt）より近く重ねない。
+#[test]
+fn dot_ortho_tracks_get_room_between_ranks() {
+    let src = "digraph { splines=ortho; {a b c d} -> {e f g h} }";
+    let svg = render(src).unwrap().svg;
+    let lines = edge_polylines(&svg);
+    // (辺, y, 始め, 終わり)
+    let mut runs: Vec<(usize, f64, f64, f64)> = Vec::new();
+    for (i, p) in lines.iter().enumerate() {
+        for w in p.windows(2) {
+            let (a, b) = (w[0], w[1]);
+            if (a.1 - b.1).abs() < 0.02 && (a.0 - b.0).abs() > 3.0 {
+                runs.push((i, a.1, a.0.min(b.0), a.0.max(b.0)));
+            }
+        }
+    }
+    assert!(runs.len() > 10, "{runs:?}");
+    for (k, a) in runs.iter().enumerate() {
+        for b in &runs[k + 1..] {
+            if a.0 == b.0 || a.3.min(b.3) - a.2.max(b.2) <= 3.0 {
+                continue;
+            }
+            assert!((a.1 - b.1).abs() >= 5.5, "{a:?} {b:?}");
+        }
+    }
+}

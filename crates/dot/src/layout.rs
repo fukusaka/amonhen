@@ -1483,6 +1483,110 @@ pub fn layout(
     }
 }
 
+/// 直角の線（`splines=ortho`）の段の場所をランクの間に空ける。ランクの間を横に動く線（仮のノードの間の横のずれ）の
+/// 重なりの最大から段の数を見積もり、`track` の間で並べて両側に `margin`（矢じりの分）を残せるだけ、下のランクを
+/// 下げる（ノード・道筋・ラベル・クラスタの箱の y と高さ）。1 つの間で下げるのは `most_add` まで（込んだ図が縦に
+/// 伸びすぎないように。足りない分は段の間を詰める）。`heights` はノードの高さ（配置の向き）。
+pub fn make_room_for_tracks(
+    lay: &mut Layout,
+    heights: &[f64],
+    track: f64,
+    margin: f64,
+    most_add: f64,
+) {
+    let key = |y: f64| (y * 64.0).round() as i64;
+    // ランクの行（中心の y → 上下の端）
+    let mut rows: Vec<(f64, f64, f64)> = Vec::new();
+    for (i, &(_, y)) in lay.nodes.iter().enumerate() {
+        let h = heights.get(i).copied().unwrap_or(0.0) / 2.0;
+        match rows.iter_mut().find(|r| key(r.0) == key(y)) {
+            Some(r) => {
+                r.1 = r.1.min(y - h);
+                r.2 = r.2.max(y + h);
+            }
+            None => rows.push((y, y - h, y + h)),
+        }
+    }
+    rows.sort_by(|a, b| a.0.total_cmp(&b.0));
+    if rows.len() < 2 {
+        return;
+    }
+    let row_of = |y: f64| rows.partition_point(|r| r.0 < y - 1e-6);
+    // ランクの間ごとの横の線の区間
+    let mut spans: Vec<Vec<(f64, f64)>> = vec![Vec::new(); rows.len()];
+    for r in &lay.routes {
+        if let Route::Path { points, .. } = r {
+            for w in points.windows(2) {
+                let (a, b) = (w[0], w[1]);
+                if (a.0 - b.0).abs() < 1e-6 || (a.1 - b.1).abs() < 1e-6 {
+                    continue;
+                }
+                let upper = row_of(a.1.min(b.1));
+                if upper + 1 < rows.len() && row_of(a.1.max(b.1)) == upper + 1 {
+                    spans[upper].push((a.0.min(b.0), a.0.max(b.0)));
+                }
+            }
+        }
+    }
+    // 下げる分（ランクの間ごと）
+    let mut add = vec![0f64; rows.len()];
+    for (g, list) in spans.iter_mut().enumerate() {
+        if list.len() < 2 || g + 1 >= rows.len() {
+            continue;
+        }
+        // 区間の重なりの最大（端の点を並べて数える）
+        let mut ev: Vec<(f64, i32)> = Vec::with_capacity(list.len() * 2);
+        for &(x0, x1) in list.iter() {
+            ev.push((x0 - 1.0, 1));
+            ev.push((x1 + 1.0, -1));
+        }
+        ev.sort_by(|a, b| a.0.total_cmp(&b.0).then(b.1.cmp(&a.1)));
+        let (mut now, mut most) = (0i32, 0i32);
+        for (_, d) in ev {
+            now += d;
+            most = most.max(now);
+        }
+        let gap = rows[g + 1].1 - rows[g].2;
+        let need = 2.0 * margin + (most.max(1) - 1) as f64 * track;
+        add[g] = (need - gap).clamp(0.0, most_add);
+    }
+    if add.iter().all(|&a| a <= 0.0) {
+        return;
+    }
+    // y を下げる: 行 i とその上の空きのものは add[..i] の和だけ（空きのものは上の行と、クラスタの箱の上の端は下の行と
+    // 動く）
+    let mut cum = vec![0f64; rows.len() + 1];
+    for i in 0..rows.len() {
+        cum[i + 1] = cum[i] + add[i];
+    }
+    let with_upper = |y: f64| -> f64 {
+        let i = rows.partition_point(|r| r.0 <= y + 1e-6);
+        y + cum[i.saturating_sub(1)]
+    };
+    let with_lower = |y: f64| -> f64 {
+        let i = rows.partition_point(|r| r.0 < y - 1e-6);
+        y + cum[i.min(rows.len() - 1)]
+    };
+    for p in &mut lay.nodes {
+        p.1 = with_upper(p.1);
+    }
+    for r in &mut lay.routes {
+        if let Route::Path { points, label } = r {
+            for p in points.iter_mut() {
+                p.1 = with_upper(p.1);
+            }
+            if let Some(l) = label {
+                l.1 = with_upper(l.1);
+            }
+        }
+    }
+    for b in lay.clusters.iter_mut().flatten() {
+        b[1] = with_lower(b[1]);
+        b[3] = with_upper(b[3]);
+    }
+    lay.height += cum[rows.len()];
+}
+
 /// 横の位置（補助グラフのネットワーク単体法）。ノードの x と、クラスタの左右の境を返す。
 fn place_x(
     nodes: &[LNode],

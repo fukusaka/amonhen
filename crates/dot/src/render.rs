@@ -860,7 +860,13 @@ pub fn render(
         }
         free_layout(model, &placed)
     } else {
-        layout::layout(&lnodes, &ledges, &lclusters, &sets, &lopt)
+        let mut lay = layout::layout(&lnodes, &ledges, &lclusters, &sets, &lopt);
+        if ortho {
+            // 直角の線の段の場所をランクの間に空ける（縁から 4 まで使い、1 つの間で足すのは ranksep まで）
+            let heights: Vec<f64> = lnodes.iter().map(|n| n.h).collect();
+            layout::make_room_for_tracks(&mut lay, &heights, route::TRACK, 4.0, ranksep);
+        }
+        lay
     };
     let lnodes: Vec<layout::Node> = if free {
         lnodes
