@@ -33,9 +33,9 @@ pulldown-cmark = { version = "0.13.6", default-features = false }
 [features]
 # 構文の色付け（tree-sitter）。文法は C で書かれていて、ターゲットごとの C コンパイラが要る。
 syntax = ["dep:amonhen-syntax"]
-# Markdown の Mermaid の図（pele の移植）と Graphviz の DOT の図。アプリ（FFI・GTK4）とエンジン（CLI・daemon。VSCode 拡張が使う）が入れる。
+# Markdown の Mermaid の図（pele の移植）と Graphviz の DOT の図。アプリ（FFI・GTK4）だけが入れ、エンジン（CLI・daemon）には入れない。
 diagrams = ["dep:amonhen-pele", "dep:amonhen-dot"]
-# Markdown の数式（RaTeX）。図と同じく、アプリ（FFI・GTK4）とエンジン（CLI・daemon。VSCode 拡張が使う）が入れる。
+# Markdown の数式（RaTeX）。図と同じく、アプリ（FFI・GTK4）だけが入れ、エンジン（CLI・daemon）には入れない。
 math = ["dep:amonhen-math"]
 
 [dev-dependencies]

@@ -34,10 +34,7 @@ tempfile = "3"
 [features]
 # 構文の色付け（tree-sitter）。FE 向けの窓口の diffSyntax などで使う。文法は C なので、ターゲットごとの C コンパイラが
 # 要る（CI の targets は --no-default-features で外す。ffi-c と同じ）
-default = ["syntax", "tui", "diagrams", "math"]
+default = ["syntax", "tui"]
 syntax = ["amonhen-core/syntax"]
-# Markdown の Mermaid・DOT の図と数式（VSCode 拡張の「すべてのファイル」が、共有の daemon のコアで描く）
-diagrams = ["amonhen-core/diagrams"]
-math = ["amonhen-core/math"]
 # 端末で動く FE（`amonhen tui`、docs/tui.md）
 tui = ["dep:amonhen-tui"]
