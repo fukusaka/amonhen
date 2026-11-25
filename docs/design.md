@@ -623,12 +623,17 @@ out: they have no confirmation, and adding one only for a drawing would slow the
   `git archive` (its standard output), and the core writes them (`{"op":"archive"}`). Through the daemon and over SSH
   the bytes come back in one frame, so an archive over 1 GB is refused before it is sent, saying to choose a folder or
   run git archive there.
-- In a partial clone `git archive` fetches the missing contents itself: from git 2.33 every missing content of the
-  commit's whole tree in one go, whatever paths are chosen, and before that one at a time. The backend counts them first without
-  fetching (`rev-list --objects --missing=print --no-walk <rev>` gives the missing blobs of that commit's tree;
-  `ls-tree -r` narrows them to the chosen folders), the app asks before fetching (`{"op":"archiveContents"}`, up to
-  50,000), and the backend fetches them in one go (`fetch --filter=blob:none --stdin`, as for diffs; from git 2.29,
-  and before that git fetches them one by one).
+- In a partial clone `git archive` fetches the missing contents itself, and not only those of the chosen folders: to
+  read `.gitattributes` it loads the commit's whole tree into an index, which fetches every missing content of the
+  tree (from git 2.33 in one go, before that one at a time). From git 2.41 the backend avoids that: with folders
+  chosen it runs `git --attr-source=<rev> archive --worktree-attributes`, which builds no index and reads
+  `.gitattributes` from the same commit's tree, so the archive is the same as git's default. It then reads only the
+  chosen folders and the `.gitattributes` of the folders above them. The backend counts what will be read first
+  without fetching (`rev-list --objects --missing=print --no-walk <rev>` gives the missing blobs of that commit's tree;
+  `ls-tree -r` narrows them to the chosen folders and those `.gitattributes`, or not at all before git 2.41 or when
+  no folder is chosen), the app asks before fetching (`{"op":"archiveContents"}`, up to 50,000), and the backend
+  fetches them in one go (`fetch --filter=blob:none --stdin`, as for diffs; from git 2.29, and before that git
+  fetches them one by one).
 - The folder to export is chosen from the exported commit's tree (`{"op":"treeFolders","rev":…}`, the same chooser as
   sparse checkout).
 

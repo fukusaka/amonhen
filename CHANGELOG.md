@@ -38,6 +38,11 @@ becomes the GitHub Release notes.
 - DOT diagrams note under the picture when a large graph's layout or edge routing is cut short at its work limit,
   and when its longest edges are drawn straight.
 
+#### Fixed
+
+- Exporting chosen folders as an archive in a partial clone fetches only the contents it asked about, not every missing
+  file of the commit (git 2.41 or later; older git fetches them all, and the question now counts them all).
+
 ### [0.2.15] - 2026-11-25
 
 Markdown previews draw math and the HTML GitHub renders, and DOT diagrams draw images, gradients and more of
@@ -1425,6 +1430,8 @@ First release.
 
 #### Fixed
 
+- Exporting chosen folders as an archive in a partial clone fetches only the contents it asked about (with the
+  engine, git 2.41 or later).
 - Starting VSCode no longer reports that a Copy Short IDs menu item has no title.
 - Restoring the version before a commit that renamed a file brings back the old name instead of only deleting the new
   one, and Restore This Version isn't offered for a file the commit deleted.
