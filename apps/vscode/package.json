@@ -1441,7 +1441,7 @@
         },
         {
           "command": "amonhen.submodule.open",
-          "when": "view == amonhen.sidebar && viewItem =~ /^submodule/",
+          "when": "view == amonhen.sidebar && viewItem =~ /^submodule.*;checkedOut/",
           "group": "1_submodule@2"
         },
         {

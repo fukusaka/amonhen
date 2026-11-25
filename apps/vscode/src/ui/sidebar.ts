@@ -638,7 +638,8 @@ export class SidebarProvider implements vscode.TreeDataProvider<Node>, vscode.Di
           fact?.conflict ? 'warning' : 'file-submodule',
           off ? new vscode.ThemeColor('disabledForeground') : undefined,
         );
-        item.contextValue = `submodule${fact?.ownGitDir ? ';ownGitDir' : ''}`;
+        // `;checkedOut` は取り出してある（Open in New Window はそのときだけ）
+        item.contextValue = `submodule${fact?.ownGitDir ? ';ownGitDir' : ''}${off ? '' : ';checkedOut'}`;
         return item;
       }
       case 'subtree': {

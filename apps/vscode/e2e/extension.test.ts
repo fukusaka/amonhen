@@ -1262,6 +1262,8 @@ async function submoduleFlow(): Promise<void> {
     assert.equal(fact.url, url(lib));
     assert.equal(sidebar.getTreeItem(row()!).description, undefined);
     assert.match(String(sidebar.getTreeItem(row()!).tooltip), /Follows the recorded commit/);
+    // 取り出してあるので Open in New Window が出る
+    assert.match(String(sidebar.getTreeItem(row()!).contextValue), /;checkedOut/);
 
     // 追うブランチと URL を変える
     await withWindow({ showInputBox: inputs('main') }, async () => vscode.commands.executeCommand('amonhen.submodule.setBranch', row()));
