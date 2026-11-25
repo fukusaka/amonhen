@@ -4845,14 +4845,15 @@ suite('Amon Hen in VSCode', () => {
     const panel = await showView('amonhen.showWorkingCopy');
     const gitignore = join(root, '.gitignore');
     const had = existsSync(gitignore) ? readFileSync(gitignore) : undefined;
-    const quickPick = vscode.window.showQuickPick;
     const [major = 0, minor = 0] = (git('version').match(/(\d+)\.(\d+)/) ?? []).slice(1).map(Number);
     const sparseCheckout = major > 2 || (major === 2 && minor >= 25);
-    (vscode.window as { showQuickPick: unknown }).showQuickPick = async (items: string[]) => items[1];
     try {
-      await vscode.commands.executeCommand('amonhen.addToGitignore', { path: 'dir/new.ignored-e2e' });
+      // 右クリックの 2 つの項目: そのパスと、拡張子のパターン
+      await vscode.commands.executeCommand('amonhen.addToGitignore', { path: 'dir/path.ignored-e2e' });
+      assert.match(readFileSync(gitignore, 'utf8'), /^dir\/path\.ignored-e2e$/m);
+      await vscode.commands.executeCommand('amonhen.addExtensionToGitignore', { path: 'dir/new.ignored-e2e' });
       assert.match(readFileSync(gitignore, 'utf8'), /^\*\.ignored-e2e$/m);
-      await vscode.commands.executeCommand('amonhen.addToGitignore', { path: 'other.ignored-e2e' });
+      await vscode.commands.executeCommand('amonhen.addExtensionToGitignore', { path: 'other.ignored-e2e' });
       assert.equal(readFileSync(gitignore, 'utf8').match(/\*\.ignored-e2e/g)?.length, 1);
       let mark = posted.length;
       panel.workingCopy.setRepository(panel.repository);
@@ -4865,7 +4866,6 @@ suite('Amon Hen in VSCode', () => {
         assert.deepEqual((await waitPosted('wcSparse', mark, (m) => m.sparse !== null)).sparse?.folders, ['e2e-only-folder']);
       }
     } finally {
-      (vscode.window as { showQuickPick: unknown }).showQuickPick = quickPick;
       if (sparseCheckout) git('sparse-checkout', 'disable');
       if (had) writeFileSync(gitignore, had);
       else rmSync(gitignore, { force: true });

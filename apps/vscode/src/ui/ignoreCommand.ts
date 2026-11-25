@@ -6,15 +6,12 @@ import { ignorePatterns, withIgnorePattern } from '../workingCopy/ignore.ts';
 import { showError } from './stageCommands.ts';
 
 export function registerIgnoreCommand(manager: RepositoryManager): vscode.Disposable {
-  return vscode.commands.registerCommand('amonhen.addToGitignore', async (context: { path: string }) => {
+  /** `which` 番目の候補（0 はそのパス、1 は拡張子のパターン）を足す。アプリと同じく、右クリックで別々の項目 */
+  const add = (which: 0 | 1) => async (context: { path: string }) => {
     const repo = manager.current;
     const client = repo && (await daemonFor(repo.root));
     if (!repo || !client) return;
-    const patterns = ignorePatterns(context.path);
-    const pattern =
-      patterns.length > 1
-        ? await vscode.window.showQuickPick(patterns, { placeHolder: 'Add to .gitignore' })
-        : patterns[0];
+    const pattern = ignorePatterns(context.path)[which];
     if (!pattern) return;
     try {
       const run = async (command: Record<string, unknown>) => {
@@ -30,5 +27,9 @@ export function registerIgnoreCommand(manager: RepositoryManager): vscode.Dispos
     } finally {
       await repo.refresh();
     }
-  });
+  };
+  return vscode.Disposable.from(
+    vscode.commands.registerCommand('amonhen.addToGitignore', add(0)),
+    vscode.commands.registerCommand('amonhen.addExtensionToGitignore', add(1)),
+  );
 }

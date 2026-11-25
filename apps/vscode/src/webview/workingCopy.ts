@@ -7,6 +7,7 @@ import type { Change, ChangeGroup } from '../state/changes.ts';
 import type { HostMessage } from '../view/protocol.ts';
 import type { DiffHunk, DiffLine, FileDiff, SelectedLine } from '../diff/fileDiff.ts';
 import type { Eol, LineEndings } from '../git/eol.ts';
+import { ignorePatterns } from '../workingCopy/ignore.ts';
 import { addTrailer, commitDisabledReason, composeMessage, lengthLevel, longestLine, messageLength, splitMessage, withType } from '../workingCopy/commitMessage.ts';
 import { filesUnder, filterByPath, makeFileTree, type FileDir, type FileLayout } from '../workingCopy/fileList.ts';
 import { el, post, type View } from './api.ts';
@@ -215,12 +216,16 @@ export function createWorkingCopyView(): View {
     row.dataset.vscodeContext = JSON.stringify({
       webviewSection: 'wcFile',
       path: f.path,
+      // Stage・Unstage・Discard… を出し分ける
+      wcGroup: f.group,
       // いくつも選んでいれば、その中で使えるもの（Stash…）だけを、選んだものすべてに
       ...(many ? { wcMulti: true, paths: [...new Set(targetsOf(f).map((x) => x.path))] } : {}),
       // コンフリクトのファイル（Stash… を出さない）
       ...(f.group === 'conflicts' ? { wcConflict: true } : {}),
-      // まだ履歴のないファイル（.gitignore に足せる）
-      ...(f.letter === 'U' ? { wcUntracked: true } : {}),
+      // まだ履歴のないファイル（.gitignore に足せる。拡張子があれば、そのパターンも）
+      ...(f.letter === 'U' ? { wcUntracked: true, ...(ignorePatterns(f.path).length > 1 ? { wcExtension: true } : {}) } : {}),
+      // 作業ツリーにないファイル（Blame・開く・ファイルマネージャーで見せるを出さない）
+      ...(f.letter === 'D' ? { wcDeleted: true } : {}),
       // rerere が解決を当てたコンフリクトのファイル（Forget Resolution を出す）
       ...(f.group === 'conflicts' && f.rerere ? { wcRerere: true } : {}),
       preventDefaultContextMenuItems: true,
