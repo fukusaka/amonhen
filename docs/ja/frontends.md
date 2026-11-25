@@ -23,7 +23,7 @@ GTK4 のアプリは macOS のアプリと同じふるまいをめざす。わ�
 
 - 最後の窓を閉じるとアプリが終わる。
 - ログインシェルの環境変数を読み込まない（Linux のセッションはもう持っている）。
-- Linux と BSD では、Watchman が入っていて git が 2.26 以降なら fsmonitor に使う（git に fsmonitor--daemon がない）。
+- Linux と BSD では、Watchman が入っていて git が 2.26 以降なら fsmonitor に使う（BSD の git には fsmonitor--daemon がない。Linux では git 2.55 からあるが、Amon Hen はまだ使わない）。
 - Apple Intelligence はない。Claude Code と Codex だけ。
 - Finder の代わりにデスクトップのファイルマネージャー。外部エディターはデスクトップ項目から探す。
 - ヘッダーバーはアイコンだけ（ツールチップつき）。ツールバーのカスタマイズにアイコン・文字の選択はない。
@@ -80,7 +80,7 @@ GTK4 のアプリは macOS のアプリと同じふるまいをめざす。わ�
 | 起動時に窓とタブを戻す | ✓ | ✓ | ✓ | n/a | n/a | n/a |  |
 | SSH・daemon のリポジトリのつなぎ中のタブ（Cancel・Try Again） | ✓ | ✓ | ✓ | n/a | n/a | n/a |  |
 | 題に未コミットの ● と ahead/behind | ✓ | ✓ | ✓ | n/a | n/a | n/a | GTK4: タブの名前に出る。<br>Windows: 窓のタイトルとそれぞれのタブの名前に。<br>TUI: 一番上の行にブランチと ahead/behind。 |
-| 最後の窓を閉じてもアプリは終わらない | ✓ | — | — | n/a | n/a | n/a | GTK4: GNOME のアプリと同じく終わる。 |
+| 最後の窓を閉じてもアプリは終わらない | ✓ | — | — | n/a | n/a | n/a | GTK4: GTK のアプリの既定と同じく終わる。<br>Windows: Windows のアプリと同じく終わる。 |
 
 ## 2. ブックマーク（リポジトリの一覧）
 
@@ -117,7 +117,7 @@ GTK4 のアプリは macOS のアプリと同じふるまいをめざす。わ�
 | Git > Commits: 共有のメッセージのテンプレート | ✓ | ✓ | ✓ | — | — | n/a |  |
 | Git > Programs: git・gpg・ssh-keygen・gpgsm | ✓ | ✓ | ✓ | n/a | △ | n/a | VSCode: 拡張は、ここで機械に選んだ git を動かし、選んでいなければ VSCode の `git.path`。gpg・ssh-keygen は git の設定で決まる。<br>CLI: `amonhen run`（`programs`・`setMachineGit`）から。<br>Windows: Settings の Git に。 |
 | Git > この機械の Environment Variables（渡す・秘密を隠す） | ✓ | ✓ | ✓ | n/a | n/a | n/a | VSCode: VSCode の環境が代わり（拡張はそれを daemon に渡す）。 |
-| Environment Variables: ログインシェルのものを使う（Read Again・SSH agent） | ✓ | — | — | n/a | n/a | n/a | GTK4: 外した。Linux のセッションはすでに持っている。<br>VSCode: VSCode の環境が代わり（拡張はそれを daemon に渡す）。 |
+| Environment Variables: ログインシェルのものを使う（Read Again・SSH agent） | ✓ | — | — | n/a | n/a | n/a | GTK4: 外した。Linux のセッションはすでに持っている。<br>Windows: 外した。Windows はログインシェルを経ずに利用者の環境をアプリに渡す。<br>VSCode: VSCode の環境が代わり（拡張はそれを daemon に渡す）。 |
 | SSH Hosts: + / − の付いたホスト、届かないものは薄く | ✓ | ✓ | ✓ | n/a | n/a | n/a | VSCode: Remote-SSH が受け持つ。 |
 | SSH Hosts > Connection: 状態・Check Connection・エンジン | ✓ | ✓ | ✓ | n/a | n/a | n/a |  |
 | SSH Hosts > Connection: 署名の確かめ方 | ✓ | ✓ | ✓ | n/a | n/a | n/a |  |
@@ -128,7 +128,7 @@ GTK4 のアプリは macOS のアプリと同じふるまいをめざす。わ�
 | Accounts: GitHub（CI の状態・アバター） | ✓ | ✓ | ✓ | — | n/a | — |  |
 | Appearance: History の順・1 行・行の項目・アバター | ✓ | ✓ | ✓ | n/a | n/a | n/a | TUI: `o`・`z` で、その回だけ順と畳み方を変える。 |
 | Appearance: フォント・グラフの色 | — | — | — | n/a | n/a | n/a |  |
-| Theme: 窓の背景（透過とぼかし・背景画像・ツールバーの色・リポジトリごと） | ✓ | ✓ | ✓ | n/a | n/a | n/a | GTK4: ぼかしはない（GNOME では窓の後ろをぼかせない）。透かすにはコンポジタが要る。<br>Windows: ぼかしの強さは Acrylic で決まっている。 |
+| Theme: 窓の背景（透過とぼかし・背景画像・ツールバーの色・リポジトリごと） | ✓ | ✓ | ✓ | n/a | n/a | n/a | GTK4: ぼかしはない（GNOME で窓の後ろをぼかせるのは GNOME 51 と GTK 4.24 から。`ext-background-effect-v1` を使うが、アプリはまだ使っていない）。透かすにはコンポジタが要る。<br>Windows: ぼかしの強さは Acrylic で決まっている。 |
 | Theme: 構文と差分の色（内蔵のテーマ・VSCode のテーマ・差分は標準の色） | ✓ | ✓ | ✓ | n/a | n/a | n/a | VSCode: VSCode 自身のテーマに従う。<br>Windows: Windows のアプリ モード（明るい・暗い）に合わせ、外観ごとにテーマを選ぶ。<br>TUI: 端末の色に従う。 |
 | Diff & Merge: 開いたときに迷わないコンフリクトを解く | ✓ | ✓ | ✓ | n/a | n/a | n/a |  |
 | Diff & Merge: unified/split・空白・前後の行・折り返し・タブの幅 | — | — | — | — | n/a | n/a |  |
@@ -360,7 +360,7 @@ GTK4 のアプリは macOS のアプリと同じふるまいをめざす。わ�
 | --- | :-: | :-: | :-: | :-: | :-: | :-: | --- |
 | 共有の操作の表（`crates/commands`）から作るメニュー | ✓ | ✓ | ✓ | n/a | n/a | ✓ | VSCode: VSCode のコマンドパレットと右クリックのメニューが代わり。<br>TUI: 命令の一覧（`:`）の名前をここから取る。 |
 | メニューバーなしで全部の操作に届く（≡） | ✓ | ✓ | ✓ | ✓ | n/a | ✓ | GTK4: ≡ のメニューに、メニューバーの File・Edit・View・Navigate・Commit・Window を macOS と同じ項目と並びで置き（Edit の取り消す・カット・コピーなどはフォーカスのある欄に効く）、その後に設定…・Amon Hen について・終了。<br>Windows: タイトルバーの右の ≡ に、メニューバーのメニューをすべて同じ項目と並びで入れ子で置く。設定…（Ctrl+,）は Windows のアプリの習いどおり File の終わりの方に置く。窓にメニューバーの段はない。<br>VSCode: コマンドパレットとコンテキストメニュー。メニューの Commit・Commit and Push・Stage All・Rename Branch…・Set Upstream…・Rebase…・Go to HEAD・Find in History… もコマンドにある。Merge Branches… と Rebase… では History で選んでいるコミットも選べる。<br>TUI: `:` が TUI にあるすべての操作をキーと一緒に並べる。 |
-| キーボードの近道 | ✓ | ✓ | ✓ | n/a | n/a | ✓ | GTK4: Linux のデスクトップやほかの操作が使うキーは違う: サイドバーを表示は F9（GNOME のユーティリティの欄のキー）。ブランチを絞り込む・親へ・子へ・New Tag にはない（GNOME が Ctrl+Alt+矢印と Ctrl+Alt+T を使い、HIG では Alt+Up が別の意味）。マージエディターの前・次のコンフリクトは Alt+Up・Down。<br>VSCode: VSCode のキー割り当てが代わり。拡張が持つのは Alt+Z（長い行を折り返す）だけで、拡張のコマンドならどれにも割り当てられる。<br>TUI: 独自の 1 文字のキー（表の近道は端末では打てない）。 |
+| キーボードの近道 | ✓ | ✓ | ✓ | n/a | n/a | ✓ | GTK4: Linux のデスクトップやほかの操作が使うキーは違う: サイドバーを表示は F9（GNOME のユーティリティの欄のキー）。ブランチを絞り込む・親へ・子へ・New Tag にはない（GNOME が Ctrl+Alt+矢印を、Ubuntu が Ctrl+Alt+T を使い、HIG では Alt+Up が別の意味）。マージエディターの前・次のコンフリクトは Alt+Up・Down。<br>VSCode: VSCode のキー割り当てが代わり。拡張が持つのは Alt+Z（長い行を折り返す）だけで、拡張のコマンドならどれにも割り当てられる。<br>TUI: 独自の 1 文字のキー（表の近道は端末では打てない）。 |
 | メニューと同じ名前のコンテキストメニュー | ✓ | ✓ | ✓ | ✓ | n/a | n/a | VSCode: VSCode のメニューの項目は決まった文なので、アプリが入れる名前を除いた同じ言葉（Checkout main… は Checkout…、Delete main… は Delete…）。<br>Windows: History とその変更ファイル・サイドバー・Working Copy・Stashes・File History・Blame。<br>TUI: 操作は選んでいる行へのキー。 |
 | キーボードの近道の窓 | — | ✓ | — | n/a | n/a | ✓ | macOS: 代わりに macOS の App Shortcuts で変える。<br>TUI: `?` でフォーカスのある所のキーを並べる。 |
 
@@ -404,7 +404,7 @@ GTK4 のアプリは macOS のアプリと同じふるまいをめざす。わ�
 | 機能 | macOS | GTK4 | Windows | VSCode | CLI | TUI | Notes |
 | --- | :-: | :-: | :-: | :-: | :-: | :-: | --- |
 | worktree と変更の数 | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | CLI: `worktree list --changes`。<br>TUI: 2 つ以上あればサイドバーに。 |
-| 書き込む先の worktree（✎）と切り替え | ✓ | ✓ | △ | ✓ | n/a | ✓ | VSCode: 拡張が働くリポジトリを切り替える。ワークスペースの外のものはソース管理のビューには足さない。<br>CLI: 動かした worktree で働く。<br>Windows: worktree を選ぶ（か Edit This Worktree）と、同じ位置・同じ画面の窓でその worktree を開き直す（開いているのは前のタブのリポジトリだけのため）。<br>TUI: ほかの worktree で Enter を押すと、TUI をそこで開き直す。 |
+| 書き込む先の worktree（✎）と切り替え | ✓ | ✓ | ✓ | ✓ | n/a | ✓ | VSCode: 拡張が働くリポジトリを切り替える。ワークスペースの外のものはソース管理のビューには足さない。<br>CLI: 動かした worktree で働く。<br>TUI: ほかの worktree で Enter を押すと、TUI をそこで開き直す。 |
 | New Worktree…（ブランチ・コミットから） | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | TUI: 手元のブランチで `w`。History の `w` で、選んでいるコミットに新しいブランチを作って。 |
 | Remove Worktree（尋ね、変更があれば `--force`） | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | TUI: `x` で尋ねてから消す。変更があればその数を書き、`--force` で消す。 |
 | ロックと解除・移動・移したフォルダを探す（repair） | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | VSCode: worktree の右クリックから。書き込む先の worktree は、ほかに切り替えてから移す。<br>CLI: `worktree lock`・`unlock`・`move`・`repair`。<br>TUI: サイドバーの worktree で `L`・`n`。 |

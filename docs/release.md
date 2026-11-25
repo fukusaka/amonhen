@@ -103,7 +103,8 @@ The Windows engines are left unsigned for now. Checked in October 2026 with v0.2
   and the shared daemon) has no mark.
 - The engines bundled in the .vsix have no mark (also over Remote-SSH), and the extension starts them without a warning.
 - Smart App Control (Windows 11) blocks unsigned executables wherever they come from, the bundled engine included. It
-  is on only on some clean installs, and was off on the machine checked.
+  used to be available only on a clean install; recent Windows updates let it be turned on without one. It was off
+  on the machine checked.
 
 Signing was weighed against what it would change:
 

@@ -764,7 +764,7 @@ impl Operations for Git {
         if revs.len() < 2 {
             return self.stoppable(&args, &[]);
         }
-        // octopus は、最後のもの以外でコンフリクトすると MERGE_HEAD を残さずに断る。git 2.37 より前は、そこまでに
+        // octopus は、最後のもの以外でコンフリクトすると MERGE_HEAD を残さずに断る。git 2.38 より前は、そこまでに
         // 合わせた変更とコンフリクトを作業ツリーと index に残す（`merge --abort` も効かない）ので、新しい git と
         // 同じく元に戻す（作業中の変更は残る）。始める前に staged の変更があれば git は何もせずに断るので触らない。
         let staged = self.index_differs_from_head()?;

@@ -9,6 +9,7 @@ use pulldown_cmark::{
 use serde::Serialize;
 
 mod dollars;
+mod entities;
 mod html;
 
 /// 文字の飾り（ひと続きの文字）。
@@ -54,6 +55,10 @@ pub struct Run {
     pub width: Option<u32>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub height: Option<u32>,
+    /// 画像の幅の割合（HTML の `width="50%"`、1〜100）。FE は表示する列の幅（表のマスの中ならマスの幅）に対して
+    /// 決める。`width` とは同時に付かない。高さの割合は読まない（ブラウザでも、高さの決まらない親の中では効かない）。
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub width_percent: Option<u32>,
     /// 脚注への参照（ラベル）。
     #[serde(skip_serializing_if = "Option::is_none")]
     pub footnote: Option<String>,
@@ -77,6 +82,9 @@ pub struct Run {
     pub(crate) math_tex: Option<String>,
     #[serde(skip_serializing_if = "std::ops::Not::not")]
     pub(crate) math_display: bool,
+    /// HTML の中の文字（Markdown として読んだ文でない）。GitHub と同じく、素の URL はリンクにしない。
+    #[serde(skip)]
+    pub(crate) html: bool,
 }
 
 /// リストの 1 項目。
@@ -353,6 +361,7 @@ fn same_style(a: &Run, b: &Run) -> bool {
         a.sup,
         a.underline,
         &a.link,
+        a.html,
     ) == (
         b.bold,
         b.italic,
@@ -363,6 +372,7 @@ fn same_style(a: &Run, b: &Run) -> bool {
         b.sup,
         b.underline,
         &b.link,
+        b.html,
     )
 }
 
@@ -521,12 +531,38 @@ fn safe_url(value: &str, link: bool) -> Option<String> {
     Some(url)
 }
 
-/// `width`・`height` の値（画素。`px` は付いてもよい、`%` などは読まない）。
-fn image_side(value: &str) -> Option<u32> {
-    let v = value.trim();
-    let v = v.strip_suffix("px").unwrap_or(v).trim();
-    let n: f64 = v.parse().ok()?;
-    (n.is_finite() && n >= 1.0).then(|| (n.round() as u32).min(MAX_IMAGE_SIDE))
+/// `width`・`height` の値（HTML の大きさの読み方: 頭の数字を読み、すぐ後に `%` があれば割合、ほかは画素。`px` など
+/// 後ろの文字は読まない）。
+#[derive(Clone, Copy, Debug, PartialEq)]
+enum Side {
+    Pixels(u32),
+    Percent(u32),
+}
+
+fn image_side(value: &str) -> Option<Side> {
+    let v = value.trim_start_matches(|c: char| c.is_ascii_whitespace());
+    let digits = v.find(|c: char| !c.is_ascii_digit()).unwrap_or(v.len());
+    if digits == 0 {
+        return None;
+    }
+    let mut end = digits;
+    if v[end..].starts_with('.') {
+        let fraction = v[end + 1..]
+            .find(|c: char| !c.is_ascii_digit())
+            .unwrap_or(v.len() - end - 1);
+        if fraction > 0 {
+            end += 1 + fraction;
+        }
+    }
+    let n: f64 = v[..end].parse().ok()?;
+    if !n.is_finite() || n < 1.0 {
+        return None;
+    }
+    // 割合は 100% まで（それより広くても列の幅に収める）。
+    Some(match v[end..].starts_with('%') {
+        true => Side::Percent((n.round() as u32).min(100)),
+        false => Side::Pixels((n.round() as u32).min(MAX_IMAGE_SIDE)),
+    })
 }
 
 /// `colspan`・`rowspan` の値（数字の頭だけ。読めなければ 1）。
@@ -635,6 +671,33 @@ impl Builder {
     }
 
     fn push_run(&mut self, text: &str, code: bool) {
+        self.push_text(text, code, false);
+    }
+
+    /// 文字を足す。`html` は HTML の中の文字（素の URL をリンクにしない）。
+    fn push_text(&mut self, text: &str, code: bool, html: bool) {
+        // 頭の空白は、前の文字の終わりの空白にたたむ（HTML のコメントを落とした前後の `a <!-- x --> b` など。ブラウザ
+        // と同じく空白 1 つに）。コードと画像の代わりの文はそのまま。
+        let blank = |c: char| c.is_ascii_whitespace();
+        let text = if !code
+            && self.style.code == 0
+            && self.style.image.is_none()
+            && text.starts_with(blank)
+            && self.runs.last().is_some_and(|r| {
+                !r.line_break
+                    && !r.code
+                    && r.image.is_none()
+                    && r.footnote.is_none()
+                    && r.text.ends_with(blank)
+            }) {
+            let rest = text.trim_start_matches(blank);
+            if rest.is_empty() {
+                return;
+            }
+            rest
+        } else {
+            text
+        };
         let s = &self.style;
         let mut run = Run {
             text: text.to_owned(),
@@ -647,6 +710,7 @@ impl Builder {
             sup: s.sup > 0,
             underline: s.underline > 0,
             link: s.links.last().cloned(),
+            html,
             ..Run::default()
         };
         if let Some(url) = &self.style.image {
@@ -909,7 +973,7 @@ impl Builder {
         {
             return;
         }
-        self.push_run(&collapsed, false);
+        self.push_text(&collapsed, false, true);
     }
 
     /// 要素を開く（深すぎれば開かない）。
@@ -1281,13 +1345,24 @@ impl Builder {
             return;
         };
         let alt = attr("alt").unwrap_or_default().trim().to_owned();
+        let width = attr("width").and_then(image_side);
         self.runs.push(Run {
             text: alt,
             image: Some(src),
             image_dark: dark,
             image_light: light,
-            width: attr("width").and_then(image_side),
-            height: attr("height").and_then(image_side),
+            width: match width {
+                Some(Side::Pixels(w)) => Some(w),
+                _ => None,
+            },
+            height: match attr("height").and_then(image_side) {
+                Some(Side::Pixels(h)) => Some(h),
+                _ => None,
+            },
+            width_percent: match width {
+                Some(Side::Percent(p)) => Some(p),
+                _ => None,
+            },
             link: self.style.links.last().cloned(),
             ..Run::default()
         });
@@ -1882,7 +1957,7 @@ fn linkify_text(runs: Vec<Run>, github: Option<&str>) -> Vec<Run> {
         }
         let text = emojify(&run.text);
         let mut last = 0;
-        for (start, end, url) in find_links(&text, github) {
+        for (start, end, url) in find_links(&text, github, !run.html) {
             if start > last {
                 out.push(Run {
                     text: text[last..start].to_owned(),
@@ -1934,8 +2009,9 @@ fn emojify(text: &str) -> String {
     out
 }
 
-/// 文の中のリンクにする所（始まり・終わり・リンク先）。
-fn find_links(text: &str, github: Option<&str>) -> Vec<(usize, usize, String)> {
+/// 文の中のリンクにする所（始まり・終わり・リンク先）。`urls` が false なら素の URL はリンクにしない（HTML の中の
+/// 文字。GitHub の URL の自動リンクは Markdown の文の中だけで、`#123`・`@user` などは HTML の中でもリンクにする）。
+fn find_links(text: &str, github: Option<&str>, urls: bool) -> Vec<(usize, usize, String)> {
     let bytes = text.as_bytes();
     let mut found = Vec::new();
     let mut i = 0;
@@ -1951,7 +2027,8 @@ fn find_links(text: &str, github: Option<&str>) -> Vec<(usize, usize, String)> {
     };
     while i < bytes.len() {
         let rest = &text[i..];
-        if at_word(i)
+        if urls
+            && at_word(i)
             && ["https://", "http://", "www."]
                 .iter()
                 .any(|p| rest.starts_with(p))
@@ -2195,6 +2272,51 @@ mod tests {
         );
     }
 
+    #[test]
+    fn bare_urls_in_html_stay_text() {
+        // GitHub と同じく、URL の自動リンクは Markdown の文の中だけ（`#12`・`@dev` は HTML の中でもリンク）。
+        let blocks = parse_with(
+            "<p>See https://a.org and www.b.org, #12 by @dev</p>\n\n\
+             <div>\n\nMarkdown https://c.org\n\n</div>\n\n\
+             Text <b>https://d.org</b> and <span>https://e.org</span>\n",
+            Some("https://github.com/o/r"),
+        );
+        let links = |block: &Block| -> Vec<String> {
+            paragraph(block)
+                .0
+                .iter()
+                .filter_map(|r| r.link.clone())
+                .collect()
+        };
+        assert_eq!(
+            links(&blocks[0]),
+            vec![
+                "https://github.com/o/r/issues/12".to_owned(),
+                "https://github.com/dev".to_owned(),
+            ]
+        );
+        assert_eq!(
+            text(paragraph(&blocks[0]).0),
+            "See https://a.org and www.b.org, #12 by @dev"
+        );
+        // HTML の中でも、空行を挟んで Markdown として読む所はリンクにする。
+        assert_eq!(links(&blocks[1]), vec!["https://c.org".to_owned()]);
+        // Markdown の段落の中のタグの中身は Markdown の文。
+        assert_eq!(
+            links(&blocks[2]),
+            vec!["https://d.org".to_owned(), "https://e.org".to_owned()]
+        );
+    }
+
+    #[test]
+    fn dropped_comments_leave_one_space() {
+        let blocks = parse(
+            "a <!-- x --> b <!-- y -->\nc <b>d</b> <!-- z --> `e  f`\n\n<p>g <!-- w --> h</p>\n",
+        );
+        assert_eq!(text(paragraph(&blocks[0]).0), "a b c d e  f");
+        assert_eq!(text(paragraph(&blocks[1]).0), "g h");
+    }
+
     fn paragraph(block: &Block) -> (&[Run], Align) {
         match block {
             Block::Paragraph { runs, align } => (runs, *align),
@@ -2246,7 +2368,8 @@ mod tests {
             "<a href=\"https://x.org\">site</a> <a href=\"javascript:alert(1)\">bad</a> \
              <a href=\"java\tscript:x\">tab</a> <a href=\"docs/a.md\">rel</a>\n\n\
              <img src=\"img/logo.png\" width=\"120\" height=\"40px\" alt=\"Logo\">\n\
-             <img src=\"javascript:x\" alt=\"no\"><img src=a.png width=50%>\n",
+             <img src=\"javascript:x\" alt=\"no\"><img src=a.png width=50% height=20%>\n\n\
+             <img src=b.png width=\" 33.4%\" height=\"12.5em\"><img src=c.png width=250% height=x>\n",
         );
         let (runs, _) = paragraph(&blocks[0]);
         let link = |t: &str| {
@@ -2263,14 +2386,16 @@ mod tests {
             .flat_map(|b| paragraph(b).0)
             .filter(|r| r.image.is_some())
             .collect();
-        assert_eq!(images.len(), 2, "{blocks:?}");
+        assert_eq!(images.len(), 4, "{blocks:?}");
         assert_eq!(images[0].image.as_deref(), Some("img/logo.png"));
         assert_eq!((images[0].width, images[0].height), (Some(120), Some(40)));
         assert_eq!(images[0].text, "Logo");
-        assert_eq!(
-            (images[1].image.as_deref(), images[1].width),
-            (Some("a.png"), None)
-        );
+        // 割合の幅は割合のまま（高さの割合は読まない）。数字の後ろの単位は画素として読む（HTML の読み方）。
+        let sides = |r: &Run| (r.width, r.height, r.width_percent);
+        assert_eq!(images[1].image.as_deref(), Some("a.png"));
+        assert_eq!(sides(images[1]), (None, None, Some(50)));
+        assert_eq!(sides(images[2]), (None, Some(13), Some(33)));
+        assert_eq!(sides(images[3]), (None, None, Some(100)));
     }
 
     #[test]
@@ -2461,8 +2586,8 @@ mod tests {
              <form><input value=x><button onclick=\"x()\">Go</button></form>\n\n<p onclick=\"x()\" style=\"x\">P</p>\n",
         );
         let all: String = blocks.iter().map(|b| text(paragraph(b).0) + "|").collect();
-        // Markdown の地の文の空白はそのまま（コメントの前後の 2 つ）。
-        assert_eq!(all, "Before|Inline ok  end|Go|P|");
+        // コメントを落とした前後の空白は、ブラウザと同じく 1 つ。
+        assert_eq!(all, "Before|Inline ok end|Go|P|");
     }
 
     #[test]

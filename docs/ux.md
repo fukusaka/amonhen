@@ -85,7 +85,7 @@ Extend today's "Repositories…" (a list in the order opened) into the equivalen
 | Adding one by one | Choose a folder with "Add…", drop from the Finder, or add repositories automatically when opened (can be turned off in settings). SSH hosts (`ssh://`) go here too |
 | Picking up from folders | Register several "folders to scan" (e.g. `~/prj`). Specify depth (default 3) and exclude patterns (`node_modules` and so on). Repositories found go into a group named after the folder. Folders are watched with FSEvents, and additions and removals are reflected. Repositories that disappear stay, greyed out, until removed by hand |
 | Groups | Manual groups (nested like folders) and scan groups. Reorder and move by dragging |
-| Status | Each row shows the current branch, ahead/behind and the number of changed files. Only `.git/HEAD` is read right away; for the rest, only visible rows run `git status --porcelain=v2 --branch --untracked-files=all` (takes no lock) in the background, 4 at a time. Untracked files are counted one by one, as in Working Copy |
+| Status | Each row shows the current branch, ahead/behind and the number of changed files. Only `.git/HEAD` is read right away; for the rest, only visible rows run `git status --porcelain=v2 --branch --untracked-files=all` (with `GIT_OPTIONAL_LOCKS=0`, so it takes no lock) in the background, 4 at a time. Untracked files are counted one by one, as in Working Copy |
 | Extra information | Color labels, favorites (★), display name override, last opened time |
 | Operations | Open (⏎ in a new tab beside the page, ⌘⏎ in a new window), Show in Finder, Open in Terminal, Open in Editor, Fetch (all selected ones at once) |
 | Quick Open | ⌘⇧O opens a panel (Spotlight-style) that fuzzy-searches all bookmarks |
@@ -944,7 +944,7 @@ Make every operation available from the menus. Shortcuts do not follow other cli
   "Stage Lines") is not translated.
 - Everything else is translated: standard macOS menus and items (with Apple's wording), explanations, confirmations,
   placeholders and tool tips. In Japanese prose ブランチ, タグ, リモート, 上流, コミット, 作業ツリー and コンフリクト are
-  used as nouns, and a commit's author and committer are 作者 and コミッター (as in Pro Git's Japanese edition).
+  used as nouns, and a commit's author and committer are 作者 and コミッター.
 - The core (Rust) is localized the same way (`tr!` in `amonhen_model::i18n`, Japanese in
   `crates/model/src/i18n/ja.strings`). The language comes from the side that shows the text: the app passes its UI
   language over FFI, the CLI reads `LC_ALL` / `LC_MESSAGES` / `LANG`, and the shared daemon and SSH hosts answer
@@ -985,9 +985,9 @@ What git says, and what the app keeps:
   connection serves every worktree). The engine remembers the counts and counts again only the worktrees that changed:
   it watches every worktree's HEAD and index under `<git dir>/worktrees` (a few files, so staging, commits and
   checkouts show anywhere within 10 seconds), and counts the worktrees with changes again every 30 seconds. It does
-  not watch the worktrees' files: Linux's inotify uses one watch per folder (about 1 KB of kernel memory each), and a
-  large tree like minix has 17,000 folders, so watching 59 would reach the limit of about a million, and even a few
-  cost tens of megabytes for numbers that may lag a little. The window asks every 10 seconds while in front, which
+  not watch the worktrees' files: Linux's inotify uses one watch per folder (1 to 2 KB of kernel memory each, counting the folder it holds), and a
+  large tree like minix has 17,000 folders, so a few would reach the per-user limit (1% of memory: about 100,000 on a
+  16 GB machine, and never more than about a million), and even a few cost tens of megabytes for numbers that may lag a little. The window asks every 10 seconds while in front, which
   runs no git when nothing changed, and counts everything again every 5 minutes, to see a clean worktree whose files
   were edited without staging. Only the worktree being
   edited and the two edited before it stay open.
