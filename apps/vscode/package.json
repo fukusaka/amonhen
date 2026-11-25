@@ -222,6 +222,21 @@
         "category": "Amon Hen"
       },
       {
+        "command": "amonhen.branch.copyName",
+        "title": "Copy Branch Name",
+        "category": "Amon Hen"
+      },
+      {
+        "command": "amonhen.tag.copyName",
+        "title": "Copy Tag Name",
+        "category": "Amon Hen"
+      },
+      {
+        "command": "amonhen.refs.copyNames",
+        "title": "Copy Names",
+        "category": "Amon Hen"
+      },
+      {
         "command": "amonhen.tag.push",
         "title": "Push Tag",
         "category": "Amon Hen"
@@ -1250,6 +1265,21 @@
           "group": "inline@2"
         },
         {
+          "command": "amonhen.branch.copyName",
+          "when": "view == amonhen.sidebar && viewItem =~ /^(branch(\\.current)?(;\\w+)*|remoteBranch)$/ && !listMultiSelection",
+          "group": "0_copy@1"
+        },
+        {
+          "command": "amonhen.tag.copyName",
+          "when": "view == amonhen.sidebar && viewItem =~ /^tag(;\\w+)*$/ && !listMultiSelection",
+          "group": "0_copy@1"
+        },
+        {
+          "command": "amonhen.refs.copyNames",
+          "when": "view == amonhen.sidebar && viewItem =~ /^(branch(\\.current)?(;\\w+)*|remoteBranch|tag(;\\w+)*)$/ && listMultiSelection",
+          "group": "0_copy@1"
+        },
+        {
           "command": "amonhen.nav.checkout",
           "when": "view == amonhen.sidebar && viewItem =~ /^branch(;\\w+)*$/ && !listMultiSelection",
           "group": "1_ref@1"
@@ -1806,6 +1836,18 @@
         },
         {
           "command": "amonhen.rangeDiff.copyNewId",
+          "when": "false"
+        },
+        {
+          "command": "amonhen.branch.copyName",
+          "when": "false"
+        },
+        {
+          "command": "amonhen.tag.copyName",
+          "when": "false"
+        },
+        {
+          "command": "amonhen.refs.copyNames",
           "when": "false"
         },
         {
