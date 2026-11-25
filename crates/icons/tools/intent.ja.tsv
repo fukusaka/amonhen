@@ -1,0 +1,29 @@
+title	Amon Hen の共通アイコン — 形の意図
+legend	全体の約束（16×16 の格子、太さ 1.5 の線、端と角は丸、色は文字の色 1 色）
+key	circle	丸 ＝ コミット
+key	line	上の横線 ＝ リモート
+key	arrow	矢印 ＝ 動く向き
+key	dot	点線 ＝ まだない・前の位置
+head	リモートとのやりとり	同じ骨組み（上の線＝リモート、丸＝手元のコミット）で 4 つを描き分ける
+icon	fetch	Fetch	リモートの線から矢印が下りるだけで、手元のコミット（丸）には届かない。取ってくるが、手元のブランチは動かさない。
+icon	pull	Pull	矢印が手元のコミットの丸まで届く。取ってきて、手元に取り込む。Fetch との違いは丸の有無だけ。
+icon	push	Push	手元のコミットの丸からリモートの線へ矢印が上がる。Pull を上下にひっくり返した形。
+icon	publish	Publish	Push と同じ形で、リモートの線が点線。行き先（upstream）がまだない。
+head	ブランチ	縦の線＝幹、丸＝コミット
+icon	branch	Branch	幹からコミットの丸へ枝が分かれる。根元にも丸を置き、あるコミットから分かれたことを示す。
+icon	new-branch	New Branch	Branch の枝の先の丸を ＋ に替えた。これから作る枝。
+icon	merge	Merge	Branch を上下に返した形。右から来た線が幹へ戻り、幹の上の丸がマージコミット。Branch と対で覚えられる。
+icon	rebase	Rebase	幹の上に枝とコミット。下に、前の位置の枝を点で残す。前と後で、根元が幹の先へ移ったことを示す。
+head	Stash	引き出し＝しまっておく場所
+icon	stash	Stash	取っ手のある引き出しへ矢印が入る。作業中の変更をしまっておく。ダウンロードの印と違う形にした。
+icon	pop	Pop	引き出しから矢印が出る。しまったものを出す。Stash と対。
+head	窓と道具	見慣れた形のほうが早く読めるので、ありふれた図案のまま
+icon	sidebar	Sidebar	窓の左に仕切り。左の欄を出す・しまう。
+icon	repositories	Repositories	棚に立てた本。リポジトリのライブラリをそのまま描く。
+icon	activity	Activity	心電図の波形。裏で動いているもの・記録。
+icon	refresh	Refresh	1 周近い円と矢印。
+icon	undo	Undo	左へ戻る矢印が下へ回り込む。1 つ前に戻す。ツールバーで浮かないよう丸で囲まない。
+icon	search	Search	虫眼鏡。
+icon	terminal	Terminal	窓の中に >_ 。
+icon	editor	Editor	</> 。コードを書く道具。
+icon	files	Files	角を折った紙。1 つのファイル。

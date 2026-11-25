@@ -1,0 +1,28 @@
+title	Five shapes redrawn — the drafts and the choice
+note	A is the first draft; the blue frame is the one chosen. Each at 48, 20 and 16 (the dark tile is 16 on a dark background)
+group	merge	Merge
+alt	merge-A	A First draft		Two lines become one with an arrow on top. A common motif.
+alt	merge-B	B Three circles		Lines from two commits join into the merge commit on top.
+alt	merge-C	C Branch upside down	chosen	A line from the right comes back into the trunk; the circle on top is the merge commit.
+alt	merge-D	D Circle at the join		The merge commit sits where the lines join, then one line goes on.
+group	rebase	Rebase
+alt	rebase-A	A First draft		Trunk, branch and an up arrow. Only says that something moved.
+alt	rebase-B	B Dots where it was	chosen	Branch and commit on top, with dots where the branch used to start.
+alt	rebase-C	C Stacked on the tip		A base line with commits stacked again at its tip.
+alt	rebase-D	D The commit moves		An arc from a dotted circle to a solid one. The dots clump at 16.
+group	stash	Stash
+alt	stash-A	A First draft		An arrow into an open tray. Looks like download.
+alt	stash-B	B Drawer	chosen	An arrow into a drawer with a handle.
+alt	stash-C	C Layers		An arrow onto stacked layers. Easy to mix up with Fetch's remote line.
+alt	stash-D	D Box with a lid		A down arrow inside a storage box.
+group	pop	Pop
+alt	pop-A	A First draft		An arrow out of a tray. Looks like upload.
+alt	pop-B	B Drawer	chosen	An arrow out of the drawer.
+alt	pop-C	C Layers		An arrow up from the top layer.
+alt	pop-D	D Box with a lid		An up arrow inside the storage box.
+group	repositories	Repositories
+alt	repositories-A	A First draft		Stacked plates and a box. Reads as a cake or a tray.
+alt	repositories-B	B Bookshelf	chosen	Books on a shelf: the library of repositories.
+alt	repositories-C	C Stacked windows		One window behind another.
+alt	repositories-D	D Four tiles		A 2×2 grid. Too generic.
+alt	repositories-E	E Folder with a commit		A commit circle inside a folder.
