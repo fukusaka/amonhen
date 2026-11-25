@@ -645,6 +645,28 @@ impl Builder {
 
     /// 文字を足す。`html` は HTML の中の文字（素の URL をリンクにしない）。
     fn push_text(&mut self, text: &str, code: bool, html: bool) {
+        // 頭の空白は、前の文字の終わりの空白にたたむ（HTML のコメントを落とした前後の `a <!-- x --> b` など。ブラウザ
+        // と同じく空白 1 つに）。コードと画像の代わりの文はそのまま。
+        let blank = |c: char| c.is_ascii_whitespace();
+        let text = if !code
+            && self.style.code == 0
+            && self.style.image.is_none()
+            && text.starts_with(blank)
+            && self.runs.last().is_some_and(|r| {
+                !r.line_break
+                    && !r.code
+                    && r.image.is_none()
+                    && r.footnote.is_none()
+                    && r.text.ends_with(blank)
+            }) {
+            let rest = text.trim_start_matches(blank);
+            if rest.is_empty() {
+                return;
+            }
+            rest
+        } else {
+            text
+        };
         let s = &self.style;
         let mut run = Run {
             text: text.to_owned(),
@@ -2244,6 +2266,15 @@ mod tests {
         );
     }
 
+    #[test]
+    fn dropped_comments_leave_one_space() {
+        let blocks = parse(
+            "a <!-- x --> b <!-- y -->\nc <b>d</b> <!-- z --> `e  f`\n\n<p>g <!-- w --> h</p>\n",
+        );
+        assert_eq!(text(paragraph(&blocks[0]).0), "a b c d e  f");
+        assert_eq!(text(paragraph(&blocks[1]).0), "g h");
+    }
+
     fn paragraph(block: &Block) -> (&[Run], Align) {
         match block {
             Block::Paragraph { runs, align } => (runs, *align),
@@ -2510,8 +2541,8 @@ mod tests {
              <form><input value=x><button onclick=\"x()\">Go</button></form>\n\n<p onclick=\"x()\" style=\"x\">P</p>\n",
         );
         let all: String = blocks.iter().map(|b| text(paragraph(b).0) + "|").collect();
-        // Markdown の地の文の空白はそのまま（コメントの前後の 2 つ）。
-        assert_eq!(all, "Before|Inline ok  end|Go|P|");
+        // コメントを落とした前後の空白は、ブラウザと同じく 1 つ。
+        assert_eq!(all, "Before|Inline ok end|Go|P|");
     }
 
     #[test]
