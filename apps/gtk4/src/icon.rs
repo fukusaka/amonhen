@@ -244,11 +244,22 @@ mod imp {
             } else if obj.has_css_class("caution") {
                 // 黄色（署名は正しいが、鍵の信用度が決まっていないなど）。
                 gdk::RGBA::new(0.85, 0.68, 0.0, 1.0)
+            } else if shared(self.kind.get()).is_some() {
+                // 共通のアイコンは文字の色のまま（Adwaita の記号のアイコンと同じ濃さ）。
+                fg
             } else {
                 gdk::RGBA::new(fg.red(), fg.green(), fg.blue(), fg.alpha() * 0.7)
             };
             let size = self.size();
-            if size != SIZE {
+            if let Some(name) = shared(self.kind.get()) {
+                draw_shared(
+                    snapshot,
+                    name,
+                    &color,
+                    size as f32,
+                    obj.scale_factor() as f32,
+                );
+            } else if size != SIZE {
                 let scale = size as f32 / SIZE as f32;
                 snapshot.save();
                 snapshot.scale(scale, scale);
@@ -354,6 +365,11 @@ pub fn draw_at(
         center.x() - size / 2.0,
         center.y() - size / 2.0,
     ));
+    if let Some(name) = shared(kind) {
+        draw_shared(snapshot, name, color, size, 1.0);
+        snapshot.restore();
+        return;
+    }
     let scale = size / SIZE as f32;
     snapshot.scale(scale, scale);
     draw(snapshot, kind, color);
@@ -385,34 +401,74 @@ fn shared(kind: Kind) -> Option<&'static str> {
     })
 }
 
+/// 共通のアイコンの線の太さ（16px のとき）。Adwaita の記号のアイコンの線（2px）に合わせる。ほかの大きさでは
+/// 大きさに比べて同じ割合。
+const SHARED_STROKE: f32 = 2.0;
+
 thread_local! {
-    /// 読んだパス（形ごとに 1 度だけ読む）。
-    static SHARED_PATHS: std::cell::RefCell<std::collections::HashMap<&'static str, gsk::Path>> =
-        Default::default();
+    /// 作ったパス（名前・大きさ・画素の細かさごとに 1 度だけ作る）。
+    #[allow(clippy::type_complexity)]
+    static SHARED_PATHS: std::cell::RefCell<
+        std::collections::HashMap<(&'static str, u32, u32), Vec<(gsk::Path, Vec<f32>)>>,
+    > = Default::default();
 }
 
-/// 共通のアイコンを 16×16 の中に線で引く。
-fn draw_shared(snapshot: &gtk::Snapshot, icon: &amonhen_icons::Icon, color: &gdk::RGBA) {
+/// 共通のアイコン `name` を、左上を原点に一辺 `size` px で線で引く。縦・横の線は画素（`scale` は画面の倍率）に
+/// 合わせる（`amonhen_icons::Icon::strokes`）。
+fn draw_shared(
+    snapshot: &gtk::Snapshot,
+    name: &'static str,
+    color: &gdk::RGBA,
+    size: f32,
+    scale: f32,
+) {
+    let Some(icon) = amonhen_icons::get(name) else {
+        return;
+    };
+    let width = SHARED_STROKE * size / SIZE as f32;
     SHARED_PATHS.with_borrow_mut(|paths| {
-        for shape in icon.shapes {
-            let path = paths.entry(shape.d).or_insert_with(|| {
-                gsk::Path::parse(shape.d).unwrap_or_else(|_| gsk::PathBuilder::new().to_path())
+        let strokes = paths
+            .entry((name, size.to_bits(), scale.to_bits()))
+            .or_insert_with(|| {
+                icon.strokes(size, scale, width)
+                    .into_iter()
+                    .map(|s| (path_of(&s.segments), s.dash))
+                    .collect()
             });
-            let stroke = gsk::Stroke::new(amonhen_icons::STROKE_WIDTH);
-            stroke.set_line_cap(gsk::LineCap::Round);
-            stroke.set_line_join(gsk::LineJoin::Round);
-            if !shape.dash.is_empty() {
-                stroke.set_dash(shape.dash);
-            }
+        let stroke = gsk::Stroke::new(width);
+        stroke.set_line_cap(gsk::LineCap::Round);
+        stroke.set_line_join(gsk::LineJoin::Round);
+        for (path, dash) in strokes.iter() {
+            stroke.set_dash(dash);
             snapshot.append_stroke(path, &stroke, color);
         }
     });
 }
 
+/// `amonhen_icons` の列（移動・直線・ベジェ・閉じる）を GSK のパスに。
+fn path_of(segments: &[f32]) -> gsk::Path {
+    let p = gsk::PathBuilder::new();
+    let mut i = 0;
+    while let Some(op) = segments
+        .get(i)
+        .and_then(|&c| amonhen_icons::Op::from_code(c))
+    {
+        let c = &segments[i + 1..i + 1 + op.arity()];
+        match op {
+            amonhen_icons::Op::Move => p.move_to(c[0], c[1]),
+            amonhen_icons::Op::Line => p.line_to(c[0], c[1]),
+            amonhen_icons::Op::Cubic => p.cubic_to(c[0], c[1], c[2], c[3], c[4], c[5]),
+            amonhen_icons::Op::Close => p.close(),
+        }
+        i += 1 + op.arity();
+    }
+    p.to_path()
+}
+
 /// 16×16 の中に描く。
 fn draw(snapshot: &gtk::Snapshot, kind: Kind, color: &gdk::RGBA) {
-    if let Some(icon) = shared(kind).and_then(amonhen_icons::get) {
-        draw_shared(snapshot, icon, color);
+    if let Some(name) = shared(kind) {
+        draw_shared(snapshot, name, color, SIZE as f32, 1.0);
         return;
     }
     let p = gsk::PathBuilder::new();
@@ -1253,13 +1309,31 @@ fn shield(p: &gsk::PathBuilder) {
 mod tests {
     use super::*;
 
-    /// 共通のアイコンのパスを GSK がすべて読める（読めないと何も描かれない）。
+    /// 共通のアイコンで描く種類は、どれも `amonhen-icons` にある（ないと何も描かれない）。
     #[test]
-    fn shared_icons_parse() {
-        for (name, icon) in amonhen_icons::ICONS {
-            for shape in icon.shapes {
-                assert!(gsk::Path::parse(shape.d).is_ok(), "{name}: {}", shape.d);
-            }
+    fn shared_icons_exist() {
+        for kind in [
+            Kind::Sidebar,
+            Kind::Repositories,
+            Kind::Branch,
+            Kind::NewBranch,
+            Kind::Fetch,
+            Kind::Pull,
+            Kind::Push,
+            Kind::Publish,
+            Kind::Merge,
+            Kind::Rebase,
+            Kind::StashPush,
+            Kind::StashPop,
+            Kind::Activity,
+            Kind::Refresh,
+            Kind::Undo,
+            Kind::Search,
+            Kind::Terminal,
+            Kind::Editor,
+        ] {
+            let name = shared(kind).unwrap();
+            assert!(amonhen_icons::get(name).is_some(), "{name}");
         }
     }
 }
