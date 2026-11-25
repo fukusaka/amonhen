@@ -152,6 +152,8 @@ fn segments(d: &str) -> Result<Vec<f32>, String> {
     let (mut cx, mut cy, mut sx, mut sy) = (0.0f64, 0.0f64, 0.0f64, 0.0f64);
     let mut i = 0;
     let mut cmd = ' ';
+    // 直前の 3 次ベジェの 2 つ目の制御点（S の 1 つ目の制御点はその折り返し）。
+    let mut last_c2: Option<(f64, f64)> = None;
     let num = |i: &mut usize| -> Result<f64, String> {
         match tokens.get(*i) {
             Some(Token::Num(n)) => {
@@ -168,6 +170,7 @@ fn segments(d: &str) -> Result<Vec<f32>, String> {
             if c == 'Z' || c == 'z' {
                 out.push(CLOSE);
                 (cx, cy) = (sx, sy);
+                last_c2 = None;
                 continue;
             }
         } else if cmd == ' ' {
@@ -206,6 +209,18 @@ fn segments(d: &str) -> Result<Vec<f32>, String> {
                 out.push(CUBIC);
                 out.extend(v.iter().map(|&n| n as f32));
                 (cx, cy) = (v[4], v[5]);
+                last_c2 = Some((v[2], v[3]));
+                continue;
+            }
+            'S' => {
+                let (x2, y2) = (num(&mut i)? + ox, num(&mut i)? + oy);
+                let (x, y) = (num(&mut i)? + ox, num(&mut i)? + oy);
+                let (x1, y1) = last_c2.map_or((cx, cy), |(px, py)| (2.0 * cx - px, 2.0 * cy - py));
+                out.push(CUBIC);
+                out.extend([x1, y1, x2, y2, x, y].map(|n| n as f32));
+                (cx, cy) = (x, y);
+                last_c2 = Some((x2, y2));
+                continue;
             }
             'A' => {
                 let (rx, ry, rot) = (num(&mut i)?, num(&mut i)?, num(&mut i)?);
@@ -216,6 +231,7 @@ fn segments(d: &str) -> Result<Vec<f32>, String> {
             }
             other => return Err(format!("unsupported command {other}")),
         }
+        last_c2 = None;
     }
     Ok(out)
 }
