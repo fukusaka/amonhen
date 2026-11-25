@@ -758,15 +758,6 @@ pub enum Command {
         #[serde(default)]
         utc_offset: Option<i32>,
     },
-    /// コミット `oid` の Android の VectorDrawable のファイル `path` を描いた SVG（`info.svg`、大きさは dp）と、絵の下に
-    /// 添える説明（`info.notes`）。色の参照は同じコミットのリソースから引き、引けない色は `fallback`（画面の文字の色の
-    /// `#rrggbb`）で描く。History の「すべてのファイル」。
-    VectorDrawable {
-        oid: String,
-        path: String,
-        #[serde(default)]
-        fallback: Option<String>,
-    },
     /// コミット `oid` の SVG のファイル `path` の、モバイル向けの描画部品で崩れる機能（`info.issues`: targets・
     /// feature・message・count）と、部品ごとの崩れ方の近似（`info.approximations`: android・ios・flutter・
     /// reactNative の SVG の文字列）。History の「すべてのファイル」の SVG のモバイルの確認。
@@ -5274,20 +5265,6 @@ impl Repository {
                     ..Default::default()
                 })
             }
-            Command::VectorDrawable {
-                oid: o,
-                path,
-                fallback,
-            } => {
-                let commit = oid(&o)?;
-                let data = self.file_at(&commit, &path)?;
-                let picture = self.vector_drawable(&commit, &path, &data, fallback.as_deref())?;
-                Ok(Response {
-                    ok: true,
-                    info: Some(serde_json::json!({ "svg": picture.svg, "notes": picture.notes })),
-                    ..Default::default()
-                })
-            }
             Command::SvgCheck { oid: o, path } => {
                 use crate::svglint::Target;
                 let data = self.file_at(&oid(&o)?, &path)?;
@@ -6104,48 +6081,6 @@ mod tests {
             .find_map(|r| r["math"]["svg"].as_str())
             .unwrap();
         assert!(inline.contains("#abcdef"), "{inline}");
-    }
-
-    #[test]
-    fn vector_drawable_draws_the_picture_with_colors_from_the_commit() {
-        let (tmp, repo) = setup();
-        let dir = tmp.path();
-        std::fs::create_dir_all(dir.join("res/drawable")).unwrap();
-        std::fs::create_dir_all(dir.join("res/values")).unwrap();
-        std::fs::write(
-            dir.join("res/values/colors.xml"),
-            r##"<resources><color name="brand">#FF112233</color></resources>"##,
-        )
-        .unwrap();
-        std::fs::write(
-            dir.join("res/drawable/icon.xml"),
-            r#"<vector xmlns:android="http://schemas.android.com/apk/res/android" android:width="24dp" android:height="24dp" android:viewportWidth="24" android:viewportHeight="24">
-<path android:fillColor="@color/brand" android:pathData="M0,0h24v24h-24z"/>
-<path android:fillColor="?attr/colorControlNormal" android:pathData="M0,0h12v12h-12z"/>
-</vector>"#,
-        )
-        .unwrap();
-        git(dir, &["add", "."]);
-        git(dir, &["commit", "-q", "-m", "icon"]);
-        let head = git(dir, &["rev-parse", "HEAD"]);
-        let drawn = run(
-            &repo,
-            &format!(
-                r##"{{"op":"vectorDrawable","oid":"{head}","path":"res/drawable/icon.xml","fallback":"#abcdef"}}"##
-            ),
-        );
-        let svg = drawn["info"]["svg"].as_str().unwrap();
-        assert!(svg.contains("<svg") && svg.contains("#112233"), "{drawn}");
-        assert!(svg.to_ascii_lowercase().contains("abcdef"), "{drawn}");
-        assert!(
-            !drawn["info"]["notes"].as_array().unwrap().is_empty(),
-            "{drawn}"
-        );
-        let not = run(
-            &repo,
-            &format!(r#"{{"op":"vectorDrawable","oid":"{head}","path":"a.txt"}}"#),
-        );
-        assert_eq!(not["ok"], false, "{not}");
     }
 
     #[test]
