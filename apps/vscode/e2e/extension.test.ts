@@ -718,6 +718,34 @@ async function tagsAndRemotesFlow(): Promise<void> {
       return remoteRow(remote);
     });
     git('update-ref', '-d', `refs/remotes/${remote}/shown`);
+
+    // ブランチをリモートの見出しに落として Push: 送り先を名前で確かめ、上流にする（アプリと同じ）
+    const dropped = 'e2e-drop';
+    git('branch', dropped, 'HEAD');
+    try {
+      await repo.refresh();
+      const data = new vscode.DataTransfer();
+      const source = { kind: 'branch', ref: { name: `refs/heads/${dropped}` }, label: dropped };
+      data.set('application/vnd.code.tree.amonhen.sidebar', new vscode.DataTransferItem(source));
+      const dropAsked: { message: string; detail?: string }[] = [];
+      await withWindow(
+        {
+          showQuickPick: async (items: readonly vscode.QuickPickItem[]) => items.find((i) => i.label.includes('$(cloud-upload)')),
+          showWarningMessage: async (message: string, options: vscode.MessageOptions) => {
+            dropAsked.push({ message, detail: options.detail });
+            return 'Push';
+          },
+        },
+        async () => api.dragAndDrop.handleDrop((await remoteNode(remote)) as never, data),
+      );
+      assert.deepEqual(dropAsked, [{ message: `Push ${dropped} to ${remote}/${dropped}?`, detail: `Creates ${remote}/${dropped}.` }]);
+      assert.equal(inOrigin('rev-parse', dropped).trim(), git('rev-parse', dropped).trim());
+      assert.equal(git('config', `branch.${dropped}.remote`).trim(), remote);
+    } finally {
+      git('branch', '-D', dropped);
+      if (inOrigin('branch', '--list', dropped).trim()) inOrigin('branch', '-D', dropped);
+      for (const r of [`refs/remotes/${remote}/${dropped}`]) if (git('for-each-ref', r).trim()) git('update-ref', '-d', r);
+    }
     await withWindow({ showInputBox: inputs(`${remote}-2`) }, async () =>
       vscode.commands.executeCommand('amonhen.remote.rename', await remoteNode(remote)),
     );
