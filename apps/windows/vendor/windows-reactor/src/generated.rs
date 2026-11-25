@@ -3184,6 +3184,64 @@ pub mod public {
         }
     }
     impl LayoutControl for Line {}
+    /// A shape that strokes (and optionally fills) a path given in XAML path markup, the SVG path syntax that
+    /// WinUI's `Geometry` accepts.
+    #[derive(Clone, Debug, Default, PartialEq)]
+    pub struct Path {
+        data: Property<String>,
+        stroke: Property<Brush>,
+        stroke_thickness: Property<f64>,
+        stroke_dash_array: Property<String>,
+        round_ends: Property<bool>,
+        element_state: Option<std::rc::Rc<ElementState>>,
+    }
+    impl Path {
+        pub fn new() -> Self {
+            Self::default()
+        }
+        /// The path, in XAML path markup (`M 0 0 L 10 10 ...`).
+        pub fn data(mut self, value: impl Into<String>) -> Self {
+            self.data = Property::Set(value.into());
+            self
+        }
+        pub fn stroke(mut self, value: impl Into<Brush>) -> Self {
+            self.stroke = Property::Set(value.into());
+            self
+        }
+        pub fn stroke_thickness(mut self, value: impl Into<Option<f64>>) -> Self {
+            let value = value.into();
+            assert!(
+                value
+                    .as_ref()
+                    .is_none_or(|value| value.is_finite() && *value >= 0.0),
+                "Path StrokeThickness must contain finite non-negative values",
+            );
+            self.stroke_thickness = Property::from(value);
+            self
+        }
+        /// Dash and gap lengths in units of the stroke thickness, separated by spaces (`StrokeDashArray`).
+        pub fn stroke_dash_array(mut self, value: impl Into<String>) -> Self {
+            self.stroke_dash_array = Property::Set(value.into());
+            self
+        }
+        /// Round line caps (start, end and dashes) and round joins.
+        pub fn round_ends(mut self, value: bool) -> Self {
+            self.round_ends = Property::Set(value);
+            self
+        }
+    }
+    impl sealed::Sealed for Path {}
+    impl sealed::NativeControl for Path {
+        fn into_element(self) -> Element {
+            self.into()
+        }
+    }
+    impl sealed::LayoutControl for Path {
+        fn element_state_mut(&mut self) -> &mut Option<std::rc::Rc<ElementState>> {
+            &mut self.element_state
+        }
+    }
+    impl LayoutControl for Path {}
     #[derive(Clone, Debug, Default, PartialEq)]
     pub struct SymbolIcon {
         symbol: Property<Symbol>,
@@ -5484,6 +5542,7 @@ pub mod public {
         Rectangle(std::rc::Rc<Rectangle>),
         Ellipse(std::rc::Rc<Ellipse>),
         Line(std::rc::Rc<Line>),
+        Path(std::rc::Rc<Path>),
         SymbolIcon(std::rc::Rc<SymbolIcon>),
         ImageIcon(std::rc::Rc<ImageIcon>),
         FontIcon(std::rc::Rc<FontIcon>),
@@ -5875,6 +5934,16 @@ pub mod public {
     }
     impl From<Ellipse> for View {
         fn from(value: Ellipse) -> Self {
+            Self::native(value)
+        }
+    }
+    impl From<Path> for Element {
+        fn from(value: Path) -> Self {
+            Self::Path(std::rc::Rc::new(value))
+        }
+    }
+    impl From<Path> for View {
+        fn from(value: Path) -> Self {
             Self::native(value)
         }
     }
@@ -6358,6 +6427,7 @@ pub mod public {
                 Self::Rectangle(_) => MountedKind::Rectangle,
                 Self::Ellipse(_) => MountedKind::Ellipse,
                 Self::Line(_) => MountedKind::Line,
+                Self::Path(_) => MountedKind::Path,
                 Self::SymbolIcon(_) => MountedKind::SymbolIcon,
                 Self::ImageIcon(_) => MountedKind::ImageIcon,
                 Self::FontIcon(_) => MountedKind::FontIcon,
@@ -7299,6 +7369,31 @@ pub mod public {
                             fill,
                             stroke,
                             stroke_thickness,
+                        })),
+                        reference: None,
+                        element_state,
+                        window_title_bar: None,
+                        structure: ElementStructure::None,
+                    }
+                }
+                Self::Path(value) => {
+                    let value = std::rc::Rc::unwrap_or_clone(value);
+                    let Path {
+                        data,
+                        stroke,
+                        stroke_thickness,
+                        stroke_dash_array,
+                        round_ends,
+                        element_state,
+                    } = value;
+                    ElementParts {
+                        kind: MountedKind::Path,
+                        props: MountedProps::Path(std::rc::Rc::new(PathMountedProps {
+                            data,
+                            stroke,
+                            stroke_thickness,
+                            stroke_dash_array,
+                            round_ends,
                         })),
                         reference: None,
                         element_state,
@@ -8472,6 +8567,13 @@ pub mod public {
                         && value.stroke == mounted.stroke
                         && f64_property_eq(&value.stroke_thickness, &mounted.stroke_thickness)
                 }
+                (Self::Path(value), MountedProps::Path(mounted)) => {
+                    true && value.data == mounted.data
+                        && value.stroke == mounted.stroke
+                        && f64_property_eq(&value.stroke_thickness, &mounted.stroke_thickness)
+                        && value.stroke_dash_array == mounted.stroke_dash_array
+                        && value.round_ends == mounted.round_ends
+                }
                 (Self::Line(value), MountedProps::Line(mounted)) => {
                     true && value.stroke == mounted.stroke
                         && f64_property_eq(&value.stroke_thickness, &mounted.stroke_thickness)
@@ -8708,6 +8810,7 @@ pub mod public {
                 Self::Rectangle(_) => None,
                 Self::Ellipse(_) => None,
                 Self::Line(_) => None,
+                Self::Path(_) => None,
                 Self::SymbolIcon(_) => None,
                 Self::ImageIcon(_) => None,
                 Self::FontIcon(_) => None,
@@ -8791,6 +8894,7 @@ pub mod public {
                 Self::Rectangle(value) => value.element_state.as_deref(),
                 Self::Ellipse(value) => value.element_state.as_deref(),
                 Self::Line(value) => value.element_state.as_deref(),
+                Self::Path(value) => value.element_state.as_deref(),
                 Self::SymbolIcon(value) => value.element_state.as_deref(),
                 Self::ImageIcon(value) => value.element_state.as_deref(),
                 Self::FontIcon(value) => value.element_state.as_deref(),
@@ -8874,6 +8978,7 @@ pub mod public {
                 Self::Rectangle(_) => None,
                 Self::Ellipse(_) => None,
                 Self::Line(_) => None,
+                Self::Path(_) => None,
                 Self::SymbolIcon(_) => None,
                 Self::ImageIcon(_) => None,
                 Self::FontIcon(_) => None,
@@ -8961,6 +9066,7 @@ pub mod public {
                 Self::Rectangle(_) => ElementStructureRef::None,
                 Self::Ellipse(_) => ElementStructureRef::None,
                 Self::Line(_) => ElementStructureRef::None,
+                Self::Path(_) => ElementStructureRef::None,
                 Self::SymbolIcon(_) => ElementStructureRef::None,
                 Self::ImageIcon(_) => ElementStructureRef::None,
                 Self::FontIcon(_) => ElementStructureRef::None,
@@ -9215,6 +9321,7 @@ pub mod public {
                 Self::Rectangle(_) => {}
                 Self::Ellipse(_) => {}
                 Self::Line(_) => {}
+                Self::Path(_) => {}
                 Self::SymbolIcon(_) => {}
                 Self::ImageIcon(_) => {}
                 Self::FontIcon(_) => {}
@@ -10452,6 +10559,45 @@ impl MountedPropsExt for MountedProps {
                     },
                 );
             }
+            Self::Path(values) => {
+                visit(
+                    PropertyId::PathData,
+                    match &values.data {
+                        Property::Inherited => None,
+                        Property::Set(value) => Some(PropertyValueRef::Str(value.as_str())),
+                    },
+                );
+                visit(
+                    PropertyId::PathStroke,
+                    match &values.stroke {
+                        Property::Set(Brush::Solid(color)) => {
+                            Some(PropertyValueRef::Brush(Brush::Solid(*color)))
+                        }
+                        Property::Inherited | Property::Set(Brush::Theme(_)) => None,
+                    },
+                );
+                visit(
+                    PropertyId::PathStrokeThickness,
+                    match &values.stroke_thickness {
+                        Property::Inherited => None,
+                        Property::Set(value) => Some(PropertyValueRef::F64(*value)),
+                    },
+                );
+                visit(
+                    PropertyId::PathStrokeDashArray,
+                    match &values.stroke_dash_array {
+                        Property::Inherited => None,
+                        Property::Set(value) => Some(PropertyValueRef::Str(value.as_str())),
+                    },
+                );
+                visit(
+                    PropertyId::PathRoundEnds,
+                    match &values.round_ends {
+                        Property::Inherited => None,
+                        Property::Set(value) => Some(PropertyValueRef::Bool(*value)),
+                    },
+                );
+            }
             Self::Line(values) => {
                 visit(
                     PropertyId::LineStroke,
@@ -11285,6 +11431,12 @@ impl MountedPropsExt for MountedProps {
                 None,
                 None,
             ]),
+            Self::Path(values) => ThemeStyle::new([
+                values.stroke.as_set().copied().and_then(Brush::theme),
+                None,
+                None,
+                None,
+            ]),
             Self::Line(values) => ThemeStyle::new([
                 values.stroke.as_set().copied().and_then(Brush::theme),
                 None,
@@ -11541,6 +11693,7 @@ impl MountedEventsExt for MountedProps {
             Self::Rectangle(_) => {}
             Self::Ellipse(_) => {}
             Self::Line(_) => {}
+            Self::Path(_) => {}
             Self::SymbolIcon(_) => {}
             Self::ImageIcon(_) => {}
             Self::FontIcon(_) => {}
@@ -12285,6 +12438,7 @@ pub enum MountedKind {
     Rectangle,
     Ellipse,
     Line,
+    Path,
     SymbolIcon,
     ImageIcon,
     FontIcon,
@@ -12564,6 +12718,7 @@ pub fn slots(kind: MountedKind) -> &'static [SlotId] {
         MountedKind::Rectangle => &[],
         MountedKind::Ellipse => &[],
         MountedKind::Line => &[],
+        MountedKind::Path => &[],
         MountedKind::SymbolIcon => &[],
         MountedKind::ImageIcon => &[],
         MountedKind::FontIcon => &[],
@@ -13209,6 +13364,23 @@ impl PartialEq for LineMountedProps {
     }
 }
 #[derive(Clone, Debug)]
+pub(crate) struct PathMountedProps {
+    data: Property<String>,
+    stroke: Property<Brush>,
+    stroke_thickness: Property<f64>,
+    stroke_dash_array: Property<String>,
+    round_ends: Property<bool>,
+}
+impl PartialEq for PathMountedProps {
+    fn eq(&self, other: &Self) -> bool {
+        true && self.data == other.data
+            && self.stroke == other.stroke
+            && f64_property_eq(&self.stroke_thickness, &other.stroke_thickness)
+            && self.stroke_dash_array == other.stroke_dash_array
+            && self.round_ends == other.round_ends
+    }
+}
+#[derive(Clone, Debug)]
 pub(crate) struct SymbolIconMountedProps {
     symbol: Property<Symbol>,
 }
@@ -13765,6 +13937,7 @@ pub enum MountedProps {
     Rectangle(std::rc::Rc<RectangleMountedProps>),
     Ellipse(std::rc::Rc<EllipseMountedProps>),
     Line(std::rc::Rc<LineMountedProps>),
+    Path(std::rc::Rc<PathMountedProps>),
     SymbolIcon(std::rc::Rc<SymbolIconMountedProps>),
     ImageIcon(std::rc::Rc<ImageIconMountedProps>),
     FontIcon(std::rc::Rc<FontIconMountedProps>),
@@ -14002,6 +14175,11 @@ pub enum PropertyId {
     LineY1,
     LineX2,
     LineY2,
+    PathData,
+    PathStroke,
+    PathStrokeThickness,
+    PathStrokeDashArray,
+    PathRoundEnds,
     SymbolIconSymbol,
     ImageIconSource,
     FontIconGlyph,
@@ -16832,6 +17010,65 @@ const LINE_PROPERTIES: &[PropertyDescriptor] = &[
 ];
 const LINE_EVENTS: &[EventDescriptor] = &[];
 const LINE_SLOTS: &[SlotDescriptor] = &[];
+const PATH_PROPERTIES: &[PropertyDescriptor] = &[
+    PropertyDescriptor {
+        id: PropertyId::PathData,
+        name: "Data",
+        field: "data",
+        value: "Str",
+        interface: "Microsoft.UI.Xaml.Shapes.IPath",
+        clearable: true,
+        feedback: None,
+        feedback_contract: None,
+        observes_feedback: false,
+    },
+    PropertyDescriptor {
+        id: PropertyId::PathStroke,
+        name: "Stroke",
+        field: "stroke",
+        value: "Brush",
+        interface: "Microsoft.UI.Xaml.Shapes.IShape",
+        clearable: true,
+        feedback: None,
+        feedback_contract: None,
+        observes_feedback: false,
+    },
+    PropertyDescriptor {
+        id: PropertyId::PathStrokeThickness,
+        name: "StrokeThickness",
+        field: "stroke_thickness",
+        value: "F64",
+        interface: "Microsoft.UI.Xaml.Shapes.IShape",
+        clearable: true,
+        feedback: None,
+        feedback_contract: None,
+        observes_feedback: false,
+    },
+    PropertyDescriptor {
+        id: PropertyId::PathStrokeDashArray,
+        name: "StrokeDashArray",
+        field: "stroke_dash_array",
+        value: "Str",
+        interface: "Microsoft.UI.Xaml.Shapes.IShape",
+        clearable: true,
+        feedback: None,
+        feedback_contract: None,
+        observes_feedback: false,
+    },
+    PropertyDescriptor {
+        id: PropertyId::PathRoundEnds,
+        name: "StrokeLineJoin",
+        field: "round_ends",
+        value: "Bool",
+        interface: "Microsoft.UI.Xaml.Shapes.IShape",
+        clearable: true,
+        feedback: None,
+        feedback_contract: None,
+        observes_feedback: false,
+    },
+];
+const PATH_EVENTS: &[EventDescriptor] = &[];
+const PATH_SLOTS: &[SlotDescriptor] = &[];
 const SYMBOL_ICON_PROPERTIES: &[PropertyDescriptor] = &[PropertyDescriptor {
     id: PropertyId::SymbolIconSymbol,
     name: "Symbol",
@@ -18733,6 +18970,18 @@ pub const CONTROLS: &[ControlDescriptor] = &[
         properties: LINE_PROPERTIES,
         events: LINE_EVENTS,
         slots: LINE_SLOTS,
+        selection: None,
+        controlled_collection: None,
+    },
+    ControlDescriptor {
+        kind: MountedKind::Path,
+        name: "Path",
+        type_name: "Microsoft.UI.Xaml.Shapes.Path",
+        role: ControlRole::Leaf,
+        capabilities: &[Capability::Layout],
+        properties: PATH_PROPERTIES,
+        events: PATH_EVENTS,
+        slots: PATH_SLOTS,
         selection: None,
         controlled_collection: None,
     },
