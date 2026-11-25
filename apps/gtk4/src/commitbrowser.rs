@@ -670,12 +670,17 @@ impl Browser {
                 this.back_to_tree();
             }
         });
-        // gantt の時間帯の設定を変えたら、整形した Markdown を読み直す（日付の位置が変わる）
+        // gantt の時間帯・数式の設定を変えたら、整形した Markdown を読み直す（日付の位置・式の大きさが変わる）
         {
             let weak = Rc::downgrade(&this);
             crate::settings::connect_changed_while(&this.root, move |key| {
                 let Some(this) = weak.upgrade() else { return };
-                if key != crate::theme::GANTT_TIME_ZONE || this.markdown_text.get() {
+                let watched = [
+                    crate::theme::GANTT_TIME_ZONE,
+                    crate::theme::MATH_SCALE,
+                    crate::theme::MATH_TIME_LIMIT,
+                ];
+                if !watched.contains(&key) || this.markdown_text.get() {
                     return;
                 }
                 let path = this.open_path.borrow().clone();

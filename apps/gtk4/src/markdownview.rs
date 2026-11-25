@@ -335,7 +335,7 @@ mod formula {
 
 /// 字の大きさ `size`（pt）で描く数式の大きさ（画素）と、基線から下の深さ（画素）。
 fn formula_size(math: &amonhen_core::math::MathPicture, size: f64) -> (i32, i32, f64) {
-    let em = size * PX_PER_PT * amonhen_core::math::FONT_SCALE;
+    let em = size * PX_PER_PT * crate::theme::math_scale();
     (
         (math.width * em).ceil() as i32,
         ((math.height + math.depth) * em).ceil() as i32,

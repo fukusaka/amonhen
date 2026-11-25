@@ -7,6 +7,18 @@ becomes the GitHub Release notes.
 
 ## App and engine
 
+### Unreleased
+
+#### Added
+
+- Settings > Theme > Math sets the formula size and the time limit for drawing one file's formulas, or no limit
+  (macOS, GTK4).
+
+#### Changed
+
+- Markdown math finds `$…$` by GitHub's rules: only at the start, after a space or after `(`, and not before a letter,
+  digit or `_`, nor in italics, links or footnotes. So `a$x$b` and `日本語の$x$` stay text, as on GitHub.
+
 ### [0.2.15] - 2026-11-25
 
 Markdown previews draw math and the HTML GitHub renders, and DOT diagrams draw images, gradients and more of

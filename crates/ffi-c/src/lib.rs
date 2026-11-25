@@ -507,6 +507,15 @@ pub unsafe extern "C" fn amonhen_math_colorize(
         .map_or(std::ptr::null_mut(), CString::into_raw)
 }
 
+/// 1 つの Markdown のファイルで数式を描く時間の上限を、`seconds` 秒にする（0 は上限なし）。次に読む Markdown から効く
+/// （Settings > テーマ > 数式）。
+#[unsafe(no_mangle)]
+pub extern "C" fn amonhen_math_set_time_limit(seconds: u64) {
+    amonhen_core::math::set_file_time_limit(
+        (seconds > 0).then(|| std::time::Duration::from_secs(seconds)),
+    );
+}
+
 /// 設定の見本の図の SVG（色は `amonhen_diagram_colorize` で当てる）。描けなければ NULL。`amonhen_string_free` で
 /// 解放する。
 #[unsafe(no_mangle)]

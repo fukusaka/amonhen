@@ -418,7 +418,7 @@ final class FormulaPicture {
 
     /// 本文の字の大きさ `fontSize` で描く数式の大きさ（pt）と、基線から下の深さ（pt）。
     static func metrics(_ formula: MarkdownBlock.Formula, fontSize: CGFloat) -> (size: NSSize, depth: CGFloat) {
-        let em = fontSize * MarkdownBlock.Formula.fontScale
+        let em = fontSize * Settings.mathScale
         return (NSSize(width: formula.width * em, height: (formula.height + formula.depth) * em), formula.depth * em)
     }
 
