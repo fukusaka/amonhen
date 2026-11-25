@@ -240,6 +240,10 @@ const FILTER: &[&str] = &[
     "Microsoft.UI.Xaml.Documents.TextRange",
     "Microsoft.UI.Xaml.BringIntoViewOptions",
     "Microsoft.UI.Xaml.IBringIntoViewOptions::{put_TargetRect,put_VerticalAlignmentRatio}",
+    // Markdown の `<sub>`・`<sup>`（文字の飾りの付属の値で、上付き・下付きにする）。
+    "Microsoft.UI.Xaml.Documents.Typography",
+    "Microsoft.UI.Xaml.Documents.ITypographyStatics::{SetVariants}",
+    "Microsoft.UI.Xaml.FontVariants",
 ];
 
 fn main() {
