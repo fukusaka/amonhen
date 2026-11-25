@@ -486,6 +486,8 @@ pub struct Tracking {
     pub no_remote: bool,
     /// 走っている操作の数（Activity のボタンが回る。macOS 版の Activity の項目の回る印）。
     pub running: usize,
+    /// History の上でコミットを編集している（HEAD を動かす操作は押せないように見せ、わけをツールチップに）。
+    pub editing: bool,
 }
 
 /// Push で送れるものがあるか（上流がなければ、送り先のリモートがあれば Publish できる）。なければツールバーの
@@ -576,7 +578,10 @@ pub fn toolbar(on_click: Callback<String>, tracking: Tracking) -> View {
                 icon_of(&id)?;
                 let command = toolbar_command(&id).to_owned();
                 let enabled = IMPLEMENTED.contains(&command.as_str());
+                let held =
+                    tracking.editing && crate::historyedit::MOVES_HEAD.contains(&command.as_str());
                 let (tooltip, count) = match id.as_str() {
+                    _ if held => (crate::historyedit::editing_hint(), 0),
                     "pull" => (pull_tooltip(tracking), tracking.behind),
                     "push" => (push_tooltip(tracking), tracking.ahead),
                     "activity" if tracking.running > 0 => (
@@ -590,7 +595,7 @@ pub fn toolbar(on_click: Callback<String>, tracking: Tracking) -> View {
                 };
                 // 送れないときは押せないように見せるだけにする（WinUI は押せない部品のツールチップを出さないので、
                 // 本当に押せなくするとわけが読めない。押せばベルが鳴る）。
-                let faded = !enabled || (id == "push" && !can_push(tracking));
+                let faded = !enabled || held || (id == "push" && !can_push(tracking));
                 // アイコンと、上流との差の数のバッジ（macOS 版の `setTracking` の `badge`。0 なら出さない）。
                 let badge: View = if count > 0 {
                     InfoBadge::new()
