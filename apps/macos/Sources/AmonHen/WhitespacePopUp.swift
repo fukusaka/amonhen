@@ -19,8 +19,8 @@ final class WhitespacePopUp: NSPopUpButton {
         isBordered = false
         let first = NSMenuItem()
         first.title = ""
-        first.image = NSImage(systemSymbolName: "space", accessibilityDescription: L("Whitespace"))
-            ?? NSImage(systemSymbolName: "textformat", accessibilityDescription: L("Whitespace"))
+        first.image = AppIcons.image(symbol: "space", label: L("Whitespace"))
+            ?? AppIcons.image(symbol: "textformat", label: L("Whitespace"))
         menu?.addItem(first)
         for mode in DiffWhitespace.allCases {
             let item = NSMenuItem(title: Self.title(mode), action: #selector(choose(_:)), keyEquivalent: "")
@@ -82,7 +82,7 @@ final class WrapLinesButton: NSButton {
         bezelStyle = .accessoryBarAction
         controlSize = .small
         isBordered = false
-        image = NSImage(systemSymbolName: "arrow.turn.down.left", accessibilityDescription: L("Wrap Long Lines"))
+        image = AppIcons.image(symbol: "arrow.turn.down.left", label: L("Wrap Long Lines"))
         imagePosition = .imageOnly
         target = self
         action = #selector(toggle)
@@ -129,7 +129,7 @@ final class ViewOptionsPopUp: NSPopUpButton, NSMenuDelegate {
 
     private static func iconItem() -> NSMenuItem {
         let first = NSMenuItem()
-        first.image = NSImage(systemSymbolName: "slider.horizontal.3", accessibilityDescription: L("View Options"))
+        first.image = AppIcons.image(symbol: "slider.horizontal.3", label: L("View Options"))
         first.title = ""
         return first
     }

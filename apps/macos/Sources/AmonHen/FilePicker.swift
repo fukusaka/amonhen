@@ -573,7 +573,7 @@ struct FilePickerView: View {
                     .focused($focus, equals: .field)
                     .onSubmit { model.go(model.field) }
                 if !model.isTree {
-                    Button { model.go("~") } label: { Image(systemName: "house") }
+                    Button { model.go("~") } label: { AppIcons.swiftUI("house") }
                         .help(L("Home folder"))
                         .disabled(model.connecting || model.connectionError != nil)
                 }
@@ -811,7 +811,7 @@ private struct PlacesButton: NSViewRepresentable {
         button.removeAllItems()
         // プルダウンの最初の項目はボタンの顔。
         button.addItem(withTitle: "")
-        button.item(at: 0)?.image = NSImage(systemSymbolName: "folder.badge.gearshape", accessibilityDescription: L("Go to a folder"))
+        button.item(at: 0)?.image = AppIcons.image(symbol: "folder.badge.gearshape", label: L("Go to a folder"))
         for place in places {
             let item = NSMenuItem(title: place, action: #selector(Coordinator.picked(_:)), keyEquivalent: "")
             item.target = context.coordinator

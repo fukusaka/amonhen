@@ -980,8 +980,9 @@ final class SidebarViewController: NSViewController, NSOutlineViewDataSource, NS
         let text = NSMutableAttributedString()
         for (index, (symbol, _, color)) in marks.enumerated() {
             let attachment = NSTextAttachment()
-            attachment.image = NSImage(systemSymbolName: symbol, accessibilityDescription: nil)?
-                .withSymbolConfiguration(.init(pointSize: NSFont.smallSystemFontSize, weight: .regular))
+            let small = NSFont.smallSystemFontSize
+            attachment.image = AppIcons.image(symbol: symbol, pointSize: small, config: .init(pointSize: small, weight: .regular))
+                .map { AppIcons.bySymbol[symbol] == nil ? $0 : CommitHeaderRenderer.tinted($0, color) }
             let icon = NSMutableAttributedString(attachment: attachment)
             icon.addAttribute(.foregroundColor, value: color, range: NSRange(location: 0, length: icon.length))
             text.append(icon)
@@ -1208,7 +1209,7 @@ final class SidebarViewController: NSViewController, NSOutlineViewDataSource, NS
             }
         }
         if node.pullRequest != nil { return "arrow.triangle.pull" }
-        if node.isCleanWorktrees { return "checkmark.circle" }
+        if node.isCleanWorktrees { return "amonhen.clean" }
         if let w = node.worktree { return node.isHead ? "pencil.circle" : w.main ? "house" : "arrow.triangle.branch" }
         if node.subtree != nil { return "square.stack.3d.down.right" }
         if node.remote != nil { return "network" }
@@ -1825,23 +1826,11 @@ final class SidebarCell: NSTableCellView {
                                           branch: emphasized ? .controlAccentColor : .white)
         imageView.contentTintColor = nil
     }
-    /// 塗った丸に枝（SF Symbols にこの形はないので、丸の上に arrow.triangle.branch を重ねる）。色は描くときに決まる
-    /// （外観が変わっても合う）。
+    /// 今のブランチの印（共通のアイコンの current-branch、Branch とチェック）を `disc` の色で。`branch` は前の形
+    /// （塗った丸の中の枝）の枝の色で、今は使わない。
     static func branchDisc(disc: NSColor, branch: NSColor) -> NSImage {
-        let size = NSSize(width: 16, height: 16)
-        let image = NSImage(size: size, flipped: false) { rect in
-            disc.setFill()
-            NSBezierPath(ovalIn: rect.insetBy(dx: 0.5, dy: 0.5)).fill()
-            let config = NSImage.SymbolConfiguration(pointSize: 9, weight: .semibold)
-                .applying(.init(paletteColors: [branch]))
-            if let symbol = NSImage(systemSymbolName: "arrow.triangle.branch", accessibilityDescription: nil)?
-                .withSymbolConfiguration(config) {
-                let s = symbol.size
-                symbol.draw(in: NSRect(x: rect.midX - s.width / 2, y: rect.midY - s.height / 2, width: s.width, height: s.height))
-            }
-            return true
-        }
-        image.isTemplate = false
+        let base = AppIcons.image("current-branch", size: 16, label: L("Current branch")) ?? NSImage()
+        let image = CommitHeaderRenderer.tinted(base, disc)
         image.accessibilityDescription = L("Current branch")
         return image
     }

@@ -870,9 +870,9 @@ pub fn bar(state: &State, callbacks: Callbacks) -> View {
                 .column_spacing(10.0)
                 .children((
                     // 編集の印（macOS 版の pencil.and.list.clipboard、GTK4 版の EditList）。
-                    FontIcon::new()
-                        .glyph("\u{E70F}")
-                        .vertical_alignment(VerticalAlignment::Center),
+                    Grid::new()
+                        .vertical_alignment(VerticalAlignment::Center)
+                        .children((crate::icons::icon("edit-mode", 20.0),)),
                     Grid::new().grid_column(1).children((texts,)),
                     buttons,
                 )),

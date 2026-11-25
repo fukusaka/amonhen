@@ -402,7 +402,7 @@ final class RepositoryBrowser: NSViewController, NSTableViewDataSource, NSTableV
             (add.cell as? NSPopUpButtonCell)?.arrowPosition = .noArrow
             add.item(at: 0)?.title = L("Add")
             add.imagePosition = .imageLeading
-            add.item(at: 0)?.image = NSImage(systemSymbolName: "plus", accessibilityDescription: L("Add"))
+            add.item(at: 0)?.image = AppIcons.image(symbol: "plus", label: L("Add"))
             add.toolTip = L("Add repositories, SSH connections, groups and folders to scan")
             // 右は絞り込みと一覧だけ（開くのはダブルクリックと ⏎、加えるのは左の ＋ と右クリック）。
             bottom = NSStackView(views: [])
@@ -1448,7 +1448,7 @@ final class RepositoryBrowser: NSViewController, NSTableViewDataSource, NSTableV
         required init?(coder: NSCoder) { fatalError() }
 
         func show(title text: String, symbol: String, count number: String) {
-            icon.image = NSImage(systemSymbolName: symbol, accessibilityDescription: nil)
+            icon.image = AppIcons.image(symbol: symbol)
             title.stringValue = text
             count.stringValue = number
         }
