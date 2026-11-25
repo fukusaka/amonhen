@@ -1042,7 +1042,7 @@ final class SettingsWindowController: NSWindowController {
             host.title = title
             let item = NSTabViewItem(viewController: host)
             item.label = title
-            item.image = NSImage(systemSymbolName: symbol, accessibilityDescription: title)
+            item.image = AppIcons.image(symbol: symbol, label: title)
             tabs.addTabViewItem(item)
         }
         add(L("General"), "gearshape", GeneralSettings(model: model))

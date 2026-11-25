@@ -588,50 +588,10 @@ const TOOLBAR_ICON_SIZE: f32 = 20.0;
 /// `docs/icons.md`）を、線ごとに WinUI の `Path`（線を引く図形）で重ねて描く。色は文字の色（テーマに従う）。Files は
 /// Explorer のフォルダ（Segoe）のまま。
 fn toolbar_icon(id: &str) -> View {
-    let Some(icon) = amonhen_icons::get(id).filter(|_| id != "files") else {
+    if id == "files" {
         return FontIcon::new().glyph(glyph_of(id)).into();
-    };
-    let scale = DISPLAY_SCALE.get();
-    let strokes = icon
-        .strokes(TOOLBAR_ICON_SIZE, scale, TOOLBAR_STROKE)
-        .into_iter()
-        .enumerate()
-        .map(|(i, stroke)| {
-            let mut path = Path::new()
-                .data(stroke.markup())
-                .stroke(Brush::Theme(ThemeBrush::PrimaryText))
-                .stroke_thickness(f64::from(TOOLBAR_STROKE))
-                .round_ends(true);
-            if !stroke.dash.is_empty() {
-                // XAML の破線は線の太さを 1 とした長さ。
-                let dash: Vec<String> = stroke
-                    .dash
-                    .iter()
-                    .map(|d| format!("{}", d / TOOLBAR_STROKE))
-                    .collect();
-                path = path.stroke_dash_array(dash.join(" "));
-            }
-            (i.to_string(), View::from(path))
-        });
-    Grid::new()
-        .width(f64::from(TOOLBAR_ICON_SIZE))
-        .height(f64::from(TOOLBAR_ICON_SIZE))
-        .children((View::keyed_fragment(strokes),))
-}
-
-/// ツールバーのアイコンの線の太さ。Segoe Fluent Icons の線（100% で 1px）に合わせる。
-const TOOLBAR_STROKE: f32 = 1.0;
-
-thread_local! {
-    /// 窓の画面の倍率（100% なら 1）。共通のアイコンの縦・横の線を画素に合わせるのに使う。
-    static DISPLAY_SCALE: std::cell::Cell<f32> = const { std::cell::Cell::new(1.0) };
-}
-
-/// 窓の画面の倍率を覚える（History の描画の大きさを決めるときに知らされる）。
-pub fn set_display_scale(scale: f32) {
-    if scale > 0.0 {
-        DISPLAY_SCALE.set(scale);
     }
+    crate::icons::icon(id, TOOLBAR_ICON_SIZE)
 }
 
 fn glyph_of(id: &str) -> &'static str {

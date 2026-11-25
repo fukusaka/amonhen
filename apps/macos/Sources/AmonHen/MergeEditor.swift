@@ -223,11 +223,11 @@ final class MergeEditorViewController: NSViewController, NSTextViewDelegate {
             band.owner = self
         }
 
-        previousButton.image = NSImage(systemSymbolName: "chevron.up", accessibilityDescription: L("Previous Conflict"))
+        previousButton.image = AppIcons.image(symbol: "chevron.up", label: L("Previous Conflict"))
         previousButton.target = self
         previousButton.action = #selector(selectPrevious)
         previousButton.toolTip = L("Previous Conflict (⌥⌘↑)")
-        nextButton.image = NSImage(systemSymbolName: "chevron.down", accessibilityDescription: L("Next Conflict"))
+        nextButton.image = AppIcons.image(symbol: "chevron.down", label: L("Next Conflict"))
         nextButton.target = self
         nextButton.action = #selector(selectNext)
         nextButton.toolTip = L("Next Conflict (⌥⌘↓)")
@@ -247,7 +247,7 @@ final class MergeEditorViewController: NSViewController, NSTextViewDelegate {
         baseToggle.isHidden = !hasBase
         baseToggle.toolTip = L("Show the common ancestor on the left.")
         let popOut = NSButton(
-            image: NSImage(systemSymbolName: "macwindow.on.rectangle", accessibilityDescription: L("Open in a Separate Window"))!,
+            image: AppIcons.image(symbol: "macwindow.on.rectangle", label: L("Open in a Separate Window"))!,
             target: self, action: #selector(popOutClicked))
         popOut.toolTip = L("Open in a Separate Window")
         popOut.isHidden = onPopOut == nil
@@ -1064,7 +1064,7 @@ final class MergeEditorViewController: NSViewController, NSTextViewDelegate {
     /// マーカーの残っていないファイル（rerere が解決を当てた、ほかのエディタで直した）の案内。左右には index の
     /// 両側が出るので、Result と見比べて解決済みにする。
     private func withoutMarkersBanner() -> NSView {
-        let icon = NSImageView(image: NSImage(systemSymbolName: "checkmark.circle", accessibilityDescription: nil) ?? NSImage())
+        let icon = NSImageView(image: AppIcons.image(symbol: "checkmark.circle") ?? NSImage())
         icon.contentTintColor = .systemOrange
         let text = NSTextField(labelWithString: WorkingCopyViewController.withoutMarkersMessage(rerere: sides.rerere))
         text.font = .systemFont(ofSize: NSFont.smallSystemFontSize)

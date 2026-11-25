@@ -129,9 +129,9 @@ final class MarkdownView: NSView, NSTextViewDelegate, NSSearchFieldDelegate {
         findField.controlSize = .small
         findCount.textColor = .secondaryLabelColor
         findCount.font = .systemFont(ofSize: NSFont.smallSystemFontSize)
-        let previous = NSButton(image: NSImage(systemSymbolName: "chevron.up", accessibilityDescription: L("Previous"))!,
+        let previous = NSButton(image: AppIcons.image(symbol: "chevron.up", label: L("Previous"))!,
                                 target: self, action: #selector(findPrevious))
-        let next = NSButton(image: NSImage(systemSymbolName: "chevron.down", accessibilityDescription: L("Next"))!,
+        let next = NSButton(image: AppIcons.image(symbol: "chevron.down", label: L("Next"))!,
                             target: self, action: #selector(findNext))
         let done = NSButton(title: L("Done"), target: self, action: #selector(hideFindBar))
         for b in [previous, next, done] {

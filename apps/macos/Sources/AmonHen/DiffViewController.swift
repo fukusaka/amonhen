@@ -479,9 +479,9 @@ final class DiffViewController: NSViewController, NSSearchFieldDelegate {
         findField.controlSize = .small
         findCount.textColor = .secondaryLabelColor
         findCount.font = .systemFont(ofSize: NSFont.smallSystemFontSize)
-        let previous = NSButton(image: NSImage(systemSymbolName: "chevron.up", accessibilityDescription: L("Previous"))!,
+        let previous = NSButton(image: AppIcons.image(symbol: "chevron.up", label: L("Previous"))!,
                                 target: self, action: #selector(findPrevious))
-        let next = NSButton(image: NSImage(systemSymbolName: "chevron.down", accessibilityDescription: L("Next"))!,
+        let next = NSButton(image: AppIcons.image(symbol: "chevron.down", label: L("Next"))!,
                             target: self, action: #selector(findNext))
         let done = NSButton(title: L("Done"), target: self, action: #selector(hideFindBar))
         for b in [previous, next, done] {
@@ -2146,8 +2146,8 @@ final class CommitDetailViewController: NSSplitViewController, NSTextViewDelegat
     private var shownRange: (base: Data, tip: Data, title: String, lines: [String])?
     fileprivate let treeSwitch: NSSegmentedControl = {
         let control = NSSegmentedControl(
-            images: [NSImage(systemSymbolName: "list.bullet", accessibilityDescription: L("List"))!,
-                     NSImage(systemSymbolName: "list.bullet.indent", accessibilityDescription: L("Tree"))!],
+            images: [AppIcons.image(symbol: "list.bullet", label: L("List"))!,
+                     AppIcons.image(symbol: "list.bullet.indent", label: L("Tree"))!],
             trackingMode: .selectOne, target: nil, action: nil)
         control.setToolTip(L("Show the changed files as a list"), forSegment: 0)
         control.setToolTip(L("Show the changed files as a tree"), forSegment: 1)
@@ -2873,9 +2873,7 @@ final class CommitDetailViewController: NSSplitViewController, NSTextViewDelegat
     private func updateExpandButton() {
         let expanded = isExpanded
         let title = expanded ? L("Restore Commit Details") : L("Show Only Commit Details")
-        expandButton.image = NSImage(
-            systemSymbolName: expanded ? "arrow.down.right.and.arrow.up.left" : "arrow.up.left.and.arrow.down.right",
-            accessibilityDescription: title)
+        expandButton.image = AppIcons.image(symbol: expanded ? "arrow.down.right.and.arrow.up.left" : "arrow.up.left.and.arrow.down.right", label: title)
         expandButton.toolTip = title
     }
 
@@ -3032,7 +3030,7 @@ extension CommitDetailViewController {
         let wrapButton = WrapLinesButton()
         whitespace.onChange = { [weak self] mode in self?.setWhitespace(mode) }
         let find = NSButton(
-            image: NSImage(systemSymbolName: "magnifyingglass", accessibilityDescription: L("Find"))!,
+            image: AppIcons.image(symbol: "magnifyingglass", label: L("Find"))!,
             target: self, action: #selector(findInDiff))
         find.bezelStyle = .accessoryBarAction
         find.controlSize = .small
@@ -3044,7 +3042,7 @@ extension CommitDetailViewController {
         display.toolTip = L("View Options")
         display.menu?.delegate = self
         let first = NSMenuItem()
-        first.image = NSImage(systemSymbolName: "slider.horizontal.3", accessibilityDescription: L("View Options"))
+        first.image = AppIcons.image(symbol: "slider.horizontal.3", label: L("View Options"))
         first.title = ""
         display.menu?.addItem(first)
         viewOptions = display.menu
@@ -3332,13 +3330,10 @@ extension CommitDetailViewController {
         whitespacePopUp.isHidden = files
         foldersButton.isHidden = !tree
         expandAllButton.toolTip = allDiffsOpen ? L("Collapse All Diffs") : L("Expand All Diffs")
-        expandAllButton.image = NSImage(
-            systemSymbolName: allDiffsOpen ? "rectangle.compress.vertical" : "rectangle.expand.vertical",
-            accessibilityDescription: expandAllButton.toolTip)
+        expandAllButton.image = AppIcons.image(symbol: allDiffsOpen ? "rectangle.compress.vertical" : "rectangle.expand.vertical", label: expandAllButton.toolTip)
         let expanded = files ? filesBrowser?.anyFolderExpanded ?? false : collapsedFolders.isEmpty
         foldersButton.toolTip = expanded ? L("Collapse All Folders") : L("Expand All Folders")
-        foldersButton.image = NSImage(
-            systemSymbolName: expanded ? "folder.fill" : "folder", accessibilityDescription: foldersButton.toolTip)
+        foldersButton.image = AppIcons.image(symbol: expanded ? "folder.fill" : "folder", label: foldersButton.toolTip)
         if files { filesBrowser?.flat = !tree }
     }
 
@@ -3512,7 +3507,7 @@ final class FileCell: NSTableCellView {
     /// フォルダの行の文字（フォルダの印と名前、薄い色）。
     static func folderTitle(_ name: String) -> NSAttributedString {
         let text = NSMutableAttributedString()
-        if let image = NSImage(systemSymbolName: "folder", accessibilityDescription: nil) {
+        if let image = AppIcons.image(symbol: "folder") {
             let attachment = NSTextAttachment()
             attachment.image = image
             attachment.bounds = NSRect(x: 0, y: -2, width: 14, height: 12)

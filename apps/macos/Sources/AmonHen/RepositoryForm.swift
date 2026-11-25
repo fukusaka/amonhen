@@ -219,7 +219,7 @@ struct FetchingPage: View {
                 }
                 ForEach(sparse.folders, id: \.self) { folder in
                     HStack(spacing: 6) {
-                        Image(systemName: "folder").foregroundStyle(.secondary)
+                        AppIcons.swiftUI("folder").foregroundStyle(.secondary)
                         Text(folder).font(.system(.body, design: .monospaced)).textSelection(.enabled)
                         Spacer()
                         Button { setFolders(sparse.folders.filter { $0 != folder }) } label: { Image(systemName: "minus") }

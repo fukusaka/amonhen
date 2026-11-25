@@ -41,7 +41,7 @@ final class ImageDiffPanel: NSView {
             ("circle.lefthalf.filled", L("Onion Skin")), ("plus.forwardslash.minus", L("Difference")),
         ]
         let control = NSSegmentedControl(
-            images: modes.map { NSImage(systemSymbolName: $0.0, accessibilityDescription: $0.1)! },
+            images: modes.map { AppIcons.image(symbol: $0.0, label: $0.1)! },
             trackingMode: .selectOne, target: nil, action: nil)
         for (i, mode) in modes.enumerated() { control.setToolTip(mode.1, forSegment: i) }
         return control
@@ -54,7 +54,7 @@ final class ImageDiffPanel: NSView {
             ("arrow.up.left.and.down.right.magnifyingglass", L("Zoom to Fit")),
         ]
         let control = NSSegmentedControl(
-            images: items.map { NSImage(systemSymbolName: $0.0, accessibilityDescription: $0.1)! },
+            images: items.map { AppIcons.image(symbol: $0.0, label: $0.1)! },
             trackingMode: .momentary, target: nil, action: nil)
         for (i, item) in items.enumerated() { control.setToolTip(item.1, forSegment: i) }
         return control
@@ -62,7 +62,7 @@ final class ImageDiffPanel: NSView {
     private let zoomLabel = NSButton(title: "", target: nil, action: nil)
     /// 市松模様の明暗の切り替え（透けた画素があるときだけ出す）。
     private let checkerButton = NSButton(
-        image: NSImage(systemSymbolName: "checkerboard.rectangle", accessibilityDescription: L("Darken the Checkerboard"))!,
+        image: AppIcons.image(symbol: "checkerboard.rectangle", label: L("Darken the Checkerboard"))!,
         target: nil, action: nil)
     private let caption = NSTextField(labelWithString: "")
     private var baseCaption = ""
@@ -119,7 +119,7 @@ final class ImageDiffPanel: NSView {
         var top: [NSView] = (accessory.map { [$0] } ?? []) + (single ? [] : [modeControl])
         if svg {
             let text = NSButton(
-                image: NSImage(systemSymbolName: "doc.plaintext", accessibilityDescription: L("Show as Text"))!,
+                image: AppIcons.image(symbol: "doc.plaintext", label: L("Show as Text"))!,
                 target: self, action: #selector(showText))
             text.toolTip = L("Show as Text")
             text.bezelStyle = .accessoryBarAction
@@ -711,7 +711,7 @@ final class CommitFilesBrowser: NSView, NSOutlineViewDataSource, NSOutlineViewDe
         treeScroll.drawsBackground = false
         content.fileMode = true
         let back = NSButton(
-            image: NSImage(systemSymbolName: "chevron.left", accessibilityDescription: L("Back"))!, target: self,
+            image: AppIcons.image(symbol: "amonhen.back", label: L("Back"))!, target: self,
             action: #selector(backToTree))
         back.bezelStyle = .accessoryBarAction
         back.controlSize = .small
@@ -721,7 +721,7 @@ final class CommitFilesBrowser: NSView, NSOutlineViewDataSource, NSOutlineViewDe
         changeButton.controlSize = .small
         changeButton.target = self
         changeButton.action = #selector(showChange)
-        quickLookButton.image = NSImage(systemSymbolName: "eye", accessibilityDescription: L("Quick Look"))
+        quickLookButton.image = AppIcons.image(symbol: "eye", label: L("Quick Look"))
         quickLookButton.bezelStyle = .accessoryBarAction
         quickLookButton.controlSize = .small
         quickLookButton.toolTip = L("Open this file at the commit in Quick Look")
@@ -1251,7 +1251,7 @@ final class CommitFilesBrowser: NSView, NSOutlineViewDataSource, NSOutlineViewDe
     func outlineView(_ outlineView: NSOutlineView, viewFor tableColumn: NSTableColumn?, item: Any) -> NSView? {
         guard let node = item as? Node else { return nil }
         let cell = NSTableCellView()
-        let icon = NSImageView(image: NSImage(systemSymbolName: node.isDirectory ? "folder" : "doc", accessibilityDescription: nil)!)
+        let icon = NSImageView(image: AppIcons.image(symbol: node.isDirectory ? "folder" : "doc")!)
         icon.contentTintColor = node.isDirectory ? .secondaryLabelColor : .tertiaryLabelColor
         var nameAttributes: [NSAttributedString.Key: Any] = [
             .font: NSFont.systemFont(ofSize: 13),

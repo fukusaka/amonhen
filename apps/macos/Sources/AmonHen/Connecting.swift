@@ -69,7 +69,7 @@ final class ConnectingTab: NSObject, NSWindowDelegate {
 
     /// つなげなかった（開けなかった）。タブは残し、閉じるまで次の起動でも開き直す。
     func showError(_ error: Error) {
-        let icon = NSImageView(image: NSImage(systemSymbolName: "exclamationmark.triangle", accessibilityDescription: nil) ?? NSImage())
+        let icon = NSImageView(image: AppIcons.image(symbol: "exclamationmark.triangle") ?? NSImage())
         icon.symbolConfiguration = .init(pointSize: 28, weight: .regular)
         icon.contentTintColor = .secondaryLabelColor
         let title = NSTextField(labelWithString: RepositoryLocation.isRemote(location)

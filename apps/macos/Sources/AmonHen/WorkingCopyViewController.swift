@@ -182,7 +182,7 @@ final class WorkingCopyViewController: NSSplitViewController, NSOutlineViewDataS
         commitButton.toolTip = L("Commit the checked files (⌘↩)")
         amend.target = self
         amend.action = #selector(toggleAmend)
-        suggestButton.image = NSImage(systemSymbolName: "sparkles", accessibilityDescription: L("Suggest a message with AI"))
+        suggestButton.image = AppIcons.image(symbol: "sparkles", label: L("Suggest a message with AI"))
         suggestButton.toolTip = L("AI: suggest a commit message from the staged changes")
         suggestButton.target = self
         suggestButton.action = #selector(suggestMessage)
@@ -196,7 +196,7 @@ final class WorkingCopyViewController: NSSplitViewController, NSOutlineViewDataS
             (insertButton, "plus.circle", L("Insert a Conventional Commits type, Co-authored-by or Signed-off-by")),
         ] {
             button.addItem(withTitle: "")
-            button.item(at: 0)?.image = NSImage(systemSymbolName: symbol, accessibilityDescription: tip)
+            button.item(at: 0)?.image = AppIcons.image(symbol: symbol, label: tip)
             button.isBordered = false
             button.controlSize = .small
             button.toolTip = tip
@@ -247,9 +247,9 @@ final class WorkingCopyViewController: NSSplitViewController, NSOutlineViewDataS
         countLabel.textColor = .secondaryLabelColor
         countLabel.font = .monospacedDigitSystemFont(ofSize: NSFont.smallSystemFontSize, weight: .regular)
         layoutControl.segmentCount = 3
-        layoutControl.setImage(NSImage(systemSymbolName: "list.bullet", accessibilityDescription: L("List")), forSegment: 0)
-        layoutControl.setImage(NSImage(systemSymbolName: "list.bullet.indent", accessibilityDescription: L("Tree")), forSegment: 1)
-        layoutControl.setImage(NSImage(systemSymbolName: "doc.text", accessibilityDescription: L("File Name")), forSegment: 2)
+        layoutControl.setImage(AppIcons.image(symbol: "list.bullet", label: L("List")), forSegment: 0)
+        layoutControl.setImage(AppIcons.image(symbol: "list.bullet.indent", label: L("Tree")), forSegment: 1)
+        layoutControl.setImage(AppIcons.image(symbol: "doc.text", label: L("File Name")), forSegment: 2)
         layoutControl.setToolTip(L("Show files as a list of paths"), forSegment: 0)
         layoutControl.setToolTip(L("Show files as a directory tree"), forSegment: 1)
         layoutControl.setToolTip(L("Show the file name first and the parent directory dimmed"), forSegment: 2)
@@ -262,8 +262,8 @@ final class WorkingCopyViewController: NSSplitViewController, NSOutlineViewDataS
         sparseNote.controlSize = .small
         sparseNote.font = .systemFont(ofSize: NSFont.smallSystemFontSize)
         sparseNote.contentTintColor = .secondaryLabelColor
-        sparseNote.image = NSImage(systemSymbolName: "folder.badge.minus", accessibilityDescription: nil)?
-            .withSymbolConfiguration(.init(pointSize: NSFont.smallSystemFontSize, weight: .regular))
+        let small = NSFont.smallSystemFontSize
+        sparseNote.image = AppIcons.image(symbol: "folder.badge.minus", pointSize: small, config: .init(pointSize: small, weight: .regular))
         sparseNote.imagePosition = .imageLeading
         sparseNote.alignment = .left
         sparseNote.target = self
@@ -1799,7 +1799,7 @@ final class WorkingFileCell: NSTableCellView {
         detail.lineBreakMode = .byTruncatingHead
         stat.font = .monospacedDigitSystemFont(ofSize: NSFont.smallSystemFontSize, weight: .regular)
         stat.alignment = .right
-        discardButton.image = NSImage(systemSymbolName: "arrow.uturn.backward", accessibilityDescription: L("Discard Changes"))
+        discardButton.image = AppIcons.image(symbol: "arrow.uturn.backward", label: L("Discard Changes"))
         discardButton.isBordered = false
         discardButton.bezelStyle = .accessoryBarAction
         discardButton.toolTip = L("Discard the working tree changes (return to the content of the index)")

@@ -52,7 +52,9 @@ final class GlyphAtlas {
         let key = Key(font: "symbol:" + name, size: pointSize * scale, glyph: 0, subpixel: 0)
         if let cached = entries[key] { return cached }
         let config = NSImage.SymbolConfiguration(pointSize: pointSize, weight: .medium)
-        guard let image = NSImage(systemSymbolName: name, accessibilityDescription: nil)?.withSymbolConfiguration(config)
+        // 共通のアイコンがあればそれを（CI の小さな丸は点のまま）。
+        let shared = name.hasPrefix("circle") ? nil : AppIcons.image(symbol: name, pointSize: pointSize, config: config)
+        guard let image = shared ?? NSImage(systemSymbolName: name, accessibilityDescription: nil)?.withSymbolConfiguration(config)
         else {
             entries[key] = .some(nil)
             return nil

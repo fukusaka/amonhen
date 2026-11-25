@@ -992,8 +992,11 @@ pub struct RichTextRun {
     /// [`set_run_variant_handler`], as the typography attached property isn't in these bindings.
     pub variant: RunVariant,
     /// Draws the run as a key cap (a framed label inside the line). Built by the handler set with
-    /// [`set_key_cap_handler`], which returns the inline to put in the run's place.
+    /// [`set_inline_handler`], which returns the inline to put in the run's place.
     pub is_key_cap: bool,
+    /// Puts an app-built element in the run's place (an image inside the line, for example): the
+    /// handler set with [`set_inline_handler`] builds it from this key.
+    pub inline: Option<String>,
 }
 
 /// A rich text run's position against the baseline.
@@ -1055,9 +1058,9 @@ thread_local! {
         const { std::cell::RefCell::new(None) };
 }
 
-/// Sets the handler that builds the inline for a key-cap run (an `InlineUIContainer`). Without
-/// it, or when it returns `None`, the run is drawn as plain text.
-pub fn set_key_cap_handler(
+/// Sets the handler that builds the inline for a key-cap run or a run with an `inline` key (an
+/// `InlineUIContainer`). Without it, or when it returns `None`, the run is drawn as plain text.
+pub fn set_inline_handler(
     handler: impl Fn(&RichTextRun) -> Option<windows_core::IInspectable> + 'static,
 ) {
     KEY_CAP_HANDLER.with(|h| *h.borrow_mut() = Some(Rc::new(handler)));
