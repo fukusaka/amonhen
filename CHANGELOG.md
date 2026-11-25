@@ -29,6 +29,7 @@ becomes the GitHub Release notes.
 #### Fixed
 
 - DOT diagrams: in `rankdir=LR`/`RL`, a cluster is widened to fit a title longer than its box.
+- DOT diagrams: clusters joined by edges both ways sit side by side instead of being stacked, as in Graphviz.
 
 #### Changed
 
