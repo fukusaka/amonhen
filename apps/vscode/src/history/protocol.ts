@@ -141,6 +141,17 @@ export type FileView =
   | { kind: 'binary'; bytes: number }
   | { kind: 'error'; message: string };
 
+/**
+ * Markdown の図・数式と VectorDrawable の絵に当てる、Webview の画面の色（`#rrggbb`。コアの `PictureColors`）。
+ * `kinds` は構文の種類（`keyword` など）→ 色
+ */
+export interface PictureColors {
+  dark: boolean;
+  text: string;
+  background: string;
+  kinds: Record<string, string>;
+}
+
 /** 中身に添えること（このコミットで消したファイルは、前の版を出す） */
 export type FileViewNote = { deleted?: boolean };
 
@@ -326,8 +337,11 @@ export type HistoryWebviewMessage =
   | { type: 'commitDiff'; oid: string; path: string }
   /** コミットの木のフォルダ `path`（根は空）の中身を求める（「すべてのファイル」。エンジンだけ） */
   | { type: 'treeEntries'; oid: string; path: string }
-  /** コミットのファイル `path` の中身を求める（「すべてのファイル」。エンジンだけ） */
-  | { type: 'treeFile'; oid: string; path: string }
+  /**
+   * コミットのファイル `path` の中身を求める（「すべてのファイル」。エンジンだけ）。`colors` は図・数式・VectorDrawable
+   * の絵に当てる色、`utcOffset` は gantt の日付を数える時差（分、地方時 − UTC）
+   */
+  | { type: 'treeFile'; oid: string; path: string; colors?: PictureColors; utcOffset?: number }
   /** そのコミットのファイルをエディタで開く（「すべてのファイル」のバイナリ） */
   | { type: 'openTreeFile'; oid: string; path: string }
   /** コミットの中の画像の前と後を求める（画像の差分） */

@@ -19,6 +19,7 @@ import type {
   FileView,
   HistoryHostMessage,
   ImageBlob,
+  PictureColors,
   SvgCheckView,
   TreeEntry,
   ViewLine,
@@ -393,7 +394,7 @@ export class HistoryController implements vscode.Disposable {
         await this.sendTreeEntries(message.oid, message.path).catch(showError);
         break;
       case 'treeFile':
-        await this.sendTreeFile(message.oid, message.path).catch((err: unknown) =>
+        await this.sendTreeFile(message.oid, message.path, message.colors, message.utcOffset).catch((err: unknown) =>
           this.post({ type: 'treeFile', oid: message.oid, path: message.path, view: { kind: 'error', message: errorMessage(err) } }),
         );
         break;
@@ -880,9 +881,10 @@ export class HistoryController implements vscode.Disposable {
   /**
    * コミットのファイルの中身を送る（「すべてのファイル」。エンジンだけ）。このコミットで変えたファイルは、ファイル
    * 全体の差分から、足した行・変えた行・消したところに印を付ける。画像は絵、Markdown は整形のブロック、SVG は絵と
-   * モバイルの確認も
+   * モバイルの確認も。Markdown の図・数式は、コアが `colors`（Webview の画面の色）で描いた絵（古いエンジンでは
+   * 描かず、コードのまま）
    */
-  private async sendTreeFile(oid: string, path: string): Promise<void> {
+  private async sendTreeFile(oid: string, path: string, colors?: PictureColors, utcOffset?: number): Promise<void> {
     const repo = this.repo;
     const client = this.daemon?.client;
     if (!repo || !client) return;
@@ -911,14 +913,23 @@ export class HistoryController implements vscode.Disposable {
       send(view);
       return;
     }
-    if (/\.(md|markdown)$/i.test(path)) {
+    // 消したファイルは前の版（最初の親のコミット）を読む
+    const at = deleted ? this.details.get(oid)?.parents[0] : oid;
+    if (/\.(md|markdown)$/i.test(path) && at) {
       const slug = repositorySlug(await repo.backend.remotes());
       const reply = await client.call({
         op: 'run',
-        command: { op: 'markdownBlocks', oid, path, ...(slug ? { github: `https://github.com/${slug}` } : {}) },
+        command: {
+          op: 'markdownBlocks',
+          oid: at,
+          path,
+          ...(slug ? { github: `https://github.com/${slug}` } : {}),
+          ...(colors ? { colors } : {}),
+          ...(utcOffset !== undefined ? { utcOffset } : {}),
+        },
       });
       const blocks = (reply.json['info'] as { blocks?: unknown[] } | undefined)?.blocks;
-      if (blocks) view.markdown = await this.colorCode(client, await this.inlineImages(repo, oid, path, blocks));
+      if (blocks) view.markdown = await this.colorCode(client, await this.inlineImages(repo, at, path, blocks));
     }
     if (svg && data.length <= MAX_IMAGE_BYTES) {
       const reply = await client.call({ op: 'run', command: { op: 'svgCheck', oid, path } }).catch(() => undefined);
