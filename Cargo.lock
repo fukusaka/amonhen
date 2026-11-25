@@ -170,6 +170,10 @@ dependencies = [
 ]
 
 [[package]]
+name = "amonhen-icons"
+version = "0.2.15"
+
+[[package]]
 name = "amonhen-layout"
 version = "0.2.15"
 dependencies = [
