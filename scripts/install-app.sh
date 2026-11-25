@@ -6,7 +6,8 @@
 # --user はユーザーのアプリフォルダ（~/Applications）に、--system は /Applications に、--dir は指定したフォルダ
 # （なければ作る）に入れる。どれも付けなければ、
 # 今入っているところ（~/Applications にだけあればそこ、なければ /Applications）を新しくする。
-# curl で取ってくるファイルには quarantine 属性が付かない（署名・公証してあるので、付いていても開ける）。
+# curl で取ってくるファイルには quarantine 属性が付かない（正式版は署名・公証してあるので付いていても開けるが、
+# snapshot は公証していないので、付いていたら外す）。
 set -eu
 usage() {
     echo "usage: $0 [--user|--system|--dir <folder>] [stable|snapshot]" >&2
