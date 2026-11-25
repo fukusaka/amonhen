@@ -327,6 +327,7 @@ impl Search {
             if let Some(w) = bar.root().and_downcast::<gtk::Window>()
                 && (crate::messagefind::find_in_focused(&w)
                     || crate::commitfiles::find_in_focused(&w)
+                    || crate::markdownfind::find_in_focused(&w)
                     || crate::difffind::find_in_focused(&w))
             {
                 return;
@@ -364,6 +365,7 @@ impl Search {
                 if let Some(w) = bar.root().and_downcast::<gtk::Window>()
                     && (crate::messagefind::find_next_in_focused(&w, step)
                         || crate::commitfiles::find_next_in_focused(&w, step)
+                        || crate::markdownfind::find_next_in_focused(&w, step)
                         || crate::difffind::find_next_in_focused(&w, step))
                 {
                     return;
@@ -375,6 +377,7 @@ impl Search {
                     if let Some(w) = bar.root().and_downcast::<gtk::Window>()
                         && (crate::messagefind::find_next_opening(&w, step)
                             || crate::commitfiles::find_next_opening(&w, step)
+                            || crate::markdownfind::find_next_opening(&w, step)
                             || crate::difffind::find_next_opening(&w, step))
                     {
                         return;
@@ -429,6 +432,7 @@ impl Search {
                     by_focus.set(
                         crate::messagefind::find_next_possible(&window)
                             || crate::commitfiles::find_next_possible(&window)
+                            || crate::markdownfind::find_next_possible(&window)
                             || crate::difffind::find_next_possible(&window)
                             || (bar.is_mapped() && focus_in_history(&window, &bar)),
                     );

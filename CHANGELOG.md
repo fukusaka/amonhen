@@ -27,6 +27,7 @@ checkerboard behind transparent pictures can be switched between light and dark.
   Comments, styles, scripts and forms are left out, as on GitHub.
 - A button beside the zoom buttons switches the checkerboard behind transparent pictures between light and dark;
   light pictures such as white icons get the dark one by default (macOS, GTK4).
+- Markdown previews can be searched with ⌘F (GTK4: Ctrl+F), key caps and table cells included (macOS, GTK4).
 - Markdown previews draw math as on GitHub (` ```math `, `$$…$$`, `$…$` and `` $`…`$ ``) with RaTeX and the KaTeX
   fonts, in the text color (macOS, GTK4); prices such as `$5 and $6` stay text.
 
