@@ -540,8 +540,8 @@ rebase と History の編集（reword・squash・fixup・drop・edit・split・m
 - submodule の様子（`{"op":"submodules"}`）は、`.gitmodules`（`git config -f .gitmodules -z --list`。名前・場所・
   URL・追うブランチ）と、submodule の場所だけの `git status --porcelain=v2` から読む: `S<C><M><U>`（記録と違う
   コミット・追跡しているファイルの変更・untracked のファイル）と `u` の行（コンフリクト）。取り出してあるかは、
-  場所に `.git` があるかで見る。`git submodule status` は使わない: index のロックを取ることがあり、裏で読むと
-  同時に動く `submodule add` が失敗した。
+  場所に `.git` があるかで見る。`git submodule status` は使わない: 裏で読んだとき、
+  同時に動く `submodule add` が失敗したことがある（status 自体は index を読むだけでロックを取らないので、原因は分かっていない）。
 - `{"op":"changeSubmodule"}` は足す（`git submodule add`）・外す・URL を変える（`set-url`、git 2.25 から。それより
   前は `.gitmodules` を書いて sync）・追うブランチを変える（`set-branch`）・URL を写す。外すのは `deinit -f` の後に
   `git rm -f`。`.git/modules/<name>` には submodule のコミットや stash（push していないものも）が残るので、git と

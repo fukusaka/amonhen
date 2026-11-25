@@ -665,8 +665,9 @@ out: they have no confirmation, and adding one only for a drawing would slow the
 - What a submodule is like (`{"op":"submodules"}`) is read from `.gitmodules` (`git config -f .gitmodules -z
   --list`; the name, path, URL and branch to follow) and from `git status --porcelain=v2` for the submodule paths:
   the `S<C><M><U>` field (another commit than the one recorded, modified tracked files, untracked files) and `u`
-  lines (in conflict). A submodule is checked out when its path has a `.git`. `git submodule status` isn't used: it
-  can take the index lock, and run in the background it made a `submodule add` running at the same time fail.
+  lines (in conflict). A submodule is checked out when its path has a `.git`. `git submodule status` isn't used: run in
+  the background, a `submodule add` running at the same time once failed (status itself only reads the index and takes
+  no lock, so the cause is not known).
 - `{"op":"changeSubmodule"}` adds (`git submodule add`), removes, sets the URL (`set-url`, git 2.25; before that,
   `.gitmodules` is written and synced), sets the branch to follow (`set-branch`) and syncs URLs. Removing is
   `deinit -f` then `git rm -f`; `.git/modules/<name>` is kept as git does unless `deleteGitDir`, since it holds the
