@@ -1361,6 +1361,9 @@ First release.
   This Commit and Show Changes Only, selected commits' headers have File History and Copy Path, parents not fetched are
   marked, the bar reads Expand All Folders / Diffs, and the display menu has Monospaced Commit Message (off at first,
   as in the app) and Changed Files as Tree.
+- The sidebar follows the app in the small things: Copy Branch / Tag Name, menus for several tags, tags in `/`
+  folders, only groups with rows, flat filter results, Open Worktree for a branch checked out elsewhere, and a
+  confirmation before Prune or a push by dragging.
 
 #### Changed
 
