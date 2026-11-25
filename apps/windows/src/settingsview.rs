@@ -207,6 +207,8 @@ pub struct Callbacks<'a> {
     /// Mermaid の「配色」と、テーマの読み込み・取り除き（`import`・`remove:名前`）。
     pub diagram_colors: Callback<Option<usize>>,
     pub mermaid_button: Box<dyn Fn(String) -> Callback<()> + 'a>,
+    /// gantt の日付を数える時間帯を選んだ（IANA の名前、空なら OS の時間帯）。
+    pub gantt_zone: Callback<String>,
     /// 窓の背景の欄（Choose…・Remove、位置、横棒、ツールバーの色を敷くか・色）。
     pub backdrop: BackdropCallbacks<'a>,
     pub ssh: crate::sshhosts::Callbacks<'a>,
@@ -1319,6 +1321,7 @@ fn mermaid_section(callbacks: &Callbacks) -> View {
                     .on_selection_changed(callbacks.diagram_colors.clone()),
             )),
         crate::markdownview::diagram_sample(),
+        gantt_zone_row(callbacks),
         StackPanel::new()
             .spacing(4.0)
             .children((View::keyed_fragment(
@@ -1348,6 +1351,44 @@ fn mermaid_section(callbacks: &Callbacks) -> View {
             .on_click((callbacks.mermaid_button)("import".to_owned()))
             .content(TextBlock::new().text(tr!("Import Mermaid Theme…"))),
     ))
+}
+
+/// gantt の日付を数える時間帯（macOS 版の Theme の「時間帯」）: OS の時間帯・UTC と、地域ごとの下の階層の名前。
+fn gantt_zone_row(callbacks: &Callbacks) -> View {
+    let current = crate::prefs::string(crate::timezone::GANTT_TIME_ZONE).unwrap_or_default();
+    let title = if current.is_empty() {
+        tr!("System time zone")
+    } else {
+        current.clone()
+    };
+    let mark = |name: &str| if name == current { "✓ " } else { "" };
+    let mut items = vec![
+        MenuItem::item("", format!("{}{}", mark(""), tr!("System time zone"))),
+        MenuItem::item("UTC", format!("{}UTC", mark("UTC"))),
+        MenuItem::separator("-zones"),
+    ];
+    // 数百あるので、地域（Asia など）ごとの下の階層に分ける（macOS 版と同じ）。
+    for (region, names) in crate::timezone::zone_regions() {
+        items.push(MenuItem::submenu(
+            format!("region:{region}"),
+            region,
+            names
+                .into_iter()
+                .map(|name| MenuItem::item(name.clone(), format!("{}{name}", mark(&name)))),
+        ));
+    }
+    StackPanel::new()
+        .orientation(Orientation::Horizontal)
+        .spacing(12.0)
+        .children((
+            TextBlock::new()
+                .text(tr!("Time zone"))
+                .width(120.0)
+                .vertical_alignment(VerticalAlignment::Center),
+            DropDownButton::new()
+                .content(TextBlock::new().text(title))
+                .menu(Menu::new(items, callbacks.gantt_zone.clone())),
+        ))
 }
 
 fn theme_choice(label: String, dark: bool, on: &Callback<Option<usize>>) -> View {
