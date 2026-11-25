@@ -2,6 +2,8 @@
 //! 名前は小文字にし、文字と属性の値の文字参照（`&amp;`・`&#39;` など）は戻す。コメント・`<!DOCTYPE>` などは落とし、
 //! `<script>`・`<style>` などの中身は読まない（ひと続きの入力をまたいでも）。
 
+use super::entities::{ENTITIES, MAX_ENTITY};
+
 /// 1 つのタグの属性の数の上限（それより後は読み飛ばす）。
 const MAX_ATTRIBUTES: usize = 32;
 /// 属性の値の長さの上限（バイト。超えた属性は落とす）。
@@ -65,7 +67,7 @@ impl Tokenizer {
         let mut text = String::new();
         let flush = |text: &mut String, out: &mut Vec<Token>| {
             if !text.is_empty() {
-                out.push(Token::Text(decode_entities(text)));
+                out.push(Token::Text(decode_entities(text, false)));
                 text.clear();
             }
         };
@@ -235,44 +237,15 @@ fn open_tag(input: &str) -> Option<(String, Attributes, usize)> {
             && value.len() <= MAX_VALUE
             && !attributes.iter().any(|(a, _)| *a == attr)
         {
-            attributes.push((attr, decode_entities(&value)));
+            attributes.push((attr, decode_entities(&value, true)));
         }
     }
 }
 
-/// 名前つきの文字参照（よく使うもの）。
-const ENTITIES: [(&str, &str); 27] = [
-    ("amp", "&"),
-    ("lt", "<"),
-    ("gt", ">"),
-    ("quot", "\""),
-    ("apos", "'"),
-    ("nbsp", "\u{a0}"),
-    ("copy", "©"),
-    ("reg", "®"),
-    ("trade", "™"),
-    ("hellip", "…"),
-    ("mdash", "—"),
-    ("ndash", "–"),
-    ("laquo", "«"),
-    ("raquo", "»"),
-    ("lsquo", "‘"),
-    ("rsquo", "’"),
-    ("ldquo", "“"),
-    ("rdquo", "”"),
-    ("middot", "·"),
-    ("bull", "•"),
-    ("times", "×"),
-    ("divide", "÷"),
-    ("deg", "°"),
-    ("plusmn", "±"),
-    ("larr", "←"),
-    ("rarr", "→"),
-    ("check", "✓"),
-];
-
-/// 文字参照を戻す（知らない名前・壊れたものはそのまま）。
-pub(super) fn decode_entities(text: &str) -> String {
+/// 文字参照を戻す（HTML5 の決まり。知らない名前・壊れたものはそのまま）。名前つきのものは HTML5 のすべて
+/// （`entities`）で、`;` のない古い名前（`&amp`・`&copy` など）も、一番長く合うものを戻す。ただし属性の値
+/// （`attribute`）では、`;` のない名前の後に `=` か英数字が続けば戻さない（URL の `?a=1&copy=2` など）。
+pub(super) fn decode_entities(text: &str, attribute: bool) -> String {
     if !text.contains('&') {
         return text.to_owned();
     }
@@ -281,30 +254,10 @@ pub(super) fn decode_entities(text: &str) -> String {
     while let Some(amp) = rest.find('&') {
         out.push_str(&rest[..amp]);
         let after = &rest[amp + 1..];
-        let semi = after.find(';').filter(|&s| s <= 10);
-        let decoded = semi.and_then(|s| {
-            let name = &after[..s];
-            if let Some(number) = name.strip_prefix('#') {
-                let code = match number.strip_prefix(['x', 'X']) {
-                    Some(hex) => u32::from_str_radix(hex, 16).ok(),
-                    None => number.parse::<u32>().ok(),
-                }?;
-                // NUL と、文字にならない数は置き換えの文字。
-                let c = char::from_u32(code)
-                    .filter(|&c| c != '\0')
-                    .unwrap_or('\u{fffd}');
-                Some((c.to_string(), s))
-            } else {
-                ENTITIES
-                    .iter()
-                    .find(|(n, _)| *n == name)
-                    .map(|(_, v)| ((*v).to_owned(), s))
-            }
-        });
-        match decoded {
-            Some((value, s)) => {
+        match reference(after, attribute) {
+            Some((value, len)) => {
                 out.push_str(&value);
-                rest = &after[s + 1..];
+                rest = &after[len..];
             }
             None => {
                 out.push('&');
@@ -314,6 +267,57 @@ pub(super) fn decode_entities(text: &str) -> String {
     }
     out.push_str(rest);
     out
+}
+
+/// `&` の後ろの文字参照を読む。戻した文字と、`&` の後ろから読んだ長さ。
+fn reference(after: &str, attribute: bool) -> Option<(String, usize)> {
+    if after.starts_with('#') {
+        let s = after.find(';').filter(|&s| s <= 10)?;
+        let number = &after[1..s];
+        let code = match number.strip_prefix(['x', 'X']) {
+            Some(hex) => u32::from_str_radix(hex, 16).ok(),
+            None => number.parse::<u32>().ok(),
+        }?;
+        // NUL と、文字にならない数は置き換えの文字。
+        let c = char::from_u32(code)
+            .filter(|&c| c != '\0')
+            .unwrap_or('\u{fffd}');
+        return Some((c.to_string(), s + 1));
+    }
+    let bytes = after.as_bytes();
+    let alnum = bytes
+        .iter()
+        .take(MAX_ENTITY)
+        .take_while(|b| b.is_ascii_alphanumeric())
+        .count();
+    if alnum == 0 {
+        return None;
+    }
+    if bytes.get(alnum) == Some(&b';')
+        && let Some(value) = entity(&after[..=alnum])
+    {
+        return Some((value.to_owned(), alnum + 1));
+    }
+    // `;` のない古い名前（一番長く合うもの）。
+    let (len, value) = (2..=alnum)
+        .rev()
+        .find_map(|len| entity(&after[..len]).map(|v| (len, v)))?;
+    if attribute
+        && bytes
+            .get(len)
+            .is_some_and(|b| *b == b'=' || b.is_ascii_alphanumeric())
+    {
+        return None;
+    }
+    Some((value.to_owned(), len))
+}
+
+/// 名前（`;` で終わるものは `;` も含める）の文字。
+fn entity(name: &str) -> Option<&'static str> {
+    ENTITIES
+        .binary_search_by(|(n, _)| (*n).cmp(name))
+        .ok()
+        .map(|i| ENTITIES[i].1)
 }
 
 #[cfg(test)]
@@ -390,7 +394,22 @@ mod tests {
     fn decodes_entities() {
         assert_eq!(
             tokens("a &amp; b &lt;c&gt; &#39;&#x41;&nbsp;&unknown; &amp &#xD800; &#0;"),
-            vec![text("a & b <c> 'A\u{a0}&unknown; &amp \u{fffd} \u{fffd}")]
+            vec![text("a & b <c> 'A\u{a0}&unknown; & \u{fffd} \u{fffd}")]
+        );
+        // HTML5 のすべての名前（2 文字になるものも）。
+        assert_eq!(
+            tokens("&CounterClockwiseContourIntegral; &NotEqualTilde; &fjlig; &zwnj;&Zfr;"),
+            vec![text("\u{2233} \u{2242}\u{338} fj \u{200c}\u{2128}")]
+        );
+        // `;` のない古い名前は、文字の中なら続きがあっても戻す（一番長く合うもの）。`;` が要る名前は戻さない。
+        assert_eq!(
+            tokens("&copy2024 &notit; &ampx &AMP &hellip &lt3"),
+            vec![text("\u{a9}2024 \u{ac}it; &x & &hellip <3")]
+        );
+        // 属性の値では、`;` のない名前の後に `=` か英数字が続けば戻さない。
+        assert_eq!(
+            tokens("<a href=\"?a=1&copy=2&not&lt3&amp;x&gt\">"),
+            vec![open("a", &[("href", "?a=1&copy=2\u{ac}&lt3&x>")])]
         );
         assert_eq!(
             tokens("<a title=\"&quot;x&quot;\">"),

@@ -604,6 +604,8 @@ public indirect enum MarkdownBlock: Decodable, Sendable {
         /// 画像の幅・高さ（HTML の `width`・`height`、pt）。片方だけなら、もう片方は比を保つ。
         public let width: Int?
         public let height: Int?
+        /// 画像の幅の割合（HTML の `width="50%"`、1〜100）。表示する列の幅（表のマスの中ならマスの幅）に対して決める。
+        public let widthPercent: Int?
         public let footnote: String?
         public let lineBreak: Bool?
         /// GitHub 独自の絵文字（画像だけのもの）の名前。`text`（`:octocat:`）を札で見せる。
@@ -617,6 +619,7 @@ public indirect enum MarkdownBlock: Decodable, Sendable {
             case imageLight = "image_light"
             case lineBreak = "line_break"
             case customEmoji = "custom_emoji"
+            case widthPercent = "width_percent"
             case mathError = "math_error"
         }
 
