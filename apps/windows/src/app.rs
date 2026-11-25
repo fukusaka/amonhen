@@ -1577,6 +1577,8 @@ enum Message {
     SearchSubmit(bool),
     /// 差分の中を探す帯を開く・閉じる、探す文字、前・次へ、件数の文字。
     DiffFindOpen(bool),
+    /// Settings > Theme: gantt の時間帯を選んだ（IANA の名前、空なら OS の時間帯）。
+    SettingsGanttZone(String),
     /// ツールバーの見せ方を選んだ（`menus::Display::ALL` の番号）。
     ToolbarDisplay(Option<usize>),
     /// 整形した Markdown の中を探した（今の一致、一致の数）。
@@ -8366,6 +8368,21 @@ impl Root {
                     h.diff.dirty = true;
                     h.session.data.recolor_diagrams();
                 });
+            }
+            // gantt の時間帯を替えた: 覚えて、開いている Markdown を読み直す（日付は図を描くときに数える）。
+            Message::SettingsGanttZone(name) => {
+                if crate::prefs::string(crate::timezone::GANTT_TIME_ZONE).unwrap_or_default()
+                    != name
+                {
+                    if let Err(e) =
+                        crate::prefs::set_string(crate::timezone::GANTT_TIME_ZONE, &name)
+                    {
+                        eprintln!("時間帯を覚えられない: {e}");
+                    }
+                    if self.markdown_shown() {
+                        self.reopen_file();
+                    }
+                }
             }
             Message::SettingsDiagramColors(index) => {
                 let schemes = crate::markdownview::diagram_schemes();
@@ -16845,6 +16862,7 @@ impl Root {
                 order: context.callback(Message::SettingsOrder),
                 syntax_theme: context.callback(|i| Message::SettingsSyntaxTheme(false, i)),
                 diagram_colors: context.callback(Message::SettingsDiagramColors),
+                gantt_zone: context.callback(Message::SettingsGanttZone),
                 mermaid_button: Box::new(|key: String| {
                     context.callback(move |()| Message::SettingsMermaidButton(key.clone()))
                 }),
