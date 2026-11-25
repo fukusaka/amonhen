@@ -1,7 +1,7 @@
 /** 拡張の見た目の好み。設定（settings.json）に出すほどではないものを、VSCode の globalState に覚える */
 import type * as vscode from 'vscode';
 import type { ArchiveFormat } from '../bundle/archiveBundle.ts';
-import type { DetailsLayout, HistoryItem, HistoryOrder } from '../history/protocol.ts';
+import type { DetailsStyle, DetailsLayout, HistoryItem, HistoryOrder } from '../history/protocol.ts';
 import type { MessageParts } from '../workingCopy/commitMessage.ts';
 import type { FileLayout } from '../workingCopy/fileList.ts';
 
@@ -73,6 +73,16 @@ export function detailsLayout(): DetailsLayout {
 
 export async function setDetailsLayout(layout: DetailsLayout): Promise<void> {
   await store?.update('history.detailsLayout', { tree: layout.tree });
+}
+
+/** コミット情報の見せ方（アプリの表示項目。既定は標準） */
+export function detailsStyle(): DetailsStyle {
+  const style = store?.get<DetailsStyle>('history.detailsStyle');
+  return style === 'brief' || style === 'full' ? style : 'standard';
+}
+
+export async function setDetailsStyle(style: DetailsStyle): Promise<void> {
+  await store?.update('history.detailsStyle', style);
 }
 
 /** 前に選んだパッチの形（1 つの mbox か）と送り状 */

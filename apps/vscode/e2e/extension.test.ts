@@ -1079,6 +1079,8 @@ async function historySignatureFlow(): Promise<void> {
     await panel.history.handle({ type: 'select', oid: signed });
     const extras = (await waitPosted('detailsExtras', mark, (m) => m.extras.oid === signed)).extras;
     assert.deepEqual(extras.children, [after]);
+    // 詳細（Full）の項目が届く（含むブランチなどは daemon の ref による）
+    assert.ok(extras.full, JSON.stringify(extras));
     if (ssh) {
       assert.equal(extras.signature?.label, 'Verified');
       assert.equal(extras.signature?.format, 'SSH');

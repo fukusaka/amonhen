@@ -8,7 +8,8 @@ import { BlameController } from './blameController.ts';
 import { DaemonController } from './daemonController.ts';
 import { FileHistoryController } from './fileHistoryController.ts';
 import { HistoryController } from './historyController.ts';
-import { detailsLayout, monospacedMessage } from './preferences.ts';
+import { detailsLayout, detailsStyle, monospacedMessage, setDetailsStyle } from './preferences.ts';
+import type { DetailsStyle } from '../history/protocol.ts';
 import { RangeDiffController } from './rangeDiffController.ts';
 import { ReflogController } from './reflogController.ts';
 import { SettingsController } from './settingsController.ts';
@@ -136,6 +137,46 @@ export class MainPanel implements vscode.Disposable {
     void this.panel.webview.postMessage(message);
   }
 
+  /**
+   * 詳細の帯の表示の設定（アプリの View Options と同じ並び）: コミット情報の表示項目（簡潔・標準・詳細）・高さを自動で
+   * 決める・コミット情報だけを表示、コードの長い行を折り返す
+   */
+  private async detailsViewOptions(kept: boolean, expanded: boolean): Promise<void> {
+    type Item = vscode.QuickPickItem & { run?: () => unknown };
+    const mark = (on: boolean) => (on ? '$(check) ' : '$(blank) ');
+    const style = detailsStyle();
+    const styles: [DetailsStyle, string, string][] = [
+      ['brief', 'Brief', 'The subject and one line of author, date, refs and parents'],
+      ['standard', 'Standard', 'The author, IDs, signature, tags and the message'],
+      ['full', 'Full', 'Also the children, branches, tags, pushed state, merged and related commits'],
+    ];
+    const items: Item[] = [
+      { label: 'Commit Details', kind: vscode.QuickPickItemKind.Separator },
+      ...styles.map(([value, label, detail]): Item => ({
+        label: `${mark(style === value)}${label}`,
+        description: detail,
+        run: async () => {
+          await setDetailsStyle(value);
+          this.post({ type: 'detailsStyle', style: value });
+        },
+      })),
+      {
+        label: `${mark(!kept)}Fit Height Automatically`,
+        description: 'Size the commit details to each message. Dragging the divider keeps its position instead.',
+        run: () => this.post({ type: 'detailsView', action: 'fit' }),
+      },
+      {
+        label: `${mark(expanded)}Show Only Commit Details`,
+        description: 'Expand the commit details to fill the right column (choose again to restore)',
+        run: () => this.post({ type: 'detailsView', action: 'expand' }),
+      },
+      { label: 'Code', kind: vscode.QuickPickItemKind.Separator },
+      { label: `${mark(wrapLongLines())}Wrap Long Lines`, description: 'Alt+Z', run: () => toggleWrapLongLines() },
+    ];
+    const picked = await vscode.window.showQuickPick(items, { placeHolder: 'View Options' });
+    await picked?.run?.();
+  }
+
   /** Webview の準備ができてから fn を行う（できていればすぐ） */
   whenReady(fn: () => void): void {
     if (this.ready) fn();
@@ -192,6 +233,7 @@ export class MainPanel implements vscode.Disposable {
         this.post({ type: 'detailsLayout', layout: detailsLayout() });
         this.post({ type: 'wrapLines', wrap: wrapLongLines() });
         this.post({ type: 'messageFont', monospace: monospacedMessage() });
+        this.post({ type: 'detailsStyle', style: detailsStyle() });
         if (this.pendingView) {
           this.post({ type: 'show', view: this.pendingView });
           this.pendingView = undefined;
@@ -206,6 +248,9 @@ export class MainPanel implements vscode.Disposable {
         break;
       case 'toggleWrapLines':
         await toggleWrapLongLines();
+        break;
+      case 'detailsViewOptions':
+        await this.detailsViewOptions(message.kept, message.expanded);
         break;
       case 'view':
         // Daemon は出している間だけ読み直す

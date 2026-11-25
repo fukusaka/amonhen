@@ -254,6 +254,34 @@ export interface TagView {
   signature?: SignatureView;
 }
 
+/** コミット情報の見せ方（アプリの表示項目: 簡潔・標準・詳細） */
+export type DetailsStyle = 'brief' | 'standard' | 'full';
+
+/** コミットの 1 行の要約（merge で取り込んだもの、メッセージが指すもの） */
+export interface CommitSummaryView {
+  oid: string;
+  subject: string;
+  author?: string;
+}
+
+/** 詳細（Full）だけに出す項目（コアの `commitExtras`） */
+export interface FullExtras {
+  /** HEAD からの道（`HEAD~2^2` など）。HEAD が含まなければ undefined */
+  headRev?: string;
+  branches: string[];
+  /** 含むタグ（古いものから 50 まで）と、その数 */
+  tags: string[];
+  tagCount: number;
+  previousTag?: string;
+  /** 含むリモートのブランチ。リモートがあるのにどれも含まなければ空（Not pushed）。リモートがなければ undefined */
+  pushed?: string[];
+  /** merge で取り込んだコミット（20 まで）と、その数 */
+  merged: CommitSummaryView[];
+  mergedCount: number;
+  /** メッセージが指すコミット（Cherry-picked from・Reverts・Fixes・Mentions） */
+  related: { kind: string; commit: CommitSummaryView }[];
+}
+
 /** コミットの詳細のうち時間のかかる分（コアの `commitExtras`）。署名と子のコミット */
 export interface DetailsExtras {
   oid: string;
@@ -261,6 +289,8 @@ export interface DetailsExtras {
   signature?: SignatureView;
   /** そのコミットを親に持つコミット */
   children: string[];
+  /** 詳細（Full）の項目 */
+  full?: FullExtras;
   /** このコミットを指すタグ（エンジンの `tagObjects`） */
   tags?: TagView[];
   /** この merge が取り込んだタグ（コミットの mergetag） */
