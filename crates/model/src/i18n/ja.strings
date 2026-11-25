@@ -2423,7 +2423,7 @@
 "GitHub alert: Important" = "重要";
 "GitHub alert: Warning" = "警告";
 "GitHub alert: Caution" = "注意";
-"HTML details: Details" = "詳細情報";
+"HTML details: Details" = "Details";
 "This is a merge: the changes below are against its first parent ({id})." = "merge のコミット: 下の変更は最初の親（{id}）との差分。";
 "Fit Height Automatically" = "高さを自動で決める";
 "Size the commit details to each message. Dragging the divider keeps its position instead." = "コミット情報の高さを、メッセージごとに自動で決める。仕切りを動かすと、代わりにその高さを保つ。";
