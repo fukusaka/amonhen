@@ -43,8 +43,8 @@ New-ItemProperty -Path HKLM:\SYSTEM\CurrentControlSet\Control\FileSystem -Name L
 git config --global core.longpaths true
 ```
 
-- PowerShell 7 has to be the MSI (`--installer-type wix`): the Microsoft Store version lives under the user's
-  `WindowsApps` and can't be ssh's default shell. Check with `Test-Path "C:\Program Files\PowerShell\7\pwsh.exe"`.
+- PowerShell 7 has to be the MSI (`--installer-type wix`), which exists only up to 7.6 (7.7 has no MSI): the Store
+  (MSIX) version is reached through an alias in the user's `WindowsApps` and can't be ssh's default shell. Check with `Test-Path "C:\Program Files\PowerShell\7\pwsh.exe"`.
 - `Microsoft.VisualStudio.BuildTools` is Build Tools 2026 (`Microsoft.VisualStudio.2022.BuildTools` is 2022). Its C++
   workload is all `x86_64-pc-windows-msvc` needs.
 - Node should be 24, like CI (`node -v`).

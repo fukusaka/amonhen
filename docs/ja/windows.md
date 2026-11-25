@@ -42,8 +42,8 @@ New-ItemProperty -Path HKLM:\SYSTEM\CurrentControlSet\Control\FileSystem -Name L
 git config --global core.longpaths true
 ```
 
-- PowerShell 7 は MSI 版にする（`--installer-type wix`）。Microsoft Store 版は利用者の `WindowsApps` の下に入り、ssh の
-  既定のシェルにできない。`Test-Path "C:\Program Files\PowerShell\7\pwsh.exe"` で確かめる。
+- PowerShell 7 は MSI 版にする（`--installer-type wix`。MSI は 7.6 までで、7.7 にはない）。Store（MSIX）版は利用者の
+  `WindowsApps` の別名から起動するもので、ssh の既定のシェルにできない。`Test-Path "C:\Program Files\PowerShell\7\pwsh.exe"` で確かめる。
 - `Microsoft.VisualStudio.BuildTools` は Build Tools 2026（2022 は `Microsoft.VisualStudio.2022.BuildTools`）。
   `x86_64-pc-windows-msvc` に要るのは C++ のワークロードだけ。
 - Node は CI と同じ 24（`node -v`）。
