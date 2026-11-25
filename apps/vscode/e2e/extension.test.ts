@@ -417,15 +417,17 @@ async function workingCopyFlow(label: string): Promise<void> {
   await wc.handle({ type: 'wcStageLines', ...(await select('staged')), stage: false });
   await until('unstage', () => numstat('--cached') === '' && numstat() === one);
 
-  // 行の破棄（確かめのダイアログには Discard と答える）と、その Undo
+  // 行の破棄（アプリと同じく確かめない。Undo で戻せる）と、その Undo
   const { version, lines } = await select('unstaged');
-  const warning = vscode.window.showWarningMessage;
-  (vscode.window as { showWarningMessage: unknown }).showWarningMessage = async () => 'Discard';
-  try {
-    await wc.handle({ type: 'wcDiscardLines', path: FILE, version, lines });
-  } finally {
-    (vscode.window as { showWarningMessage: unknown }).showWarningMessage = warning;
-  }
+  let asked = false;
+  const showWarningMessage = async () => {
+    asked = true;
+    return undefined;
+  };
+  await withWindow({ showWarningMessage }, () =>
+    wc.handle({ type: 'wcDiscardLines', path: FILE, version, lines }),
+  );
+  assert.equal(asked, false, '行の破棄は確かめない');
   await until('行の破棄', () => git('status', '--porcelain').trim() === '');
   assert.equal(readFileSync(path, 'latin1'), before, '破棄したら元の内容（CRLF のまま）');
   await vscode.commands.executeCommand('amonhen.undo');
