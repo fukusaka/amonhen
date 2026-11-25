@@ -7,6 +7,8 @@
 import type { FileView, FileViewNote, ImageBlob, PictureColors, SvgCheckView, TreeEntry, ViewLine } from '../history/protocol.ts';
 import { el, post } from './api.ts';
 import { renderCode } from './diffView.ts';
+import { checkerToggle } from './imageDiff.ts';
+import { findAll, findCountText } from './textFind.ts';
 import { resolvePath } from '../history/repoPath.ts';
 import { hexColor } from '../history/cssColor.ts';
 
@@ -363,6 +365,8 @@ function zoomableImage(image: ImageBlob, unit = ''): HTMLElement {
     return b;
   };
   bar.append(
+    // 市松模様の明暗（透けた画素があるときだけ。アプリと同じく拡大縮小の左）
+    checkerToggle(box, [img]),
     button('−', 'Zoom out', () => zoom(1 / 1.25)),
     label,
     button('+', 'Zoom in', () => zoom(1.25)),
@@ -417,7 +421,11 @@ function renderSvgCheck(image: ImageBlob, check: SvgCheckView): HTMLElement {
   const pick = (key: string) => {
     lastRenderer = key;
     for (const b of switcher.querySelectorAll<HTMLElement>('button')) b.classList.toggle('on', b.dataset.key === key);
-    body.replaceChildren(renderTarget(key));
+    const target = renderTarget(key);
+    body.replaceChildren(target);
+    const toggle = checkerToggle(box, [...target.querySelectorAll<HTMLImageElement>('.checker img')]);
+    head.querySelector('.checker-toggle')?.remove();
+    head.append(toggle);
   };
   for (const key of Object.keys(TARGET_NAMES)) {
     const b = el('button', 'bar-button', SHORT[key] ?? key);
@@ -426,7 +434,10 @@ function renderSvgCheck(image: ImageBlob, check: SvgCheckView): HTMLElement {
     b.addEventListener('click', () => pick(key));
     switcher.append(b);
   }
-  box.append(switcher, body);
+  // 市松模様の明暗は部品を選ぶ帯に（既定は元の絵と、選んだ部品の近似の色から）
+  const head = el('div', 'svg-check-bar');
+  head.append(switcher);
+  box.append(head, body);
   pick(TARGET_NAMES[lastRenderer] ? lastRenderer : 'android');
   return box;
 
@@ -540,7 +551,200 @@ function renderMarkdown(blocks: readonly unknown[], from?: string, onOpen?: (pat
       if (path) onOpen(path);
     });
   }
-  return box;
+  return withFind(box);
+}
+
+const mac = navigator.platform.toUpperCase().includes('MAC');
+
+/**
+ * 整形した Markdown を探す帯（アプリと同じ）。⌘F（Ctrl+F）で開き、見えている文字（キーの札・表のマスも）から大文字・
+ * 小文字を区別せずに探す。絵と閉じた `<details>` の中は探さない。一致の地を塗り、「n / m」を出し、Enter・Shift+Enter・
+ * ⌘G・⇧⌘G（F3・Shift+F3）で進む・戻る。帯を閉じているときの ⌘F は VSCode の検索に渡さない
+ */
+function withFind(box: HTMLElement): HTMLElement {
+  const view = el('div', 'markdown-view');
+  // 押すと欄に入り、⌘F を受けられる
+  view.tabIndex = -1;
+  const bar = el('div', 'md-find-bar');
+  bar.hidden = true;
+  const field = el('input');
+  field.type = 'search';
+  field.placeholder = 'Search';
+  field.setAttribute('aria-label', 'Search');
+  const count = el('span', 'search-count');
+  const previous = el('button', 'icon-button', '∧');
+  previous.title = 'Previous';
+  const next = el('button', 'icon-button', '∨');
+  next.title = 'Next';
+  const done = el('button', 'bar-button', 'Done');
+  bar.append(field, count, previous, next, done);
+  view.append(bar, box);
+  clearHighlights();
+
+  /** 一致（文書の順） */
+  let matches: Range[] = [];
+  let current: number | undefined;
+
+  const scroller = () => view.closest<HTMLElement>('.file-pane-body') ?? document.documentElement;
+
+  /** 探す文字と、その場所の文字のノード。ブロックの境目には改行を入れる（段落をまたいで当たらない） */
+  const collect = () => {
+    let text = '';
+    const nodes: { node: Text; start: number }[] = [];
+    let lastBlock: Element | null = null;
+    const walker = document.createTreeWalker(box, NodeFilter.SHOW_TEXT, {
+      acceptNode: (n) => (visible(n, box) ? NodeFilter.FILTER_ACCEPT : NodeFilter.FILTER_REJECT),
+    });
+    for (let n = walker.nextNode() as Text | null; n; n = walker.nextNode() as Text | null) {
+      if (!n.data) continue;
+      const block = n.parentElement?.closest(BLOCKS) ?? null;
+      if (block !== lastBlock && text) text += '\n';
+      lastBlock = block;
+      nodes.push({ node: n, start: text.length });
+      text += n.data;
+    }
+    return { text, nodes };
+  };
+
+  const update = (reveal: boolean) => {
+    const { text, nodes } = collect();
+    const at = (offset: number, end: boolean): [Text, number] | undefined => {
+      // 終わりは、その文字で終わるノード（次のノードの頭でなく）
+      let lo = 0;
+      let hi = nodes.length - 1;
+      let found = -1;
+      while (lo <= hi) {
+        const mid = (lo + hi) >> 1;
+        const start = nodes[mid]!.start;
+        if (end ? start < offset : start <= offset) {
+          found = mid;
+          lo = mid + 1;
+        } else {
+          hi = mid - 1;
+        }
+      }
+      const hit = nodes[found];
+      return hit ? [hit.node, Math.min(offset - hit.start, hit.node.length)] : undefined;
+    };
+    matches = [];
+    for (const [s, e] of findAll(text, field.value)) {
+      const from = at(s, false);
+      const to = at(e, true);
+      if (!from || !to) continue;
+      const range = document.createRange();
+      range.setStart(from[0], from[1]);
+      range.setEnd(to[0], to[1]);
+      matches.push(range);
+    }
+    // 今の一致は、見えている所より後の最初のもの（アプリと同じ）
+    const top = scroller().getBoundingClientRect().top + bar.offsetHeight;
+    const first = matches.findIndex((r) => r.getBoundingClientRect().bottom > top);
+    current = matches.length === 0 ? undefined : Math.max(0, first);
+    paint();
+    if (reveal) revealCurrent();
+  };
+
+  const paint = () => {
+    count.textContent = findCountText(field.value, current, matches.length);
+    const highlights = highlightRegistry();
+    if (!highlights) return;
+    highlights.set(FIND_HIGHLIGHT, new Highlight(...matches.filter((_, i) => i !== current)));
+    highlights.set(CURRENT_HIGHLIGHT, new Highlight(...(current === undefined ? [] : [matches[current]!])));
+  };
+
+  const revealCurrent = () => {
+    if (current === undefined) return;
+    const range = matches[current]!;
+    const s = scroller();
+    const area = s.getBoundingClientRect();
+    const rect = range.getBoundingClientRect();
+    const top = area.top + bar.offsetHeight;
+    if (rect.top < top || rect.bottom > area.bottom) s.scrollTop += rect.top - top - (area.bottom - top) / 3;
+  };
+
+  const move = (step: number) => {
+    if (bar.hidden) show();
+    if (matches.length === 0) return;
+    current = ((current ?? -step) + step + matches.length) % matches.length;
+    paint();
+    revealCurrent();
+  };
+
+  const show = () => {
+    const selected = window.getSelection()?.toString() ?? '';
+    if (selected && !selected.includes('\n')) field.value = selected;
+    bar.hidden = false;
+    field.focus();
+    field.select();
+    update(true);
+  };
+
+  const hide = () => {
+    bar.hidden = true;
+    matches = [];
+    current = undefined;
+    clearHighlights();
+    count.textContent = '';
+    view.focus();
+  };
+
+  field.addEventListener('input', () => update(true));
+  previous.addEventListener('click', () => move(-1));
+  next.addEventListener('click', () => move(1));
+  done.addEventListener('click', hide);
+  // `<details>` を開け閉めしたら、見えている文字が変わる（toggle は泡立たないので捕まえる側で）
+  box.addEventListener('toggle', () => (bar.hidden ? undefined : update(false)), true);
+  view.addEventListener('keydown', (e) => {
+    const command = mac ? e.metaKey && !e.ctrlKey : e.ctrlKey && !e.metaKey;
+    const key = e.key.toLowerCase();
+    let handled = true;
+    if (command && !e.altKey && key === 'f' && !e.shiftKey) {
+      show();
+    } else if (!bar.hidden && ((command && !e.altKey && key === 'g') || (e.key === 'F3' && !command))) {
+      // 帯を閉じているときは、ほか（History の検索）に任せる
+      move(e.shiftKey ? -1 : 1);
+    } else if (e.target === field && e.key === 'Enter') {
+      move(e.shiftKey ? -1 : 1);
+    } else if (e.target === field && e.key === 'Escape') {
+      hide();
+    } else {
+      handled = false;
+    }
+    if (handled) {
+      // VSCode の検索の窓（enableFindWidget）に渡さない
+      e.preventDefault();
+      e.stopPropagation();
+    }
+  });
+  return view;
+}
+
+/** 段落の区切りになる要素 */
+const BLOCKS = 'p, li, td, th, h1, h2, h3, h4, h5, h6, pre, summary, blockquote, div, figure';
+
+/** 見えている文字か（閉じた `<details>` の中は見出しのほか見えない） */
+function visible(n: Node, root: HTMLElement): boolean {
+  const parent = n.parentElement;
+  if (!parent) return false;
+  for (let d = parent.closest('details'); d && root.contains(d); d = d.parentElement?.closest('details') ?? null) {
+    if (d.open) continue;
+    const summary = d.querySelector(':scope > summary');
+    if (!summary?.contains(n)) return false;
+  }
+  return true;
+}
+
+const FIND_HIGHLIGHT = 'amonhen-md-find';
+const CURRENT_HIGHLIGHT = 'amonhen-md-find-current';
+
+function highlightRegistry(): HighlightRegistry | undefined {
+  return typeof CSS !== 'undefined' && 'highlights' in CSS ? CSS.highlights : undefined;
+}
+
+function clearHighlights(): void {
+  const highlights = highlightRegistry();
+  highlights?.delete(FIND_HIGHLIGHT);
+  highlights?.delete(CURRENT_HIGHLIGHT);
 }
 
 

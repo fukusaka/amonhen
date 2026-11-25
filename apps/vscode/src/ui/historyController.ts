@@ -365,9 +365,6 @@ export class HistoryController implements vscode.Disposable {
       case 'search':
         await this.runSearch(message.query.trim(), message.matchingOnly, message.selected);
         break;
-      case 'toggleFold':
-        await this.toggleFold(message.oid);
-        break;
       case 'detailsLayout':
         await setDetailsLayout(message.layout);
         this.post({ type: 'detailsLayout', layout: detailsLayout() });
