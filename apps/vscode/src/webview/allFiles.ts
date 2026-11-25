@@ -7,6 +7,7 @@
 import type { FileView, FileViewNote, ImageBlob, SvgCheckView, TreeEntry, ViewLine } from '../history/protocol.ts';
 import { el, post } from './api.ts';
 import { renderCode } from './diffView.ts';
+import { checkerToggle } from './imageDiff.ts';
 import { resolvePath } from '../history/repoPath.ts';
 
 /** コミットで変えたファイル（木の印） */
@@ -329,6 +330,8 @@ function zoomableImage(image: ImageBlob): HTMLElement {
     return b;
   };
   bar.append(
+    // 市松模様の明暗（透けた画素があるときだけ。アプリと同じく拡大縮小の左）
+    checkerToggle(box, [img]),
     button('−', 'Zoom out', () => zoom(1 / 1.25)),
     label,
     button('+', 'Zoom in', () => zoom(1.25)),
@@ -383,7 +386,11 @@ function renderSvgCheck(image: ImageBlob, check: SvgCheckView): HTMLElement {
   const pick = (key: string) => {
     lastRenderer = key;
     for (const b of switcher.querySelectorAll<HTMLElement>('button')) b.classList.toggle('on', b.dataset.key === key);
-    body.replaceChildren(renderTarget(key));
+    const target = renderTarget(key);
+    body.replaceChildren(target);
+    const toggle = checkerToggle(box, [...target.querySelectorAll<HTMLImageElement>('.checker img')]);
+    head.querySelector('.checker-toggle')?.remove();
+    head.append(toggle);
   };
   for (const key of Object.keys(TARGET_NAMES)) {
     const b = el('button', 'bar-button', SHORT[key] ?? key);
@@ -392,7 +399,10 @@ function renderSvgCheck(image: ImageBlob, check: SvgCheckView): HTMLElement {
     b.addEventListener('click', () => pick(key));
     switcher.append(b);
   }
-  box.append(switcher, body);
+  // 市松模様の明暗は部品を選ぶ帯に（既定は元の絵と、選んだ部品の近似の色から）
+  const head = el('div', 'svg-check-bar');
+  head.append(switcher);
+  box.append(head, body);
   pick(TARGET_NAMES[lastRenderer] ? lastRenderer : 'android');
   return box;
 

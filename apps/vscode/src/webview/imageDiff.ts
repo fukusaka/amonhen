@@ -4,6 +4,7 @@
  */
 import type { ImageBlob } from '../history/protocol.ts';
 import { el } from './api.ts';
+import { CheckerTone } from './checkerTone.ts';
 
 export type ImageMode = 'side' | 'swipe' | 'onion' | 'difference';
 
@@ -36,6 +37,79 @@ function load(url: string): Promise<HTMLImageElement> {
     img.onerror = () => resolve(img);
     img.src = url;
   });
+}
+
+/** 読み終えた画像（読めなくても） */
+export function loaded(img: HTMLImageElement): Promise<HTMLImageElement> {
+  if (img.complete) return Promise.resolve(img);
+  return new Promise((resolve) => {
+    img.addEventListener('load', () => resolve(img), { once: true });
+    img.addEventListener('error', () => resolve(img), { once: true });
+  });
+}
+
+/**
+ * 市松模様の既定（絵の色から。比べるときは両方を合わせて 1 つ）と、透けた画素があるか。アプリと同じく、絵をそれぞれ
+ * 256 × 256 に伸ばして並べた画素で数える
+ */
+export function checkerDefault(images: readonly HTMLImageElement[]): { dark: boolean; transparent: boolean } {
+  const shown = images.filter((i) => i.naturalWidth > 0 && i.naturalHeight > 0);
+  if (shown.length === 0) return { dark: false, transparent: false };
+  const cell = 256;
+  try {
+    const canvas = document.createElement('canvas');
+    canvas.width = cell * shown.length;
+    canvas.height = cell;
+    const g = canvas.getContext('2d', { willReadFrequently: true });
+    if (!g) return { dark: false, transparent: false };
+    shown.forEach((img, i) => g.drawImage(img, i * cell, 0, cell, cell));
+    const tone = new CheckerTone();
+    tone.add(g.getImageData(0, 0, canvas.width, cell).data, canvas.width, cell);
+    return { dark: tone.dark(), transparent: tone.transparent() };
+  } catch {
+    return { dark: false, transparent: false };
+  }
+}
+
+/** 欄ごとの今の切り替え */
+const currentToggle = new WeakMap<HTMLElement, HTMLButtonElement>();
+
+const CHECKER_ICON =
+  '<svg viewBox="0 0 16 16" width="14" height="14" aria-hidden="true"><rect x="1.5" y="2.5" width="13" height="11" rx="2" fill="none" stroke="currentColor"/>' +
+  '<path d="M2 3h4v3.5H2zM10 3h4v3.5h-4zM6 6.5h4V10H6zM2 10h4v3H2zM10 10h4v3h-4z" fill="currentColor"/></svg>';
+
+/**
+ * 市松模様の明暗の切り替え（アプリと同じ）。`scope` の中の市松模様を暗く・明るくする。既定は `images` の色から決め、
+ * 透けた画素がなければ出さない。選んだ明暗は覚えない（ファイルを開き直すと既定に戻る）
+ */
+export function checkerToggle(scope: HTMLElement, images: readonly HTMLImageElement[]): HTMLButtonElement {
+  const button = el('button', 'bar-button checker-toggle');
+  currentToggle.set(scope, button);
+  button.innerHTML = CHECKER_ICON;
+  button.hidden = true;
+  let dark = false;
+  const apply = () => {
+    // 置き換えられた切り替え（SVG の確認で部品を選び直した）は、もう触らない
+    if (currentToggle.get(scope) !== button) return;
+    scope.classList.toggle('checker-dark', dark);
+    button.classList.toggle('on', dark);
+    button.setAttribute('aria-pressed', String(dark));
+    const title = dark ? 'Lighten the Checkerboard' : 'Darken the Checkerboard';
+    button.title = title;
+    button.setAttribute('aria-label', title);
+  };
+  button.addEventListener('click', () => {
+    dark = !dark;
+    apply();
+  });
+  apply();
+  void Promise.all(images.map(loaded)).then((all) => {
+    const tone = checkerDefault(all);
+    dark = tone.dark;
+    button.hidden = !tone.transparent;
+    apply();
+  });
+  return button;
 }
 
 /** 拡大縮小の倍率（0 は欄に合わせる）。欄をまたいで同じにする（開いている間だけ） */
@@ -73,8 +147,11 @@ export function renderImageDiff(
     return b;
   };
   const spacer = el('span', 'spacer');
+  // 市松模様の明暗（絵を読んでから置く。アプリと同じく拡大縮小の左）
+  const checkerSlot = el('span', 'checker-slot');
   bar.append(
     spacer,
+    checkerSlot,
     zoomButton('−', 'Zoom Out', () => setZoom(currentZoom() / 1.25)),
     zoomLabel,
     zoomButton('+', 'Zoom In', () => setZoom(currentZoom() * 1.25)),
@@ -121,6 +198,7 @@ export function renderImageDiff(
     el('div', 'image-caption', `${label} · ${img.naturalWidth} × ${img.naturalHeight} · ${sizeText(blob.bytes)}`);
 
   void Promise.all([before ? load(before.url) : undefined, after ? load(after.url) : undefined]).then(([old, now]) => {
+    checkerSlot.replaceWith(checkerToggle(box, [old, now].filter((i): i is HTMLImageElement => i !== undefined)));
     const show = (mode: ImageMode) => {
       lastMode = mode;
       for (const b of modes.querySelectorAll<HTMLElement>('button')) b.classList.toggle('on', b.dataset.mode === mode);
