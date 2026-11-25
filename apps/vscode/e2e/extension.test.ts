@@ -742,6 +742,8 @@ async function worktreeFlow(): Promise<void> {
     await vscode.commands.executeCommand('amonhen.worktree.edit', row(root)!.node);
     assert.ok(samePath(manager.current!.root, root));
     await until('✎ が戻る', () => icon(row(root)!.item) === 'edit');
+    // 書き込む先でなくなった worktree の数は、コアが数え直す（HEAD と index は変わっていない）
+    await until('戻した後の変更の数', () => /1 changed/.test(String(row(folder)?.item.description)));
 
     // 変更があっても、確かめてから消す（ブランチは残る）
     await withWindow({ showWarningMessage: async () => 'Remove Worktree' }, async () =>
