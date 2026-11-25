@@ -380,7 +380,7 @@ async function workingCopyFlow(label: string): Promise<void> {
   const mark = posted.length;
   await vscode.commands.executeCommand('amonhen.refresh');
   await waitPosted('wcFiles', mark, (m) => m.layout === 'tree' && m.files.some((f) => f.group === 'unstaged' && f.path === FILE));
-  await wc.handle({ type: 'wcLayout', layout: 'flat' });
+  await wc.handle({ type: 'wcLayout', layout: 'list' });
 
   /** 差分を選び、変わった行が 1 行の書き換えだけであることを確かめて、その行を返す */
   const select = async (group: 'unstaged' | 'staged') => {

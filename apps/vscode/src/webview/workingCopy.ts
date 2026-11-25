@@ -22,7 +22,7 @@ const GROUPS: { group: ChangeGroup; title: string }[] = [
 const LAYOUTS: { layout: FileLayout; label: string; title: string }[] = [
   { layout: 'list', label: 'List', title: 'Show files as a list of paths' },
   { layout: 'tree', label: 'Tree', title: 'Show files as a directory tree' },
-  { layout: 'flat', label: 'Name', title: 'Show the file name first and the parent directory dimmed' },
+  { layout: 'flat', label: 'File Name', title: 'Show the file name first and the parent directory dimmed' },
 ];
 
 export function createWorkingCopyView(): View {
@@ -76,7 +76,7 @@ export function createWorkingCopyView(): View {
   filter.setAttribute('aria-label', 'Filter by path');
   const layoutButtons = el('div', 'wc-layout');
   tools.append(filter, layoutButtons);
-  let layout: FileLayout = 'flat';
+  let layout: FileLayout = 'list';
   for (const { layout: value, label, title } of LAYOUTS) {
     const button = el('button', undefined, label);
     button.title = title;

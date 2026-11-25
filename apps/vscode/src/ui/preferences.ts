@@ -12,7 +12,7 @@ export function initPreferences(memento: vscode.Memento): void {
 }
 
 export function fileLayout(): FileLayout {
-  return store?.get<FileLayout>('workingCopy.fileLayout') ?? 'flat';
+  return store?.get<FileLayout>('workingCopy.fileLayout') ?? 'list';
 }
 
 export async function setFileLayout(layout: FileLayout): Promise<void> {
