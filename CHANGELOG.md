@@ -32,6 +32,8 @@ becomes the GitHub Release notes.
 - DOT diagrams: clusters joined by edges both ways sit side by side instead of being stacked, as in Graphviz.
 - DOT diagrams: `splines=ortho` in the dot layout widens the space between ranks (up to `ranksep`) when many edges
   run across it, so they no longer merge into one line.
+- DOT diagrams: edges in the dot layout are drawn as Graphviz does, as smooth curves along the shortest way between
+  the nodes around them, instead of bending at every rank.
 
 #### Changed
 
