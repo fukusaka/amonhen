@@ -81,6 +81,7 @@ checkerboard behind transparent pictures can be switched between light and dark.
   outermost ones in from the left and right sides, and moves end lines apart when they would share a line.
 - DOT diagrams: the dot layout orders nodes with fewer edge crossings.
 - DOT diagrams: edges to record fields and compass ports in the dot layout use the same smooth curves as other edges.
+- DOT diagrams: dot-layout curves bulge less between ranks, crossing fewer edges and nodes.
 
 #### Changed
 
