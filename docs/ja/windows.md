@@ -144,8 +144,8 @@ ssh windows-pc "powershell -NoProfile -NonInteractive -EncodedCommand $(iconv -f
 
 - `powershell -Command -`（スクリプトを標準入力から読む）は ssh 越しでは止まる。
 - スクリプトの最初に `[Console]::OutputEncoding = [Text.Encoding]::UTF8` を置くと、日本語の出力を Mac で読める。
-- Windows PowerShell 5.1 で `npm` は `npm.ps1` になり、テストが失敗しても `$LASTEXITCODE` が 0 のまま。`npm.cmd` を
-  呼ぶ。`r` は別名（Invoke-History）なので、関数の名前にしない。
+- Windows PowerShell 5.1 で `npm` は `npm.ps1` になり、テストが失敗しても `$LASTEXITCODE` が 0 のままだった（今の
+  `npm.ps1` は終了コードを返す作りなので、npm の版によるかもしれない）。`npm.cmd` を呼ぶ。`r` は別名（Invoke-History）なので、関数の名前にしない。
 - ssh のセッションにはデスクトップがない。そこから起動した窓は画面に出ず、撮れない。画面は実機かリモート デスクトップで
   見る。
 

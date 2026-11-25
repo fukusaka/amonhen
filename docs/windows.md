@@ -144,8 +144,8 @@ ssh windows-pc "powershell -NoProfile -NonInteractive -EncodedCommand $(iconv -f
 
 - `powershell -Command -` (reading the script from standard input) hangs over ssh.
 - Start a script with `[Console]::OutputEncoding = [Text.Encoding]::UTF8` to read Japanese output on the Mac.
-- In Windows PowerShell 5.1, `npm` runs `npm.ps1`, which leaves `$LASTEXITCODE` at 0 even when tests fail. Call
-  `npm.cmd`. `r` is an alias (Invoke-History), so don't name a function `r`.
+- In Windows PowerShell 5.1, `npm` runs `npm.ps1`, and `$LASTEXITCODE` stayed 0 here even when tests failed
+  (the current `npm.ps1` is meant to pass the code on, so it may depend on the npm version). Call `npm.cmd`. `r` is an alias (Invoke-History), so don't name a function `r`.
 - An ssh session has no desktop: windows started from it don't appear on the screen and can't be captured. Look at the
   screen in person or through Remote Desktop.
 
