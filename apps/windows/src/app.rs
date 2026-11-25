@@ -18286,36 +18286,42 @@ impl Root {
         if self.multi.len() > 1 {
             let n = self.multi.len();
             let ids: Vec<&str> = self.multi.iter().map(|(id, _)| id.as_str()).collect();
-            // Cherry-pick は古い順に、Revert は新しい順に（GTK4 版の `menu_many` と同じ）。
+            // 並びは macOS 版の `buildMultipleMenu` と同じ: ID のコピー、続いていればまとめる、Cherry-pick（古い
+            // 順）・Revert（新しい順）・Merge、パッチ、2 つなら Range Diff。使えない項目は押せない形で、わけを
+            // ツールチップに。
             let oldest_first: Vec<&str> = ids.iter().rev().copied().collect();
             let mut items = vec![
+                MenuItem::item(format!("copy:{}", ids.join("\n")), tr!("Copy Commit IDs")),
                 MenuItem::item(
-                    format!("cherry-pick:{}", oldest_first.join(",")),
-                    tr!("Cherry-pick {count} Commits…", count = n),
+                    format!(
+                        "copy:{}",
+                        ids.iter()
+                            .map(|id| &id[..id.len().min(8)])
+                            .collect::<Vec<_>>()
+                            .join(" ")
+                    ),
+                    tr!("Copy Short IDs"),
                 ),
-                MenuItem::item(
-                    format!("revert:{}", ids.join(",")),
-                    tr!("Revert {count} Commits…", count = n),
-                ),
+                MenuItem::separator("-copy"),
             ];
-            // マージはパッチにできない（git format-patch は飛ばす）。押せない項目で残す。古い順に（GTK4 版と同じ）。
-            let title = tr!("Save {count} Commits as Patches…", count = n);
-            if self.multi.iter().any(|(_, merge)| *merge) {
-                items.push(MenuItem::disabled("patch-merge", title));
-            } else {
-                items.push(MenuItem::item(
-                    format!("patch:{}", oldest_first.join(",")),
-                    title,
-                ));
-            }
-            // 連続した行（first-parent で続いているかはコアで確かめる）なら、1 つにまとめられる（GTK4 版と同じ）。
+            // 連続した行（first-parent で続いているかはコアで確かめる）なら、1 つにまとめられる（編集の項目なので、
+            // できなければ出さない）。
             if self.multi_consecutive && !self.multi.iter().any(|(_, merge)| *merge) {
                 items.push(MenuItem::item(
                     format!("edit-combine-many:{}", ids.join(",")),
                     tr!("Combine {count} Commits…", count = n),
                 ));
+                items.push(MenuItem::separator("-combine"));
             }
-            // 今のコミット以外を、上の行から順に 1 つのコミットで merge する（octopus。GTK4 版と同じ）。
+            items.push(MenuItem::item(
+                format!("cherry-pick:{}", oldest_first.join(",")),
+                tr!("Cherry-pick {count} Commits…", count = n),
+            ));
+            items.push(MenuItem::item(
+                format!("revert:{}", ids.join(",")),
+                tr!("Revert {count} Commits…", count = n),
+            ));
+            // 今のコミット以外を、上の行から順に 1 つのコミットで merge する（octopus）。
             let sources = crate::merge_several::sources(self.refs.as_ref().map(|r| &r.refs), &ids);
             if sources.len() > 1 {
                 items.push(MenuItem::item(
@@ -18326,30 +18332,45 @@ impl Root {
                         branch = self.head_name()
                     ),
                 ));
+            } else {
+                // merge できる数は 1 以下なので、数は出さない。
+                items.push(
+                    MenuItem::disabled(
+                        "merge-several-none",
+                        tr!("Merge into {branch}…", branch = self.head_name()),
+                    )
+                    .with_tooltip(tr!(
+                        "Select two or more commits other than the current one."
+                    )),
+                );
             }
             items.push(MenuItem::separator("-pick"));
+            // マージはパッチにできない（git format-patch は飛ばす）。古い順に。
+            let title = tr!("Save {count} Commits as Patches…", count = n);
+            if self.multi.iter().any(|(_, merge)| *merge) {
+                items.push(
+                    MenuItem::disabled("patch-merge", title)
+                        .with_tooltip(tr!("A merge can’t be saved as a patch.")),
+                );
+            } else {
+                items.push(MenuItem::item(
+                    format!("patch:{}", oldest_first.join(",")),
+                    title,
+                ));
+            }
             // 2 つなら、それぞれを先端とする 2 つの版として比べられる（rebase の前と後など）。
+            let range_diff = tr!("Compare as Two Versions (Range Diff)");
             if let [newer, older] = &ids[..] {
                 items.push(MenuItem::item(
                     format!("rangediff:{older}...{newer}"),
-                    tr!("Compare as Two Versions (Range Diff)"),
+                    range_diff,
                 ));
-                items.push(MenuItem::separator("-copy"));
+            } else {
+                items.push(
+                    MenuItem::disabled("rangediff-none", range_diff)
+                        .with_tooltip(tr!("Select exactly two commits.")),
+                );
             }
-            items.push(MenuItem::item(
-                format!("copy:{}", ids.join("\n")),
-                tr!("Copy Commit IDs"),
-            ));
-            items.push(MenuItem::item(
-                format!(
-                    "copy:{}",
-                    ids.iter()
-                        .map(|id| &id[..id.len().min(8)])
-                        .collect::<Vec<_>>()
-                        .join("\n")
-                ),
-                tr!("Copy Short IDs"),
-            ));
             return items;
         }
         let Some((id, labels)) = &self.selected else {
