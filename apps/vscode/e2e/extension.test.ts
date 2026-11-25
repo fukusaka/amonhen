@@ -2174,7 +2174,7 @@ async function detailsCopyFlow(): Promise<void> {
   };
   assert.equal(await copied('amonhen.details.copySubject'), git('log', '-1', '--format=%s', oid).trim());
   assert.equal(await copied('amonhen.details.copyMessage'), git('log', '-1', '--format=%B', oid).trim());
-  assert.equal(await copied('amonhen.details.copyShortId'), oid.slice(0, 7));
+  assert.equal(await copied('amonhen.details.copyShortId'), oid.slice(0, 8));
   assert.equal(await copied('amonhen.details.copyShowCommand'), `git show ${oid}`);
   // History の行の右クリック: このコミットを指すブランチの名前（HEAD のブランチ 1 つなら選ばずにそのまま）
   const branch = git('symbolic-ref', '--short', 'HEAD').trim();
