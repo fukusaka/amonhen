@@ -128,7 +128,7 @@ GTK4 のアプリは macOS のアプリと同じふるまいをめざす。わ�
 | Accounts: GitHub（CI の状態・アバター） | ✓ | ✓ | ✓ | — | n/a | — |  |
 | Appearance: History の順・1 行・行の項目・アバター | ✓ | ✓ | ✓ | n/a | n/a | n/a | TUI: `o`・`z` で、その回だけ順と畳み方を変える。 |
 | Appearance: フォント・グラフの色 | — | — | — | n/a | n/a | n/a |  |
-| Theme: 窓の背景（透過とぼかし・背景画像・ツールバーの色・リポジトリごと） | ✓ | ✓ | ✓ | n/a | n/a | n/a | GTK4: ぼかしはない（GNOME では窓の後ろをぼかせない）。透かすにはコンポジタが要る。<br>Windows: ぼかしの強さは Acrylic で決まっている。 |
+| Theme: 窓の背景（透過とぼかし・背景画像・ツールバーの色・リポジトリごと） | ✓ | ✓ | ✓ | n/a | n/a | n/a | GTK4: ぼかしはない（GNOME で窓の後ろをぼかせるのは GNOME 51 と GTK 4.24 から。`ext-background-effect-v1` を使うが、アプリはまだ使っていない）。透かすにはコンポジタが要る。<br>Windows: ぼかしの強さは Acrylic で決まっている。 |
 | Theme: 構文と差分の色（内蔵のテーマ・VSCode のテーマ・差分は標準の色） | ✓ | ✓ | ✓ | n/a | n/a | n/a | VSCode: VSCode 自身のテーマに従う。<br>Windows: Windows のアプリ モード（明るい・暗い）に合わせ、外観ごとにテーマを選ぶ。<br>TUI: 端末の色に従う。 |
 | Diff & Merge: 開いたときに迷わないコンフリクトを解く | ✓ | ✓ | ✓ | n/a | n/a | n/a |  |
 | Diff & Merge: unified/split・空白・前後の行・折り返し・タブの幅 | — | — | — | — | n/a | n/a |  |

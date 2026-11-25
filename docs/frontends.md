@@ -128,7 +128,7 @@ The GTK4 app aims to behave like the macOS app. These are the only intended diff
 | Accounts: GitHub (CI status, avatars) | ✓ | ✓ | ✓ | — | n/a | — |  |
 | Appearance: History order, one line, row items, avatars | ✓ | ✓ | ✓ | n/a | n/a | n/a | TUI: `o` and `z` change the order and folding for the run. |
 | Appearance: fonts, graph colors | — | — | — | n/a | n/a | n/a |  |
-| Theme: window background (transparency and blur, image, toolbar tint, per repository) | ✓ | ✓ | ✓ | n/a | n/a | n/a | GTK4: No blur (GNOME can't blur what is behind the window); a see-through window needs a compositor.<br>Windows: The blur strength is fixed by Acrylic. |
+| Theme: window background (transparency and blur, image, toolbar tint, per repository) | ✓ | ✓ | ✓ | n/a | n/a | n/a | GTK4: No blur (GNOME can blur behind a window only from GNOME 51 with GTK 4.24, through `ext-background-effect-v1`, which the app does not use yet); a see-through window needs a compositor.<br>Windows: The blur strength is fixed by Acrylic. |
 | Theme: syntax and diff colors (built-in themes, VSCode themes, standard diff colors) | ✓ | ✓ | ✓ | n/a | n/a | n/a | VSCode: follows VSCode's own theme.<br>Windows: The app follows Windows' app mode (light or dark), with a theme for each.<br>TUI: Follows the terminal's colors. |
 | Diff & Merge: resolve unambiguous conflicts on open | ✓ | ✓ | ✓ | n/a | n/a | n/a |  |
 | Diff & Merge: unified/split, whitespace, context, wrap, tab width | — | — | — | — | n/a | n/a |  |
