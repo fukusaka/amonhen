@@ -136,6 +136,8 @@ export type FileView =
       markdown?: unknown[];
       /** SVG なら、絵とモバイルの確認 */
       svg?: { image: ImageBlob; check?: SvgCheckView };
+      /** Android の VectorDrawable なら、描いた絵と、絵の下に添える説明（引けなかった色など） */
+      drawable?: { image: ImageBlob; notes: string[] };
     }
   | { kind: 'image'; image: ImageBlob }
   | { kind: 'binary'; bytes: number }

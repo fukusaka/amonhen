@@ -3226,7 +3226,8 @@ body.monospace-message .details-head pre.body {
   height: auto;
 }
 
-.markdown .md-diagram-note {
+.markdown .md-diagram-note,
+.image-footnote {
   margin-top: 4px;
   font-size: 0.9em;
   white-space: pre-wrap;

@@ -32,8 +32,8 @@ export interface AllFilesOptions {
   onShowChange?: (path: string) => void;
 }
 
-/** 見せ方（Markdown・SVG・モバイルの部品）は、ファイルを替えても覚えておく（アプリと同じ） */
-const lastMode: { markdown?: string; svg?: string } = {};
+/** 見せ方（Markdown・SVG・VectorDrawable・モバイルの部品）は、ファイルを替えても覚えておく（アプリと同じ） */
+const lastMode: { markdown?: string; svg?: string; drawable?: string } = {};
 let lastRenderer = 'android';
 
 /** 中身に並べる行の上限（それより長いファイルはエディタで） */
@@ -55,7 +55,7 @@ export function createAllFiles(oid: string, changes: readonly ChangedFile[], opt
   const folders = new Map<string, HTMLElement>();
   let selected: string | undefined;
   let selectedRow: HTMLElement | undefined;
-  /** 開いているファイルの絵（図・数式）が、画面の色で描いたものか（テーマが変わったら求め直す） */
+  /** 開いているファイルの絵（図・数式・VectorDrawable）が、画面の色で描いたものか（テーマが変わったら求め直す） */
   let themed = false;
   // テーマが変わったら、画面の色で描いた絵を描き直す（アプリと同じ）
   const observer = new MutationObserver(() => {
@@ -128,7 +128,7 @@ export function createAllFiles(oid: string, changes: readonly ChangedFile[], opt
     requestFile(full);
   }
 
-  /** ファイルの中身を求める（図・数式の絵は、今の画面の色と時間帯で描かせる） */
+  /** ファイルの中身を求める（図・数式・VectorDrawable の絵は、今の画面の色と時間帯で描かせる） */
   function requestFile(full: string): void {
     post({ type: 'treeFile', oid, path: full, colors: pictureColors(), utcOffset: -new Date().getTimezoneOffset() });
   }
@@ -200,7 +200,7 @@ export function createAllFiles(oid: string, changes: readonly ChangedFile[], opt
 
   function showFile(path: string, view: FileView & FileViewNote): void {
     if (path !== selected) return;
-    themed = view.kind === 'text' && view.markdown !== undefined && hasPictures(view.markdown);
+    themed = view.kind === 'text' && (view.drawable !== undefined || (view.markdown !== undefined && hasPictures(view.markdown)));
     const head = el('div', 'file-pane-head');
     // パスとコミット（アプリの「パス @ 短い ID」）。消したファイルは前の版を出すので、そう添える
     head.append(el('span', 'path', path), el('span', 'at', `@ ${oid.slice(0, 7)}`));
@@ -248,8 +248,16 @@ export function createAllFiles(oid: string, changes: readonly ChangedFile[], opt
             modes.push(['Mobile', 'What breaks on a mobile SVG renderer, beside an approximation of it', () => renderSvgCheck(svg.image, check)]);
           }
         }
-        modes.push(['Text', 'Show the text with this commit’s changes marked', () => renderLines(view.lines, view.removedAtEnd)]);
-        const kind = view.markdown ? 'markdown' : view.svg ? 'svg' : undefined;
+        if (view.drawable) {
+          const drawable = view.drawable;
+          modes.push(['Picture', 'Draw the VectorDrawable', () => drawablePicture(drawable.image, drawable.notes)]);
+        }
+        modes.push([
+          'Text',
+          view.drawable ? 'Show the XML source' : 'Show the text with this commit’s changes marked',
+          () => renderLines(view.lines, view.removedAtEnd),
+        ]);
+        const kind = view.markdown ? 'markdown' : view.svg ? 'svg' : view.drawable ? 'drawable' : undefined;
         if (modes.length > 1) {
           const switcher = el('span', 'segmented');
           const pick = (i: number) => {
@@ -313,8 +321,15 @@ function renderLines(lines: readonly ViewLine[], removedAtEnd?: number): HTMLEle
   return box;
 }
 
-/** 拡大縮小できる画像（ボタン、⌘・Ctrl を押してスクロール） */
-function zoomableImage(image: ImageBlob): HTMLElement {
+/** VectorDrawable の絵（大きさは dp）と、絵の下に添える説明（引けなかった色など。アプリと同じ） */
+function drawablePicture(image: ImageBlob, notes: readonly string[]): HTMLElement {
+  const box = zoomableImage(image, 'dp');
+  if (notes.length) box.append(el('div', 'image-footnote', notes.join('\n')));
+  return box;
+}
+
+/** 拡大縮小できる画像（ボタン、⌘・Ctrl を押してスクロール）。`unit` は大きさの単位（VectorDrawable の dp） */
+function zoomableImage(image: ImageBlob, unit = ''): HTMLElement {
   const box = el('div', 'zoom-image');
   const bar = el('div', 'zoom-bar');
   const frame = el('div', 'zoom-frame');
@@ -371,7 +386,7 @@ function zoomableImage(image: ImageBlob): HTMLElement {
   );
   const info = el('div', 'image-caption');
   img.addEventListener('load', () => {
-    info.textContent = `${img.naturalWidth} × ${img.naturalHeight} · ${sizeText(image.bytes)}`;
+    info.textContent = `${img.naturalWidth} × ${img.naturalHeight}${unit ? ` ${unit}` : ''} · ${sizeText(image.bytes)}`;
     apply();
   });
   apply();
