@@ -6,7 +6,7 @@
 import * as vscode from 'vscode';
 import type { Json } from '../daemon/client.ts';
 import { daemonFor } from '../daemon/connection.ts';
-import { tagStateText, tagTargets, type TagRemotes } from '../git/tagRemotes.ts';
+import { manyTagTargets, tagStateText, type TagRemotes } from '../git/tagRemotes.ts';
 import type { RepositoryManager } from '../state/manager.ts';
 import { shortName } from '../state/operations.ts';
 import type { Repository } from '../state/repository.ts';
@@ -30,14 +30,31 @@ async function run(repo: Repository, command: Json, title: string): Promise<Json
   return reply;
 }
 
-/** 選ぶリモート（1 つしかなければ聞かない） */
-async function pickRemote(remotes: string[], title: string, describe: (remote: string) => string): Promise<string | undefined> {
-  if (remotes.length <= 1) return remotes[0];
+/**
+ * 送る・消す先のリモートと、そこで扱うタグ（1 つしかなければ聞かない）。タグが 1 つならリモートでの様子を、
+ * いくつもならそのリモートで扱う数を添える
+ */
+async function pickTarget(
+  targets: { remote: string; tags: string[] }[],
+  tags: readonly string[],
+  info: TagRemotes,
+  title: string,
+): Promise<{ remote: string; tags: string[] } | undefined> {
+  if (targets.length <= 1) return targets[0];
   const picked = await vscode.window.showQuickPick(
-    remotes.map((r) => ({ label: r, description: describe(r) })),
+    targets.map((t) => ({
+      label: t.remote,
+      description: tags.length === 1 ? tagStateText(info, tags[0]!, t.remote) : `${t.tags.length} of ${tags.length} tags`,
+      target: t,
+    })),
     { title, placeHolder: 'Remote' },
   );
-  return picked?.label;
+  return picked?.target;
+}
+
+/** 知らせに書くタグ（1 つなら名前、いくつもなら数） */
+function tagsText(tags: readonly string[]): string {
+  return tags.length === 1 ? tags[0]! : `${tags.length} tags`;
 }
 
 /** git のリモートの名前に使えるか（空白・制御文字、`/` で始まる・終わる、`..` などは使えない） */
@@ -50,22 +67,28 @@ function remoteNameProblem(name: string, taken: readonly string[]): string | und
 }
 
 export function registerTagCommands(manager: RepositoryManager, sidebar: SidebarProvider): vscode.Disposable {
-  /** タグのコマンド。今のリモートでの様子を読み直してから決める（印は最後の読み込みの時点のもの） */
-  const tagCommand = (id: string, fn: (repo: Repository, tag: string, info: TagRemotes) => Promise<void>) =>
-    vscode.commands.registerCommand(id, async (node?: Node) => {
-      const repo = manager.current;
-      if (!repo || node?.kind !== 'tag') return;
-      const tag = shortName(node.ref.name);
-      try {
-        const info = (await run(repo, { op: 'tagRemotes' }, 'Read tags on remotes'))['info'] as unknown as TagRemotes;
-        await fn(repo, tag, info);
-      } catch (err) {
-        showError(err);
-      } finally {
-        await repo.refresh();
-        await sidebar.tagMarks.reload();
-      }
-    });
+  /**
+   * タグのコマンド。今のリモートでの様子を読み直してから決める（印は最後の読み込みの時点のもの）。いくつも選んで
+   * いれば、選んだタグすべて（アプリの「… N Tags」）
+   */
+  const tagCommand = (ids: string[], fn: (repo: Repository, tags: string[], info: TagRemotes) => Promise<void>) =>
+    ids.map((id) =>
+      vscode.commands.registerCommand(id, async (node?: Node, selected?: Node[]) => {
+        const repo = manager.current;
+        const nodes = selected && selected.length > 1 ? selected : node ? [node] : [];
+        const tags = nodes.flatMap((n) => (n.kind === 'tag' ? [shortName(n.ref.name)] : []));
+        if (!repo || tags.length === 0) return;
+        try {
+          const info = (await run(repo, { op: 'tagRemotes' }, 'Read tags on remotes'))['info'] as unknown as TagRemotes;
+          await fn(repo, tags, info);
+        } catch (err) {
+          showError(err);
+        } finally {
+          await repo.refresh();
+          await sidebar.tagMarks.reload();
+        }
+      }),
+    );
   const remoteCommand = (id: string, fn: (repo: Repository, remote: string) => Promise<void>) =>
     vscode.commands.registerCommand(id, async (node?: Node) => {
       const repo = manager.current;
@@ -82,63 +105,94 @@ export function registerTagCommands(manager: RepositoryManager, sidebar: Sidebar
   const remoteNames = (repo: Repository) => (repo.current.remotes ?? []).map((r) => r.name);
 
   return vscode.Disposable.from(
-    tagCommand('amonhen.tag.push', async (repo, tag, info) => {
-      const remotes = tagTargets(info, tag).push;
-      if (remotes.length === 0) {
-        void vscode.window.showInformationMessage(`Every remote has ${tag}`);
+    // リモートと話す操作は先に聞く（送ったものは Undo では戻せない）
+    ...tagCommand(['amonhen.tag.push', 'amonhen.tags.push'], async (repo, tags, info) => {
+      const targets = manyTagTargets(info, tags).push;
+      if (targets.length === 0) {
+        void vscode.window.showInformationMessage(tags.length === 1 ? `Every remote has ${tags[0]}` : 'Every remote has these tags');
         return;
       }
-      const remote = await pickRemote(remotes, `Push ${tag} to`, (r) => tagStateText(info, tag, r));
-      if (!remote) return;
-      await run(repo, { op: 'pushTags', remote, names: [tag] }, `Push ${tag} to ${remote}`);
-      vscode.window.setStatusBarMessage(`$(check) Pushed ${tag} to ${remote}`, 5000);
+      const target = await pickTarget(targets, tags, info, tags.length === 1 ? `Push ${tags[0]} to` : `Push ${tags.length} tags to`);
+      if (!target) return;
+      const { remote, tags: names } = target;
+      const answer = await vscode.window.showWarningMessage(
+        names.length === 1 ? `Push ${names[0]} to ${remote}?` : `Push ${names.length} tags to ${remote}?`,
+        { modal: true, detail: `${names.join('\n')}\n\nEveryone who fetches from ${remote} gets them. ${CANT_UNDO}` },
+        'Push',
+      );
+      if (answer !== 'Push') return;
+      await run(repo, { op: 'pushTags', remote, names }, `Push ${tagsText(names)} to ${remote}`);
+      vscode.window.setStatusBarMessage(`$(check) Pushed ${tagsText(names)} to ${remote}`, 5000);
     }),
     // リモートにある同じ名前の別のタグを、手元のもので置き換える（fetch した人みんなに効くので確かめる）
-    tagCommand('amonhen.tag.replace', async (repo, tag, info) => {
-      const remote = await pickRemote(tagTargets(info, tag).replace, `Replace ${tag} on`, (r) => tagStateText(info, tag, r));
-      if (!remote) return;
+    ...tagCommand(['amonhen.tag.replace', 'amonhen.tags.replace'], async (repo, tags, info) => {
+      const targets = manyTagTargets(info, tags).replace;
+      if (targets.length === 0) {
+        void vscode.window.showInformationMessage('No remote has a different tag with these names');
+        return;
+      }
+      const target = await pickTarget(targets, tags, info, tags.length === 1 ? `Replace ${tags[0]} on` : `Replace ${tags.length} tags on`);
+      if (!target) return;
+      const { remote, tags: names } = target;
       const answer = await vscode.window.showWarningMessage(
-        `Replace ${tag} on ${remote}?`,
+        names.length === 1 ? `Replace ${names[0]} on ${remote}?` : `Replace ${names.length} tags on ${remote}?`,
         {
           modal: true,
-          detail: `${remote} has a different tag with this name; yours replaces it for everyone who fetches. ${CANT_UNDO}`,
+          detail:
+            (names.length === 1 ? '' : `${names.join('\n')}\n`) +
+            `${remote} has a different tag with this name; yours replaces it for everyone who fetches. ${CANT_UNDO}`,
         },
         'Replace',
       );
       if (answer !== 'Replace') return;
-      await run(repo, { op: 'pushTags', remote, names: [tag], force: true }, `Replace ${tag} on ${remote}`);
-      vscode.window.setStatusBarMessage(`$(check) Replaced ${tag} on ${remote}`, 5000);
+      await run(repo, { op: 'pushTags', remote, names, force: true }, `Replace ${tagsText(names)} on ${remote}`);
+      vscode.window.setStatusBarMessage(`$(check) Replaced ${tagsText(names)} on ${remote}`, 5000);
     }),
     // 手元のタグを消す（注釈付きのタグもオブジェクトごと Undo で戻る）。リモートのものは残る
-    tagCommand('amonhen.tag.delete', async (repo, tag) => {
+    ...tagCommand(['amonhen.tag.delete', 'amonhen.tags.delete'], async (repo, tags) => {
+      const one = tags.length === 1;
       const answer = await vscode.window.showWarningMessage(
-        `Delete tag ${tag}?`,
-        { modal: true, detail: 'The remotes keep theirs. You can Undo this.' },
-        'Delete',
-      );
-      if (answer !== 'Delete') return;
-      await run(repo, { op: 'deleteTag', name: tag }, `Delete tag ${tag}`);
-      void vscode.window.showInformationMessage(`Deleted tag ${tag}`, 'Undo').then((choice) => {
-        if (choice === 'Undo') void vscode.commands.executeCommand('amonhen.undo');
-      });
-    }),
-    tagCommand('amonhen.tag.deleteFromRemote', async (repo, tag, info) => {
-      const remote = await pickRemote(tagTargets(info, tag).onRemote, `Delete ${tag} from`, (r) => tagStateText(info, tag, r));
-      if (!remote) return;
-      const unchecked = !info.remotes.some((r) => r.name === remote && r.checked !== null);
-      const answer = await vscode.window.showWarningMessage(
-        `Delete ${tag} from ${remote}?`,
+        one ? `Delete tag ${tags[0]}?` : `Delete ${tags.length} tags?`,
         {
           modal: true,
-          detail:
-            `Everyone who fetches from ${remote} loses it; yours stays. ${CANT_UNDO}` +
-            (unchecked ? ` Whether ${remote} has it hasn’t been checked yet (Fetch reads it).` : ''),
+          detail: one
+            ? 'The remotes keep theirs. You can Undo this.'
+            : `${tags.join('\n')}\n\nThe remotes keep theirs. You can undo this, one tag at a time.`,
         },
         'Delete',
       );
       if (answer !== 'Delete') return;
-      await run(repo, { op: 'pushTags', remote, names: [tag], delete: true }, `Delete ${tag} from ${remote}`);
-      vscode.window.setStatusBarMessage(`$(check) Deleted ${tag} from ${remote}`, 5000);
+      for (const tag of tags) await run(repo, { op: 'deleteTag', name: tag }, `Delete tag ${tag}`);
+      void vscode.window.showInformationMessage(one ? `Deleted tag ${tags[0]}` : `Deleted ${tags.length} tags`, 'Undo').then((choice) => {
+        if (choice === 'Undo') void vscode.commands.executeCommand('amonhen.undo');
+      });
+    }),
+    ...tagCommand(['amonhen.tag.deleteFromRemote', 'amonhen.tags.deleteFromRemote'], async (repo, tags, info) => {
+      const targets = manyTagTargets(info, tags).onRemote;
+      if (targets.length === 0) {
+        void vscode.window.showInformationMessage(tags.length === 1 ? `No remote has ${tags[0]}` : 'No remote has these tags');
+        return;
+      }
+      const target = await pickTarget(targets, tags, info, tags.length === 1 ? `Delete ${tags[0]} from` : `Delete ${tags.length} tags from`);
+      if (!target) return;
+      const { remote, tags: names } = target;
+      const one = names.length === 1;
+      const unchecked = !info.remotes.some((r) => r.name === remote && r.checked !== null);
+      const answer = await vscode.window.showWarningMessage(
+        one ? `Delete ${names[0]} from ${remote}?` : `Delete ${names.length} tags from ${remote}?`,
+        {
+          modal: true,
+          detail: one
+            ? `Everyone who fetches from ${remote} loses it; yours stays. ${CANT_UNDO}` +
+              (unchecked ? ` Whether ${remote} has it hasn’t been checked yet (Fetch reads it).` : '')
+            : `${names.join('\n')}\n\nEveryone who fetches from ${remote} loses them; yours stay. ${CANT_UNDO}` +
+              (unchecked ? ` Whether ${remote} has them hasn’t been checked yet (Fetch reads it).` : ''),
+        },
+        'Delete',
+      );
+      if (answer !== 'Delete') return;
+      await run(repo, { op: 'pushTags', remote, names, delete: true }, `Delete ${tagsText(names)} from ${remote}`);
+      vscode.window.setStatusBarMessage(`$(check) Deleted ${tagsText(names)} from ${remote}`, 5000);
     }),
 
     // Remotes の見出しから（リモートの行からも）

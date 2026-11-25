@@ -599,6 +599,7 @@ async function tagsAndRemotesFlow(): Promise<void> {
       async () => vscode.commands.executeCommand('amonhen.fetch'),
     );
   const tag = 'e2e-tag';
+  const several = ['e2e-many-a', 'e2e-many-b'];
   const remote = 'e2e-mirror';
   try {
     // まだ origin にないタグは「どのリモートにもない」。Push で origin に置く
@@ -607,7 +608,18 @@ async function tagsAndRemotesFlow(): Promise<void> {
     let found = await tagIs(tag, 'どのリモートにもない', (i) => String(i.description).startsWith('not on any remote'));
     assert.match(String(found.item.contextValue), /;push/);
     assert.doesNotMatch(String(found.item.contextValue), /;onRemote/);
-    await vscode.commands.executeCommand('amonhen.tag.push', found.node);
+    // リモートと話すので先に聞く（アプリと同じ）
+    let pushAsked = '';
+    await withWindow(
+      {
+        showWarningMessage: async (message: string) => {
+          pushAsked = message;
+          return 'Push';
+        },
+      },
+      async () => vscode.commands.executeCommand('amonhen.tag.push', found.node),
+    );
+    assert.equal(pushAsked, `Push ${tag} to origin?`);
     assert.equal(inOrigin('rev-parse', tag).trim(), git('rev-parse', tag).trim());
     found = await tagIs(tag, 'origin にある', (i) => /;onRemote/.test(String(i.contextValue)));
     assert.doesNotMatch(String(found.item.contextValue), /;push/);
@@ -640,6 +652,31 @@ async function tagsAndRemotesFlow(): Promise<void> {
     await vscode.commands.executeCommand('amonhen.undo');
     await until('タグの Undo', () => git('tag', '--list', tag).trim() === tag);
     assert.equal(git('rev-parse', tag).trim(), oid);
+
+    // いくつも選んだタグは、まとめて push・リモートから削除・手元の削除（アプリの「… N Tags」）
+    for (const t of several) git('tag', t);
+    await vscode.commands.executeCommand('amonhen.refresh');
+    const picked = await until('選んだタグの行', () => {
+      const nodes = several.map((t) => tagItem(t)?.node);
+      return nodes.every((n) => n) && (nodes as NonNullable<(typeof nodes)[number]>[]);
+    });
+    const titles: string[] = [];
+    const answer = (button: string) => ({
+      showWarningMessage: async (message: string) => {
+        titles.push(message);
+        return button;
+      },
+      showInformationMessage: async () => undefined,
+    });
+    await withWindow(answer('Push'), async () => vscode.commands.executeCommand('amonhen.tags.push', picked[0], picked));
+    assert.equal(titles.at(-1), 'Push 2 tags to origin?');
+    for (const t of several) assert.equal(inOrigin('rev-parse', t).trim(), git('rev-parse', t).trim());
+    await withWindow(answer('Delete'), async () => vscode.commands.executeCommand('amonhen.tags.deleteFromRemote', picked[0], picked));
+    assert.equal(titles.at(-1), 'Delete 2 tags from origin?');
+    assert.equal(inOrigin('tag', '--list', 'e2e-many-*').trim(), '');
+    await withWindow(answer('Delete'), async () => vscode.commands.executeCommand('amonhen.tags.delete', picked[0], picked));
+    assert.equal(titles.at(-1), 'Delete 2 tags?');
+    assert.equal(git('tag', '--list', 'e2e-many-*').trim(), '');
 
     // SSH の鍵で署名したタグ（git 2.34 から）は、allowed signers に載っていれば Verified
     const [major, minor] = git('--version').match(/(\d+)\.(\d+)/)!.slice(1).map(Number) as [number, number];
@@ -683,8 +720,8 @@ async function tagsAndRemotesFlow(): Promise<void> {
     );
     assert.equal(git('remote').split('\n').includes(`${remote}-2`), false);
   } finally {
-    for (const t of [tag, 'e2e-signed']) if (git('tag', '--list', t).trim()) git('tag', '-d', t);
-    if (inOrigin('tag', '--list', tag).trim()) inOrigin('tag', '-d', tag);
+    for (const t of [tag, 'e2e-signed', ...several]) if (git('tag', '--list', t).trim()) git('tag', '-d', t);
+    for (const t of [tag, ...several]) if (inOrigin('tag', '--list', t).trim()) inOrigin('tag', '-d', t);
     for (const r of [remote, `${remote}-2`]) if (git('remote').split('\n').includes(r)) git('remote', 'remove', r);
     try {
       git('config', '--unset', 'gpg.ssh.allowedSignersFile');

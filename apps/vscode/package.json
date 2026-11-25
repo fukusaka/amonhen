@@ -257,6 +257,26 @@
         "category": "Amon Hen"
       },
       {
+        "command": "amonhen.tags.push",
+        "title": "Push Tags…",
+        "category": "Amon Hen"
+      },
+      {
+        "command": "amonhen.tags.replace",
+        "title": "Replace Tags on Remote…",
+        "category": "Amon Hen"
+      },
+      {
+        "command": "amonhen.tags.delete",
+        "title": "Delete Tags…",
+        "category": "Amon Hen"
+      },
+      {
+        "command": "amonhen.tags.deleteFromRemote",
+        "title": "Delete Tags from Remote…",
+        "category": "Amon Hen"
+      },
+      {
         "command": "amonhen.remote.add",
         "title": "Add Remote…",
         "category": "Amon Hen",
@@ -1250,6 +1270,26 @@
           "group": "6_tag@2"
         },
         {
+          "command": "amonhen.tags.push",
+          "when": "view == amonhen.sidebar && viewItem =~ /^tag(;\\w+)*$/ && amonhen.engine && listMultiSelection",
+          "group": "5_tag@1"
+        },
+        {
+          "command": "amonhen.tags.replace",
+          "when": "view == amonhen.sidebar && viewItem =~ /^tag(;\\w+)*$/ && amonhen.engine && listMultiSelection",
+          "group": "5_tag@2"
+        },
+        {
+          "command": "amonhen.tags.delete",
+          "when": "view == amonhen.sidebar && viewItem =~ /^tag(;\\w+)*$/ && amonhen.engine && listMultiSelection",
+          "group": "6_tag@1"
+        },
+        {
+          "command": "amonhen.tags.deleteFromRemote",
+          "when": "view == amonhen.sidebar && viewItem =~ /^tag(;\\w+)*$/ && amonhen.engine && listMultiSelection",
+          "group": "6_tag@2"
+        },
+        {
           "command": "amonhen.amRetryThreeWay",
           "when": "view == amonhen.sidebar && viewItem == sequence.am.retry",
           "group": "inline@0"
@@ -1866,6 +1906,22 @@
         },
         {
           "command": "amonhen.tag.push",
+          "when": "false"
+        },
+        {
+          "command": "amonhen.tags.push",
+          "when": "false"
+        },
+        {
+          "command": "amonhen.tags.replace",
+          "when": "false"
+        },
+        {
+          "command": "amonhen.tags.delete",
+          "when": "false"
+        },
+        {
+          "command": "amonhen.tags.deleteFromRemote",
           "when": "false"
         },
         {
