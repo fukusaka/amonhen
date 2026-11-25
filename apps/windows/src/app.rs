@@ -366,6 +366,9 @@ struct Root {
     /// Activity の時計の数え（開くたびに替わり、前の時計を止める）。
     activity_clock: u64,
     diff_panel: ElementRef<SwapChainPanel>,
+    /// Push の確認（ContentDialog）の中身と、その中の差分の欄（右の列とは別に描く）。
+    push_root: ElementRef<Grid>,
+    push_panel: ElementRef<SwapChainPanel>,
     diff_area: ElementRef<Grid>,
     /// 差分で右クリックしたファイル（見出しのメニューの中身）。
     diff_file: Option<crate::data::DiffFile>,
@@ -1621,6 +1624,8 @@ impl Component for Root {
             toolbar_defaults: ElementRef::new(),
             activity_clock: 0,
             diff_panel: ElementRef::new(),
+            push_root: ElementRef::new(),
+            push_panel: ElementRef::new(),
             diff_area: ElementRef::new(),
             diff_file: None,
             diff_rows: None,
@@ -9159,6 +9164,7 @@ impl Root {
                     scroll_y: 0.0,
                     dirty: true,
                 },
+                push_diff: None,
                 sender,
                 refs_sent: None,
                 status_sent: None,
@@ -9701,8 +9707,6 @@ impl Root {
                 self.activity_view(context),
                 self.repositories_view(context),
                 self.repo_settings_view(context),
-                // Push の確認は、どの画面の上にも重ねる。
-                self.push_view(context),
                 // 列の境目（動かして幅を変える）。いちばん上に重ねる。
                 View::fragment((
                     if sidebar_width == 0.0 {
@@ -9940,6 +9944,59 @@ impl Root {
                 None
             });
         }
+        // Push の確認の中の差分の欄: 開いている間だけ描き先を持ち、窓の 85% に広げ、ホイールでスクロールする。
+        let push_open = matches!(self.dialog, Some(Dialog::Push { .. }));
+        let (cell, panel, root) = (
+            self.history.clone(),
+            self.push_panel.clone(),
+            self.push_root.clone(),
+        );
+        context.use_effect("push-diff", push_open, move || {
+            if !push_open {
+                return None;
+            }
+            let observer_cell = cell.clone();
+            let observer_panel = panel.clone();
+            let observer = panel.observe_surface(move |event| {
+                let SwapChainPanelEvent::Metrics {
+                    width,
+                    height,
+                    scale_x,
+                    ..
+                } = event
+                else {
+                    return;
+                };
+                with_cell(&observer_cell, |h| {
+                    let pane = h.push_diff.get_or_insert_with(|| DiffPane {
+                        panel: observer_panel.clone(),
+                        area: ElementRef::new(),
+                        surface: None,
+                        scale: 1.0,
+                        attached: false,
+                        input_requested: true,
+                        scroll_y: 0.0,
+                        dirty: true,
+                    });
+                    if let Err(e) = pane.resize(&h.session.renderer, width, height, scale_x) {
+                        h.sender.send(Message::Failed(e));
+                    }
+                });
+            });
+            // 差分の欄に操作を付けるのも、ContentDialog の中に並んでから（`retry_push_fit`）。
+            PUSH_INPUT.with(|p| *p.borrow_mut() = Some(panel.clone()));
+            // 中身が ContentDialog の中に並ぶまでは親がないので、描くたびに試し、広げられたら止める。
+            PUSH_FITTED.with(|f| f.set(None));
+            PUSH_FIT.with(|p| *p.borrow_mut() = Some(root.clone()));
+            let cleanup_cell = cell.clone();
+            Some(Box::new(move || {
+                drop(observer);
+                PUSH_WHEEL.with(|w| w.borrow_mut().clear());
+                PUSH_FIT.with(|p| p.borrow_mut().take());
+                PUSH_INPUT.with(|p| p.borrow_mut().take());
+                with_cell(&cleanup_cell, |h| h.push_diff = None);
+            }))
+        });
         let dialog = self.dialog_view(context);
         // 透かすときの地: メニュー・ツールバー・タブ、サイドバー、下の帯は窓の色を透過率の分だけ薄く、読む面
         // （一覧・詳細・差分）は不透明に塗る。透かさなければ窓全体を窓の色で塗る。
@@ -11344,7 +11401,24 @@ impl Root {
                     )
             }
             // Push は窓の中の画面に出す（`push_view`。右の列に中身を出すため）。
-            Some(Dialog::Push { .. }) => dialog.is_open(false).into(),
+            // Push の確認: 窓の 85% の ContentDialog に、上に注意と送った後の絵、左に送るコミット、右に選んだものの
+            // 差分（macOS 版の PushSheet と同じ中身。WinUI の標準の確認の形）。
+            Some(Dialog::Push {
+                title,
+                replace,
+                diverged,
+                ..
+            }) => {
+                let dialog = dialog.is_open(true).title(title.clone()).close_button_text(tr!("Cancel"));
+                let dialog = if *diverged {
+                    dialog.primary_button_text("Pull…").secondary_button_text("Force Push")
+                } else if *replace {
+                    dialog.primary_button_text("Force Push")
+                } else {
+                    dialog.primary_button_text("Push")
+                };
+                dialog.content(self.push_view(context))
+            }
             Some(Dialog::Publish {
                 branch,
                 remotes,
@@ -15858,7 +15932,6 @@ impl Root {
     /// 詳細と同じ表示）に出す。ContentDialog には右の列を入れられないので、Stashes などと同じく窓の中に出す。
     fn push_view(&self, context: &ViewContext<Self>) -> View {
         let Some(Dialog::Push {
-            title,
             message,
             replace,
             diverged,
@@ -15870,7 +15943,8 @@ impl Root {
             PUSH_KEYS.with(|k| k.set(None));
             return View::empty();
         };
-        // Enter は Push か（分かれていれば）Pull…。Force Push は Enter では押せない（macOS 版と同じ）。
+        // Enter は Push か（分かれていれば）Pull…。Force Push は Enter では押せない（macOS 版と同じ。ContentDialog の
+        // 既定のボタンにする。`fit_push_dialog`）。
         PUSH_KEYS.with(|k| k.set(Some(*diverged || !*replace)));
         let upstream = format!("{remote}/{remote_branch}");
         let drawing = self.sync_drawing.as_ref().and_then(|preview| {
@@ -15907,15 +15981,7 @@ impl Root {
             .collect();
         // 上の帯は、ある物だけを鍵付きで並べる（空の場所を挟むと、後から絵が届いたときに reactor が差し込む位置を
         // 誤る）。
-        let mut band: Vec<(String, View)> = vec![(
-            "title".to_owned(),
-            TextBlock::new()
-                .text(title.clone())
-                .font_size(15.0)
-                .font_weight(FontWeight::SEMI_BOLD)
-                .text_wrapping(TextWrapping::Wrap)
-                .into(),
-        )];
+        let mut band: Vec<(String, View)> = Vec::new();
         if !message.is_empty() {
             band.push((
                 "message".to_owned(),
@@ -15933,7 +15999,7 @@ impl Root {
         }
         let top = StackPanel::new()
             .spacing(4.0)
-            .margin(Thickness::new(14.0, 10.0, 14.0, 8.0))
+            .margin(Thickness::new(0.0, 0.0, 0.0, 8.0))
             .children((View::keyed_fragment(band),));
         let red = Color::rgb(0xc0, 0x1c, 0x28);
         let rows = self.push_rows();
@@ -15999,60 +16065,30 @@ impl Root {
         // 行の数が変わったら一覧ごと作り直す（reactor の ListView は消した項目の場所が空いたまま残る）。
         let list = Border::new()
             .grid_row(1)
+            .grid_column(0)
+            .border_thickness(Thickness::new(0.0, 0.0, 1.0, 0.0))
+            .border_brush(Brush::Solid(crate::palette::border()))
             .content(View::keyed_fragment([(format!("{}", rows.len()), list)]));
-        // 下: キャンセル、（分かれていれば Pull…）、Push か Force Push。Force Push は戻せないので、目立たせない。
-        let destructive = *replace || *diverged;
-        let force = *replace;
-        let ok = Button::new().on_click(context.callback(move |()| {
-            Message::DialogClosed(if destructive && !force {
-                ContentDialogResult::Secondary
-            } else {
-                ContentDialogResult::Primary
-            })
-        }));
-        let ok = if destructive {
-            ok
-        } else {
-            ok.style(ButtonStyle::Accent)
-        };
-        let ok = ok.content(TextBlock::new().text(if destructive { "Force Push" } else { "Push" }));
-        let pull: View = if *diverged {
-            Button::new()
-                .on_click(
-                    context.callback(|()| Message::DialogClosed(ContentDialogResult::Primary)),
-                )
-                .style(ButtonStyle::Accent)
-                .content(TextBlock::new().text("Pull…"))
-        } else {
-            View::empty()
-        };
-        let buttons = StackPanel::new()
-            .orientation(Orientation::Horizontal)
-            .horizontal_alignment(HorizontalAlignment::Right)
-            .spacing(8.0)
-            .margin(Thickness::new(14.0, 8.0, 14.0, 10.0))
-            .grid_row(2)
+        // ボタンは ContentDialog のもの（Cancel、Push か Force Push、分かれていれば Pull… と Force Push）。
+        // 窓の大きさに合わせる幅・高さは、開いてから付ける（`fit_push_dialog`）。
+        Grid::new()
+            .element_ref(&self.push_root)
+            .width(1100.0)
+            .height(640.0)
+            .rows([GridLength::Auto, GridLength::Star(1.0)])
+            .columns([GridLength::Pixel(340.0), GridLength::Star(1.0)])
             .children((
-                Button::new()
-                    .on_click(
-                        context.callback(|()| Message::DialogClosed(ContentDialogResult::None)),
-                    )
-                    .content(TextBlock::new().text(tr!("Cancel"))),
-                pull,
-                ok,
-            ));
-        Border::new()
-            .background(Brush::Solid(crate::palette::background()))
-            .grid_column(1)
-            .content(
+                ScrollViewer::new()
+                    .grid_column_span(2)
+                    .max_height(260.0)
+                    .content(top),
+                list,
                 Grid::new()
-                    .rows([GridLength::Auto, GridLength::Star(1.0), GridLength::Auto])
-                    .children((
-                        ScrollViewer::new().max_height(360.0).content(top),
-                        list,
-                        buttons,
-                    )),
-            )
+                    .grid_row(1)
+                    .grid_column(1)
+                    .background(Brush::Solid(crate::palette::background()))
+                    .children((SwapChainPanel::new().element_ref(&self.push_panel),)),
+            ))
     }
 
     /// Repositories の画面の知らせを扱う（状態を変え、要る操作をする）。
@@ -20234,6 +20270,8 @@ struct HistoryView {
     attached: bool,
     input_requested: bool,
     diff: DiffPane,
+    /// Push の確認の中の差分の欄（開いている間だけ。右の列と同じ中身を描く）。
+    push_diff: Option<DiffPane>,
     sender: LocalSender<Message>,
     /// サイドバーに送った ref（同じものは送り直さない）。
     refs_sent: Option<Arc<RefsSnapshot>>,
@@ -20440,6 +20478,7 @@ impl HistoryView {
             tip_sidebar_rows();
         }
         retry_splitters();
+        retry_push_fit();
         retry_place();
         self.take_ownership();
         // 窓の入力（ショートカット・右クリック・サイドバー）は、部品を持ってからつなぐ（後ろのタブ・後ろの窓が、
@@ -20757,6 +20796,23 @@ impl HistoryView {
         if s.data.set_wrap(wrap) {
             s.renderer.forget_diff();
             self.diff.dirty = true;
+        }
+        // Push の確認の中の差分は、右の列と同じ中身（変わったら描き直す。スクロールは別）。
+        if self.diff.dirty
+            && let Some(push) = self.push_diff.as_mut()
+        {
+            push.dirty = true;
+        }
+        if self.front
+            && let Some(push) = self.push_diff.as_mut()
+            && push.dirty
+            && let Some(surface) = push.surface.as_mut()
+        {
+            s.renderer
+                .draw_diff(surface, s.data.shown_content(), push.scroll_y, push.scale)
+                .map_err(|e| format!("差分を描けない: {e}"))?;
+            surface.present().map_err(|e| format!("出せない: {e}"))?;
+            push.dirty = false;
         }
         if self.diff.dirty
             && self.front
@@ -22248,25 +22304,6 @@ fn attach_shortcuts(element: &IInspectable) -> windows_core_reactor::Result<()> 
             shift: down(xaml::VirtualKey::Shift),
             alt: down(xaml::VirtualKey::Menu),
         };
-        // Push の画面: Enter で既定のボタン、Esc でキャンセル（ダイアログと同じ）。
-        if !pressed.control
-            && !pressed.alt
-            && !pressed.shift
-            && let Some(enter) = PUSH_KEYS.with(std::cell::Cell::get)
-        {
-            let result = match key {
-                xaml::VirtualKey::Escape => Some(ContentDialogResult::None),
-                xaml::VirtualKey::Enter if enter => Some(ContentDialogResult::Primary),
-                _ => None,
-            };
-            if let Some(result) = result {
-                let _ = args.SetHandled(true);
-                with_history(|h| {
-                    h.sender.send(Message::DialogClosed(result));
-                });
-                return;
-            }
-        }
         // 修飾キーなしのキー（文字の入力・矢印）は部品に任せる。
         if !pressed.control && !pressed.alt {
             return;
@@ -22422,6 +22459,175 @@ fn tip_sidebar_rows() {
     if let Ok(node) = root.cast::<xaml::DependencyObject>() {
         walk(&node, 40);
     }
+}
+
+thread_local! {
+    /// 開いている Push の確認の中身（閉じたら None）と、最後に合わせた窓の大きさ。
+    static PUSH_FIT: RefCell<Option<ElementRef<Grid>>> = const { RefCell::new(None) };
+    static PUSH_FITTED: std::cell::Cell<Option<(f64, f64)>> = const { std::cell::Cell::new(None) };
+    /// 操作をまだ付けていない、Push の確認の中の差分の欄（付けたら None）。
+    static PUSH_INPUT: RefCell<Option<ElementRef<SwapChainPanel>>> = const { RefCell::new(None) };
+    /// Push の確認の中の差分の欄のホイールと押す操作（閉じたら外す）。
+    static PUSH_WHEEL: std::cell::RefCell<Vec<windows_core_reactor::EventRevoker>> =
+        const { std::cell::RefCell::new(Vec::new()) };
+}
+
+/// Push の確認の中の差分の欄を、ホイールでスクロールする（右の列の差分と同じ速さ）。
+fn attach_push_wheel(element: &IInspectable) -> windows_core_reactor::Result<()> {
+    let ui: xaml::UIElement = element.cast()?;
+    let revoker = ui.PointerWheelChanged(|_, args: Ref<xaml::PointerRoutedEventArgs>| {
+        let Some(args) = args.as_ref() else { return };
+        let Ok(properties) = args
+            .GetCurrentPoint(None::<&xaml::UIElement>)
+            .and_then(|p| p.Properties())
+        else {
+            return;
+        };
+        if properties.IsHorizontalMouseWheel().unwrap_or(false) {
+            return;
+        }
+        let notches = -(properties.MouseWheelDelta().unwrap_or(0) as f32) / 120.0;
+        with_history(|h| {
+            let rows = h.diff_rows();
+            if let Some(pane) = h.push_diff.as_mut() {
+                pane.scroll_by(notches * WHEEL_ROWS * DIFF_ROW_HEIGHT, rows);
+            }
+        });
+        let _ = args.SetHandled(true);
+    })?;
+    // 左で押した: ファイルの見出しなら畳む・開く、木のフォルダなら中ごと（右の列の差分と同じ）。
+    let source = ui.clone();
+    let pressed = ui.PointerPressed(move |_, args: Ref<xaml::PointerRoutedEventArgs>| {
+        let Some(args) = args.as_ref() else { return };
+        let Ok(point) = args.GetCurrentPoint(&source) else {
+            return;
+        };
+        let (Ok(position), Ok(properties)) = (point.Position(), point.Properties()) else {
+            return;
+        };
+        if !properties.IsLeftButtonPressed().unwrap_or(false) {
+            return;
+        }
+        with_history(|h| {
+            let Some(scroll) = h.push_diff.as_ref().map(|p| p.scroll_y) else {
+                return;
+            };
+            let line = ((scroll + position.Y) / DIFF_ROW_HEIGHT).floor();
+            if line < 0.0 {
+                return;
+            }
+            let toggled = match h.diff_line(line as usize) {
+                Some(crate::data::DiffLine::Row(row) | crate::data::DiffLine::Cont(row, _, _)) => {
+                    h.session.data.toggle_file(row as usize)
+                }
+                Some(crate::data::DiffLine::Folder(folder)) => {
+                    let path = h.session.data.commit.as_ref().and_then(|c| {
+                        c.content()
+                            .tree
+                            .and_then(|t| t.folders.get(folder as usize))
+                            .map(|f| f.path.clone())
+                    });
+                    path.is_some_and(|path| h.session.data.toggle_folder(&path))
+                }
+                _ => false,
+            };
+            if toggled {
+                h.sender.send(Message::DiffFilesToggled);
+                h.session.renderer.forget_diff();
+                h.diff.dirty = true;
+                let rows = h.diff_rows();
+                if let Some(pane) = h.push_diff.as_mut() {
+                    pane.scroll_by(0.0, rows);
+                }
+            }
+        });
+        let _ = args.SetHandled(true);
+    })?;
+    PUSH_WHEEL.with(|w| {
+        let mut w = w.borrow_mut();
+        w.clear();
+        w.push(revoker);
+        w.push(pressed);
+    });
+    Ok(())
+}
+
+/// Push の確認（ContentDialog）を窓の 85% に広げる。ContentDialog は既定で幅 548・高さ 756 までなので、中身から
+/// 親をたどって上限を外し、いちばん外（窓いっぱいの Popup の中身）の大きさから中身の大きさを決める（macOS 版の
+/// PushSheet・GTK4 版の広いシートと同じ割合）。
+fn retry_push_fit() {
+    if let Some(panel) = PUSH_INPUT.with(|p| p.borrow().clone())
+        && panel.request_native_element(|result| {
+            if let Ok(element) = result
+                && let Err(e) = attach_push_wheel(&element)
+            {
+                eprintln!("Push の差分に操作を付けられない: {e}");
+            }
+        })
+    {
+        PUSH_INPUT.with(|p| p.borrow_mut().take());
+    }
+    let Some(root) = PUSH_FIT.with(|p| p.borrow().clone()) else {
+        return;
+    };
+    let _ = root.request_native_element(|result| {
+        if let Ok(element) = result {
+            fit_push_dialog(&element);
+        }
+    });
+}
+
+/// Push の確認の中身を、今の窓の大きさに合わせる（開いている間、描くたびに見て、窓の大きさが変われば合わせ
+/// 直す）。まだ ContentDialog の中に並んでいなければ何もしない。
+fn fit_push_dialog(element: &IInspectable) {
+    let Ok(root) = element.cast::<xaml::FrameworkElement>() else {
+        return;
+    };
+    let mut outer: Option<xaml::FrameworkElement> = None;
+    let mut node: Option<xaml::DependencyObject> = element.cast().ok();
+    while let Some(current) = node {
+        let Ok(parent) = xaml::VisualTreeHelper::GetParent(&current) else {
+            break;
+        };
+        if let Ok(framework) = parent.cast::<xaml::FrameworkElement>() {
+            outer = Some(framework);
+        }
+        node = Some(parent);
+    }
+    let Some(outer) = outer else { return };
+    let (width, height) = (
+        outer.ActualWidth().unwrap_or(0.0),
+        outer.ActualHeight().unwrap_or(0.0),
+    );
+    if width <= 0.0 || height <= 0.0 || PUSH_FITTED.with(|f| f.get()) == Some((width, height)) {
+        return;
+    }
+    PUSH_FITTED.with(|f| f.set(Some((width, height))));
+    // ContentDialog の大きさの上限（既定で幅 548・高さ 756）を外し、Enter で押すボタンを決める（Push は色付き。
+    // Force Push だけのときは決めない。分かれていれば Pull…）。
+    let mut node: Option<xaml::DependencyObject> = element.cast().ok();
+    while let Some(current) = node {
+        let Ok(parent) = xaml::VisualTreeHelper::GetParent(&current) else {
+            break;
+        };
+        if let Ok(framework) = parent.cast::<xaml::FrameworkElement>() {
+            let _ = framework.SetMaxWidth(f64::INFINITY);
+            let _ = framework.SetMaxHeight(f64::INFINITY);
+        }
+        if let Ok(dialog) = parent.cast::<xaml::ContentDialog>()
+            && let Some(primary) = PUSH_KEYS.with(std::cell::Cell::get)
+        {
+            let _ = dialog.SetDefaultButton(if primary {
+                xaml::ContentDialogButton::Primary
+            } else {
+                xaml::ContentDialogButton::None
+            });
+        }
+        node = Some(parent);
+    }
+    // 題とボタンの分（およそ 140）を除いた高さ。窓より大きくはしない（ContentDialog は窓の外に出せない）。
+    let _ = root.SetWidth((width * 0.85).max(820.0).min(width - 48.0));
+    let _ = root.SetHeight((height * 0.85 - 140.0).max(340.0).min(height - 160.0));
 }
 
 /// 押した行 `key` の印（指がその印の上にあれば）と、サイドバーの中の位置。
