@@ -730,6 +730,12 @@
         "category": "Amon Hen"
       },
       {
+        "command": "amonhen.renameCurrentBranch",
+        "title": "Rename Branch…",
+        "category": "Amon Hen",
+        "enablement": "amonhen.hasRepository"
+      },
+      {
         "command": "amonhen.compareWithPrevious",
         "title": "Compare with Previous Version",
         "category": "Amon Hen"
@@ -1641,6 +1647,10 @@
         {
           "command": "amonhen.renameBranch",
           "when": "false"
+        },
+        {
+          "command": "amonhen.renameCurrentBranch",
+          "when": "amonhen.hasRepository"
         },
         {
           "command": "amonhen.stash.apply",
