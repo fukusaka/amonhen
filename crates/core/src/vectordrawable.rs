@@ -1,9 +1,11 @@
 //! History の「すべてのファイル」で、Android の VectorDrawable（拡張子が `.xml` で、根が `<vector>`）を絵で見せる。
 //!
 //! 絵は `svgandroid` で SVG に戻して描く。色の参照（`@color/x`）は、同じコミットの、drawable のいちばん近い `res`
-//! フォルダの `values*/` の `<color>`（と `color/x.xml` の色の一覧）から引く。テーマの属性（`?attr/x`）と、
+//! フォルダの `values*/` の `<color>`（と `color/x.xml` の色の一覧）から引く。修飾つきのフォルダは Android と同じ
+//! 順で選ぶ（暗い外観では `-night` を、明るい外観では修飾のないもの・`-notnight` を先に、同じなら新しい `-vN` を先に）。テーマの属性（`?attr/x`）と、
 //! 見つからない参照は引けないので、FE が渡す画面の文字の色（なければ灰色）で描き、そのことを説明に足す。`<animated-vector>` は、動かす前の絵（中に
-//! 書いた `<vector>` か、同じ `res` の `@drawable/x`）を描く。読むのはコミットの中のものだけで、量に上限がある。
+//! 書いた `<vector>` か、同じ `res` の `@drawable/x`。`drawable-night*/` も色と同じ順で選ぶ）を描く。開いたファイル
+//! そのものは差し替えない（見ているのはそのファイル）。読むのはコミットの中のものだけで、量に上限がある。
 
 use std::cell::{OnceCell, RefCell};
 use std::collections::HashMap;
@@ -93,13 +95,14 @@ pub fn is_vector_drawable(path: &str, data: &[u8]) -> bool {
 }
 
 /// コミットの `path` の VectorDrawable（中身 `xml`）を絵にする。色の参照・`<animated-vector>` の参照は `files`
-/// から引く。引けない色は `fallback`（画面の文字の色の `#rrggbb`。テーマの属性はたいてい文字・アイコンの色）、
-/// なければ `FALLBACK_COLOR` で描く。
+/// から引く。`dark` なら暗い外観の資源（`values-night*/` など）を先に引く。引けない色は `fallback`（画面の文字の
+/// 色の `#rrggbb`。テーマの属性はたいてい文字・アイコンの色）、なければ `FALLBACK_COLOR` で描く。
 pub fn picture(
     path: &str,
     xml: &[u8],
     files: &dyn Files,
     fallback: Option<&str>,
+    dark: bool,
 ) -> Result<Picture> {
     if xml.len() > MAX_DRAWABLE_BYTES {
         return Err(tr!("The VectorDrawable is too large to draw").into());
@@ -107,11 +110,12 @@ pub fn picture(
     let res = res_folder(path);
     let mut text = String::from_utf8_lossy(xml).into_owned();
     if root_element(xml) == Some("animated-vector") {
-        text = animated_drawable(text, res.as_deref(), files)?;
+        text = animated_drawable(text, res.as_deref(), files, dark)?;
     }
     let colors = Colors {
         files,
         res: res.as_deref(),
+        dark,
         table: OnceCell::new(),
         themed: RefCell::new(Vec::new()),
         missing: RefCell::new(Vec::new()),
@@ -141,8 +145,13 @@ pub fn picture(
 }
 
 /// `<animated-vector>` の、動かす前の絵の XML。中に書いた `<vector>` ならそのまま（`svgandroid` が中を見る）、
-/// `@drawable/x` なら同じ `res` の `drawable*/x.xml`。
-fn animated_drawable(text: String, res: Option<&str>, files: &dyn Files) -> Result<String> {
+/// `@drawable/x` なら同じ `res` の `drawable*/x.xml`（外観に合うフォルダを先に）。
+fn animated_drawable(
+    text: String,
+    res: Option<&str>,
+    files: &dyn Files,
+    dark: bool,
+) -> Result<String> {
     let nodes = svgandroid::parse_xml(&text);
     let Some(animated) = nodes.iter().find(|n| n.local() == "animated-vector") else {
         return Ok(text);
@@ -165,7 +174,7 @@ fn animated_drawable(text: String, res: Option<&str>, files: &dyn Files) -> Resu
         .ok_or_else(not_found)?;
     let res = res.ok_or_else(not_found)?;
     let file = format!("{name}.xml");
-    for folder in qualified_folders(files, res, "drawable") {
+    for folder in qualified_folders(files, res, "drawable", dark) {
         let has = files
             .list(&join(res, &folder))
             .iter()
@@ -213,17 +222,51 @@ fn join(folder: &str, name: &str) -> String {
     }
 }
 
-/// `res` の中の `kind` と `kind-*` のフォルダ（修飾のないものを先に、あとは名前の順）。
-fn qualified_folders(files: &dyn Files, res: &str, kind: &str) -> Vec<String> {
+/// `res` の中の `kind` と `kind-*` のフォルダを、資源を探す順に（前のものにあればそれを使う）。Android が資源を
+/// 選ぶ順に合わせる: 外観（`night`・`notnight`）は版（`vN`）より先に効くので、
+///
+/// 1. 外観と版だけの修飾のもの。外観が合うもの（暗い外観なら `-night`、明るい外観なら `-notnight`）を、外観を
+///    書かないものより先に。同じなら新しい版を先に（端末は新しいものとみなす）
+/// 2. ほかの修飾（言語・画面の大きさ・密度など。端末に合うかは分からない）もあるもの。中の順は 1 と同じ
+/// 3. 外観が合わないもの（暗い外観の `-notnight`、明るい外観の `-night`）。Android なら選ばないが、ほかに
+///    なければ使う
+///
+/// 残りは名前の順。
+fn qualified_folders(files: &dyn Files, res: &str, kind: &str, dark: bool) -> Vec<String> {
     let prefix = format!("{kind}-");
-    let mut folders: Vec<String> = files
+    let mut folders: Vec<(FolderRank, String)> = files
         .list(res)
         .into_iter()
         .filter(|(name, dir)| *dir && (name == kind || name.starts_with(&prefix)))
-        .map(|(name, _)| name)
+        .map(|(name, _)| (folder_rank(&name[kind.len()..], dark), name))
         .collect();
-    folders.sort_by(|a, b| (a != kind, a).cmp(&(b != kind, b)));
-    folders
+    folders.sort();
+    folders.into_iter().map(|(_, name)| name).collect()
+}
+
+/// `qualified_folders` の順（小さいものが先）。
+type FolderRank = (bool, bool, bool, std::cmp::Reverse<u32>);
+
+/// フォルダの名前の修飾（`-night-v31` など。種類の名前を除いたもの）の、`qualified_folders` の順。
+fn folder_rank(qualifiers: &str, dark: bool) -> FolderRank {
+    let (mut night, mut version, mut other) = (None, 0, false);
+    for q in qualifiers.split('-').filter(|q| !q.is_empty()) {
+        match q {
+            "night" => night = Some(true),
+            "notnight" => night = Some(false),
+            _ => match q.strip_prefix('v').and_then(|v| v.parse::<u32>().ok()) {
+                Some(v) => version = v,
+                None => other = true,
+            },
+        }
+    }
+    let contradicts = night.is_some_and(|n| n != dark);
+    (
+        contradicts,
+        other,
+        night.is_none(),
+        std::cmp::Reverse(version),
+    )
 }
 
 /// 資源の参照（`@color/x`・`@android:color/x`・`@drawable/x`）。
@@ -266,6 +309,8 @@ fn framework_color(name: &str) -> Option<&'static str> {
 struct Colors<'a> {
     files: &'a dyn Files,
     res: Option<&'a str>,
+    /// 暗い外観か（`values-night` などを先に引く）。
+    dark: bool,
     /// `values*/` の `<color>`（名前 → 値）。最初に引くときに読む。
     table: OnceCell<HashMap<String, String>>,
     themed: RefCell<Vec<String>>,
@@ -319,16 +364,17 @@ impl Colors<'_> {
 
     fn table(&self) -> &HashMap<String, String> {
         self.table.get_or_init(|| match self.res {
-            Some(res) => read_color_table(self.files, res),
+            Some(res) => read_color_table(self.files, res, self.dark),
             None => HashMap::new(),
         })
     }
 
-    /// `color*/name.xml`（色の一覧 `<selector>`）の、状態のないときの色（状態を書かない `<item>`、なければ最後）。
+    /// `color*/name.xml`（色の一覧 `<selector>`。外観に合うフォルダを先に）の、状態のないときの色（状態を書かない
+    /// `<item>`、なければ最後）。
     fn state_list(&self, name: &str) -> Option<String> {
         let res = self.res?;
         let file = format!("{name}.xml");
-        let folder = qualified_folders(self.files, res, "color")
+        let folder = qualified_folders(self.files, res, "color", self.dark)
             .into_iter()
             .find(|f| {
                 self.files
@@ -355,12 +401,12 @@ impl Colors<'_> {
     }
 }
 
-/// `res` の `values` と `values-*` の XML の `<color>`（`<item type="color">` も）。修飾のない `values` を先に読み、
-/// 同じ名前はそれを使う。読むのは上限まで。
-fn read_color_table(files: &dyn Files, res: &str) -> HashMap<String, String> {
+/// `res` の `values` と `values-*` の XML の `<color>`（`<item type="color">` も）。`qualified_folders` の順に読み、
+/// 同じ名前は先に読んだものを使う。読むのは上限まで。
+fn read_color_table(files: &dyn Files, res: &str, dark: bool) -> HashMap<String, String> {
     let mut table = HashMap::new();
     let (mut count, mut bytes) = (0, 0);
-    for folder in qualified_folders(files, res, "values") {
+    for folder in qualified_folders(files, res, "values", dark) {
         let folder = join(res, &folder);
         let mut names: Vec<String> = files
             .list(&folder)
@@ -541,7 +587,14 @@ mod tests {
             ]
             .concat(),
         );
-        let p = picture("app/res/drawable/ic.xml", xml.as_bytes(), &tree, None).unwrap();
+        let p = picture(
+            "app/res/drawable/ic.xml",
+            xml.as_bytes(),
+            &tree,
+            None,
+            false,
+        )
+        .unwrap();
         // values が values-night より先
         assert!(p.svg.contains(r##"fill="#ff0000""##), "{}", p.svg);
         assert!(p.svg.contains(r##"fill="#ffffff""##), "{}", p.svg);
@@ -551,7 +604,14 @@ mod tests {
 
         // 終わらない参照は深さで止め、代わりの色で描く
         let xml = vector(&path("@color/loop"));
-        let p = picture("app/res/drawable/ic.xml", xml.as_bytes(), &tree, None).unwrap();
+        let p = picture(
+            "app/res/drawable/ic.xml",
+            xml.as_bytes(),
+            &tree,
+            None,
+            false,
+        )
+        .unwrap();
         assert!(p.svg.contains(r##"fill="#808080""##), "{}", p.svg);
         assert_eq!(
             p.notes,
@@ -559,6 +619,131 @@ mod tests {
                 "Colors not found in this commit’s resources are drawn in the text color: {refs}",
                 refs = "@color/loop"
             )]
+        );
+    }
+
+    #[test]
+    fn picks_the_night_resources_in_the_dark_appearance() {
+        let tree = Tree::with(&[
+            (
+                "res/values/colors.xml",
+                r##"<resources><color name="bg">#ffffff</color><color name="fg">#000000</color>
+                   <color name="accent">#ff0000</color><color name="tint">@color/states</color></resources>"##,
+            ),
+            (
+                "res/values-night/colors.xml",
+                r##"<resources><color name="bg">#000000</color><color name="fg">#ffffff</color></resources>"##,
+            ),
+            (
+                "res/values-v31/colors.xml",
+                r##"<resources><color name="accent">#00ff00</color></resources>"##,
+            ),
+            (
+                "res/values-night-v31/colors.xml",
+                r##"<resources><color name="accent">#0000ff</color></resources>"##,
+            ),
+            (
+                "res/values-ja/colors.xml",
+                r##"<resources><color name="bg">#123456</color></resources>"##,
+            ),
+            (
+                "res/color/states.xml",
+                r##"<selector><item android:color="#111111"/></selector>"##,
+            ),
+            (
+                "res/color-night/states.xml",
+                r##"<selector><item android:color="#eeeeee"/></selector>"##,
+            ),
+        ]);
+        let xml = vector(
+            &[
+                path("@color/bg"),
+                path("@color/fg"),
+                path("@color/accent"),
+                path("@color/tint"),
+            ]
+            .concat(),
+        );
+        let fills = |dark| {
+            let p = picture("res/drawable/ic.xml", xml.as_bytes(), &tree, None, dark).unwrap();
+            assert!(p.notes.is_empty(), "{:?}", p.notes);
+            p.svg
+                .match_indices("fill=\"")
+                .map(|(at, _)| p.svg[at + 6..at + 13].to_owned())
+                .collect::<Vec<_>>()
+        };
+        // 明るい外観は values（版は新しいものが先）、暗い外観は values-night（外観は版より先に効く）
+        assert_eq!(fills(false), ["#ffffff", "#000000", "#00ff00", "#111111"]);
+        assert_eq!(fills(true), ["#000000", "#ffffff", "#0000ff", "#eeeeee"]);
+
+        // <animated-vector> の参照する drawable も外観で選ぶ
+        let tree = Tree::with(&[
+            ("res/drawable/ic_base.xml", &vector(&path("#f00"))),
+            ("res/drawable-night/ic_base.xml", &vector(&path("#00f"))),
+        ]);
+        let by_ref = format!(
+            r#"<animated-vector {NS} android:drawable="@drawable/ic_base"></animated-vector>"#
+        );
+        for (dark, fill) in [(false, "#ff0000"), (true, "#0000ff")] {
+            let p = picture(
+                "res/drawable/anim.xml",
+                by_ref.as_bytes(),
+                &tree,
+                None,
+                dark,
+            )
+            .unwrap();
+            assert!(p.svg.contains(&format!("fill=\"{fill}\"")), "{}", p.svg);
+        }
+    }
+
+    #[test]
+    fn orders_qualified_folders_as_android_does() {
+        let names = [
+            "values",
+            "values-ja",
+            "values-night",
+            "values-night-ja",
+            "values-night-v31",
+            "values-notnight",
+            "values-v21",
+            "values-v31",
+            "valuesx",
+        ];
+        let files: Vec<(String, String)> = names
+            .iter()
+            .map(|n| (format!("res/{n}/c.xml"), "<resources/>".to_owned()))
+            .collect();
+        let pairs: Vec<(&str, &str)> = files
+            .iter()
+            .map(|(p, c)| (p.as_str(), c.as_str()))
+            .collect();
+        let tree = Tree::with(&pairs);
+        assert_eq!(
+            qualified_folders(&tree, "res", "values", true),
+            [
+                "values-night-v31",
+                "values-night",
+                "values-v31",
+                "values-v21",
+                "values",
+                "values-night-ja",
+                "values-ja",
+                "values-notnight",
+            ]
+        );
+        assert_eq!(
+            qualified_folders(&tree, "res", "values", false),
+            [
+                "values-notnight",
+                "values-v31",
+                "values-v21",
+                "values",
+                "values-ja",
+                "values-night-v31",
+                "values-night",
+                "values-night-ja",
+            ]
         );
     }
 
@@ -580,12 +765,20 @@ mod tests {
             xml.as_bytes(),
             &tree,
             Some("#e5e5e5"),
+            false,
         )
         .unwrap();
         assert_eq!(p.svg.matches(r##"fill="#e5e5e5""##).count(), 5, "{}", p.svg);
         // 文字の色がない（読めない）ときは灰色
         for fallback in [None, Some("white")] {
-            let gray = picture("res/drawable/ic.xml", xml.as_bytes(), &tree, fallback).unwrap();
+            let gray = picture(
+                "res/drawable/ic.xml",
+                xml.as_bytes(),
+                &tree,
+                fallback,
+                false,
+            )
+            .unwrap();
             assert_eq!(gray.svg.matches(r##"fill="#808080""##).count(), 5);
         }
         assert_eq!(
@@ -617,7 +810,7 @@ mod tests {
         ]);
         let xml =
             vector(&path("#000")).replace("<vector ", r#"<vector android:tint="@color/tint" "#);
-        let p = picture("res/drawable/ic.xml", xml.as_bytes(), &tree, None).unwrap();
+        let p = picture("res/drawable/ic.xml", xml.as_bytes(), &tree, None, false).unwrap();
         assert!(p.svg.contains(r##"fill="#00ff00""##), "{}", p.svg);
         assert!(p.notes.is_empty(), "{:?}", p.notes);
     }
@@ -629,17 +822,38 @@ mod tests {
             vector(&path("#f00"))
         );
         let tree = Tree::with(&[("res/drawable-v24/ic_base.xml", &vector(&path("#00f")))]);
-        let p = picture("res/drawable/anim.xml", inline.as_bytes(), &tree, None).unwrap();
+        let p = picture(
+            "res/drawable/anim.xml",
+            inline.as_bytes(),
+            &tree,
+            None,
+            false,
+        )
+        .unwrap();
         assert!(p.svg.contains(r##"fill="#ff0000""##), "{}", p.svg);
 
         let by_ref = format!(
             r#"<animated-vector {NS} android:drawable="@drawable/ic_base"></animated-vector>"#
         );
-        let p = picture("res/drawable/anim.xml", by_ref.as_bytes(), &tree, None).unwrap();
+        let p = picture(
+            "res/drawable/anim.xml",
+            by_ref.as_bytes(),
+            &tree,
+            None,
+            false,
+        )
+        .unwrap();
         assert!(p.svg.contains(r##"fill="#0000ff""##), "{}", p.svg);
 
         let missing = by_ref.replace("ic_base", "ic_gone");
-        let error = picture("res/drawable/anim.xml", missing.as_bytes(), &tree, None).unwrap_err();
+        let error = picture(
+            "res/drawable/anim.xml",
+            missing.as_bytes(),
+            &tree,
+            None,
+            false,
+        )
+        .unwrap_err();
         assert_eq!(
             error.to_string(),
             tr!(
@@ -648,7 +862,16 @@ mod tests {
             )
         );
         let tree = Tree::with(&[("res/drawable/ic_base.xml", "<selector/>")]);
-        assert!(picture("res/drawable/anim.xml", by_ref.as_bytes(), &tree, None).is_err());
+        assert!(
+            picture(
+                "res/drawable/anim.xml",
+                by_ref.as_bytes(),
+                &tree,
+                None,
+                false
+            )
+            .is_err()
+        );
     }
 
     #[test]
@@ -658,7 +881,8 @@ mod tests {
                 "res/drawable/ic.xml",
                 &vec![b' '; MAX_DRAWABLE_BYTES + 1],
                 &Tree::default(),
-                None
+                None,
+                false
             )
             .is_err()
         );
@@ -688,7 +912,7 @@ mod tests {
             ]
             .concat(),
         );
-        let p = picture("res/drawable/ic.xml", xml.as_bytes(), &tree, None).unwrap();
+        let p = picture("res/drawable/ic.xml", xml.as_bytes(), &tree, None, false).unwrap();
         assert!(p.svg.contains(r##"fill="#00ff00""##), "{}", p.svg);
         assert_eq!(
             p.notes,
@@ -704,7 +928,7 @@ mod tests {
     fn reads_no_resources_without_references() {
         let tree = Tree::with(&[("res/values/colors.xml", "<resources/>")]);
         let xml = vector(&path("#fff"));
-        picture("res/drawable/ic.xml", xml.as_bytes(), &tree, None).unwrap();
+        picture("res/drawable/ic.xml", xml.as_bytes(), &tree, None, false).unwrap();
         assert!(tree.reads.borrow().is_empty());
     }
 }
