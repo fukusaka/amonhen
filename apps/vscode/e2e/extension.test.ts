@@ -1371,9 +1371,11 @@ async function stashOptionsFlow(): Promise<void> {
   writeFileSync(b, 'b\n');
   git('add', 'so-a.txt', 'so-b.txt');
   git('commit', '-q', '-m', 'stash options');
-  const pick = (label: string) => ({
-    showQuickPick: async (items: readonly vscode.QuickPickItem[]) => items.find((i) => i.label === label),
-    showInputBox: inputs(''),
+  // アプリと同じシート: まず何を（すべて・stage した変更だけ）、すべてなら組み合わせる選び方（canPickMany）
+  const pick = (what: string, options: string[] = [], message = '') => ({
+    showQuickPick: async (items: readonly vscode.QuickPickItem[], opts?: vscode.QuickPickOptions) =>
+      opts?.canPickMany ? items.filter((i) => options.includes(i.label)) : items.find((i) => i.label === what),
+    showInputBox: inputs(message),
   });
   try {
     // stage した変更を残す: a（stage）も b（stage していない）も stash に入り、a の stage は残る
@@ -1381,7 +1383,7 @@ async function stashOptionsFlow(): Promise<void> {
     writeFileSync(b, 'b2\n');
     git('add', 'so-a.txt');
     await repo.refresh();
-    await withWindow(pick('Stash, Keeping the Staged Changes'), async () => vscode.commands.executeCommand('amonhen.stash'));
+    await withWindow(pick('All changes', ['Keep the staged changes in the working tree (--keep-index)']), async () => vscode.commands.executeCommand('amonhen.stash'));
     assert.equal(git('diff', '--cached', '--name-only').trim(), 'so-a.txt', lastErrors());
     assert.equal(git('diff', '--name-only').trim(), '');
     assert.equal(git('stash', 'list').trim().split('\n').length, 1);
@@ -1394,7 +1396,7 @@ async function stashOptionsFlow(): Promise<void> {
       writeFileSync(b, 'b3\n');
       git('add', 'so-a.txt');
       await repo.refresh();
-      await withWindow(pick('Stash Only the Staged Changes'), async () => vscode.commands.executeCommand('amonhen.stash'));
+      await withWindow(pick('Only the staged changes'), async () => vscode.commands.executeCommand('amonhen.stash'));
       assert.equal(git('diff', '--cached', '--name-only').trim(), '', lastErrors());
       assert.equal(git('diff', '--name-only').trim(), 'so-b.txt');
       assert.equal(git('stash', 'show', '--name-only').trim(), 'so-a.txt');
@@ -1406,14 +1408,14 @@ async function stashOptionsFlow(): Promise<void> {
     writeFileSync(a, 'a4\n');
     writeFileSync(b, 'b4\n');
     await repo.refresh();
-    await withWindow({ showInputBox: inputs('only b') }, async () => vscode.commands.executeCommand('amonhen.stash.files', { path: 'so-b.txt' }));
+    await withWindow(pick('All changes', [], 'only b'), async () => vscode.commands.executeCommand('amonhen.stash.files', { path: 'so-b.txt' }));
     assert.equal(git('diff', '--name-only').trim(), 'so-a.txt', lastErrors());
     assert.equal(git('stash', 'show', '--name-only').trim(), 'so-b.txt');
 
     // いくつも選んで: 選んだファイルすべてを 1 つの stash に
     writeFileSync(b, 'b5\n');
     await repo.refresh();
-    await withWindow({ showInputBox: inputs('both') }, async () =>
+    await withWindow(pick('All changes', [], 'both'), async () =>
       vscode.commands.executeCommand('amonhen.stash.files', { path: 'so-a.txt', paths: ['so-a.txt', 'so-b.txt'] }),
     );
     assert.equal(git('diff', '--name-only').trim(), '', lastErrors());

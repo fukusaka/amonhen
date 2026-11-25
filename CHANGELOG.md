@@ -1364,6 +1364,8 @@ First release.
 - Branch operations follow the app: Fast-Forward asks without the main view too, deleting several asks once with the
   unmerged commits, Force Push publishes a branch with no upstream, Rename Branch… renames the current branch, and
   Merge Branches… can change the order.
+- Stashes, Restore and File History follow the app: Stash's choices combine, stash rows show the time and base ID
+  with Copy Name, File History rows have Restore This Version… and Copy Short ID, and Skip / Abort don't ask first.
 
 #### Changed
 

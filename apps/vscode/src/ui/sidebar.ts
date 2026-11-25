@@ -10,7 +10,7 @@ import type { Ref, Remote, Stash } from '../git/refs.ts';
 import { splitRemoteRef } from '../git/refs.ts';
 import { arrangeBranches, type Arranged, type BranchGroupsInfo } from '../git/branchGroups.ts';
 import { signatureExplanation, signatureIcon, signatureLabel, signatureStatus } from '../git/signature.ts';
-import { stashBaseText, stashBranch } from '../git/stash.ts';
+import { stashBaseText, stashBranch, stashDescription } from '../git/stash.ts';
 import { describeSubmodule } from '../git/status.ts';
 import { submoduleMarks, submoduleTooltip } from '../git/submodules.ts';
 import { subtreeTooltip, type Subtree } from '../git/subtrees.ts';
@@ -562,11 +562,11 @@ export class SidebarProvider implements vscode.TreeDataProvider<Node>, vscode.Di
       case 'stash': {
         const item = new vscode.TreeItem(node.stash.name);
         item.id = `stash:${node.stash.oid}`;
-        // アプリの Stashes の行と同じく、作ったときのブランチ・土台と HEAD の離れ具合・untracked を添える
+        // アプリの Stashes の行と同じく、作ったときのブランチ・土台と HEAD の関係・いつ・untracked・土台の短い ID を添える
         const fact = this.engine ? this.stashFacts.get(node.stash.oid) : undefined;
         const branch = stashBranch(node.stash.subject);
         const moved = fact && stashBaseText(fact.ahead, fact.behind);
-        item.description = [node.stash.subject, fact?.untracked ? '+ untracked' : undefined].filter(Boolean).join(' · ');
+        item.description = stashDescription(node.stash, fact);
         item.tooltip = [
           node.stash.name,
           node.stash.subject,

@@ -175,8 +175,8 @@ GTK4 のアプリは macOS のアプリと同じふるまいをめざす。わ�
 | いくつもを 1 つにマージ（順番・コンフリクトの見込み） | ✓ | ✓ | ✓ | ✓ | △ | △ | VSCode: 選んだ順。Change the Order… で merge する順に 1 つずつ選び直す（QuickPick ではドラッグできない）。最後より前のものがぶつかりそうなら、それを最後に回す項目も出す。<br>CLI: `merge-check` で確かめ、マージは `amonhen run` から。<br>Windows: History の選択から。順（ドラッグ）、ぶつかる見込みと最後に回す、取り込み方、1 つずつ、メッセージ、前と後の絵、git が断ったら 1 つずつ Merge。<br>TUI: サイドバーの `v` で印をつけた ref で `m`。印をつけた順に、それぞれが持ち込むコミットの数とコンフリクトの見込みを添える。`l` でコンフリクトしそうな最初のものを最後に回す。ほかの並べ替えはない。 |
 | 前と後を描く Rebase のシート | ✓ | ✓ | ✓ | ✓ | △ | ✓ | VSCode: メインビューが開いていれば絵の付いたシート。なければダイアログに、今と rebase の後のコミットを文で並べる。<br>CLI: `rewrite-preview` が出し、rebase は `amonhen run` から。<br>TUI: サイドバーで `r`。絵は画面に重ねる。 |
 | Stash（メッセージ・未追跡を含める） | ✓ | ✓ | ✓ | ✓ | △ | ✓ | CLI: `amonhen run` から。<br>TUI: `s`。 |
-| Stash: stage した変更だけ・index を残す・選んだファイルだけ | ✓ | ✓ | ✓ | ✓ | △ | ✓ | VSCode: エンジンがあるとき、Stash の一覧に前の 2 つ、Working Copy のファイルの右クリックに、そのファイルか選んだファイルの Stash…。<br>CLI: `amonhen run`（`stashPush` の `staged`・`keepIndex`・`paths`）から。<br>TUI: `s` で `k` index を残す、`s` stage したものだけ、Working Copy では `f` 選んでいるファイルだけ。 |
-| ignore されたファイルを消す（先に一覧） | ✓ | ✓ | ✓ | ✓ | △ | ✓ | VSCode: コマンドパレットと Working Copy の右クリックから。一覧は選ぶもので、はじめはすべて選んである。<br>CLI: `amonhen run`（`ignoredFiles`・`deleteIgnored`）から。<br>TUI: 命令の一覧から。 |
+| Stash: stage した変更だけ・index を残す・選んだファイルだけ | ✓ | ✓ | ✓ | ✓ | △ | ✓ | VSCode: アプリのシートと同じく、Stash はすべての変更か stage した変更だけかを聞き、続けて stage した変更を残す・untracked を含めるを組み合わせて選ぶ（前の 2 つはエンジンがあるとき）。Working Copy のファイルの右クリックに、そのファイルか選んだファイルの Stash…（選び方は同じ）。<br>CLI: `amonhen run`（`stashPush` の `staged`・`keepIndex`・`paths`）から。<br>TUI: `s` で `k` index を残す、`s` stage したものだけ、Working Copy では `f` 選んでいるファイルだけ。 |
+| ignore されたファイルを消す（先に一覧） | ✓ | ✓ | ✓ | ✓ | △ | ✓ | VSCode: コマンドパレットと、サイドバーの Working Copy の行の右クリックから。一覧は選ぶもので、はじめはすべて選んである。<br>CLI: `amonhen run`（`ignoredFiles`・`deleteIgnored`）から。<br>TUI: 命令の一覧から。 |
 | 最新の stash を Pop（先に尋ねる） | ✓ | ✓ | ✓ | ✓ | △ | ✓ | VSCode: Stashes の見出しとコマンドパレットの Pop Latest Stash…。行の Pop も尋ねる。<br>CLI: `amonhen run` から。<br>TUI: `S`。stash の名前とメッセージを出して尋ねる。サイドバーの stash の `a`・`o` も同じ。 |
 | Activity のくるくると数 | ✓ | ✓ | ✓ | ✓ | n/a | ✓ | VSCode: VSCode の進み具合の知らせ。<br>TUI: 一番上の行に動いている操作の名前。 |
 | Refresh と Rebuild History | ✓ | ✓ | ✓ | ✓ | △ | ✓ | VSCode: Rebuild History はサイドバーの ⋯ とコマンドパレットから。エンジンがあれば。<br>CLI: `log --rebuild`・`daemon rebuild`。<br>TUI: `Ctrl-r` で Refresh、命令の一覧に Rebuild History。`Ctrl-l` は読み直さずに画面を描き直す。 |
@@ -191,7 +191,7 @@ GTK4 のアプリは macOS のアプリと同じふるまいをめざす。わ�
 | 機能 | macOS | GTK4 | Windows | VSCode | CLI | TUI | Notes |
 | --- | :-: | :-: | :-: | :-: | :-: | :-: | --- |
 | Stashes の表示（一覧と中身） | ✓ | ✓ | ✓ | ✓ | △ | ✓ | VSCode: サイドバーの一覧で、Show Stash は VSCode の複数ファイルの差分。<br>CLI: `refs` が並べ、`show stash@{n}`。<br>TUI: サイドバーに並べ、Enter で stash の差分を詳細に出す。 |
-| stash の行の詳細（ブランチ・HEAD に対する元・未追跡） | ✓ | ✓ | ✓ | ✓ | △ | ✓ | VSCode: 未追跡は行の説明に、ブランチと元はツールチップに（エンジンがあるとき）。<br>CLI: `amonhen run`（`stashBases`）から。<br>TUI: Enter で stash を出したとき、一番下の行に。 |
+| stash の行の詳細（ブランチ・HEAD に対する元・未追跡） | ✓ | ✓ | ✓ | ✓ | △ | ✓ | VSCode: アプリの行と同じく、行の説明にブランチ・HEAD に対する元・いつ・未追跡・元の短い ID（元と未追跡はエンジンがあるとき）。行の右クリックに Copy Name。<br>CLI: `amonhen run`（`stashBases`）から。<br>TUI: Enter で stash を出したとき、一番下の行に。 |
 | Apply・Pop・Drop…（Undo できる）・Branch… | ✓ | ✓ | ✓ | ✓ | △ | ✓ | VSCode: Branch… はエンジンがあるとき。Apply・Pop はできれば index も戻す（`--index`）。<br>CLI: `amonhen run` から。<br>TUI: サイドバーで `a`・`o`・`x`・`b`。 |
 
 ## 5b. Reflog
@@ -295,8 +295,8 @@ GTK4 のアプリは macOS のアプリと同じふるまいをめざす。わ�
 | 機能 | macOS | GTK4 | Windows | VSCode | CLI | TUI | Notes |
 | --- | :-: | :-: | :-: | :-: | :-: | :-: | --- |
 | Blame | ✓ | ✓ | ✓ | ✓ | △ | ✓ | VSCode: メインビューのページ。<br>CLI: `amonhen run`（`blame`）から。<br>Windows: 行のメニューからそのコミットを History に出す。<br>TUI: Working Copy のファイルかコミットの詳細で `B`。`H` で行のコミットを History で選ぶ。 |
-| ファイルをコミットの版に戻す（この版・その前の版。選べば stage も） | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | VSCode: エンジンがあるとき、History の詳細のファイルの右クリックから。Restore and Stage は 2 つめのボタン。<br>CLI: `restore --source <rev> [--staged]`。<br>TUI: File History の `V`。`y` この版、`b` その前の版、`s`・`B` で stage も。 |
-| File History | ✓ | ✓ | ✓ | ✓ | △ | ✓ | VSCode: メインビューのページ。エクスプローラー・エディターのタブ・コマンドパレット・メインビューのファイルから開く。<br>CLI: `amonhen run`（`fileHistory`）から。<br>Windows: Working Copy のファイルから。<br>TUI: 同じく `L`。変更のないファイルは `O` でパスを聞く。 |
+| ファイルをコミットの版に戻す（この版・その前の版。選べば stage も） | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | VSCode: エンジンがあるとき、詳細（History・Reflog・File History）のファイルの右クリックと、File History の今の名前の行の Restore This Version… から。Restore and Stage は 2 つめのボタン。<br>CLI: `restore --source <rev> [--staged]`。<br>TUI: File History の `V`。`y` この版、`b` その前の版、`s`・`B` で stage も。 |
+| File History | ✓ | ✓ | ✓ | ✓ | △ | ✓ | VSCode: メインビューのページ。エクスプローラー・エディターのタブ・コマンドパレット・メインビューのファイルから開く。行の右クリックにアプリと同じ項目（Copy Short ID も）。Merge Commits はメニューではなく帯のチェックボックス。<br>CLI: `amonhen run`（`fileHistory`）から。<br>Windows: Working Copy のファイルから。<br>TUI: 同じく `L`。変更のないファイルは `O` でパスを聞く。 |
 | リポジトリのタブの隣のタブに、リポジトリのツールバー付きで開く | ✓ | ✓ | ✓ | n/a | n/a | n/a | GTK4: リポジトリのタブがほかの窓で前に出ているときは、ツールバーのない題だけの帯になる。<br>TUI: メインの画面の代わりに開き、Esc で戻る。 |
 | 行の履歴 | — | — | — | — | — | — |  |
 
@@ -324,7 +324,7 @@ GTK4 のアプリは macOS のアプリと同じふるまいをめざす。わ�
 | ファイルを Current / Incoming で解く | ✓ | ✓ | ✓ | ✓ | △ | ✓ | CLI: `amonhen run` から。<br>TUI: 一覧で `o` `t`。 |
 | 外のマージツールで開く | — | — | — | n/a | n/a | — |  |
 | エディターを別の窓に出す | ✓ | ✓ | ✓ | n/a | n/a | n/a | Windows: 新しい窓で同じファイルを開く。保存していない編集も持って行く。 |
-| Continue / Skip / Abort | ✓ | ✓ | ✓ | ✓ | △ | ✓ | VSCode: サイドバーの進行中の行に出る。<br>CLI: `amonhen run` から。<br>TUI: `C` `K` `A`。 |
+| Continue / Skip / Abort | ✓ | ✓ | ✓ | ✓ | △ | ✓ | VSCode: サイドバーの進行中の行に出る。Skip と Abort は、アプリと同じく先に尋ねない。<br>CLI: `amonhen run` から。<br>TUI: `C` `K` `A`。 |
 
 ## 9. AI
 
