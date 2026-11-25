@@ -460,10 +460,18 @@ final class FormulaPicture {
 /// 列の幅に縮む絵。
 nonisolated final class FittingAttachment: NSTextAttachment {
     private let natural: NSSize
+    /// 幅の割合（HTML の `width="50%"`）と、その基準の列の幅に対する割合（表のマスの中ならマスの分）。
+    private let percent: CGFloat?
+    private let share: CGFloat?
+    private let fixedHeight: CGFloat?
 
-    /// `width`・`height`（HTML の大きさ、pt）があればその大きさで（片方だけなら比を保つ）。
-    init(image: NSImage, width: Int? = nil, height: Int? = nil) {
+    /// `width`・`height`（HTML の大きさ、pt）があればその大きさで（片方だけなら比を保つ）。`widthPercent` があれば
+    /// 幅は列の幅（の `share`）のその割合（`fitting` で決める）。
+    init(image: NSImage, width: Int? = nil, height: Int? = nil, widthPercent: Int? = nil, share: CGFloat? = nil) {
         let size = image.size
+        percent = widthPercent.map { CGFloat($0) / 100 }
+        self.share = share
+        fixedHeight = height.map { CGFloat($0) }
         natural = switch (width, height) {
         case let (w?, h?): NSSize(width: w, height: h)
         case let (w?, nil): NSSize(width: CGFloat(w), height: size.width > 0 ? size.height * CGFloat(w) / size.width : size.height)
@@ -478,11 +486,19 @@ nonisolated final class FittingAttachment: NSTextAttachment {
     @available(*, unavailable)
     required init?(coder: NSCoder) { fatalError() }
 
-    /// 幅 `width`（と 640 pt）に収めた大きさ。
+    /// 幅 `width`（と 640 pt）に収めた大きさ。幅の割合があれば、幅 `width` の割合（高さは決まっていなければ比を保つ）。
     func fitting(_ width: CGFloat) -> NSSize {
         let limit = min(width, 640)
-        guard natural.width > limit, natural.width > 0 else { return natural }
-        return NSSize(width: limit, height: natural.height * limit / natural.width)
+        var size = natural
+        if let percent {
+            // 表のマスの中なら、マスの左右の余白と枠（6 pt と 1 pt ずつ）を除いた幅に対して。
+            let base = share.map { max(width * $0 - 14, 0) } ?? width
+            let w = (base * percent).rounded()
+            let picture = image?.size ?? natural
+            size = NSSize(width: w, height: fixedHeight ?? (picture.width > 0 ? picture.height * w / picture.width : picture.height))
+        }
+        guard size.width > limit, size.width > 0 else { return size }
+        return NSSize(width: limit, height: size.height * limit / size.width)
     }
 }
 
@@ -756,7 +772,8 @@ private struct MarkdownBuilder {
     }
 
     /// 飾りの文字。
-    private func runs(_ runs: [MarkdownBlock.Run], size: CGFloat, bold: Bool = false, style: NSParagraphStyle) -> NSAttributedString {
+    /// `share` は表のマスの中なら、列の幅に対するマスの幅の割合（絵の幅の割合の基準）。
+    private func runs(_ runs: [MarkdownBlock.Run], size: CGFloat, bold: Bool = false, style: NSParagraphStyle, share: CGFloat? = nil) -> NSAttributedString {
         let result = NSMutableAttributedString()
         for run in runs {
             if run.lineBreak == true {
@@ -766,7 +783,8 @@ private struct MarkdownBuilder {
             if let src = run.image(dark: dark) {
                 if let picture = image(src) {
                     // 列より広い絵は縮める（MarkdownView.fitAttachments）。リンクの中の絵（バッジなど）は押せる。
-                    let piece = NSMutableAttributedString(attachment: FittingAttachment(image: picture, width: run.width, height: run.height))
+                    let piece = NSMutableAttributedString(attachment: FittingAttachment(
+                        image: picture, width: run.width, height: run.height, widthPercent: run.widthPercent, share: share))
                     var attributes: [NSAttributedString.Key: Any] = [.paragraphStyle: style]
                     if let link = run.link { attributes[.link] = link }
                     if !run.text.isEmpty { attributes[.toolTip] = run.text }
@@ -1014,7 +1032,9 @@ private struct MarkdownBuilder {
                         case "right": .right
                         default: .left
                         }
-                        out.append(runs(column < row.count ? row[column] : [], size: bodySize - 1, bold: r == 0, style: style))
+                        out.append(runs(
+                            column < row.count ? row[column] : [], size: bodySize - 1, bold: r == 0, style: style,
+                            share: 1 / CGFloat(table.numberOfColumns)))
                         out.append(newline(style))
                     }
                 }
@@ -1072,7 +1092,9 @@ private struct MarkdownBuilder {
                     let style = paragraph(spacing: 0, blocks: outer + [block])
                     // 見出しのマスは、決めなければ中央（ブラウザの既定）。
                     style.alignment = cell.align == nil && header ? .center : Self.alignment(cell.align)
-                    out.append(runs(cell.runs, size: bodySize - 1, bold: header, style: style))
+                    out.append(runs(
+                        cell.runs, size: bodySize - 1, bold: header, style: style,
+                        share: CGFloat(max(cell.colspan, 1)) / CGFloat(table.numberOfColumns)))
                     out.append(newline(style))
                 }
                 let after = paragraph(spacing: 10, blocks: outer)

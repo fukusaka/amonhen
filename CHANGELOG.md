@@ -20,6 +20,8 @@ becomes the GitHub Release notes.
   digit or `_`, nor in italics, links or footnotes. So `a$x$b` and `日本語の$x$` stay text, as on GitHub.
 - Markdown previews no longer turn bare URLs inside HTML into links; as on GitHub, only those in Markdown text are.
 - Markdown previews leave one space where an HTML comment is dropped between words, as browsers do, instead of two.
+- Markdown previews size `<img width="50%">` as a share of the column's width (of the cell's, in tables) instead of the
+  picture's own size (macOS, GTK4).
 
 ### [0.2.15] - 2026-11-25
 

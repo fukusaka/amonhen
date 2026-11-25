@@ -54,6 +54,10 @@ pub struct Run {
     pub width: Option<u32>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub height: Option<u32>,
+    /// 画像の幅の割合（HTML の `width="50%"`、1〜100）。FE は表示する列の幅（表のマスの中ならマスの幅）に対して
+    /// 決める。`width` とは同時に付かない。高さの割合は読まない（ブラウザでも、高さの決まらない親の中では効かない）。
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub width_percent: Option<u32>,
     /// 脚注への参照（ラベル）。
     #[serde(skip_serializing_if = "Option::is_none")]
     pub footnote: Option<String>,
@@ -526,12 +530,38 @@ fn safe_url(value: &str, link: bool) -> Option<String> {
     Some(url)
 }
 
-/// `width`・`height` の値（画素。`px` は付いてもよい、`%` などは読まない）。
-fn image_side(value: &str) -> Option<u32> {
-    let v = value.trim();
-    let v = v.strip_suffix("px").unwrap_or(v).trim();
-    let n: f64 = v.parse().ok()?;
-    (n.is_finite() && n >= 1.0).then(|| (n.round() as u32).min(MAX_IMAGE_SIDE))
+/// `width`・`height` の値（HTML の大きさの読み方: 頭の数字を読み、すぐ後に `%` があれば割合、ほかは画素。`px` など
+/// 後ろの文字は読まない）。
+#[derive(Clone, Copy, Debug, PartialEq)]
+enum Side {
+    Pixels(u32),
+    Percent(u32),
+}
+
+fn image_side(value: &str) -> Option<Side> {
+    let v = value.trim_start_matches(|c: char| c.is_ascii_whitespace());
+    let digits = v.find(|c: char| !c.is_ascii_digit()).unwrap_or(v.len());
+    if digits == 0 {
+        return None;
+    }
+    let mut end = digits;
+    if v[end..].starts_with('.') {
+        let fraction = v[end + 1..]
+            .find(|c: char| !c.is_ascii_digit())
+            .unwrap_or(v.len() - end - 1);
+        if fraction > 0 {
+            end += 1 + fraction;
+        }
+    }
+    let n: f64 = v[..end].parse().ok()?;
+    if !n.is_finite() || n < 1.0 {
+        return None;
+    }
+    // 割合は 100% まで（それより広くても列の幅に収める）。
+    Some(match v[end..].starts_with('%') {
+        true => Side::Percent((n.round() as u32).min(100)),
+        false => Side::Pixels((n.round() as u32).min(MAX_IMAGE_SIDE)),
+    })
 }
 
 /// `colspan`・`rowspan` の値（数字の頭だけ。読めなければ 1）。
@@ -1314,13 +1344,24 @@ impl Builder {
             return;
         };
         let alt = attr("alt").unwrap_or_default().trim().to_owned();
+        let width = attr("width").and_then(image_side);
         self.runs.push(Run {
             text: alt,
             image: Some(src),
             image_dark: dark,
             image_light: light,
-            width: attr("width").and_then(image_side),
-            height: attr("height").and_then(image_side),
+            width: match width {
+                Some(Side::Pixels(w)) => Some(w),
+                _ => None,
+            },
+            height: match attr("height").and_then(image_side) {
+                Some(Side::Pixels(h)) => Some(h),
+                _ => None,
+            },
+            width_percent: match width {
+                Some(Side::Percent(p)) => Some(p),
+                _ => None,
+            },
             link: self.style.links.last().cloned(),
             ..Run::default()
         });
@@ -2326,7 +2367,8 @@ mod tests {
             "<a href=\"https://x.org\">site</a> <a href=\"javascript:alert(1)\">bad</a> \
              <a href=\"java\tscript:x\">tab</a> <a href=\"docs/a.md\">rel</a>\n\n\
              <img src=\"img/logo.png\" width=\"120\" height=\"40px\" alt=\"Logo\">\n\
-             <img src=\"javascript:x\" alt=\"no\"><img src=a.png width=50%>\n",
+             <img src=\"javascript:x\" alt=\"no\"><img src=a.png width=50% height=20%>\n\n\
+             <img src=b.png width=\" 33.4%\" height=\"12.5em\"><img src=c.png width=250% height=x>\n",
         );
         let (runs, _) = paragraph(&blocks[0]);
         let link = |t: &str| {
@@ -2343,14 +2385,16 @@ mod tests {
             .flat_map(|b| paragraph(b).0)
             .filter(|r| r.image.is_some())
             .collect();
-        assert_eq!(images.len(), 2, "{blocks:?}");
+        assert_eq!(images.len(), 4, "{blocks:?}");
         assert_eq!(images[0].image.as_deref(), Some("img/logo.png"));
         assert_eq!((images[0].width, images[0].height), (Some(120), Some(40)));
         assert_eq!(images[0].text, "Logo");
-        assert_eq!(
-            (images[1].image.as_deref(), images[1].width),
-            (Some("a.png"), None)
-        );
+        // 割合の幅は割合のまま（高さの割合は読まない）。数字の後ろの単位は画素として読む（HTML の読み方）。
+        let sides = |r: &Run| (r.width, r.height, r.width_percent);
+        assert_eq!(images[1].image.as_deref(), Some("a.png"));
+        assert_eq!(sides(images[1]), (None, None, Some(50)));
+        assert_eq!(sides(images[2]), (None, Some(13), Some(33)));
+        assert_eq!(sides(images[3]), (None, None, Some(100)));
     }
 
     #[test]

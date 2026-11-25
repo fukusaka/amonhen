@@ -572,6 +572,8 @@ struct Doc {
     dark: Cell<bool>,
     /// 表と、その段落の左の下げ（欄の幅が変わったら広げ直す）。
     tables: RefCell<Vec<(glib::WeakRef<gtk::Grid>, i32)>>,
+    /// 幅を割合で決めた絵（欄の幅が変わったら大きさを決め直す）。
+    percent: RefCell<Vec<(glib::WeakRef<gtk::Picture>, PercentSize)>>,
     /// Markdown のファイル。
     from: String,
     on_open: OnOpenPath,
@@ -602,6 +604,7 @@ pub fn view(
         links: RefCell::default(),
         dark: Cell::new(false),
         tables: RefCell::default(),
+        percent: RefCell::default(),
         from: path.to_owned(),
         on_open,
         find: RefCell::default(),
@@ -705,6 +708,12 @@ fn build(doc: &Rc<Doc>, text: &gtk::TextView) {
         .into_iter()
         .map(|(grid, margin)| (grid.downgrade(), margin))
         .collect();
+    *doc.percent.borrow_mut() = builder
+        .percent
+        .take()
+        .into_iter()
+        .map(|(picture, size)| (picture.downgrade(), size))
+        .collect();
     fit_tables(doc, text);
     if let Some(find) = doc.find.borrow().upgrade() {
         find.refresh();
@@ -736,10 +745,19 @@ fn build(doc: &Rc<Doc>, text: &gtk::TextView) {
 
 /// 表を欄の幅に広げる（macOS 版の幅 100% の表と同じ。列は収まれば 1 行で、収まらないときだけ折り返す）。
 /// 文字の間に埋め込んだ部品は最小の大きさで置かれ、折り返すラベルは 1 語の幅まで縮むので、幅を決めておく。
+/// 幅を割合で決めた絵も、欄の幅に合わせて大きさを決め直す。
 fn fit_tables(doc: &Doc, text: &gtk::TextView) {
     let width = text.width();
     if width <= 0 {
         return;
+    }
+    for (picture, size) in doc.percent.borrow().iter() {
+        if let Some(picture) = picture.upgrade() {
+            let (w, h) = size.at(width);
+            if picture.width_request() != w || picture.height_request() != h {
+                picture.set_size_request(w, h);
+            }
+        }
     }
     for (grid, margin) in doc.tables.borrow().iter() {
         if let Some(grid) = grid.upgrade() {
@@ -811,6 +829,40 @@ fn link_at(text: &gtk::TextView, links: &[(i32, i32, String)], x: f64, y: f64) -
         .map(|(_, _, url)| url.clone())
 }
 
+/// 幅を割合で決めた絵（HTML の `width="50%"`）の大きさの決め方。
+#[derive(Clone, Copy)]
+struct PercentSize {
+    /// 段落の左の下げ。
+    margin: i32,
+    /// 表のマスの中なら、欄の幅に対するマスの幅の割合。
+    share: Option<f64>,
+    /// 幅の割合（1〜100）。
+    percent: u32,
+    /// HTML の高さ（なければ比を保つ）。
+    height: Option<u32>,
+    /// 絵の大きさ。
+    natural: (i32, i32),
+}
+
+impl PercentSize {
+    /// 欄の幅 `width` のときの大きさ（幅は 640 px まで、高さは決まっていなければ比を保つ）。
+    fn at(&self, width: i32) -> (i32, i32) {
+        // 左右の余白（24 と 24）と段落の下げを除く。マスの中なら、そのマスの分からマスの左右の余白（8 と 8）と枠を除く。
+        let column = f64::from((width - 48 - self.margin - 2).max(0));
+        let base = self
+            .share
+            .map_or(column, |share| (column * share - 18.0).max(0.0));
+        let w = ((base * f64::from(self.percent) / 100.0).round() as i32).max(1);
+        let (tw, th) = (self.natural.0.max(1), self.natural.1.max(1));
+        let h = self.height.map_or(th * w / tw, |h| h as i32);
+        if w > MAX_IMAGE_WIDTH {
+            (MAX_IMAGE_WIDTH, h * MAX_IMAGE_WIDTH / w)
+        } else {
+            (w, h)
+        }
+    }
+}
+
 /// 入れ子の様子（左の下げ・引用の背景）。
 #[derive(Clone, Default)]
 struct Ctx {
@@ -835,6 +887,10 @@ struct Builder<'a> {
     linked: RefCell<Vec<(gtk::Widget, String)>>,
     /// 表（欄の幅に広げる）と、その段落の左の下げ。
     tables: RefCell<Vec<(gtk::Grid, i32)>>,
+    /// 幅を割合で決めた絵（欄の幅に合わせる）。
+    percent: RefCell<Vec<(gtk::Picture, PercentSize)>>,
+    /// 今のブロックの段落の左の下げ（割合の幅の絵の基準）。
+    margin: Cell<i32>,
     /// 暗い外観か（`<picture>` の画像を選ぶ）。
     dark: bool,
     /// 開いている `<details>` の番号と、次の `<details>` の番号（閉じたものの中のものも数える）。
@@ -857,6 +913,8 @@ impl<'a> Builder<'a> {
             labels: RefCell::default(),
             linked: RefCell::default(),
             tables: RefCell::default(),
+            percent: RefCell::default(),
+            margin: Cell::new(0),
             dark,
             open,
             details: Cell::new(0),
@@ -1082,6 +1140,7 @@ impl<'a> Builder<'a> {
                 picture.set_can_shrink(true);
                 picture.set_content_fit(gtk::ContentFit::Contain);
                 picture.set_size_request(w, h);
+                self.percent_width(&picture, texture, run, None);
                 if !alt.is_empty() {
                     picture.set_alternative_text(Some(alt));
                     picture.set_tooltip_text(Some(alt));
@@ -1124,6 +1183,7 @@ impl<'a> Builder<'a> {
     }
 
     fn block(&self, block: &Block, ctx: &Ctx) {
+        self.margin.set(ctx.margin);
         match block {
             Block::Heading { level, runs, align } => {
                 let start = self.offset();
@@ -1363,9 +1423,9 @@ impl<'a> Builder<'a> {
                     self.details.set(self.details.get() + count_details(blocks));
                 }
             }
-            Block::HtmlTable { cells, .. } => {
+            Block::HtmlTable { cells, columns, .. } => {
                 self.lone_marker(ctx);
-                self.html_table(cells, ctx);
+                self.html_table(cells, *columns, ctx);
             }
             Block::Footnote { label, blocks } => {
                 self.lone_marker(ctx);
@@ -1453,6 +1513,7 @@ impl<'a> Builder<'a> {
                     row.get(column).map_or(&[][..], Vec::as_slice),
                     r == 0,
                     aligns.get(column).copied().unwrap_or(Align::None),
+                    1.0 / columns as f64,
                 );
                 grid.attach(&cell, column as i32, r as i32, 1, 1);
             }
@@ -1465,7 +1526,7 @@ impl<'a> Builder<'a> {
     }
 
     /// HTML の表（マスは `colspan`・`rowspan` をまたぐ。見出しのマスは、決めなければ中央）。
-    fn html_table(&self, cells: &[amonhen_core::markdown::TableCell], ctx: &Ctx) {
+    fn html_table(&self, cells: &[amonhen_core::markdown::TableCell], columns: u32, ctx: &Ctx) {
         install_css();
         let grid = gtk::Grid::new();
         grid.add_css_class("md-table");
@@ -1476,7 +1537,12 @@ impl<'a> Builder<'a> {
                 (Align::None, true) => Align::Center,
                 (align, _) => align,
             };
-            let widget = self.cell(&cell.runs, cell.header, align);
+            let widget = self.cell(
+                &cell.runs,
+                cell.header,
+                align,
+                f64::from(cell.colspan.max(1)) / f64::from(columns.max(1)),
+            );
             grid.attach(
                 &widget,
                 cell.column as i32,
@@ -1492,8 +1558,38 @@ impl<'a> Builder<'a> {
         self.paragraph(start, ctx, false, 10);
     }
 
+    /// 幅を割合で決めた絵（HTML の `width="50%"`）なら、欄の幅（表のマスの中なら、欄の幅の `share` の分）に合わせる
+    /// ように覚えておく（大きさは `fit_tables` で決める）。
+    fn percent_width(
+        &self,
+        picture: &gtk::Picture,
+        texture: &gdk::Texture,
+        run: &Run,
+        share: Option<f64>,
+    ) {
+        let Some(percent) = run.width_percent else {
+            return;
+        };
+        let size = PercentSize {
+            margin: self.margin.get(),
+            share,
+            percent,
+            height: run.height,
+            natural: (texture.width(), texture.height()),
+        };
+        let width = self.view.width();
+        let (w, h) = size.at(if width > 0 {
+            width
+        } else {
+            MAX_IMAGE_WIDTH + 50
+        });
+        picture.set_size_request(w, h);
+        self.percent.borrow_mut().push((picture.clone(), size));
+    }
+
     /// 表のマス: 文字はラベル（Pango のマークアップ）、画像はこのコミットの中で読めたものなら絵。改行で行を分ける。
-    fn cell(&self, runs: &[Run], head: bool, align: Align) -> gtk::Widget {
+    /// `share` は欄の幅に対するマスの幅の割合（割合の幅の絵の基準）。
+    fn cell(&self, runs: &[Run], head: bool, align: Align, share: f64) -> gtk::Widget {
         let (xalign, justify, halign) = match align {
             Align::Center => (0.5, gtk::Justification::Center, gtk::Align::Center),
             Align::Right => (1.0, gtk::Justification::Right, gtk::Align::End),
@@ -1563,6 +1659,7 @@ impl<'a> Builder<'a> {
                             w.min(MAX_IMAGE_WIDTH),
                             h * w.min(MAX_IMAGE_WIDTH) / w.max(1),
                         );
+                        self.percent_width(&picture, texture, run, Some(share));
                         picture.set_valign(gtk::Align::Center);
                         if !run.text.is_empty() {
                             picture.set_tooltip_text(Some(&run.text));
