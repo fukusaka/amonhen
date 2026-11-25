@@ -7,6 +7,12 @@ becomes the GitHub Release notes.
 
 ## App and engine
 
+### Unreleased
+
+#### Changed
+
+- The GTK4 app's toolbar draws the new icons shared by every front end (see `docs/icons.md`); the other front ends follow.
+
 ### [0.2.15] - 2026-11-25
 
 Markdown previews draw math and the HTML GitHub renders, and DOT diagrams draw images, gradients and more of
