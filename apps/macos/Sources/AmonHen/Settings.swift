@@ -349,6 +349,38 @@ enum Settings {
         }
     }
 
+    /// Markdown の数式の大きさ（本文の字に対する倍率）。変えたら `mathSettingsChanged` を知らせる。
+    static var mathScale: Double {
+        get {
+            let value = UserDefaults.standard.double(forKey: "mathScale")
+            return value > 0 ? value : MarkdownBlock.Formula.fontScale
+        }
+        set {
+            UserDefaults.standard.set(newValue, forKey: "mathScale")
+            NotificationCenter.default.post(name: .mathSettingsChanged, object: nil)
+        }
+    }
+
+    /// 1 つの Markdown のファイルで数式を描く時間の上限（秒。0 は上限なし）。変えたらコアに渡し、`mathSettingsChanged`
+    /// を知らせる。
+    static var mathTimeLimit: Int {
+        get {
+            // 起動の引数（`-mathTimeLimit 0`）は文字で届くので、integer で読む
+            UserDefaults.standard.object(forKey: "mathTimeLimit") == nil
+                ? MarkdownBlock.Formula.defaultTimeLimit : UserDefaults.standard.integer(forKey: "mathTimeLimit")
+        }
+        set {
+            UserDefaults.standard.set(newValue, forKey: "mathTimeLimit")
+            MarkdownBlock.Formula.setTimeLimit(seconds: newValue)
+            NotificationCenter.default.post(name: .mathSettingsChanged, object: nil)
+        }
+    }
+
+    /// 起動したときに、数式の時間の上限をコアに渡す。
+    static func applyMathTimeLimit() {
+        MarkdownBlock.Formula.setTimeLimit(seconds: mathTimeLimit)
+    }
+
     /// 今の gantt の時間帯（名前が読めなければ OS の時間帯）。
     static var ganttZone: TimeZone {
         let name = ganttTimeZone
@@ -562,6 +594,10 @@ final class SettingsModel {
     var diffStandardColors = Settings.diffStandardColors { didSet { Settings.diffStandardColors = diffStandardColors } }
     var diagramColors = Settings.diagramColors { didSet { Settings.diagramColors = diagramColors } }
     var ganttTimeZone = Settings.ganttTimeZone { didSet { Settings.ganttTimeZone = ganttTimeZone } }
+    var mathScale = Settings.mathScale { didSet { if mathScale != oldValue { Settings.mathScale = mathScale } } }
+    var mathTimeLimit = Settings.mathTimeLimit {
+        didSet { if mathTimeLimit != oldValue { Settings.mathTimeLimit = mathTimeLimit } }
+    }
     var importedMermaidThemes = Settings.importedMermaidThemes {
         didSet { Settings.importedMermaidThemes = importedMermaidThemes }
     }

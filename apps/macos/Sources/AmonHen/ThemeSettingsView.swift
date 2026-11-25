@@ -164,6 +164,26 @@ struct SyntaxThemeSection: View {
                 .fixedSize()
             }
         }
+        // Markdown の数式
+        Section(L("Math")) {
+            Picker(L("Formula size"), selection: $model.mathScale) {
+                ForEach(MarkdownBlock.Formula.fontScales, id: \.self) { scale in
+                    Text(Self.percent(scale)).tag(scale)
+                }
+            }
+            Picker(L("Time limit per file"), selection: $model.mathTimeLimit) {
+                ForEach(MarkdownBlock.Formula.timeLimits, id: \.self) { seconds in
+                    Text(seconds == 0 ? L("No limit") : L("%ld s", seconds)).tag(seconds)
+                }
+            }
+            Note(L("Formulas past the limit show their TeX."))
+        }
+    }
+
+    /// 本文の字に対する倍率（`1.21` → 「121%」）。既定には KaTeX と添える。
+    private static func percent(_ scale: Double) -> String {
+        let text = "\(Int((scale * 100).rounded()))%"
+        return scale == MarkdownBlock.Formula.fontScale ? L("%@ (KaTeX)", text) : text
     }
 
     @ViewBuilder private func options(dark: Bool) -> some View {

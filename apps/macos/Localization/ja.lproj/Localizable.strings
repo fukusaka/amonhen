@@ -1964,6 +1964,12 @@
 "Colors" = "配色";
 "Time zone" = "時間帯";
 "System time zone" = "OS の時間帯";
+"Math" = "数式";
+"Formula size" = "式の大きさ";
+"Time limit per file" = "1 つのファイルで描く時間の上限";
+"No limit" = "上限なし";
+"Formulas past the limit show their TeX." = "上限を超えた式は TeX のまま見せます。";
+"%@ (KaTeX)" = "%@（KaTeX）";
 "Syntax colors" = "構文の色";
 "Mermaid (follows the appearance)" = "Mermaid（外観に合わせる）";
 "Import Mermaid Theme…" = "Mermaid のテーマを読み込む…";

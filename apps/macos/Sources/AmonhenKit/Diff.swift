@@ -567,8 +567,18 @@ public indirect enum MarkdownBlock: Decodable, Sendable {
         public let height: Double
         public let depth: Double
 
-        /// 本文の字の大きさに対する、数式の 1 em の大きさ（コアの `math::FONT_SCALE`）。
+        /// 本文の字の大きさに対する、数式の 1 em の大きさの既定（コアの `math::FONT_SCALE`。設定で変えられる）。
         public static let fontScale: Double = 1.21
+        /// 設定で選べる大きさ（コアの `math::FONT_SCALES`）と、1 つのファイルで式を描く時間の上限（秒。0 は上限なし。
+        /// コアの `math::TIME_LIMITS`）。
+        public static let fontScales: [Double] = [1.0, 1.1, fontScale, 1.3, 1.4, 1.5]
+        public static let timeLimits: [Int] = [1, 2, 5, 10, 0]
+        public static let defaultTimeLimit = 2
+
+        /// 1 つの Markdown のファイルで式を描く時間の上限を `seconds` 秒にする（0 は上限なし）。次に読む Markdown から効く。
+        public static func setTimeLimit(seconds: Int) {
+            amonhen_math_set_time_limit(UInt64(max(0, seconds)))
+        }
     }
 
     /// ひと続きの飾りの文字。
