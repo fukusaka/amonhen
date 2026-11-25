@@ -2946,8 +2946,8 @@ pub fn set_property(
             blocks.Clear().map_err(native_error)?;
             let append_run = |inlines: &windows_collections::IVector<Inline>,
                               value: &crate::RichTextRun| {
-                // A key cap is the app's inline (a framed label) in the run's place.
-                if value.is_key_cap
+                // A key cap or an app element is the app's inline in the run's place.
+                if (value.is_key_cap || value.inline.is_some())
                     && let Some(inline) = crate::element::key_cap(value)
                     && let Ok(inline) = inline.cast::<Inline>()
                 {

@@ -291,7 +291,11 @@ fn install_app_links() {
         }
     });
     // Markdown の `<kbd>`: 文の中に置く枠付きの札（GitHub のキーの札と同じく、地・枠・角の丸み・等幅の字）。
-    windows_reactor::set_key_cap_handler(|run| key_cap(&run.text).ok());
+    // 文の中の画像（Markdown の段落の途中の画像。読んだ画像を一時ファイルに書いたもの）も、ここで部品にする。
+    windows_reactor::set_inline_handler(|run| match &run.inline {
+        Some(key) => crate::markdownview::inline_image(key),
+        None => key_cap(&run.text).ok(),
+    });
     // Markdown の `<sup>`・`<sub>`: 文字の飾りを上付き・下付きにする（reactor の Run には付属の値がないので、ここで）。
     windows_reactor::set_run_variant_handler(|run, variant| {
         let value = match variant {
