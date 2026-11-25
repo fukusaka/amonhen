@@ -419,8 +419,8 @@ fn syntax_section() -> (gtk::Box, gtk::Box) {
                 diagram.set_model(Some(&gtk::StringList::new(&labels)));
                 *keys.borrow_mut() = new_keys;
             }
-            let current =
-                settings::string(theme::DIAGRAM_COLORS).unwrap_or_else(|| "syntax".into());
+            let current = settings::string(theme::DIAGRAM_COLORS)
+                .unwrap_or_else(|| amonhen_core::diagram::DEFAULT_KEY.into());
             let index = keys
                 .borrow()
                 .iter()
@@ -447,7 +447,10 @@ fn syntax_section() -> (gtk::Box, gtk::Box) {
                     if settings::string(theme::DIAGRAM_COLORS).as_deref()
                         == Some(&format!("{IMPORTED_PREFIX}{name}"))
                     {
-                        settings::set_string(theme::DIAGRAM_COLORS, "syntax");
+                        settings::set_string(
+                            theme::DIAGRAM_COLORS,
+                            amonhen_core::diagram::DEFAULT_KEY,
+                        );
                     }
                     theme::set_imported_mermaid(&themes);
                 });
@@ -468,7 +471,7 @@ fn syntax_section() -> (gtk::Box, gtk::Box) {
             if let Some(key) = key
                 && settings::string(theme::DIAGRAM_COLORS)
                     .as_deref()
-                    .unwrap_or("syntax")
+                    .unwrap_or(amonhen_core::diagram::DEFAULT_KEY)
                     != key
             {
                 settings::set_string(theme::DIAGRAM_COLORS, &key);

@@ -8245,7 +8245,7 @@ impl Root {
                     if crate::prefs::string(crate::markdownview::DIAGRAM_COLORS)
                         == Some(format!("{IMPORTED_PREFIX}{name}"))
                     {
-                        chosen = Some("syntax".to_owned());
+                        chosen = Some(amonhen_core::diagram::DEFAULT_KEY.to_owned());
                     }
                 } else {
                     // 読み込んだテーマは、そのまま配色にする（GTK4 版と同じ）。

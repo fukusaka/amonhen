@@ -144,7 +144,7 @@ struct SyntaxThemeSection: View {
                     Spacer()
                     Button(L("Remove")) {
                         model.importedMermaidThemes[name] = nil
-                        if model.diagramColors == "mermaid-import:\(name)" { model.diagramColors = "syntax" }
+                        if model.diagramColors == "mermaid-import:\(name)" { model.diagramColors = "mermaid" }
                     }
                 }
             }
