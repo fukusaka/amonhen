@@ -42,7 +42,7 @@
 - GTK4: `gsk::Path::parse` でパスを読み、`apps/gtk4/src/icon.rs` が共通のセットにある種類を線で引く（形ごとに 1 度だけ読む）。GSK がすべての形を読めることをテストで確かめる。
 - macOS: C ABI（`amonhen_icon_shape`）で移動・直線・ベジェの列を渡し、AmonhenKit の `SharedIcons` が `CGPath` にし、アプリの `AppIcons` が線を引いてテンプレート画像にする。ツールバーとサイドバーが SF Symbols と同じように色を付ける。今の macOS の `NSImage` は SVG を読めるが、対応する最も古い 14.4 で読めるかは確かめていないので、それには頼らない。ツールバーのサイドバーの切り替えと検索欄は AppKit の部品なのでシステムの見た目のまま、Finder は Finder のフォルダのまま。
 - Windows: WinUI のアイコンの部品（`PathIcon`・`FontIcon`）は塗るだけなので、ツールバーとそのカスタマイズのパレットでは、形ごとに XAML の図形の `Path` で線を引く（`Shape::markup(20)`、太さは大きさに合わせ、端と角は丸、破線は太さを 1 とした長さ、色はテーマの文字の色）。windows-reactor に `Path` がなかったので、vendor の写しに足した（`Shape` と `Path` のバインディングは、Windows App SDK の winmd から windows-bindgen で作った）。Files は Segoe Fluent Icons の Explorer のフォルダのまま。
-- VSCode（これから）: `package.json` のアイコンは、明るいテーマと暗いテーマの SVG のファイルか、`contributes.icons` で登録するフォント（テーマの色に追従するが、フォントを作る道具が要る。字形には塗る形を使える）。未決。
+- VSCode: サイドバーの見出しのボタン（Fetch・Pull・Push / Publish・Undo・Select Repository・Refresh・Switch Branch・New Branch・Stash）とブランチの行。VSCode は拡張の SVG を画像として描き、テーマの色を受け継げない（`currentColor` は黒になり、SVG の画像の中の `prefers-color-scheme` は、既定では VSCode のテーマではなく OS の外観に従う。ここは試していない）ので、`esbuild.mjs` が形ごとにライトとダークの写しを `media/icons/` に書く。色は VSCode の既定のアイコンの色（`icon.foreground`、ほかの worktree が checkout しているブランチは `charts.green`）。codicon と違い、テーマ独自のアイコンの色・ハイコントラスト・選んだ行の色には追従しない。追従するアイコンのフォント（`contributes.icons`）は見送った。
 
 このページの図は `crates/icons/tools/figures.swift`（macOS で）と、その横のデータから作る。描いた案は `crates/icons/tools/alternatives` に残す。
 
@@ -59,5 +59,5 @@ swift figures.swift alternatives alternatives.ja.tsv alternatives ../../../docs/
 - [x] macOS: ツールバーと、サイドバーのブランチ
 - [x] Windows: ツールバー
 - [ ] 残りのアイコン（約 55 種: サイドバーの節、状態、署名の印など）
-- [ ] VSCode
+- [x] VSCode: サイドバーの見出しのボタンとブランチの行
 - 未決: アプリのアイコンも描き直すか、VSCode の形式、端末の FE に何かするか（文字で表している）。
