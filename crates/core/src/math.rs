@@ -63,14 +63,33 @@ pub fn colorize_for_coresvg(svg: &str, fg: &str) -> Option<String> {
 /// 1 つの Markdown のファイルで描く式の数・原文と SVG の合計の大きさ・時間の上限。超えた分は描かずに原文を見せる（1 つの
 /// ファイルで整形表示が止まらないように）。
 #[cfg(feature = "math")]
-const MAX_FILE_FORMULAS: usize = 2_000;
+const MAX_FILE_FORMULAS: usize = 10_000;
 #[cfg(feature = "math")]
 const MAX_FILE_SOURCE: usize = 512 * 1024;
-/// SVG の合計（FE は式ごとに色を当てて画像にするので、JSON とその手間が大きくなりすぎないように）。
+/// SVG の合計（FE は式ごとに色を当てて画像にするので、JSON とその手間が大きくなりすぎないように）。小さな式でも字形を
+/// 持つので 1 式あたり 2〜4 KB になり、上の 1 万式が入る大きさにする（1 万式で約 44 MB）。
 #[cfg(feature = "math")]
-const MAX_FILE_SVG: usize = 8 << 20;
+const MAX_FILE_SVG: usize = 48 << 20;
 #[cfg(feature = "math")]
 const MAX_FILE_TIME: std::time::Duration = std::time::Duration::from_secs(2);
+
+/// 1 つのファイルの上限の組（試験では小さくする）。
+#[cfg(feature = "math")]
+#[derive(Clone, Copy)]
+struct FileLimits {
+    formulas: usize,
+    source: usize,
+    svg: usize,
+    time: std::time::Duration,
+}
+
+#[cfg(feature = "math")]
+const FILE_LIMITS: FileLimits = FileLimits {
+    formulas: MAX_FILE_FORMULAS,
+    source: MAX_FILE_SOURCE,
+    svg: MAX_FILE_SVG,
+    time: MAX_FILE_TIME,
+};
 /// 描くスレッドのスタック（RaTeX の入れ子の上限まで足りる大きさ。使った分だけ取られる）。
 #[cfg(feature = "math")]
 const STACK: usize = 64 << 20;
@@ -163,6 +182,15 @@ pub(crate) fn render_all(blocks: &mut [Block]) {
 /// 式を順に描く（大きなスタックの別スレッドで。上限を超えた分は描かない）。
 #[cfg(feature = "math")]
 fn render_jobs(jobs: Vec<(String, bool)>) -> Vec<Result<MathPicture, String>> {
+    render_jobs_with(jobs, FILE_LIMITS)
+}
+
+/// `render_jobs` を上限 `limits` で。
+#[cfg(feature = "math")]
+fn render_jobs_with(
+    jobs: Vec<(String, bool)>,
+    limits: FileLimits,
+) -> Vec<Result<MathPicture, String>> {
     let count = jobs.len();
     let worker = std::thread::Builder::new()
         .name("math".into())
@@ -174,10 +202,10 @@ fn render_jobs(jobs: Vec<(String, bool)>) -> Vec<Result<MathPicture, String>> {
                 .enumerate()
                 .map(|(i, (tex, display))| {
                     source += tex.len();
-                    if i >= MAX_FILE_FORMULAS
-                        || source > MAX_FILE_SOURCE
-                        || svg > MAX_FILE_SVG
-                        || started.elapsed() > MAX_FILE_TIME
+                    if i >= limits.formulas
+                        || source > limits.source
+                        || svg > limits.svg
+                        || started.elapsed() > limits.time
                     {
                         return Err(amonhen_model::tr!(
                             "This file has too many formulas to draw them all"
@@ -469,21 +497,33 @@ mod tests {
     #[cfg(feature = "math")]
     #[test]
     fn a_file_has_a_limit() {
-        let md: String = (0..MAX_FILE_FORMULAS + 5)
-            .map(|i| format!("$x_{{{i}}}$ "))
-            .collect();
+        // 上限を小さくして、上限を超えた式は描かずに断ることを見る（速さに左右されないように時間は長く）
+        let limits = FileLimits {
+            formulas: 3,
+            time: std::time::Duration::from_secs(600),
+            ..FILE_LIMITS
+        };
+        let jobs: Vec<(String, bool)> = (0..5).map(|i| (format!("x_{{{i}}}"), false)).collect();
+        let results = render_jobs_with(jobs, limits);
+        assert_eq!(results.len(), 5);
+        assert!(results[..3].iter().all(Result::is_ok));
+        assert!(results[3..].iter().all(Result::is_err));
+        // SVG の合計の上限も同じく止める
+        let limits = FileLimits {
+            svg: 1,
+            time: std::time::Duration::from_secs(600),
+            ..FILE_LIMITS
+        };
+        let jobs: Vec<(String, bool)> = (0..3).map(|i| (format!("x_{{{i}}}"), false)).collect();
+        let results = render_jobs_with(jobs, limits);
+        assert!(results[0].is_ok() && results[1..].iter().all(Result::is_err));
+        // Markdown の中の文中の式も、上限を超えた分は原文と理由になる
+        let md: String = (0..5).map(|i| format!("$x_{{{i}}}$ ")).collect();
         let blocks = parse(&md);
         let Block::Paragraph { runs, .. } = &blocks[0] else {
             panic!("{blocks:?}")
         };
-        let maths: Vec<&Run> = runs.iter().filter(|r| r.math_tex.is_some()).collect();
-        assert_eq!(maths.len(), MAX_FILE_FORMULAS + 5);
-        assert!(maths[..MAX_FILE_FORMULAS].iter().all(|r| r.math.is_some()));
-        assert!(
-            maths[MAX_FILE_FORMULAS..]
-                .iter()
-                .all(|r| r.math.is_none() && r.math_error.is_some())
-        );
+        assert_eq!(runs.iter().filter(|r| r.math.is_some()).count(), 5);
     }
 
     #[cfg(feature = "math")]
