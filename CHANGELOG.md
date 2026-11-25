@@ -20,6 +20,8 @@ becomes the GitHub Release notes.
   digit or `_`, nor in italics, links or footnotes. So `a$x$b` and `日本語の$x$` stay text, as on GitHub.
 - Diagrams take Mermaid's colors for the appearance by default, closer to GitHub. The setting moved to Settings >
   Theme > Diagrams, and pele's colors are now called the Obsidian style.
+- Why a Markdown diagram can't be drawn is shown in Japanese too: every DOT error, and Mermaid's common ones (syntax
+  errors, unknown diagram types, limits).
 
 ### [0.2.15] - 2026-11-25
 
