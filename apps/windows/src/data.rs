@@ -2258,6 +2258,8 @@ impl Data {
         };
         let (tx, wake) = (self.tx.clone(), self.wake.clone());
         let (svg_view, renderer) = (self.svg_view, self.mobile_renderer);
+        // VectorDrawable の色は、暗い外観なら values-night などを先に引く
+        let dark = crate::palette::dark();
         // Markdown の図に当てる色の元は、テーマを持つ UI のスレッドで取っておく。
         let diagram_theme =
             amonhen_core::markdown::is_markdown(&path).then(crate::markdownview::diagram_theme);
@@ -2278,7 +2280,7 @@ impl Data {
                 && amonhen_core::vectordrawable::is_vector_drawable(&path, &data)
             {
                 let drawn = (svg_view != SvgView::Text)
-                    .then(|| repo.vector_drawable(&commit, &path, &data, None));
+                    .then(|| repo.vector_drawable(&commit, &path, &data, None, dark));
                 match drawn {
                     Some(Ok(drawn)) => {
                         let (w, h) = crate::imagediff::svg_size(drawn.svg.as_bytes());

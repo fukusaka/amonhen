@@ -977,7 +977,7 @@ export class HistoryController implements vscode.Disposable {
     }
     // Android の VectorDrawable は絵にする（引けない色は画面の文字の色で。描けなければテキストだけ。アプリと同じ）
     if (at && isVectorDrawable(path, data)) {
-      const reply = await render('vectorDrawable', { path, data: data.toString('base64'), ...(colors ? { fallback: colors.text } : {}) }).catch(
+      const reply = await render('vectorDrawable', { path, data: data.toString('base64'), ...(colors ? { fallback: colors.text, dark: colors.dark } : {}) }).catch(
         () => undefined,
       );
       const info = reply as { svg?: string; notes?: string[] } | undefined;

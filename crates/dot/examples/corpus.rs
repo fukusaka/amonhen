@@ -94,7 +94,7 @@ fn main() {
             }
             Ok(Err(e)) => {
                 errors += 1;
-                println!("error  {name}: {}", e.message);
+                println!("error  {name}: {e}");
             }
             Err(_) => {
                 errors += 1;
