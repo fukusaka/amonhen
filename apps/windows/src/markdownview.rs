@@ -573,6 +573,14 @@ fn inlines(runs: &[Run], bold: bool) -> Vec<RichTextInline> {
                 foreground,
                 is_monospace: r.code || r.kbd,
                 is_strikethrough: r.strike,
+                // `<sup>`・`<sub>` は上付き・下付き（GitHub と同じく小さく、上・下にずらす）。
+                variant: if r.sup {
+                    RunVariant::Superscript
+                } else if r.sub {
+                    RunVariant::Subscript
+                } else {
+                    RunVariant::Normal
+                },
             })
         })
         .collect()
