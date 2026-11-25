@@ -1030,12 +1030,18 @@ async function branchArrangeFlow(): Promise<void> {
     await vscode.commands.executeCommand('amonhen.undo');
     await until('merge の Undo', () => git('rev-parse', 'HEAD').trim() === before);
     await settle();
-    // 取り込んでいないので、もう一度確かめてから消す
-    const answer = async (message: string) => (/aren’t merged/.test(message) ? 'Delete Anyway' : 'Delete');
+    // 取り込んでいないので、アプリと同じく 1 度の確認で、ほかにないコミットの数を見せて Delete Anyway を聞く
+    const asked: string[] = [];
+    const answer = async (message: string, options: vscode.MessageOptions) => {
+      asked.push(`${message}\n${options.detail ?? ''}`);
+      return 'Delete Anyway';
+    };
     await withWindow({ showWarningMessage: answer }, async () =>
       vscode.commands.executeCommand('amonhen.nav.delete', node('arr-a'), [node('arr-a'), node('arr-b')]),
     );
     assert.equal(git('branch', '--list', 'arr-a', 'arr-b').trim(), '');
+    assert.equal(asked.length, 1, JSON.stringify(asked));
+    assert.match(asked[0]!, /arr-a \(1 commit only on it\)/);
   } finally {
     if (git('symbolic-ref', '--short', 'HEAD').trim() !== current) git('switch', '-q', current);
     for (const b of names) if (git('branch', '--list', b).trim()) git('branch', '-D', b);
@@ -2446,7 +2452,7 @@ async function pullRequestMarkFlow(): Promise<void> {
     assert.match(drawnText(asked[0]!.drawing), /After deleting:/);
     assert.equal(git('branch', '--list', 'pm-lone').trim(), '', lastErrors());
 
-    // 取り込んでいないものと一緒に選ぶと、確認にプルリクエストが添えられ、もう一度聞くのは取り込んでいないものだけ
+    // 取り込んでいないものと一緒に選ぶと、1 度の確認にプルリクエストと、ほかにないコミットの数が添えられる
     git('switch', '-q', '-c', 'pm-plain');
     writeFileSync(join(root, 'pm-plain.txt'), 'pm\n');
     git('add', 'pm-plain.txt');
@@ -2461,14 +2467,14 @@ async function pullRequestMarkFlow(): Promise<void> {
       {
         showWarningMessage: async (message: string, options: vscode.MessageOptions) => {
           asked.push({ message, detail: options.detail ?? '', buttons: [] });
-          return /aren’t merged/.test(message) ? 'Delete Anyway' : 'Delete';
+          return 'Delete Anyway';
         },
       },
       async () => vscode.commands.executeCommand('amonhen.nav.delete', squashed, [squashed, plain]),
     );
-    assert.equal(asked.length, 2, JSON.stringify(asked));
+    assert.equal(asked.length, 1, JSON.stringify(asked));
     assert.match(asked[0]!.detail, /pm-squashed \(merged by pull request #77\)/);
-    assert.match(asked[1]!.message, /^pm-plain has/);
+    assert.match(asked[0]!.detail, /pm-plain \(1 commit only on it\)/);
     assert.equal(git('branch', '--list', 'pm-squashed', 'pm-plain').trim(), '', lastErrors());
   } finally {
     facts.readMerged = readMerged;
@@ -3795,15 +3801,18 @@ async function mergeBranchesFlow(label: string): Promise<void> {
   // 1 つ目の QuickPick（いくつも選ぶ）では order の順に選び、2 つ目（どう merge するか）では choose で選ぶ
   let order: string[] = [];
   let choose: (label: string) => boolean = () => false;
+  let first = '';
   const placeHolders: string[] = [];
   const warned: string[] = [];
   const failed: string[] = [];
   const stubs = {
-    showQuickPick: async (items: unknown, options?: { canPickMany?: boolean; placeHolder?: string }) => {
+    showQuickPick: async (items: unknown, options?: { canPickMany?: boolean; placeHolder?: string; title?: string }) => {
       const list = (await items) as ({ label: string; ref?: string } & Record<string, unknown>)[];
       if (options?.canPickMany) {
         return order.map((b) => list.find((i) => i.ref === `refs/heads/${b}`)!);
       }
+      // 順を決め直すときは first を先に
+      if (options?.title?.startsWith('Change the Order')) return list.find((i) => i.label === first);
       // 3 つ目（取り込み方）は git の設定のとおり
       if (list.some((i) => 'mode' in i)) return list.find((i) => i['mode'] === 'git');
       placeHolders.push(options?.placeHolder ?? '');
@@ -3827,6 +3836,16 @@ async function mergeBranchesFlow(label: string): Promise<void> {
       assert.equal(placeHolders.at(-1), `Merge 2 into ${branch} in one commit`);
       await vscode.commands.executeCommand('amonhen.undo');
       await until('merge の Undo', () => head() === start);
+
+      // 順を決め直すと、その順で merge する（アプリのシートでドラッグして並べ替えるのと同じ）
+      let reordered = false;
+      first = name('x');
+      choose = (l) => (reordered ? l.startsWith('$(git-merge)') : (reordered = l.startsWith('$(arrow-swap)')));
+      await vscode.commands.executeCommand('amonhen.mergeBranches');
+      await until('並べ替えた merge', () => git('log', '-1', '--format=%s').startsWith(`Merge branches '${name('x')}' and '${name('a')}'`));
+      await vscode.commands.executeCommand('amonhen.undo');
+      await until('並べ替えた merge の Undo', () => head() === start);
+      choose = (l) => l.startsWith('$(git-merge)');
 
       // x の後の y はぶつかる。見込みが分かれば（git 2.38 以降）そう伝える。それでも 1 つにまとめると git は断る
       order = [name('x'), name('y'), name('a')];
