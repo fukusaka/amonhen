@@ -1304,7 +1304,7 @@ fn mermaid_section(callbacks: &Callbacks) -> View {
         .unwrap_or_else(|| "syntax".into());
     let selected = schemes.iter().position(|(k, _)| *k == current).unwrap_or(0);
     StackPanel::new().spacing(8.0).children((
-        heading("Mermaid".to_owned()),
+        heading(tr!("Diagrams")),
         StackPanel::new()
             .orientation(Orientation::Horizontal)
             .spacing(12.0)

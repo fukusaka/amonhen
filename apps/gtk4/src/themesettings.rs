@@ -592,9 +592,9 @@ fn syntax_section() -> (gtk::Box, gtk::Box) {
             imported.clone().upcast(),
         ],
     );
-    // Markdown の Mermaid の図
+    // Markdown の図（Mermaid・DOT）
     let mermaid_section = crate::reposettings::section(
-        Some("Mermaid"),
+        Some(&tr!("Diagrams")),
         &[
             row(&tr!("Colors"), &diagram).upcast(),
             diagram_sample.clone().upcast(),
@@ -920,7 +920,7 @@ fn diagram_scheme_label(scheme: amonhen_core::diagram::Scheme) -> String {
     use amonhen_core::diagram::Scheme;
     match scheme {
         Scheme::Syntax => tr!("Syntax colors"),
-        Scheme::Pele => "pele".into(),
+        Scheme::Pele => tr!("Obsidian style"),
         Scheme::Mermaid(None) => tr!("Mermaid (follows the appearance)"),
         Scheme::Mermaid(Some(theme)) => format!("Mermaid {}", theme.name()),
         // 読み込んだテーマは名前で出す（ここには来ない）
