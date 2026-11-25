@@ -985,9 +985,9 @@ What git says, and what the app keeps:
   connection serves every worktree). The engine remembers the counts and counts again only the worktrees that changed:
   it watches every worktree's HEAD and index under `<git dir>/worktrees` (a few files, so staging, commits and
   checkouts show anywhere within 10 seconds), and counts the worktrees with changes again every 30 seconds. It does
-  not watch the worktrees' files: Linux's inotify uses one watch per folder (about 1 KB of kernel memory each), and a
-  large tree like minix has 17,000 folders, so watching 59 would reach the limit of about a million, and even a few
-  cost tens of megabytes for numbers that may lag a little. The window asks every 10 seconds while in front, which
+  not watch the worktrees' files: Linux's inotify uses one watch per folder (1 to 2 KB of kernel memory each, counting the folder it holds), and a
+  large tree like minix has 17,000 folders, so a few would reach the per-user limit (1% of memory: about 100,000 on a
+  16 GB machine, and never more than about a million), and even a few cost tens of megabytes for numbers that may lag a little. The window asks every 10 seconds while in front, which
   runs no git when nothing changed, and counts everything again every 5 minutes, to see a clean worktree whose files
   were edited without staging. Only the worktree being
   edited and the two edited before it stay open.
