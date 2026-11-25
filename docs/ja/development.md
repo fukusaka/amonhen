@@ -10,12 +10,12 @@
 cargo test --workspace
 cargo clippy --workspace --all-targets -- -D warnings
 scripts/build-core.sh && (cd apps/macos && swift test)
-scripts/build-engine.sh          # dist/engine にエンジン（macOS・Linux。Linux 用は brew install zig が要る）
+scripts/build-engine.sh          # dist/engine にエンジン、dist/render に VSCode の絵の手伝い（macOS・Linux。Linux 用は brew install zig が要る）
 scripts/build-app.sh snapshot   # dist/ に .app と zip を作る（compile-app.sh・Linux のエンジン・package-app.sh）
-scripts/check-engine.sh dist/engine/amonhen-darwin-aarch64   # 作ったエンジンを一度動かす（版、このリポジトリを読めるか）
+scripts/check-engine.sh dist/engine/amonhen-darwin-aarch64   # 作ったエンジンと dist/render の絵の手伝いを一度動かす（版、このリポジトリを読めるか、描けるか）
 scripts/third-party-notices.sh   # dist/THIRD-PARTY-NOTICES.md（cargo install --locked cargo-about --features cli）
 cargo deny check licenses        # 依存が deny.toml で許したライセンスだけか（cargo install --locked cargo-deny）
-cargo build -p amonhen-cli && (cd apps/vscode && npm ci && npm test)   # VSCode 拡張
+cargo build -p amonhen-cli && cargo build -p amonhen-render && (cd apps/vscode && npm ci && npm test)   # VSCode 拡張
 (cd apps/vscode && npm run test:e2e)   # 実際の VSCode での VSCode 拡張（上の行のあとで）
 (cd apps/gtk4 && cargo clippy --all-targets -- -D warnings && cargo run --release -- <repo>)   # GTK4 のアプリ（GTK 4.14 以降と libadwaita が要る。libgtk-4-dev libadwaita-1-dev か brew install gtk4 libadwaita pkgconf）
 scripts/package-gtk4.sh          # GTK4 のアプリを dist/amonhen-gtk-<版>-linux-<arch>.tar.gz に（Linux で。dist/engine の Linux のエンジンがあれば入れる）
@@ -63,8 +63,10 @@ GTK4 のアプリ（`apps/gtk4`）: `amonhen-gtk <repo> --snapshot out.png` は�
 
 設計は [vscode.md](vscode.md)。
 
-エンジンはリポジトリのルートで作る（`cargo build -p amonhen-cli`。テストはそれを使う）。`bin/` に同梱するエンジンは、
-ルートで `scripts/build-engine.sh` と `scripts/third-party-notices.sh`、`apps/vscode` で `scripts/bundle-engine.sh` を実行して写す
+エンジンはリポジトリのルートで作る（`cargo build -p amonhen-cli`。テストはそれを使う）。絵の手伝いも同じ
+（`cargo build -p amonhen-render`。図と数式のフィーチャーがエンジンに混ざらないよう、別々に作る）。`bin/` に同梱する
+エンジンと手伝いは、ルートで `scripts/build-engine.sh` と `scripts/third-party-notices.sh`、`apps/vscode` で
+`scripts/bundle-engine.sh` を実行して写す
 （ライセンスと `dist/THIRD-PARTY-NOTICES.md` も拡張のフォルダに写す）。
 
 ```sh

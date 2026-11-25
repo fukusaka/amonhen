@@ -133,12 +133,15 @@ crates/
   cli/               CLI（amonhen）
   commands/          FE に共通の操作の表（メニュー・ツールバー・ショートカット）
   assist/            手元の CLI（Claude Code・Codex）による AI の呼び出し、プロンプト、結果のキャッシュ
+  render/            VSCode 拡張の絵の手伝い（amonhen-render: 図・数式・VectorDrawable・SVG のモバイル向けの確認）
 apps/
   macos/             SwiftPM のパッケージ（AmonhenKit と、AppKit のアプリ）
   gtk4/              GTK4 のアプリ（gtk4-rs。Cargo の workspace は別）
   vscode/            VSCode 拡張（TypeScript）
 ```
 後で足すもの: `backend-git2/`（モバイル向け）、Swift / Kotlin 向けのバインディング（作らなかった: C ABI と JSON の命令で済ませている）。
+
+画面に描く機能は、アプリと VSCode の手伝い `amonhen-render` に置き、エンジンには入れない。Mermaid・DOT の図・数式・Android の VectorDrawable の絵・SVG のモバイル向けの確認は、アプリ（コアの `diagrams`・`math` のフィーチャー。C ABI 越しと GTK4）と、`crates/render`（VSCode 拡張がエンジンの隣に同梱し、見せるファイルごとに起動する別の実行ファイル。取り決めは [front.md](front.md#絵の手伝いamonhen-render)）に入れる。エンジン（`amonhen`: CLI・共有の daemon・SSH 先の `--stdio`）は Markdown をブロックに読むなど、リポジトリを読み書きすることだけを持ち、SSH 先に送るものを小さく保つ。
 ## データ設計
 
 ### 不変のスナップショット

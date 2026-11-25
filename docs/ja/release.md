@@ -36,6 +36,7 @@ snapshot は次の patch（版を上げてからタグを打つまでは、そ�
 
 正式版の `.vsix` に同梱するエンジンは、拡張をエンジンとは別に出すので snapshot のモードで作る（`vscode-release.yml`）。
 版は snapshot のものになるが、macOS のものは Developer ID で署名し、公証にも出す。
+`.vsix` には、エンジンの OS と CPU ごとの絵の手伝い `amonhen-render`（`dist/render`。エンジンと一緒に作って確かめ、macOS のものは同じく署名して公証に出す）も同梱する。アプリとエンジンの tar.gz・zip には入れない。
 
 正式版を出す手順:
 
