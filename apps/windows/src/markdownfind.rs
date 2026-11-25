@@ -165,7 +165,7 @@ fn collect(node: &xaml::DependencyObject, out: &mut Vec<Text>, depth: u32) {
             text,
             runs,
         });
-        return;
+        // 文の中に置いた部品（`<kbd>` の札）も探す（その字は Run でなく、中の TextBlock にある）。
     }
     if let Ok(plain) = node.cast::<xaml::TextBlock>() {
         let mut text = Vec::new();

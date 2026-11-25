@@ -30,6 +30,7 @@ becomes the GitHub Release notes.
   picture's own size (macOS, GTK4).
 - Markdown previews decode all of HTML5's named character references (such as `&rarr;` or `&NotEqualTilde;`), and
   the old names without `;` (`&copy`, `&amp`) by HTML's rules, where they were limited to 27 common ones.
+- The toolbar draws new icons shared by every front end, also used for branches in the sidebar (macOS, GTK4; see `docs/icons.md`).
 - Fences named after a Graphviz engine, such as ` ```neato `, stay code, as on GitHub; ` ```dot `, ` ```graphviz `
   and ` ```gv ` are drawn, and `layout` still picks the engine.
 - DOT diagrams follow Graphviz's defaults: unfilled nodes and clusters stay transparent, cluster titles take the text
@@ -1387,6 +1388,7 @@ First release.
 
 #### Changed
 
+- The sidebar's title buttons and branch rows draw the icons shared by every front end (see `docs/icons.md`).
 - Copy Short ID copies 8 characters, as the app does.
 - The sidebar's in-progress row says what is being done where and the step, and why it stopped with what to do next
   (the commit, conflicts, a failed exec, a stop to edit), as the app's band does (with the engine); a revert has no

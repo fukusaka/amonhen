@@ -86,7 +86,10 @@
         "command": "amonhen.refresh",
         "title": "Refresh",
         "category": "Amon Hen",
-        "icon": "$(refresh)"
+        "icon": {
+          "light": "media/icons/light/refresh.svg",
+          "dark": "media/icons/dark/refresh.svg"
+        }
       },
       {
         "command": "amonhen.openFirstConflict",
@@ -104,7 +107,10 @@
         "command": "amonhen.selectRepository",
         "title": "Select Repository",
         "category": "Amon Hen",
-        "icon": "$(repo)"
+        "icon": {
+          "light": "media/icons/light/repositories.svg",
+          "dark": "media/icons/dark/repositories.svg"
+        }
       },
       {
         "command": "amonhen.undo",
@@ -117,7 +123,10 @@
         "command": "amonhen.fetch",
         "title": "Fetch",
         "category": "Amon Hen",
-        "icon": "$(cloud-download)",
+        "icon": {
+          "light": "media/icons/light/fetch.svg",
+          "dark": "media/icons/dark/fetch.svg"
+        },
         "enablement": "amonhen.hasRepository"
       },
       {
@@ -517,7 +526,10 @@
         "command": "amonhen.undoWithConfirmation",
         "title": "Undo…",
         "category": "Amon Hen",
-        "icon": "$(discard)",
+        "icon": {
+          "light": "media/icons/light/undo.svg",
+          "dark": "media/icons/dark/undo.svg"
+        },
         "enablement": "amonhen.hasRepository"
       },
       {
@@ -708,21 +720,30 @@
         "command": "amonhen.pull",
         "title": "Pull",
         "category": "Amon Hen",
-        "icon": "$(repo-pull)",
+        "icon": {
+          "light": "media/icons/light/pull.svg",
+          "dark": "media/icons/dark/pull.svg"
+        },
         "enablement": "amonhen.hasRepository"
       },
       {
         "command": "amonhen.push",
         "title": "Push",
         "category": "Amon Hen",
-        "icon": "$(repo-push)",
+        "icon": {
+          "light": "media/icons/light/push.svg",
+          "dark": "media/icons/dark/push.svg"
+        },
         "enablement": "amonhen.hasRepository"
       },
       {
         "command": "amonhen.publish",
         "title": "Publish Branch",
         "category": "Amon Hen",
-        "icon": "$(cloud-upload)",
+        "icon": {
+          "light": "media/icons/light/publish.svg",
+          "dark": "media/icons/dark/publish.svg"
+        },
         "enablement": "amonhen.hasRepository"
       },
       {
@@ -806,14 +827,20 @@
         "command": "amonhen.switchBranch",
         "title": "Switch Branch…",
         "category": "Amon Hen",
-        "icon": "$(git-branch)",
+        "icon": {
+          "light": "media/icons/light/branch.svg",
+          "dark": "media/icons/dark/branch.svg"
+        },
         "enablement": "amonhen.hasRepository"
       },
       {
         "command": "amonhen.newBranch",
         "title": "New Branch…",
         "category": "Amon Hen",
-        "icon": "$(git-branch-create)",
+        "icon": {
+          "light": "media/icons/light/new-branch.svg",
+          "dark": "media/icons/dark/new-branch.svg"
+        },
         "enablement": "amonhen.hasRepository"
       },
       {
@@ -872,7 +899,10 @@
         "command": "amonhen.stash",
         "title": "Stash Changes…",
         "category": "Amon Hen",
-        "icon": "$(add)",
+        "icon": {
+          "light": "media/icons/light/stash.svg",
+          "dark": "media/icons/dark/stash.svg"
+        },
         "enablement": "amonhen.hasRepository"
       },
       {

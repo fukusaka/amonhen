@@ -380,6 +380,100 @@ pub unsafe extern "C" fn amonhen_rename_label(
         .map_or(std::ptr::null_mut(), CString::into_raw)
 }
 
+/// 共通のアイコン（`amonhen-icons`、どの FE でも同じ形）`name`（NUL 終わり）の線の数。ないアイコンなら -1。
+///
+/// # Safety
+/// `name` は NUL 終わりの文字列であること。
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn amonhen_icon_shape_count(name: *const c_char) -> i32 {
+    unsafe { icon(name) }.map_or(-1, |icon| icon.shapes.len() as i32)
+}
+
+/// 共通のアイコン `name` の `index` 本目の線。移動・直線・3 次ベジェ・閉じるの列（`amonhen_icons::Shape::segments`:
+/// 操作の番号 0・1・2・3 に続けて、移動と直線は x y、ベジェは x1 y1 x2 y2 x y）を返し、その長さを `len` に、破線の
+/// 長さ（なければ NULL と 0）を `dash`・`dash_len` に入れる。座標は 16×16 の格子で、線の太さは
+/// `amonhen_icon_stroke_width`。返す列はプログラムが終わるまで有効で、解放しない。ないときは NULL。
+///
+/// # Safety
+/// `name` は NUL 終わりの文字列、`len`・`dash`・`dash_len` は書けること。
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn amonhen_icon_shape(
+    name: *const c_char,
+    index: usize,
+    len: *mut usize,
+    dash: *mut *const f32,
+    dash_len: *mut usize,
+) -> *const f32 {
+    let Some(shape) = unsafe { icon(name) }.and_then(|icon| icon.shapes.get(index)) else {
+        return std::ptr::null();
+    };
+    unsafe {
+        *len = shape.segments.len();
+        *dash = if shape.dash.is_empty() {
+            std::ptr::null()
+        } else {
+            shape.dash.as_ptr()
+        };
+        *dash_len = shape.dash.len();
+    }
+    shape.segments.as_ptr()
+}
+
+/// 共通のアイコン `name` を、一辺 `size`（描く単位）の正方形に太さ `stroke` で描く線。縦・横の線は画素
+/// （`pixel_scale` は描く単位あたりの画素の数）に合わせてある（`amonhen_icons::Icon::strokes`）。返す列は
+/// `[線の数, (列の長さ, 破線の長さの数, 列…, 破線…) × 線の数]`（列は `amonhen_icon_shape` と同じ形、座標は描く単位）
+/// で、長さを `len` に入れる。`amonhen_icon_strokes_free` で解放する。ないアイコンなら NULL。
+///
+/// # Safety
+/// `name` は NUL 終わりの文字列、`len` は書けること。
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn amonhen_icon_strokes(
+    name: *const c_char,
+    size: f32,
+    pixel_scale: f32,
+    stroke: f32,
+    len: *mut usize,
+) -> *mut f32 {
+    let Some(icon) = (unsafe { icon(name) }) else {
+        return std::ptr::null_mut();
+    };
+    let strokes = icon.strokes(size, pixel_scale, stroke);
+    let mut out = vec![strokes.len() as f32];
+    for s in &strokes {
+        out.extend([s.segments.len() as f32, s.dash.len() as f32]);
+        out.extend(&s.segments);
+        out.extend(&s.dash);
+    }
+    let out = out.into_boxed_slice();
+    unsafe { *len = out.len() };
+    Box::into_raw(out) as *mut f32
+}
+
+/// `amonhen_icon_strokes` が返した列を解放する。
+///
+/// # Safety
+/// `ptr` と `len` は `amonhen_icon_strokes` が返したものであること（NULL なら何もしない）。
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn amonhen_icon_strokes_free(ptr: *mut f32, len: usize) {
+    if !ptr.is_null() {
+        drop(unsafe { Box::from_raw(std::ptr::slice_from_raw_parts_mut(ptr, len)) });
+    }
+}
+
+/// 共通のアイコンの線の太さ（16×16 の格子の単位）。
+#[unsafe(no_mangle)]
+pub extern "C" fn amonhen_icon_stroke_width() -> f32 {
+    amonhen_icons::STROKE_WIDTH
+}
+
+unsafe fn icon(name: *const c_char) -> Option<&'static amonhen_icons::Icon> {
+    if name.is_null() {
+        return None;
+    }
+    let name = unsafe { CStr::from_ptr(name) }.to_str().ok()?;
+    amonhen_icons::get(name)
+}
+
 /// SVG（`data` の `len` バイト）の、モバイル向けの描画部品で崩れる機能（JSON の配列。要素は
 /// `{"targets": ["android"|"ios"|"flutter"|"reactNative", …], "feature", "message", "count"}`）。
 /// `amonhen_string_free` で解放する。

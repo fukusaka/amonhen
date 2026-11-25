@@ -290,6 +290,8 @@ fn install_app_links() {
             });
         }
     });
+    // Markdown の `<kbd>`: 文の中に置く枠付きの札（GitHub のキーの札と同じく、地・枠・角の丸み・等幅の字）。
+    windows_reactor::set_key_cap_handler(|run| key_cap(&run.text).ok());
     // Markdown の `<sup>`・`<sub>`: 文字の飾りを上付き・下付きにする（reactor の Run には付属の値がないので、ここで）。
     windows_reactor::set_run_variant_handler(|run, variant| {
         let value = match variant {
@@ -304,6 +306,60 @@ fn install_app_links() {
             eprintln!("上付き・下付きにできない: {e}");
         }
     });
+}
+
+/// `<kbd>` の札: InlineUIContainer の中に、角の丸い枠と地の Border、等幅の小さな字。
+fn key_cap(text: &str) -> windows_core_reactor::Result<IInspectable> {
+    let color = |c: Color| xaml::Color {
+        A: c.a,
+        R: c.r,
+        G: c.g,
+        B: c.b,
+    };
+    let label = xaml::TextBlock::new()?;
+    label.SetText(&windows_core_reactor::HSTRING::from(text))?;
+    label.SetFontSize(12.0)?;
+    label.SetFontFamily(&xaml::FontFamily::CreateInstanceWithName(
+        &windows_core_reactor::HSTRING::from("Cascadia Mono, Consolas"),
+    )?)?;
+    let frame = xaml::Border::new()?;
+    frame.SetChild(&label)?;
+    frame.SetPadding(xaml::Thickness {
+        Left: 5.0,
+        Top: 0.0,
+        Right: 5.0,
+        Bottom: 1.0,
+    })?;
+    frame.SetBorderThickness(xaml::Thickness {
+        Left: 1.0,
+        Top: 1.0,
+        Right: 1.0,
+        Bottom: 2.0,
+    })?;
+    frame.SetCornerRadius(xaml::CornerRadius {
+        TopLeft: 4.0,
+        TopRight: 4.0,
+        BottomRight: 4.0,
+        BottomLeft: 4.0,
+    })?;
+    frame.SetBorderBrush(&xaml::SolidColorBrush::CreateInstanceWithColor(color(
+        crate::palette::border(),
+    ))?)?;
+    frame.SetBackground(&xaml::SolidColorBrush::CreateInstanceWithColor(color(
+        crate::palette::bar(),
+    ))?)?;
+    // 札の下端を文字の並びの下に合わせる（InlineUIContainer は下端を基準線に置く）。
+    frame
+        .cast::<xaml::FrameworkElement>()?
+        .SetMargin(xaml::Thickness {
+            Left: 1.0,
+            Top: 0.0,
+            Right: 1.0,
+            Bottom: -4.0,
+        })?;
+    let container = xaml::InlineUIContainer::new()?;
+    container.SetChild(&frame)?;
+    container.cast()
 }
 
 fn with_history(f: impl FnOnce(&mut HistoryView)) {
@@ -20393,6 +20449,7 @@ fn resize_surface(
             );
         }
     }
+    crate::menus::set_display_scale(scale);
     surface
         .as_ref()
         .expect("surface")

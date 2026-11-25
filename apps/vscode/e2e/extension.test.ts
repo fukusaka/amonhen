@@ -1117,7 +1117,11 @@ async function branchArrangeFlow(): Promise<void> {
     await until('並べ替え', () => JSON.stringify(shape().slice(0, 2)) === JSON.stringify(['arr-a', 'arr-b']));
     await vscode.commands.executeCommand('amonhen.branch.removeFromFavorites', node('arr-a'), [node('arr-a'), node('arr-b')]);
     assert.deepEqual([config('branch.arr-a.amonhenPinned'), config('branch.arr-b.amonhenPinned')], [undefined, undefined]);
-    await until('お気に入りが消える', () => (sidebar.getTreeItem(node('arr-a')).iconPath as vscode.ThemeIcon).id === 'git-branch');
+    // お気に入りでなくなったブランチは、どの FE でも同じ形の Branch（media/icons の SVG）
+    await until('お気に入りが消える', () => {
+      const icon = sidebar.getTreeItem(node('arr-a')).iconPath as { light?: vscode.Uri } | undefined;
+      return icon?.light?.path.endsWith('/branch.svg') === true;
+    });
 
     // いくつも選んで merge すると 1 つのコミットになり（Undo 1 回で戻る）、まとめて消せる
     for (const b of ['arr-a', 'arr-b']) {

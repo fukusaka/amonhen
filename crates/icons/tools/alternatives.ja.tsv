@@ -1,0 +1,28 @@
+title	見直した 5 つ — 描いた案と選んだ案
+note	A は最初の形。青い枠が選んだ案。各案は 48・20・16 の大きさ（右の黒い帯は暗い背景の 16）
+group	merge	Merge
+alt	merge-A	A 最初の形		下の 2 本が 1 本になり、上へ矢印。よくある図案。
+alt	merge-B	B 3 つの丸		2 つのコミットから線が合わさり、上の丸（マージコミット）になる。
+alt	merge-C	C Branch の裏返し	chosen	Branch を上下に返した形。右から来た線が幹へ戻り、幹の上の丸がマージコミット。
+alt	merge-D	D 合流点に丸		合わさる所にマージコミットの丸を置き、上へ 1 本で進む。
+group	rebase	Rebase
+alt	rebase-A	A 最初の形		幹・枝・右の上向き矢印。動いたことしか伝わらない。
+alt	rebase-B	B 前の位置を点で	chosen	幹の上に枝とコミット。下に、前の位置の枝を点で残す。
+alt	rebase-C	C 先に積み直す		横の線が土台。土台の先にコミットを縦に積み直す。
+alt	rebase-D	D コミットが移る		点の丸（前の位置）から実線の丸へ弧の矢印で移る。16 では点が固まる。
+group	stash	Stash
+alt	stash-A	A 最初の形		開いた箱へ矢印。ダウンロードの印に近い。
+alt	stash-B	B 引き出し	chosen	取っ手のある引き出しへ矢印が入る。
+alt	stash-C	C 積み重ね		積んだ層の上へ矢印。Fetch のリモートの線と見分けにくい。
+alt	stash-D	D ふたのある箱		保管箱の中に下向きの矢印。
+group	pop	Pop
+alt	pop-A	A 最初の形		箱から矢印。アップロードの印に近い。
+alt	pop-B	B 引き出し	chosen	引き出しから矢印が出る。
+alt	pop-C	C 積み重ね		いちばん上の層から矢印が上がる。
+alt	pop-D	D ふたのある箱		保管箱の中で上向きの矢印。
+group	repositories	Repositories
+alt	repositories-A	A 最初の形		重ねた板と箱。ケーキやトレーに見える。
+alt	repositories-B	B 本棚	chosen	棚に立てた本。リポジトリのライブラリ。
+alt	repositories-C	C 重ねた窓		後ろに 1 枚、前に 1 枚の窓。
+alt	repositories-D	D 4 つの区画		2×2 の区画。意味が一般的すぎる。
+alt	repositories-E	E フォルダとコミット		フォルダの中にコミットの丸。

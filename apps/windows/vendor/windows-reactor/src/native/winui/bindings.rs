@@ -15867,6 +15867,54 @@ impl IShape {
             .ok()
         }
     }
+    pub(crate) fn SetStrokeStartLineCap(&self, value: PenLineCap) -> windows_core::Result<()> {
+        unsafe {
+            (windows_core::Interface::vtable(self).SetStrokeStartLineCap)(
+                windows_core::Interface::as_raw(self),
+                value,
+            )
+            .ok()
+        }
+    }
+    pub(crate) fn SetStrokeEndLineCap(&self, value: PenLineCap) -> windows_core::Result<()> {
+        unsafe {
+            (windows_core::Interface::vtable(self).SetStrokeEndLineCap)(
+                windows_core::Interface::as_raw(self),
+                value,
+            )
+            .ok()
+        }
+    }
+    pub(crate) fn SetStrokeLineJoin(&self, value: PenLineJoin) -> windows_core::Result<()> {
+        unsafe {
+            (windows_core::Interface::vtable(self).SetStrokeLineJoin)(
+                windows_core::Interface::as_raw(self),
+                value,
+            )
+            .ok()
+        }
+    }
+    pub(crate) fn SetStrokeDashCap(&self, value: PenLineCap) -> windows_core::Result<()> {
+        unsafe {
+            (windows_core::Interface::vtable(self).SetStrokeDashCap)(
+                windows_core::Interface::as_raw(self),
+                value,
+            )
+            .ok()
+        }
+    }
+    pub(crate) fn SetStrokeDashArray<P0>(&self, value: P0) -> windows_core::Result<()>
+    where
+        P0: windows_core::Param<DoubleCollection>,
+    {
+        unsafe {
+            (windows_core::Interface::vtable(self).SetStrokeDashArray)(
+                windows_core::Interface::as_raw(self),
+                value.param().abi(),
+            )
+            .ok()
+        }
+    }
 }
 #[repr(C)]
 pub struct IShape_Vtbl {
@@ -15886,6 +15934,25 @@ pub struct IShape_Vtbl {
     StrokeThickness: usize,
     pub SetStrokeThickness:
         unsafe extern "system" fn(*mut core::ffi::c_void, f64) -> windows_core::HRESULT,
+    StrokeStartLineCap: usize,
+    pub SetStrokeStartLineCap:
+        unsafe extern "system" fn(*mut core::ffi::c_void, PenLineCap) -> windows_core::HRESULT,
+    StrokeEndLineCap: usize,
+    pub SetStrokeEndLineCap:
+        unsafe extern "system" fn(*mut core::ffi::c_void, PenLineCap) -> windows_core::HRESULT,
+    StrokeLineJoin: usize,
+    pub SetStrokeLineJoin:
+        unsafe extern "system" fn(*mut core::ffi::c_void, PenLineJoin) -> windows_core::HRESULT,
+    StrokeDashOffset: usize,
+    SetStrokeDashOffset: usize,
+    StrokeDashCap: usize,
+    pub SetStrokeDashCap:
+        unsafe extern "system" fn(*mut core::ffi::c_void, PenLineCap) -> windows_core::HRESULT,
+    StrokeDashArray: usize,
+    pub SetStrokeDashArray: unsafe extern "system" fn(
+        *mut core::ffi::c_void,
+        *mut core::ffi::c_void,
+    ) -> windows_core::HRESULT,
 }
 windows_core::imp::define_interface!(
     IShapeStatics,
@@ -15909,6 +15976,27 @@ pub struct IShapeStatics_Vtbl {
     ) -> windows_core::HRESULT,
     StrokeMiterLimitProperty: usize,
     pub StrokeThicknessProperty: unsafe extern "system" fn(
+        *mut core::ffi::c_void,
+        *mut *mut core::ffi::c_void,
+    ) -> windows_core::HRESULT,
+    pub StrokeStartLineCapProperty: unsafe extern "system" fn(
+        *mut core::ffi::c_void,
+        *mut *mut core::ffi::c_void,
+    ) -> windows_core::HRESULT,
+    pub StrokeEndLineCapProperty: unsafe extern "system" fn(
+        *mut core::ffi::c_void,
+        *mut *mut core::ffi::c_void,
+    ) -> windows_core::HRESULT,
+    pub StrokeLineJoinProperty: unsafe extern "system" fn(
+        *mut core::ffi::c_void,
+        *mut *mut core::ffi::c_void,
+    ) -> windows_core::HRESULT,
+    StrokeDashOffsetProperty: usize,
+    pub StrokeDashCapProperty: unsafe extern "system" fn(
+        *mut core::ffi::c_void,
+        *mut *mut core::ffi::c_void,
+    ) -> windows_core::HRESULT,
+    pub StrokeDashArrayProperty: unsafe extern "system" fn(
         *mut core::ffi::c_void,
         *mut *mut core::ffi::c_void,
     ) -> windows_core::HRESULT,
@@ -26232,6 +26320,16 @@ impl Shape {
             .and_then(|| windows_core::imp::Type::from_abi(result__))
         })
     }
+    pub(crate) fn StrokeDashArrayProperty() -> windows_core::Result<DependencyProperty> {
+        Self::IShapeStatics(|this| unsafe {
+            let mut result__ = core::mem::zeroed();
+            (windows_core::Interface::vtable(this).StrokeDashArrayProperty)(
+                windows_core::Interface::as_raw(this),
+                &mut result__,
+            )
+            .and_then(|| windows_core::imp::Type::from_abi(result__))
+        })
+    }
     fn IShapeStatics<R, F: FnOnce(&IShapeStatics) -> windows_core::Result<R>>(
         callback: F,
     ) -> windows_core::Result<R> {
@@ -29907,3 +30005,185 @@ impl windows_core::RuntimeType for XmlnsDefinition {
         b"struct(Microsoft.UI.Xaml.Markup.XmlnsDefinition;string;string)",
     );
 }
+windows_core::imp::define_interface!(IPath, IPath_Vtbl, 0x757d1cd8_0ec0_55c5_b400_66657e493e78);
+impl windows_core::RuntimeType for IPath {
+    const SIGNATURE: windows_core::imp::ConstBuffer =
+        windows_core::imp::ConstBuffer::for_interface::<Self>();
+    const NAME: windows_core::imp::ConstBuffer =
+        windows_core::imp::ConstBuffer::from_slice(b"Microsoft.UI.Xaml.Shapes.IPath");
+}
+#[repr(C)]
+pub struct IPath_Vtbl {
+    pub base__: windows_core::IInspectable_Vtbl,
+    Data: usize,
+    pub SetData: unsafe extern "system" fn(
+        *mut core::ffi::c_void,
+        *mut core::ffi::c_void,
+    ) -> windows_core::HRESULT,
+}
+windows_core::imp::define_interface!(
+    IPathFactory,
+    IPathFactory_Vtbl,
+    0x5e82e4c9_7502_5b1f_b940_c3346a71362a
+);
+impl windows_core::RuntimeType for IPathFactory {
+    const SIGNATURE: windows_core::imp::ConstBuffer =
+        windows_core::imp::ConstBuffer::for_interface::<Self>();
+    const NAME: windows_core::imp::ConstBuffer =
+        windows_core::imp::ConstBuffer::from_slice(b"Microsoft.UI.Xaml.Shapes.IPathFactory");
+}
+#[repr(C)]
+pub struct IPathFactory_Vtbl {
+    pub base__: windows_core::IInspectable_Vtbl,
+    pub CreateInstance: unsafe extern "system" fn(
+        *mut core::ffi::c_void,
+        *mut core::ffi::c_void,
+        *mut *mut core::ffi::c_void,
+        *mut *mut core::ffi::c_void,
+    ) -> windows_core::HRESULT,
+}
+windows_core::imp::define_interface!(
+    IPathStatics,
+    IPathStatics_Vtbl,
+    0x2146d36f_721c_5b54_af7d_60f3adc4fbca
+);
+impl windows_core::RuntimeType for IPathStatics {
+    const SIGNATURE: windows_core::imp::ConstBuffer =
+        windows_core::imp::ConstBuffer::for_interface::<Self>();
+    const NAME: windows_core::imp::ConstBuffer =
+        windows_core::imp::ConstBuffer::from_slice(b"Microsoft.UI.Xaml.Shapes.IPathStatics");
+}
+#[repr(C)]
+pub struct IPathStatics_Vtbl {
+    pub base__: windows_core::IInspectable_Vtbl,
+    pub DataProperty: unsafe extern "system" fn(
+        *mut core::ffi::c_void,
+        *mut *mut core::ffi::c_void,
+    ) -> windows_core::HRESULT,
+}
+#[repr(transparent)]
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct Path(windows_core::IUnknown);
+windows_core::imp::interface_hierarchy!(Path, windows_core::IUnknown, windows_core::IInspectable);
+windows_core::imp::required_hierarchy!(Path, Shape, FrameworkElement, UIElement, DependencyObject);
+impl Path {
+    pub(crate) fn SetData<P0>(&self, value: P0) -> windows_core::Result<()>
+    where
+        P0: windows_core::Param<Geometry>,
+    {
+        unsafe {
+            (windows_core::Interface::vtable(self).SetData)(
+                windows_core::Interface::as_raw(self),
+                value.param().abi(),
+            )
+            .ok()
+        }
+    }
+    pub(crate) fn new() -> windows_core::Result<Self> {
+        Self::IPathFactory(|this| unsafe {
+            let mut result__ = core::mem::zeroed();
+            (windows_core::Interface::vtable(this).CreateInstance)(
+                windows_core::Interface::as_raw(this),
+                core::ptr::null_mut(),
+                core::ptr::null_mut(),
+                &mut result__,
+            )
+            .and_then(|| windows_core::imp::Type::from_abi(result__))
+        })
+    }
+    pub(crate) fn DataProperty() -> windows_core::Result<DependencyProperty> {
+        Self::IPathStatics(|this| unsafe {
+            let mut result__ = core::mem::zeroed();
+            (windows_core::Interface::vtable(this).DataProperty)(
+                windows_core::Interface::as_raw(this),
+                &mut result__,
+            )
+            .and_then(|| windows_core::imp::Type::from_abi(result__))
+        })
+    }
+    fn IPathFactory<R, F: FnOnce(&IPathFactory) -> windows_core::Result<R>>(
+        callback: F,
+    ) -> windows_core::Result<R> {
+        static SHARED: windows_core::imp::FactoryCache<Path, IPathFactory> =
+            windows_core::imp::FactoryCache::new();
+        SHARED.call(callback)
+    }
+    fn IPathStatics<R, F: FnOnce(&IPathStatics) -> windows_core::Result<R>>(
+        callback: F,
+    ) -> windows_core::Result<R> {
+        static SHARED: windows_core::imp::FactoryCache<Path, IPathStatics> =
+            windows_core::imp::FactoryCache::new();
+        SHARED.call(callback)
+    }
+}
+impl windows_core::RuntimeType for Path {
+    const SIGNATURE: windows_core::imp::ConstBuffer =
+        windows_core::imp::ConstBuffer::for_class::<Self, IPath>();
+}
+unsafe impl windows_core::Interface for Path {
+    type Vtable = <IPath as windows_core::Interface>::Vtable;
+    const IID: windows_core::GUID = <IPath as windows_core::Interface>::IID;
+}
+impl windows_core::RuntimeName for Path {
+    const NAME: &'static str = "Microsoft.UI.Xaml.Shapes.Path";
+}
+unsafe impl Send for Path {}
+unsafe impl Sync for Path {}
+#[repr(transparent)]
+#[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
+pub struct PenLineCap(pub i32);
+impl PenLineCap {
+    pub const Flat: Self = Self(0);
+    pub const Square: Self = Self(1);
+    pub const Round: Self = Self(2);
+    pub const Triangle: Self = Self(3);
+}
+impl windows_core::imp::TypeKind for PenLineCap {
+    type TypeKind = windows_core::imp::CopyType;
+}
+impl windows_core::RuntimeType for PenLineCap {
+    const SIGNATURE: windows_core::imp::ConstBuffer =
+        windows_core::imp::ConstBuffer::from_slice(b"enum(Microsoft.UI.Xaml.Media.PenLineCap;i4)");
+    const NAME: windows_core::imp::ConstBuffer =
+        windows_core::imp::ConstBuffer::from_slice(b"Microsoft.UI.Xaml.Media.PenLineCap");
+}
+#[repr(transparent)]
+#[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
+pub struct PenLineJoin(pub i32);
+impl PenLineJoin {
+    pub const Miter: Self = Self(0);
+    pub const Bevel: Self = Self(1);
+    pub const Round: Self = Self(2);
+}
+impl windows_core::imp::TypeKind for PenLineJoin {
+    type TypeKind = windows_core::imp::CopyType;
+}
+impl windows_core::RuntimeType for PenLineJoin {
+    const SIGNATURE: windows_core::imp::ConstBuffer =
+        windows_core::imp::ConstBuffer::from_slice(b"enum(Microsoft.UI.Xaml.Media.PenLineJoin;i4)");
+    const NAME: windows_core::imp::ConstBuffer =
+        windows_core::imp::ConstBuffer::from_slice(b"Microsoft.UI.Xaml.Media.PenLineJoin");
+}
+#[repr(transparent)]
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct DoubleCollection(windows_core::IUnknown);
+windows_core::imp::interface_hierarchy!(
+    DoubleCollection,
+    windows_core::IUnknown,
+    windows_core::IInspectable,
+    windows_collections::IVector<f64>
+);
+impl windows_core::RuntimeType for DoubleCollection {
+    const SIGNATURE: windows_core::imp::ConstBuffer =
+        windows_core::imp::ConstBuffer::for_class::<Self, windows_collections::IVector<f64>>();
+}
+unsafe impl windows_core::Interface for DoubleCollection {
+    type Vtable = <windows_collections::IVector<f64> as windows_core::Interface>::Vtable;
+    const IID: windows_core::GUID =
+        <windows_collections::IVector<f64> as windows_core::Interface>::IID;
+}
+impl windows_core::RuntimeName for DoubleCollection {
+    const NAME: &'static str = "Microsoft.UI.Xaml.Media.DoubleCollection";
+}
+unsafe impl Send for DoubleCollection {}
+unsafe impl Sync for DoubleCollection {}

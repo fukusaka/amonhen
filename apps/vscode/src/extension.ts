@@ -1,4 +1,5 @@
 import * as vscode from 'vscode';
+import { setSharedIconsRoot } from './ui/sharedIcons.ts';
 import { groupChanges } from './state/changes.ts';
 import { askpass, setAskpass } from './git/askpass.ts';
 import { setFsmonitor } from './git/fsmonitor.ts';
@@ -85,6 +86,7 @@ export async function activate(
     setFsmonitor({ enabled, engine: await daemonPath().catch(() => undefined) });
   };
   void updateFsmonitor();
+  setSharedIconsRoot(context.extensionUri);
   const manager = new RepositoryManager(log);
   const sidebar = new SidebarProvider(manager);
   const dragAndDrop = new SidebarDragAndDrop(manager, (branch, root) => sidebar.worktrees.checkedOutElsewhere(branch, root));
