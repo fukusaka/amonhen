@@ -62,6 +62,10 @@ swift figures.swift alternatives alternatives.en.tsv alternatives ../../../docs/
 - [x] macOS: the toolbar and the sidebar's branches
 - [x] Windows: the toolbar
 - [x] The other 72 shapes (sidebar sections, branch and worktree states, tools, settings pages, signatures, clone states, CI, AI, image comparison), chosen from three or four drafts each where the first one didn't read well
-- [ ] The other 72 shapes in the front ends (they still draw their own icons there)
+- [x] The other 72 shapes in the front ends:
+  - GTK4: every icon is from the shared set; the hand-drawn paths are gone.
+  - macOS: SF Symbols with a shared shape are mapped by name (`AppIcons.bySymbol`), including History's signature marks; system controls (chevrons, plus, close, info), the pull request mark and CI's small dots in History stay as SF Symbols.
+  - VSCode: tree rows (sections, worktrees, branches, tags and their signatures, stashes, remotes, submodules, subtrees) and the branch and ignored-file pickers; codicons stay in tooltips and for rows without a shared shape (a paused sequence, the inactive and archived branch groups, a signature being checked).
+  - Windows: the file list's buttons, diff options, edit mode, All Files and the image diff (drawn with Direct2D). The sidebar still shows text marks (⌂ ✎ ⑂) and no icons, as before.
 - [x] VSCode: the sidebar's title buttons and branch rows
 - Not decided: whether the app icon is redrawn too, the VSCode format, and whether the terminal front end gets anything (it shows text).
