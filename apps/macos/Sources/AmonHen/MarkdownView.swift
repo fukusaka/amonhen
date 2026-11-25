@@ -9,7 +9,10 @@ import CAmonhen
 /// （```` ```math ````・`$$…$$`・`$…$`）はコアが描いた SVG を、文字の色を当てて絵にする（文中の式は基線にそろえる）。
 final class MarkdownView: NSView, NSTextViewDelegate {
     private let scroll = NSScrollView()
-    private let text: NSTextView
+    /// 文字の欄（試験も中の文字を読む）。
+    let text: NSTextView
+    /// 文字の置き場（TextKit 1 では文字の置き場が NSLayoutManager を持ち、NSTextView は持たないので、ここで持つ）。
+    private let storage = NSTextStorage()
     /// リポジトリの中のファイルへのリンクを押した（Markdown のファイルからの相対パスを解いたもの）。
     var onOpenPath: ((String) -> Void)?
     /// 押したリンクを開く前に、そのファイル（Markdown）の場所。
@@ -29,8 +32,12 @@ final class MarkdownView: NSView, NSTextViewDelegate {
         self.blocks = blocks
         self.image = image
         openDetails = MarkdownBuilder.initiallyOpen(blocks)
-        // 表（NSTextTable）は TextKit 1 で描く。
-        text = NSTextView(usingTextLayoutManager: false)
+        // 表（NSTextTable）は TextKit 1 で描く。`<kbd>` の札は自前の NSLayoutManager が描く。
+        let layoutManager = KeyCapLayoutManager()
+        storage.addLayoutManager(layoutManager)
+        let container = NSTextContainer(size: NSSize(width: 600, height: CGFloat.greatestFiniteMagnitude))
+        layoutManager.addTextContainer(container)
+        text = NSTextView(frame: NSRect(x: 0, y: 0, width: 600, height: 400), textContainer: container)
         super.init(frame: NSRect(x: 0, y: 0, width: 600, height: 400))
         text.isEditable = false
         text.isSelectable = true
@@ -82,6 +89,8 @@ final class MarkdownView: NSView, NSTextViewDelegate {
         super.viewDidChangeEffectiveAppearance()
         // `<picture>` の画像は外観で選ぶ。
         if dark != builtDark, MarkdownBuilder.hasPictures(blocks) { rebuild() }
+        // `<kbd>` の札の色は描くときの外観で当てる。
+        text.needsDisplay = true
     }
 
     override func layout() {
@@ -317,6 +326,133 @@ nonisolated final class FittingAttachment: NSTextAttachment {
     }
 }
 
+extension NSAttributedString.Key {
+    /// `<kbd>` の文字（値は札ごとの番号。並んだ札を分ける）。
+    nonisolated static let amonhenKeyCap = NSAttributedString.Key("AmonhenKeyCap")
+}
+
+/// `<kbd>` の札の枠を、`.amonhenKeyCap` の付いた文字の後ろに描く（行に折り返したら行ごとに 1 つ）。色は描くときの
+/// 外観で当てる。地は薄く透かすので、選んだ範囲の色は札の上でも見える。表の中も同じ（表の升も同じ入れ物に並ぶ）。
+nonisolated final class KeyCapLayoutManager: NSLayoutManager {
+    /// 枠と文字の間の左右の空き。
+    static let padding: CGFloat = 4
+    /// 枠の外の、隣の文字との間。
+    static let margin: CGFloat = 2
+    /// 札の左右に空ける幅（字送りで空ける）。
+    static let room = padding + margin
+
+    /// 行が札で始まるときに文字を送るもの（NSLayoutManager は delegate を弱く持つので、ここで持つ）。
+    private let lineStart = KeyCapLineStart()
+
+    override init() {
+        super.init()
+        delegate = lineStart
+    }
+
+    @available(*, unavailable)
+    required init?(coder: NSCoder) { fatalError() }
+
+    override func drawBackground(forGlyphRange glyphsToShow: NSRange, at origin: NSPoint) {
+        super.drawBackground(forGlyphRange: glyphsToShow, at: origin)
+        guard let storage = textStorage, glyphsToShow.length > 0 else { return }
+        let shown = characterRange(forGlyphRange: glyphsToShow, actualGlyphRange: nil)
+        storage.enumerateAttribute(.amonhenKeyCap, in: shown) { value, range, _ in
+            guard value != nil else { return }
+            // 見せる範囲の外まで続く札も、札の全体で描く（はみ出た分は切られる）。
+            var whole = range
+            _ = storage.attribute(.amonhenKeyCap, at: range.location, longestEffectiveRange: &whole, in: NSRange(location: 0, length: storage.length))
+            for rect in capRects(whole) {
+                drawCap(NSRect(x: rect.minX + origin.x, y: rect.minY + origin.y, width: rect.width, height: rect.height))
+            }
+        }
+    }
+
+    /// 札（文字の範囲 `characters`）の枠。入れ物の中の位置で、行ごとに 1 つ。行の端の空白は枠に入れない。
+    func capRects(_ characters: NSRange) -> [NSRect] {
+        guard let storage = textStorage else { return [] }
+        let text = storage.string as NSString
+        let glyphs = glyphRange(forCharacterRange: characters, actualCharacterRange: nil)
+        var rects: [NSRect] = []
+        var index = glyphs.location
+        while index < NSMaxRange(glyphs) {
+            var line = NSRange()
+            let fragment = lineFragmentRect(forGlyphAt: index, effectiveRange: &line)
+            guard line.length > 0 else { break }
+            var piece = NSIntersectionRange(line, glyphs)
+            index = NSMaxRange(line)
+            // 行の頭・終わりの空白（折り返したところ）は外す。
+            func blank(_ glyph: Int) -> Bool {
+                let c = text.character(at: characterIndexForGlyph(at: glyph))
+                return c == 0x20 || c == 0x09 || c == 0x2028 || c == 0x0A
+            }
+            while piece.length > 0, blank(piece.location) { piece = NSRange(location: piece.location + 1, length: piece.length - 1) }
+            while piece.length > 0, blank(NSMaxRange(piece) - 1) { piece.length -= 1 }
+            guard piece.length > 0, let container = textContainer(forGlyphAt: piece.location, effectiveRange: nil) else { continue }
+            var box = NSRect.null
+            enumerateEnclosingRects(
+                forGlyphRange: piece, withinSelectedGlyphRange: NSRange(location: NSNotFound, length: 0), in: container
+            ) { rect, _ in box = box.union(rect) }
+            guard !box.isNull else { continue }
+            // 最後の文字の字送り（右の空き）は枠に入れない。
+            let last = characterIndexForGlyph(at: NSMaxRange(piece) - 1)
+            let kern = (storage.attribute(.kern, at: last, effectiveRange: nil) as? CGFloat) ?? 0
+            let right = box.maxX - kern
+            // 高さは札の字の大きさで、基線から測る（行の高さ・行間によらない）。
+            let font = (storage.attribute(.font, at: characterIndexForGlyph(at: piece.location), effectiveRange: nil) as? NSFont)
+                ?? .monospacedSystemFont(ofSize: 11, weight: .regular)
+            let baseline = fragment.minY + location(forGlyphAt: piece.location).y
+            let top = baseline - font.ascender - 2
+            let bottom = baseline - font.descender + 2
+            rects.append(NSRect(x: box.minX - Self.padding, y: top, width: right - box.minX + Self.padding * 2, height: bottom - top))
+        }
+        return rects
+    }
+
+    /// 札を 1 つ描く（GitHub の札に似せる: 細い枠、下の縁を少し濃く、角を丸め、地は薄く）。
+    private func drawCap(_ rect: NSRect) {
+        let frame = rect.insetBy(dx: 0.5, dy: 0.5)
+        let path = NSBezierPath(roundedRect: frame, xRadius: 4.5, yRadius: 4.5)
+        NSColor.labelColor.withAlphaComponent(0.05).setFill()
+        path.fill()
+        // 下の縁（内側に 1 px の影）。描く先は上下が逆（flipped）。
+        NSGraphicsContext.saveGraphicsState()
+        path.addClip()
+        NSColor.labelColor.withAlphaComponent(0.22).setFill()
+        NSRect(x: frame.minX, y: frame.maxY - 1.5, width: frame.width, height: 1).fill(using: .sourceOver)
+        NSGraphicsContext.restoreGraphicsState()
+        NSColor.labelColor.withAlphaComponent(0.25).setStroke()
+        path.lineWidth = 1
+        path.stroke()
+    }
+}
+
+/// 行が札で始まるとき（段落・表の升の頭、折り返した札の続き）、その行だけ文字を枠の内側の空きの分だけ右へ送る。
+/// 枠の左の端が、ほかの行の文字の始まりにそろう（字送りでは行の頭に空きを作れない）。
+nonisolated final class KeyCapLineStart: NSObject, NSLayoutManagerDelegate {
+    func layoutManager(
+        _ layoutManager: NSLayoutManager, shouldSetLineFragmentRect lineFragmentRect: UnsafeMutablePointer<NSRect>,
+        lineFragmentUsedRect: UnsafeMutablePointer<NSRect>, baselineOffset: UnsafeMutablePointer<CGFloat>,
+        in textContainer: NSTextContainer, forGlyphRange glyphRange: NSRange
+    ) -> Bool {
+        guard glyphRange.length > 0, let storage = layoutManager.textStorage else { return false }
+        let first = layoutManager.characterIndexForGlyph(at: glyphRange.location)
+        guard first < storage.length, storage.attribute(.amonhenKeyCap, at: first, effectiveRange: nil) != nil,
+            !CharacterSet.whitespacesAndNewlines.contains((storage.string as NSString).character(at: first).scalar)
+        else { return false }
+        // 行の右の端は動かさない（表の升の枠は行の大きさから決まる）。
+        let shift = KeyCapLayoutManager.padding
+        lineFragmentRect.pointee.origin.x += shift
+        lineFragmentRect.pointee.size.width -= shift
+        lineFragmentUsedRect.pointee.origin.x += shift
+        lineFragmentUsedRect.pointee.size.width = min(lineFragmentUsedRect.pointee.width, lineFragmentRect.pointee.width)
+        return true
+    }
+}
+
+private extension unichar {
+    nonisolated var scalar: Unicode.Scalar { Unicode.Scalar(self) ?? " " }
+}
+
 /// ブロックを文字に組み立てる。
 private struct MarkdownBuilder {
     let image: (String) -> NSImage?
@@ -326,6 +462,9 @@ private struct MarkdownBuilder {
     let openDetails: Set<Int>
     let out = NSMutableAttributedString()
     private let bodySize: CGFloat = 14
+    /// これまでの `<kbd>` の数（札ごとに `.amonhenKeyCap` の値を変え、並んだ札を 1 つにしない）。
+    private let keyCaps = Counter()
+    private final class Counter { var count = 0 }
     /// 次の `<details>` の番号（文書の中の順。閉じたものの中のものも数える）。
     private var detailsIndex = 0
     /// `<details>` の見出しのリンク（後ろに番号）。
@@ -401,35 +540,34 @@ private struct MarkdownBuilder {
         return text.hasPrefix("HTML details: ") ? String(text.dropFirst("HTML details: ".count)) : text
     }
 
-    /// `<kbd>` の札（角を丸めた枠の中に等幅の文字。色は描くときの外観で）。
-    private func keyCap(_ text: String, size: CGFloat, style: NSParagraphStyle, link: String?) -> NSAttributedString {
-        let font = NSFont.monospacedSystemFont(ofSize: size - 3, weight: .regular)
-        let measured = NSAttributedString(string: text, attributes: [.font: font]).size()
-        let padX: CGFloat = 5, padY: CGFloat = 2
-        let box = NSSize(width: ceil(measured.width) + padX * 2, height: ceil(measured.height) + padY * 2)
-        let picture = NSImage(size: box, flipped: false) { rect in
-            MainActor.assumeIsolated {
-                let frame = NSBezierPath(roundedRect: rect.insetBy(dx: 0.5, dy: 0.5), xRadius: 4, yRadius: 4)
-                NSColor.quaternaryLabelColor.withAlphaComponent(0.12).setFill()
-                frame.fill()
-                NSColor.tertiaryLabelColor.setStroke()
-                frame.lineWidth = 1
-                frame.stroke()
-                let label = NSFont.monospacedSystemFont(ofSize: size - 3, weight: .regular)
-                NSAttributedString(string: text, attributes: [.font: label, .foregroundColor: NSColor.labelColor])
-                    .draw(at: NSPoint(x: padX, y: padY))
-            }
-            return true
+    /// `<kbd>` の札。文字はふつうの文字のまま（写す・探す・読み上げで読める）、等幅で本文より少し小さく、
+    /// `.amonhenKeyCap` を付ける。枠は KeyCapLayoutManager が文字の後ろに描く。枠の左右の空きは、前の文字と札の
+    /// 最後の文字の字送り（kern）で空ける。`before` はこの札の前に並ぶ文字（同じ段落の中なら左の空きを足す）。
+    private func keyCap(_ run: MarkdownBlock.Run, size: CGFloat, bold: Bool, style: NSParagraphStyle, before: NSMutableAttributedString)
+        -> NSAttributedString
+    {
+        var font = NSFont.monospacedSystemFont(ofSize: size - 3, weight: .regular)
+        var traits: NSFontDescriptor.SymbolicTraits = []
+        if bold || run.bold == true { traits.insert(.bold) }
+        if run.italic == true { traits.insert(.italic) }
+        if !traits.isEmpty {
+            font = NSFont(descriptor: font.fontDescriptor.withSymbolicTraits(traits), size: font.pointSize) ?? font
         }
-        picture.cacheMode = .never
-        let attachment = NSTextAttachment()
-        attachment.image = picture
-        // 札の中の文字の基線を、外の文字の基線にそろえる。
-        attachment.bounds = NSRect(x: 0, y: font.descender - padY, width: box.width, height: box.height)
-        let result = NSMutableAttributedString(attachment: attachment)
-        var attributes: [NSAttributedString.Key: Any] = [.paragraphStyle: style, .toolTip: text]
-        if let link { attributes[.link] = link }
-        result.addAttributes(attributes, range: NSRange(location: 0, length: result.length))
+        keyCaps.count += 1
+        var attributes: [NSAttributedString.Key: Any] = [
+            .font: font, .foregroundColor: NSColor.labelColor, .paragraphStyle: style, .amonhenKeyCap: keyCaps.count,
+        ]
+        if let link = run.link { attributes[.link] = link }
+        let result = NSMutableAttributedString(string: run.text, attributes: attributes)
+        guard result.length > 0 else { return result }
+        let room = KeyCapLayoutManager.room
+        result.addAttribute(.kern, value: room, range: NSRange(location: result.length - 1, length: 1))
+        // 前の文字との間（段落・行の頭なら要らない）。
+        let previous = before.length - 1
+        if previous >= 0, !["\n", "\u{2028}"].contains((before.string as NSString).substring(with: NSRange(location: previous, length: 1))) {
+            let kern = (before.attribute(.kern, at: previous, effectiveRange: nil) as? CGFloat) ?? 0
+            before.addAttribute(.kern, value: kern + room, range: NSRange(location: previous, length: 1))
+        }
         return result
     }
 
@@ -471,7 +609,7 @@ private struct MarkdownBuilder {
                 continue
             }
             if run.kbd == true {
-                result.append(keyCap(run.text, size: size, style: style, link: run.link))
+                result.append(keyCap(run, size: size, bold: bold, style: style, before: result))
                 continue
             }
             if let formula = run.math {
