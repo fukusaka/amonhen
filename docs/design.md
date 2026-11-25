@@ -605,8 +605,8 @@ out: they have no confirmation, and adding one only for a drawing would slow the
 - Defaults follow git: one file per commit (one mbox is a choice), `am.threeWay` for am, the working tree only for
   apply. The rest of format-patch (numbering, recipients, sign-offs) is left to `format.*`.
 - A `git am` in progress is its own sequence (`rebase-apply/applying`; it used to be taken for a rebase). When a patch
-  doesn't apply without 3-way, Retry with 3-Way Merge applies `rebase-apply/patch` with `git apply --3way`, as
-  `git am -3` does, and continues if it is clean. The core notes the retried patch in `rebase-apply/amonhen-retried`
+  doesn't apply without 3-way, Retry with 3-Way Merge applies `rebase-apply/patch` with `git apply --3way` (close
+  to `git am -3`, which merges with a fake ancestor tree instead, so renames can come out differently) and continues if it is clean. The core notes the retried patch in `rebase-apply/amonhen-retried`
   (git removes it with the folder when am ends) rather than in git's `rebase-apply/threeway`, which would switch the
   later patches to 3-way too.
 - Undo: am is one entry, held while it is stopped and recorded when it finishes (Abort leaves none). An applied diff

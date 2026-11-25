@@ -487,7 +487,7 @@ rebase と History の編集（reword・squash・fixup・drop・edit・split・m
   format-patch のほかのこと（番号の付け方・宛先・Signed-off-by）は `format.*` に任せる。
 - `git am` の途中は、それだけの種類にする（`rebase-apply/applying`。前は rebase と見なしていた）。3-way なしで
   当たらなかったパッチは、Retry with 3-Way Merge で `rebase-apply/patch` を `git apply --3way` で当て直し
-  （`git am -3` と同じ）、きれいに当たれば続ける。当て直したパッチはコアが `rebase-apply/amonhen-retried` に書く
+  （`git am -3` に近い。am -3 は仮の祖先のツリーとマージするので、名前の変更などで結果が違うことがある）、きれいに当たれば続ける。当て直したパッチはコアが `rebase-apply/amonhen-retried` に書く
   （am が終わると git がフォルダごと消す）。git の `rebase-apply/threeway` を書き換えると、後のパッチまで 3-way になるので使わない。
 - Undo: am は全体で 1 つ。止まっている間は保留し、終わったときに記録する（Abort なら残らない）。当てた diff は
   触ったファイルで記録する。index は戻らない。
