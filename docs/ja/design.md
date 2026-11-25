@@ -515,8 +515,8 @@ rebase と History の編集（reword・squash・fixup・drop・edit・split・m
   `--tags`）。git はそのファイルから clone や fetch ができる。アーカイブと同じく、バックエンドは中身を返し、コアが
   自分の機械に書く（`{"op":"bundle"}`）。daemon 越しや SSH 先では、1 GB を超えれば送る前に断る。
 - `{"op":"bundlePreview"}` はコミットを数え（`rev-list`）、書く前に次を見る:
-  - shallow clone では、git は範囲が shallow の境に届く bundle も書き、`git bundle verify` は完全と言うが、clone
-    できない（「Failed to traverse parents」）。範囲のコミットが `.git/shallow` にあり、親を持つなら断る（根まで取り
+  - shallow clone では、git は範囲が shallow の境に届く bundle も書き、`git bundle verify` は完全と言うが、そこから
+    clone したリポジトリは壊れている（「Failed to traverse parents」）。範囲のコミットが `.git/shallow` にあり、親を持つなら断る（根まで取り
     足すと根のコミットも残るが、それは数えない）。取得した範囲の中の基点からなら作れる。
   - partial clone では、git は手元にない中身を 1 つずつ取りに行く。手元にないものを数え
     （`rev-list --objects --missing=print`）、アプリが確かめ、アーカイブと同じく先にまとめて取る。

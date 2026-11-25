@@ -639,7 +639,7 @@ out: they have no confirmation, and adding one only for a drawing would slow the
   the file on its own machine (`{"op":"bundle"}`), and over 1 GB is refused before sending through the daemon or SSH.
 - `{"op":"bundlePreview"}` counts the commits (`rev-list`), and before writing:
   - In a shallow clone, git writes a bundle whose commits reach the shallow boundary, and `git bundle verify` even
-    calls it complete, but it can't be cloned ("Failed to traverse parents"). The core refuses when a commit in the
+    calls it complete, but the clone made from it is broken ("Failed to traverse parents"). The core refuses when a commit in the
     range is in `.git/shallow` and has parents (a root kept there after deepening to the start doesn't count); a base
     inside the fetched history works.
   - In a partial clone git fetches each missing content one at a time. The missing ones are counted
