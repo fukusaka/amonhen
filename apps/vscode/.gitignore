@@ -8,5 +8,3 @@ LICENSE-APACHE
 NOTICE
 THIRD-PARTY-NOTICES.md
 .vscode-test/
-# esbuild.mjs が crates/icons/svg から作る
-media/icons/

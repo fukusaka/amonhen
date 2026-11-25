@@ -1,7 +1,8 @@
 import * as vscode from 'vscode';
 
-// どの FE でも同じ形のアイコン（crates/icons/svg、docs/icons.md）。esbuild.mjs が media/icons/{light,dark}/ に
-// 色を書き込んだ SVG を作る（拡張の SVG は画像として描かれ、文字の色を受け継がないため）。
+// どの FE でも同じ形のアイコン（crates/icons/svg、docs/icons.md）。media/icons/{light,dark}/ に、色を書き込み画素に
+// 合わせた SVG を置く（`cargo run -p amonhen-icons --example vscode` で作る。拡張の SVG は画像として描かれ、文字の色を
+// 受け継がないため）。
 
 let root: vscode.Uri | undefined;
 
