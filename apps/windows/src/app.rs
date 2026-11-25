@@ -1502,6 +1502,8 @@ enum Message {
     SearchSubmit(bool),
     /// 差分の中を探す帯を開く・閉じる、探す文字、前・次へ、件数の文字。
     DiffFindOpen(bool),
+    /// ツールバーの見せ方を選んだ（`menus::Display::ALL` の番号）。
+    ToolbarDisplay(Option<usize>),
     /// 整形した Markdown の中を探した（今の一致、一致の数）。
     MarkdownFound(usize, usize),
     DiffFindQuery(String),
@@ -2028,6 +2030,7 @@ impl Root {
             .content(crate::menus::toolbar_palette(
                 &self.toolbar_palette,
                 &self.toolbar_defaults,
+                context.callback(Message::ToolbarDisplay),
                 context.callback(|()| Message::ToolbarDone),
             ))
     }
@@ -3317,6 +3320,11 @@ impl Root {
                             self.schedule_fit(context);
                         }
                     }
+                }
+            }
+            Message::ToolbarDisplay(index) => {
+                if let Some(display) = index.and_then(|i| crate::menus::Display::ALL.get(i)) {
+                    crate::menus::set_toolbar_display(*display);
                 }
             }
             Message::DiffFindOpen(open) => {

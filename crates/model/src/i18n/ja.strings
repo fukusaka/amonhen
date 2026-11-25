@@ -1913,6 +1913,9 @@
 "Customize Toolbar" = "ツールバーのカスタマイズ";
 "Drag your favorite items into the toolbar…" = "よく使う項目をツールバーにドラッグしてください…";
 "…or drag the default set into the toolbar." = "…またはデフォルトセットをツールバーにドラッグしてください。";
+"Icon and Text" = "アイコンとテキスト";
+"Icon Only" = "アイコンのみ";
+"Text Only" = "テキストのみ";
 "Space" = "スペース";
 "Flexible Space" = "フレキシブルスペース";
 "Files" = "ファイル";
