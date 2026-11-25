@@ -385,7 +385,7 @@ The GTK4 app aims to behave like the macOS app. These are the only intended diff
 | Feature | macOS | GTK4 | Windows | VSCode | CLI | TUI | Notes |
 | --- | :-: | :-: | :-: | :-: | :-: | :-: | --- |
 | GitHub through `gh` | ✓ | ✓ | ✓ | — | — | — |  |
-| Pull Requests (CI, draft, review; check out, open, copy URL) | ✓ | ✓ | △ | — | — | — | Windows: Clicking the CI mark after the title opens the checks popover, but the mark is cut off with the title when the sidebar is narrower than the row. |
+| Pull Requests (CI, draft, review; check out, open, copy URL) | ✓ | ✓ | △ | — | — | — | Windows: The CI and draft marks come before the number, since a tree row is text only and can't keep a badge at its right edge; the checks popover opens from the row's right-click. |
 | Create Pull Request (base, draft) | ✓ | ✓ | ✓ | — | — | — | macOS: The base is typed (the default branch at first). From a fork, to its parent.<br>GTK4: The base is typed (the default branch at first). From a fork, to its parent.<br>Windows: The base is typed (the default branch at first). From a fork, to its parent. |
 | Branch status popover (CI, pull request) | ✓ | ✓ | △ | — | — | — | Windows: Opens from merged or gone after a branch's name; a branch without either has no mark, and its status is a dialog from the top of its right-click. |
 | Open on GitHub | ✓ | ✓ | ✓ | — | — | — |  |
