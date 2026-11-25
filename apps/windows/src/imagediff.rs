@@ -131,6 +131,8 @@ pub struct View {
     /// 画像の 1 ピクセルを何 DIP で描くか。None なら枠に合わせる。
     pub zoom: Option<f32>,
     pub pan: (f32, f32),
+    /// 透けた絵の下の市松模様を暗くするか（None なら絵の色から決めた既定。帯のボタンで替える）。
+    pub dark: Option<bool>,
 }
 
 impl Default for View {
@@ -139,6 +141,7 @@ impl Default for View {
             position: 0.5,
             zoom: None,
             pan: (0.0, 0.0),
+            dark: None,
         }
     }
 }
@@ -331,6 +334,8 @@ pub struct Layout {
     pub slider: Option<Rect>,
     /// 倍率（押すと 100% と合わせるを切り替える）・縮める・広げる・合わせる。
     pub zoom_label: Rect,
+    /// 市松模様の明暗の切り替え（透けた絵のときだけ出す）。
+    pub checker: Rect,
     pub zoom_out: Rect,
     pub zoom_in: Rect,
     pub zoom_fit: Rect,
@@ -376,8 +381,9 @@ pub fn layout(top: f32, width: f32, mode: Mode, svg: bool) -> Layout {
     let zoom_in = button(zoom_fit.x - 28.0, 28.0);
     let zoom_out = button(zoom_in.x - 28.0, 28.0);
     let zoom_label = button(zoom_out.x - 56.0, 52.0);
+    let checker = button(zoom_label.x - 32.0, 28.0);
     let slider = matches!(mode, Mode::Swipe | Mode::Onion).then(|| Rect {
-        x: zoom_label.x - 172.0,
+        x: checker.x - 172.0,
         y: bar_y,
         w: 160.0,
         h: BAR_HEIGHT - 4.0,
@@ -389,6 +395,7 @@ pub fn layout(top: f32, width: f32, mode: Mode, svg: bool) -> Layout {
         text,
         slider,
         zoom_label,
+        checker,
         zoom_out,
         zoom_in,
         zoom_fit,
@@ -490,6 +497,32 @@ pub fn zoom_by(view: &mut View, factor: f32, size: (f32, f32), area: Rect) {
     view.zoom = Some((current * factor).clamp(0.1, 32.0));
 }
 
+/// 市松模様を暗くするか: 帯のボタンで替えていればそれ、でなければ絵の色から決めた既定（macOS 版・GTK4 版と同じ。
+/// 確かめる用に `AMH_CHECKERBOARD=dark|light`）。
+pub fn dark_checker(view: &View, tone: amonhen_core::checker::Tone) -> bool {
+    view.dark
+        .unwrap_or_else(|| match std::env::var("AMH_CHECKERBOARD").as_deref() {
+            Ok("dark") => true,
+            Ok("light") => false,
+            _ => tone.dark(),
+        })
+}
+
+/// 読んだ絵（乗算済みの BGRA）の明るさを数える（比べるときは両方を合わせる）。
+pub fn tone(pixels: &[Option<&Pixels>]) -> amonhen_core::checker::Tone {
+    let mut tone = amonhen_core::checker::Tone::default();
+    for p in pixels.iter().flatten() {
+        tone.add(
+            &p.data,
+            p.width as usize,
+            p.height as usize,
+            p.width as usize * 4,
+            amonhen_core::checker::Order::Bgra,
+        );
+    }
+    tone
+}
+
 /// 帯の倍率の表示（「Fit」か「150%」）。
 pub fn zoom_text(view: &View) -> String {
     match view.zoom {
@@ -507,6 +540,8 @@ pub enum Hit {
     /// スライダーか、重ねた絵（スワイプ・オニオンスキンの位置。0〜1）。
     Position(f32),
     ZoomActual,
+    /// 市松模様の明暗を替える（透けた絵のときだけ。押した側で確かめる）。
+    Checker,
     ZoomOut,
     ZoomIn,
     ZoomFit,
@@ -534,6 +569,7 @@ pub fn hit(
     }
     for (r, hit) in [
         (layout.zoom_label, Hit::ZoomActual),
+        (layout.checker, Hit::Checker),
         (layout.zoom_out, Hit::ZoomOut),
         (layout.zoom_in, Hit::ZoomIn),
         (layout.zoom_fit, Hit::ZoomFit),

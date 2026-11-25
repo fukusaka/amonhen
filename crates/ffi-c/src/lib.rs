@@ -1966,7 +1966,8 @@ pub unsafe extern "C" fn amonhen_is_vector_drawable(
 /// にする（コアの `Repository::vector_drawable`。色の参照は同じコミットのリソースから引く）。SVG を返し、長さを
 /// `out_len` に書く（`amonhen_blob_free` で解放する）。描けなければ NULL で、理由は `amonhen_last_error`。`notes` に
 /// 絵の下に添える説明の JSON の配列（文字列）を書く（`amonhen_string_free` で解放する）。引けない色は `fallback`
-/// （画面の文字の色の `#rrggbb`。NULL なら灰色）で描く。裏のスレッドで呼ぶ。
+/// （画面の文字の色の `#rrggbb`。NULL なら灰色）で描く。`dark` なら暗い外観の資源（`values-night` など）を先に
+/// 引く。裏のスレッドで呼ぶ。
 ///
 /// # Safety
 /// `repo` は有効、`commit` は 20 バイトを読める領域、`path` は NUL で終わる UTF-8、`data` は `len` バイト読めること。
@@ -1979,6 +1980,7 @@ pub unsafe extern "C" fn amonhen_vector_drawable(
     data: *const u8,
     len: usize,
     fallback: *const c_char,
+    dark: bool,
     out_len: *mut usize,
     notes: *mut *mut c_char,
 ) -> *mut u8 {
@@ -2002,7 +2004,7 @@ pub unsafe extern "C" fn amonhen_vector_drawable(
         unsafe { std::slice::from_raw_parts(data, len) }
     };
     let fallback = str_arg(fallback).ok();
-    match repo!(repo_ptr).vector_drawable(&commit, path, bytes, fallback) {
+    match repo!(repo_ptr).vector_drawable(&commit, path, bytes, fallback, dark) {
         Ok(picture) => {
             if let Some(notes) = unsafe { notes.as_mut() } {
                 let json = serde_json::to_string(&picture.notes).unwrap_or_default();

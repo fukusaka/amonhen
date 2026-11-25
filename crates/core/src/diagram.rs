@@ -30,7 +30,7 @@ pub enum Drawn {
     Svg(String, Option<MermaidConfig>),
     /// 近いもので描いた図（DOT の HTML の表など）と、そのことを伝える一文（訳した文）。色は `Svg` と同じ。
     Noted(String, String),
-    /// 描けない（書き方の誤りなど）。理由は pele の言葉のまま（英語）。
+    /// 描けない（書き方の誤りなど）。理由は訳した文（Mermaid のめったに出ないものは pele の言葉のまま、英語）。
     Error(String),
 }
 
@@ -189,9 +189,132 @@ fn draw_dot(text: &str, language: &str, images: Option<&ImageSource>) -> Option<
     Some(match drawn {
         Ok(Ok(d)) if d.notes.is_empty() => Drawn::Svg(d.svg, None),
         Ok(Ok(d)) => Drawn::Noted(d.svg, approximation_note(&d.notes)),
-        Ok(Err(e)) => Drawn::Error(e.message),
+        Ok(Err(e)) => Drawn::Error(dot_error(&e)),
         Err(_) => Drawn::Error(amonhen_model::tr!("This diagram couldn’t be drawn")),
     })
+}
+
+/// DOT の図の誤りを、今の言語の文にする（位置と数は残す）。
+#[cfg(feature = "diagrams")]
+fn dot_error(error: &amonhen_dot::Error) -> String {
+    use amonhen_dot::{Error, Syntax};
+    use amonhen_model::tr;
+    match *error {
+        Error::TooLong { limit } => tr!(
+            "The graph is longer than the limit of {limit} characters",
+            limit = limit
+        ),
+        Error::TooManyNodes { limit } => {
+            tr!("The graph has more than {limit} nodes", limit = limit)
+        }
+        Error::TooManyEdges { limit } => {
+            tr!("The graph has more than {limit} edges", limit = limit)
+        }
+        Error::TooLarge => tr!("The drawing is larger than the output limit"),
+        Error::Syntax { kind, line } => {
+            let message = match kind {
+                Syntax::UnterminatedComment => tr!("Unterminated comment"),
+                Syntax::UnexpectedCharacter(ch) => {
+                    tr!("Unexpected character '{character}'", character = ch)
+                }
+                Syntax::MalformedNumber => tr!("Malformed number"),
+                Syntax::UnterminatedString => tr!("Unterminated string"),
+                Syntax::UnterminatedHtml => tr!("Unterminated HTML string"),
+                Syntax::Expected(token) => tr!("Expected {token}", token = token),
+                Syntax::ExpectedBeforeEnd(token) => {
+                    tr!("Expected {token} before the end", token = token)
+                }
+                Syntax::ExpectedStringAfterPlus => tr!("Expected a string after '+'"),
+                Syntax::ExpectedName => tr!("Expected a name"),
+                Syntax::ExpectedGraph => tr!("Expected 'graph' or 'digraph'"),
+                Syntax::NestedTooDeeply => tr!("Subgraphs are nested too deeply"),
+                Syntax::UnexpectedSymbol => tr!("Unexpected symbol"),
+            };
+            tr!("{message} (line {line})", message = message, line = line)
+        }
+    }
+}
+
+/// Mermaid の図の誤り（pele の英語の文）のうち、よく出るもの（上限・知らない種類・書き方の誤り）を今の言語の文に
+/// する。pele の中は変えず、`ErrorCode` と pele の決まった文の形から訳す。書き方の誤りは見出しだけを訳し、
+/// 抜き出した行と期待した字句（pele の言葉）はそのまま。ほかは英語のまま。
+#[cfg(feature = "diagrams")]
+fn mermaid_error(error: &amonhen_pele::PeleError) -> String {
+    use amonhen_model::tr;
+    use amonhen_pele::ErrorCode;
+    let message = error.message.as_str();
+    // pele の文の `prefix` と `suffix` のあいだの数（`5,000` のような区切りも）。
+    let number = |prefix: &str, suffix: &str| {
+        message
+            .strip_prefix(prefix)?
+            .strip_suffix(suffix)
+            .filter(|n| !n.is_empty() && n.chars().all(|c| c.is_ascii_digit() || c == ','))
+            .map(str::to_owned)
+    };
+    let translated = match error.code {
+        ErrorCode::Limit => {
+            if let Some(limit) = number(
+                "Diagram source is longer than the limit of ",
+                " characters.",
+            ) {
+                Some(tr!(
+                    "Diagram source is longer than the limit of {limit} characters.",
+                    limit = limit
+                ))
+            } else if let Some(limit) = number(
+                "Diagram output is longer than the limit of ",
+                " characters.",
+            ) {
+                Some(tr!(
+                    "Diagram output is longer than the limit of {limit} characters.",
+                    limit = limit
+                ))
+            } else if let Some(limit) = number("Edge limit exceeded. The limit is ", ".") {
+                Some(tr!(
+                    "Edge limit exceeded. The limit is {limit}.",
+                    limit = limit
+                ))
+            } else if message == "Diagram is nested too deeply." {
+                Some(tr!("Diagram is nested too deeply."))
+            } else {
+                None
+            }
+        }
+        ErrorCode::UnsupportedDiagram => {
+            if message == "No diagram type detected for the given text." {
+                Some(tr!("No diagram type detected for the given text."))
+            } else {
+                error
+                    .type_
+                    .as_deref()
+                    .filter(|name| {
+                        message == format!("Diagram type \"{name}\" is not supported yet.")
+                    })
+                    .map(|name| tr!("Diagram type \"{name}\" is not supported yet.", name = name))
+            }
+        }
+        ErrorCode::Syntax => {
+            let line = error.line;
+            if let Some(rest) = message.strip_prefix(&format!("Parse error on line {line}:")) {
+                Some(tr!("Parse error on line {line}:", line = line) + rest)
+            } else if let Some(rest) =
+                message.strip_prefix(&format!("Lexical error on line {line}. Unrecognized text."))
+            {
+                Some(
+                    tr!(
+                        "Lexical error on line {line}. Unrecognized text.",
+                        line = line
+                    ) + rest,
+                )
+            } else {
+                message
+                    .strip_prefix("Front matter is not valid YAML. ")
+                    .map(|detail| tr!("Front matter is not valid YAML. {error}", error = detail))
+            }
+        }
+        ErrorCode::Semantic => None,
+    };
+    translated.unwrap_or_else(|| message.to_owned())
 }
 
 #[cfg(not(feature = "diagrams"))]
@@ -252,15 +375,14 @@ fn draw_mermaid(text: &str, zone: Option<Arc<dyn TimeZone>>) -> Option<Drawn> {
                 time_zone: zone,
                 ..Default::default()
             };
-            amonhen_pele::render_with(&source, &options)
-                .map(|r| r.svg)
-                .map_err(|e| e.message)
+            amonhen_pele::render_with(&source, &options).map(|r| r.svg)
         })
         .ok()?
         .join();
+    // 訳はこのスレッドの言語で（daemon は相手ごとの言語をスレッドに置く）
     Some(match rendered {
         Ok(Ok(svg)) => Drawn::Svg(svg, own_config(text)),
-        Ok(Err(message)) => Drawn::Error(message),
+        Ok(Err(e)) => Drawn::Error(mermaid_error(&e)),
         Err(_) => Drawn::Error(amonhen_model::tr!("This diagram couldn’t be drawn")),
     })
 }
@@ -410,19 +532,28 @@ impl MermaidConfig {
 }
 
 /// 図の配色（設定の「図の配色」）。
-#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Scheme {
-    /// 構文の色と同じテーマから（既定）。
-    #[default]
+    /// 構文の色と同じテーマから。
     Syntax,
     /// pele の既定の色（灰色を主にした色）。
     Pele,
-    /// Mermaid 本家のテーマ。`None` は外観に合わせる（明るい表示は default、暗い表示は dark）。名前つきは外観に
+    /// Mermaid 本家のテーマ。`None` は外観に合わせる（明るい表示は default、暗い表示は dark。既定）。名前つきは外観に
     /// 関係なくそのテーマ（地も塗る）。
     Mermaid(Option<MermaidTheme>),
     /// 読み込んだ Mermaid のテーマ（設定の鍵は `mermaid-import:名前`、中身は FE が覚えている）。
     Imported,
 }
+
+impl Default for Scheme {
+    /// GitHub の見た目に近い、外観に合わせた Mermaid のテーマ。
+    fn default() -> Self {
+        Self::Mermaid(None)
+    }
+}
+
+/// 既定の配色の設定の鍵。
+pub const DEFAULT_KEY: &str = "mermaid";
 
 /// 読み込んだ Mermaid のテーマを指す設定の鍵の接頭辞。
 pub const IMPORTED_PREFIX: &str = "mermaid-import:";
@@ -478,13 +609,14 @@ impl Scheme {
     /// 設定の名前から（知らない名前は既定）。
     pub fn from_key(key: &str) -> Self {
         match key {
+            "syntax" => Self::Syntax,
             "pele" => Self::Pele,
             "mermaid" => Self::Mermaid(None),
             _ if key.starts_with(IMPORTED_PREFIX) => Self::Imported,
             _ => key
                 .strip_prefix("mermaid-")
                 .and_then(|name| MermaidTheme::ALL.into_iter().find(|t| t.name() == name))
-                .map_or(Self::Syntax, |t| Self::Mermaid(Some(t))),
+                .map_or(Self::default(), |t| Self::Mermaid(Some(t))),
         }
     }
 
@@ -820,7 +952,10 @@ mod tests {
         for scheme in Scheme::all() {
             assert_eq!(Scheme::from_key(&scheme.key()), scheme);
         }
-        assert_eq!(Scheme::from_key("?"), Scheme::Syntax);
+        assert_eq!(Scheme::from_key("?"), Scheme::Mermaid(None));
+        assert_eq!(Scheme::from_key(""), Scheme::default());
+        assert_eq!(Scheme::default().key(), DEFAULT_KEY);
+        assert_eq!(Scheme::from_key("syntax"), Scheme::Syntax);
     }
 
     #[cfg(feature = "diagrams")]
@@ -1205,5 +1340,92 @@ mod tests {
             draw("Mermaid", "flowchart LR\n  A -->"),
             Some(Drawn::Error(_))
         ));
+    }
+
+    #[cfg(feature = "diagrams")]
+    #[test]
+    fn diagram_errors_are_translated() {
+        use amonhen_model::i18n::{Lang, with};
+        let error = |language: &str, text: &str| match draw(language, text) {
+            Some(Drawn::Error(message)) => message,
+            other => panic!("{other:?}"),
+        };
+        // 英語は今までと同じ文
+        assert_eq!(
+            error("dot", "digraph {"),
+            "Expected '}' before the end (line 1)"
+        );
+        let flowchart = error("mermaid", "flowchart LR\n  A -->");
+        assert!(
+            flowchart.starts_with("Parse error on line 2:\n"),
+            "{flowchart}"
+        );
+        let long = format!("flowchart LR\n{}", "  A --> B\n".repeat(6_000));
+        assert_eq!(
+            error("mermaid", &long),
+            "Diagram source is longer than the limit of 50000 characters."
+        );
+        with(Lang::Ja, || {
+            // DOT: 位置と数は残す
+            assert_eq!(
+                error("dot", "digraph {\n  a -> b\n  c @\n}"),
+                "予期しない文字 '@' があります（3 行目）"
+            );
+            assert_eq!(
+                error("dot", "digraph {"),
+                "終わりまでに '}' がありません（1 行目）"
+            );
+            assert_eq!(
+                error("dot", "digraph { a @ }"),
+                "予期しない文字 '@' があります（1 行目）"
+            );
+            assert_eq!(
+                error("dot", &format!("digraph {{ a }}{}", " ".repeat(50_000))),
+                "この図は長すぎて描けません（50000 文字まで）"
+            );
+            let nodes: String = (0..2100).map(|i| format!("n{i};")).collect();
+            assert_eq!(
+                error("dot", &format!("digraph {{ {nodes} }}")),
+                "この図はノードが多すぎて描けません（2000 個まで）"
+            );
+            // Mermaid: 見出しだけを訳し、抜き出した行はそのまま
+            let flowchart = error("mermaid", "flowchart LR\n  A -->");
+            assert!(
+                flowchart.starts_with("2 行目の書き方に誤りがあります:\n"),
+                "{flowchart}"
+            );
+            assert!(flowchart.contains("A -->"), "{flowchart}");
+            assert_eq!(
+                error("mermaid", &long),
+                "この図は長すぎて描けません（50000 文字まで）。"
+            );
+        });
+        // pele の決まった文の形から訳すもの
+        let pele = |message: &str, code: amonhen_pele::ErrorCode| {
+            let mut e = amonhen_pele::PeleError::new(message, code);
+            e.type_ = Some("zenuml".into());
+            with(Lang::Ja, || mermaid_error(&e))
+        };
+        use amonhen_pele::ErrorCode;
+        assert_eq!(
+            pele("Edge limit exceeded. The limit is 500.", ErrorCode::Limit),
+            "この図は辺が多すぎて描けません（500 本まで）。"
+        );
+        assert_eq!(
+            pele("Diagram is nested too deeply.", ErrorCode::Limit),
+            "この図は入れ子が深すぎて描けません。"
+        );
+        assert_eq!(
+            pele(
+                "Diagram type \"zenuml\" is not supported yet.",
+                ErrorCode::UnsupportedDiagram
+            ),
+            "図の種類「zenuml」にはまだ対応していません。"
+        );
+        // 訳さないものは pele の文のまま
+        assert_eq!(
+            pele("Unknown thing.", ErrorCode::Semantic),
+            "Unknown thing."
+        );
     }
 }

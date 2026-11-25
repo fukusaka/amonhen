@@ -119,6 +119,8 @@ pub struct DiffContent<'a> {
     pub mobile: Option<&'a MobileCheck>,
     /// 絵の下の説明を替えるもの（Android の VectorDrawable の「24 × 24 dp · 1 kB」）。
     pub picture_caption: Option<&'a str>,
+    /// 選んだ行（Working Copy の差分。地を塗る）。
+    pub selection: Option<&'a std::collections::BTreeSet<u32>>,
 }
 
 /// SVG の見せ方（macOS 版の `SVGView`、GTK4 版の `SvgView`）: 絵・モバイル（絵と、モバイル向けの描画部品で
@@ -410,6 +412,10 @@ pub struct WorkingShown {
     /// 長い行を折り返した表示の行の並びと、その桁の数。
     pub tree: Option<DiffTree>,
     pub wrap_cols: usize,
+    /// 選んだ行（差分の行の番号）と、Shift で続けて選ぶ起点。差分を読み直したら外れる（macOS 版・GTK4 版と同じ。
+    /// 読み直すと行の番号が別の行を指すことがある）。
+    pub selection: std::collections::BTreeSet<u32>,
+    pub anchor: Option<u32>,
 }
 
 impl WorkingShown {
@@ -431,7 +437,62 @@ impl WorkingShown {
             picture: None,
             mobile: None,
             picture_caption: None,
+            selection: Some(&self.selection),
         }
+    }
+
+    /// 行 `row` を選ぶ（macOS 版・GTK4 版と同じく前後の行も選べる）。hunk の見出しなら、その hunk の行をすべて。
+    /// `shift` で起点からの続いた行、`ctrl` で足す・外す（すべて選んでいれば外す）。
+    pub fn select(&mut self, row: u32, shift: bool, ctrl: bool) {
+        use amonhen_layout::DiffRow;
+        let rows = &self.diff.view.rows;
+        let Some(kind) = rows.get(row as usize).map(|r| r.kind) else {
+            return;
+        };
+        let picked: Vec<u32> = if kind == DiffRow::HUNK {
+            std::iter::once(row)
+                .chain((row + 1..rows.len() as u32).take_while(|&r| {
+                    !matches!(rows[r as usize].kind, DiffRow::HUNK | DiffRow::FILE)
+                }))
+                .collect()
+        } else {
+            vec![row]
+        };
+        match (shift, self.anchor) {
+            (true, Some(anchor)) => {
+                self.selection = (anchor.min(row)..=anchor.max(row)).collect();
+            }
+            _ if ctrl => {
+                if picked.iter().all(|r| self.selection.contains(r)) {
+                    for r in &picked {
+                        self.selection.remove(r);
+                    }
+                } else {
+                    self.selection.extend(picked);
+                }
+                self.anchor = Some(row);
+            }
+            _ => {
+                self.selection = picked.into_iter().collect();
+                self.anchor = Some(row);
+            }
+        }
+    }
+
+    /// 選んだ行のうち、変更の行（捨てるのはこの行）。
+    pub fn selected_changes(&self) -> Vec<usize> {
+        use amonhen_layout::DiffRow;
+        self.selection
+            .iter()
+            .filter(|&&r| {
+                self.diff
+                    .view
+                    .rows
+                    .get(r as usize)
+                    .is_some_and(|row| matches!(row.kind, DiffRow::ADDED | DiffRow::REMOVED))
+            })
+            .map(|&r| r as usize)
+            .collect()
     }
 }
 
@@ -491,6 +552,7 @@ impl FileShown {
                 .map(|p| (p.as_slice(), self.picture_view)),
             mobile: self.mobile.as_deref(),
             picture_caption: self.drawable.as_ref().map(|d| d.caption.as_str()),
+            selection: None,
         }
     }
 }
@@ -691,6 +753,7 @@ impl CommitShown {
             picture: None,
             mobile: None,
             picture_caption: None,
+            selection: None,
         }
     }
 
@@ -1683,6 +1746,8 @@ impl Data {
                         syntax,
                         tree: None,
                         wrap_cols: 0,
+                        selection: Default::default(),
+                        anchor: None,
                     }))
                 }
                 Err(e) => {
@@ -1811,7 +1876,10 @@ impl Data {
         if working.diff.staged {
             return None;
         }
+        // 選んだ行の中を押したら、選んだ変更の行すべて（macOS 版・GTK4 版の Discard Lines）。
+        let selected = working.selected_changes();
         let rows = match working.diff.view.rows.get(row)?.kind {
+            _ if working.selection.contains(&(row as u32)) && !selected.is_empty() => selected,
             DiffRow::ADDED | DiffRow::REMOVED => vec![row],
             DiffRow::HUNK => hunk_rows(&working.diff.view.rows, row),
             _ => return None,
@@ -2190,6 +2258,8 @@ impl Data {
         };
         let (tx, wake) = (self.tx.clone(), self.wake.clone());
         let (svg_view, renderer) = (self.svg_view, self.mobile_renderer);
+        // VectorDrawable の色は、暗い外観なら values-night などを先に引く
+        let dark = crate::palette::dark();
         // Markdown の図に当てる色の元は、テーマを持つ UI のスレッドで取っておく。
         let diagram_theme =
             amonhen_core::markdown::is_markdown(&path).then(crate::markdownview::diagram_theme);
@@ -2210,7 +2280,7 @@ impl Data {
                 && amonhen_core::vectordrawable::is_vector_drawable(&path, &data)
             {
                 let drawn = (svg_view != SvgView::Text)
-                    .then(|| repo.vector_drawable(&commit, &path, &data, None));
+                    .then(|| repo.vector_drawable(&commit, &path, &data, None, dark));
                 match drawn {
                     Some(Ok(drawn)) => {
                         let (w, h) = crate::imagediff::svg_size(drawn.svg.as_bytes());

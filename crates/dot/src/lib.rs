@@ -25,23 +25,73 @@ pub mod spline;
 pub mod text;
 mod x11;
 
-/// 描けない理由。
+/// 描けない理由。文は英語（`Display`）で、FE は種類と値から訳して見せる（core の `diagram`）。
 #[derive(Clone, Debug, PartialEq, Eq)]
-pub struct Error {
-    pub message: String,
+pub enum Error {
+    /// 文が上限（UTF-16 の数）より長い。
+    TooLong { limit: usize },
+    /// ノードが上限より多い。
+    TooManyNodes { limit: usize },
+    /// 辺が上限より多い。
+    TooManyEdges { limit: usize },
+    /// 描いた SVG が出力の上限より大きい。
+    TooLarge,
+    /// 書き方の誤り（`line` は 1 から）。
+    Syntax { kind: Syntax, line: usize },
 }
 
-impl Error {
-    pub fn new(message: impl Into<String>) -> Self {
-        Error {
-            message: message.into(),
+/// 書き方の誤りの種類。
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Syntax {
+    UnterminatedComment,
+    UnexpectedCharacter(char),
+    MalformedNumber,
+    UnterminatedString,
+    UnterminatedHtml,
+    /// その記号（`'{'` など、引用符つき）がない。
+    Expected(&'static str),
+    /// 終わりまでにその記号がない。
+    ExpectedBeforeEnd(&'static str),
+    ExpectedStringAfterPlus,
+    ExpectedName,
+    ExpectedGraph,
+    NestedTooDeeply,
+    UnexpectedSymbol,
+}
+
+impl std::fmt::Display for Syntax {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Syntax::UnterminatedComment => f.write_str("Unterminated comment"),
+            Syntax::UnexpectedCharacter(ch) => write!(f, "Unexpected character '{ch}'"),
+            Syntax::MalformedNumber => f.write_str("Malformed number"),
+            Syntax::UnterminatedString => f.write_str("Unterminated string"),
+            Syntax::UnterminatedHtml => f.write_str("Unterminated HTML string"),
+            Syntax::Expected(what) => write!(f, "Expected {what}"),
+            Syntax::ExpectedBeforeEnd(what) => write!(f, "Expected {what} before the end"),
+            Syntax::ExpectedStringAfterPlus => f.write_str("Expected a string after '+'"),
+            Syntax::ExpectedName => f.write_str("Expected a name"),
+            Syntax::ExpectedGraph => f.write_str("Expected 'graph' or 'digraph'"),
+            Syntax::NestedTooDeeply => f.write_str("Subgraphs are nested too deeply"),
+            Syntax::UnexpectedSymbol => f.write_str("Unexpected symbol"),
         }
     }
 }
 
 impl std::fmt::Display for Error {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        f.write_str(&self.message)
+        match self {
+            Error::TooLong { limit } => {
+                write!(
+                    f,
+                    "The graph is longer than the limit of {limit} characters"
+                )
+            }
+            Error::TooManyNodes { limit } => write!(f, "The graph has more than {limit} nodes"),
+            Error::TooManyEdges { limit } => write!(f, "The graph has more than {limit} edges"),
+            Error::TooLarge => f.write_str("The drawing is larger than the output limit"),
+            Error::Syntax { kind, line } => write!(f, "{kind} (line {line})"),
+        }
     }
 }
 
@@ -119,9 +169,7 @@ pub fn render_with_images(
     images: Option<&image::Loader>,
 ) -> Result<Drawing, Error> {
     if source.len() > MAX_SOURCE && source.encode_utf16().count() > MAX_SOURCE {
-        return Err(Error::new(format!(
-            "The graph is longer than the limit of {MAX_SOURCE} characters"
-        )));
+        return Err(Error::TooLong { limit: MAX_SOURCE });
     }
     let parsed = parse::parse(source)?;
     let model = graph::build(
@@ -140,7 +188,7 @@ pub fn render_with_images(
     let mut notes = BTreeSet::new();
     let svg = render::render(&model, budget, default_engine, &mut notes, images);
     if svg.len() > MAX_OUTPUT && svg.encode_utf16().count() > MAX_OUTPUT {
-        return Err(Error::new("The drawing is larger than the output limit"));
+        return Err(Error::TooLarge);
     }
     Ok(Drawing {
         svg,

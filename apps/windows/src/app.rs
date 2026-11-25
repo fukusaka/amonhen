@@ -86,6 +86,9 @@ thread_local! {
         std::cell::Cell::new((crate::prefs::auto_fetch_minutes(), Instant::now()));
     /// サイドバーのメニューを付けておく、押されない空の Grid。
     static SIDEBAR_MENU_HOST: RefCell<Option<xaml::UIElement>> = const { RefCell::new(None) };
+    /// 最後にサイドバーを右クリックした所（サイドバーの中。キーボードで開いたなら None）。メニューから開く吹き出しの
+    /// 置き場所。
+    static SIDEBAR_POINT: std::cell::Cell<Option<xaml::Point>> = const { std::cell::Cell::new(None) };
     static SIDEBAR_AT: RefCell<Option<(xaml::UIElement, Option<xaml::Point>)>> =
         const { RefCell::new(None) };
     /// 差分の欄と、右クリックした位置（メニューを作り直してから、そこで開く）。
@@ -516,6 +519,9 @@ struct Root {
     /// 帯を開いた回数（開くたびに欄にフォーカスを入れる）。
     diff_find_opened: u64,
     diff_find_box: ElementRef<TextBox>,
+    /// 整形した Markdown の根（帯の検索を、その中の文字に向ける）と、今の一致・一致の数。
+    markdown_root: ElementRef<Grid>,
+    markdown_find: (usize, usize),
     /// マージエディタの Result の欄（Ctrl+Z・Ctrl+Y を付ける）。
     merge_result_box: ElementRef<TextBox>,
     /// マージエディタの左右と Base の欄の、選んでいるコンフリクトの所。
@@ -1499,6 +1505,10 @@ enum Message {
     SearchSubmit(bool),
     /// 差分の中を探す帯を開く・閉じる、探す文字、前・次へ、件数の文字。
     DiffFindOpen(bool),
+    /// ツールバーの見せ方を選んだ（`menus::Display::ALL` の番号）。
+    ToolbarDisplay(Option<usize>),
+    /// 整形した Markdown の中を探した（今の一致、一致の数）。
+    MarkdownFound(usize, usize),
     DiffFindQuery(String),
     DiffFindStep(i32),
     /// 差分が替わって数え直した、差分の中の一致の数（メッセージの一致と合わせて出す）。
@@ -1754,6 +1764,8 @@ impl Component for Root {
             diff_find_open: false,
             diff_find_opened: 0,
             diff_find_box: ElementRef::new(),
+            markdown_root: ElementRef::new(),
+            markdown_find: (0, 0),
             merge_result_box: ElementRef::new(),
             merge_chosen: std::array::from_fn(|_| ElementRef::new()),
             diff_find_query: String::new(),
@@ -2021,6 +2033,7 @@ impl Root {
             .content(crate::menus::toolbar_palette(
                 &self.toolbar_palette,
                 &self.toolbar_defaults,
+                context.callback(Message::ToolbarDisplay),
                 context.callback(|()| Message::ToolbarDone),
             ))
     }
@@ -3312,12 +3325,20 @@ impl Root {
                     }
                 }
             }
+            Message::ToolbarDisplay(index) => {
+                if let Some(display) = index.and_then(|i| crate::menus::Display::ALL.get(i)) {
+                    crate::menus::set_toolbar_display(*display);
+                }
+            }
             Message::DiffFindOpen(open) => {
                 self.diff_find_open = open;
                 if open {
                     self.diff_find_opened += 1;
                 }
                 if !open {
+                    if self.markdown_shown() {
+                        self.find_in_markdown(String::new(), 0);
+                    }
                     self.diff_find_query.clear();
                     self.diff_find_status.clear();
                     self.diff_find_message = None;
@@ -3325,6 +3346,29 @@ impl Root {
                         h.find_in_diff(String::new(), Some(0));
                     });
                 }
+            }
+            // 整形した Markdown を出している間は、その中を探す（GTK4 版の `markdownfind`）。
+            Message::DiffFindQuery(query) if self.markdown_shown() => {
+                self.diff_find_query = query.clone();
+                self.find_in_markdown(query, 0);
+            }
+            Message::DiffFindStep(step) if self.markdown_shown() => {
+                let (now, total) = self.markdown_find;
+                if total == 0 {
+                    return beep();
+                }
+                let next = (now as i64 + i64::from(step)).rem_euclid(total as i64) as usize;
+                self.find_in_markdown(self.diff_find_query.clone(), next);
+            }
+            Message::MarkdownFound(now, total) => {
+                self.markdown_find = (now, total);
+                self.diff_find_status = if self.diff_find_query.trim().is_empty() {
+                    String::new()
+                } else if total == 0 {
+                    tr!("No Matches")
+                } else {
+                    format!("{} / {total}", now + 1)
+                };
             }
             Message::DiffFindQuery(query) => {
                 self.diff_find_query = query.clone();
@@ -5690,6 +5734,16 @@ impl Root {
                             .find(|e| &e.path == p)
                             .map(|e| e.kind == amonhen_model::StatusKind::Unmerged)
                     });
+                    // マージエディタを出している間に別のファイルを選んだ: 直しかけなら離れない（Close と同じく
+                    // 確かめる）。でなければ閉じて、そのファイルの差分（コンフリクトならそのマージエディタ）へ。
+                    if changed && self.merge_embedded() {
+                        if self.merge.as_ref().is_some_and(crate::merge::State::dirty) {
+                            self.dialog = Some(Dialog::CloseMerge);
+                            return;
+                        }
+                        self.merge = None;
+                        self.page = Page::WorkingCopy;
+                    }
                     if changed {
                         self.working_staged = false;
                     }
@@ -5737,11 +5791,26 @@ impl Root {
                     copy_text(text);
                 } else if let Some(name) = key.strip_prefix("branch-status:") {
                     let (actions, forecast) = self.branch_status(name, context);
-                    self.dialog = Some(Dialog::BranchStatus {
-                        name: name.to_owned(),
-                        actions,
-                        forecast,
-                    });
+                    match SIDEBAR_POINT.with(std::cell::Cell::take) {
+                        // 右クリックした行の所に、印を押したときと同じ吹き出し（macOS 版・GTK4 版と同じ）。
+                        Some(at) => {
+                            self.mark_popover = Some(MarkPopover::Branch {
+                                name: name.to_owned(),
+                                actions,
+                                forecast,
+                            });
+                            self.mark_at = at;
+                            self.mark_opened += 1;
+                        }
+                        // キーボードで開いたメニューからは、置き場所がないのでダイアログ。
+                        None => {
+                            self.dialog = Some(Dialog::BranchStatus {
+                                name: name.to_owned(),
+                                actions,
+                                forecast,
+                            });
+                        }
+                    }
                 } else if let Some(id) = key.strip_prefix("command:") {
                     self.update(Message::Command(id.to_owned()), context);
                 } else if let Some(name) = key.strip_prefix("create-pr:") {
@@ -8245,7 +8314,7 @@ impl Root {
                     if crate::prefs::string(crate::markdownview::DIAGRAM_COLORS)
                         == Some(format!("{IMPORTED_PREFIX}{name}"))
                     {
-                        chosen = Some("syntax".to_owned());
+                        chosen = Some(amonhen_core::diagram::DEFAULT_KEY.to_owned());
                     }
                 } else {
                     // 読み込んだテーマは、そのまま配色にする（GTK4 版と同じ）。
@@ -16746,11 +16815,18 @@ impl Root {
                 option: context.callback(Message::Command),
             },
         );
+        // Working Copy に埋め込むなら右の列だけ（別の窓なら全体）。
+        let embedded = self.merge_embedded();
         Border::new()
             .background(Brush::Solid(crate::palette::background()))
-            .grid_column(1)
-            .grid_column_span(2)
+            .grid_column(if embedded { 2 } else { 1 })
+            .grid_column_span(if embedded { 1 } else { 2 })
             .content(view)
+    }
+
+    /// マージエディタを Working Copy の右の列に埋め込んで出している（別の窓に出していない）。
+    fn merge_embedded(&self) -> bool {
+        self.page == Page::Merge && self.merge.as_ref().is_some_and(|m| !m.separate)
     }
 
     fn blame_view(&self, context: &ViewContext<Self>) -> View {
@@ -17711,14 +17787,15 @@ impl Root {
                     images = f.images.clone();
                 }
             });
-            return Border::new()
+            return Grid::new()
+                .element_ref(&self.markdown_root)
                 .background(Brush::Solid(crate::palette::background()))
-                .content(crate::markdownview::view(
+                .children((crate::markdownview::view(
                     key,
                     parsed.as_deref(),
                     &diagrams,
                     &images,
-                ));
+                ),));
         }
         let flat = !crate::prefs::bool(crate::prefs::HISTORY_FILE_TREE);
         Border::new()
@@ -17729,6 +17806,35 @@ impl Root {
                 &browser.expanded,
                 context.callback(Message::AllFilesRow),
             ))
+    }
+
+    /// 整形した Markdown を出しているか（すべてのファイルで Markdown を開き、テキストにしていない）。
+    fn markdown_shown(&self) -> bool {
+        self.files_mode
+            && self.page != Page::WorkingCopy
+            && !self.markdown_text
+            && self
+                .browser
+                .as_ref()
+                .and_then(|b| b.open.as_deref())
+                .is_some_and(amonhen_core::markdown::is_markdown)
+    }
+
+    /// 整形した Markdown の中で `query` を探し、`now` 番目の一致へ寄せる（並んだ部品の文字を読むので、描き終えて
+    /// から。数は `MarkdownFound` で返る）。
+    fn find_in_markdown(&self, query: String, now: usize) {
+        let _ = self.markdown_root.request_native_element(move |result| {
+            let Ok(root) = result else {
+                return;
+            };
+            let total = crate::markdownfind::find(&root, &query, now);
+            with_history(|h| {
+                h.sender.send(Message::MarkdownFound(
+                    now.min(total.saturating_sub(1)),
+                    total,
+                ));
+            });
+        });
     }
 
     /// 少し後に、コミット情報の中身の高さを測って欄の高さを合わせる（描き終えて大きさが決まってから）。
@@ -18170,7 +18276,8 @@ impl Root {
     }
 
     fn working_copy_view(&self, context: &mut ViewContext<Self>) -> View {
-        if self.page != Page::WorkingCopy {
+        // マージエディタは Working Copy の右の列に埋め込む（一覧は左に残す。macOS 版・GTK4 版と同じ）。
+        if self.page != Page::WorkingCopy && !self.merge_embedded() {
             return View::empty();
         }
         let callbacks = crate::workcopy::Callbacks {
@@ -21172,6 +21279,7 @@ impl HistoryView {
             .session
             .renderer
             .image_common(commit.content().key, file);
+        let key = commit.content().key;
         let view = commit.image_views.entry(file).or_default();
         let area = if mode == Mode::TwoUp {
             image::two_up_area(layout.canvas, 1)
@@ -21201,6 +21309,13 @@ impl HistoryView {
                 };
                 view.pan = (0.0, 0.0);
             }
+            // 市松模様の明暗（透けた画素がなければボタンはない）。
+            Some(Hit::Checker) => match self.session.renderer.image_tone(key, file) {
+                Some(tone) if tone.transparent() => {
+                    view.dark = Some(!image::dark_checker(view, tone));
+                }
+                _ => return false,
+            },
             Some(Hit::ZoomOut) => image::zoom_by(view, 1.0 / 1.5, common, area),
             Some(Hit::ZoomIn) => image::zoom_by(view, 1.5, common, area),
             Some(Hit::ZoomFit) => {
@@ -21234,6 +21349,7 @@ impl HistoryView {
             .session
             .renderer
             .image_common(file.content().key, usize::MAX);
+        let key = file.content().key;
         let view = &mut file.picture_view;
         let mut drag = None;
         match image::hit(&layout, Mode::TwoUp, view, common, x, y, false) {
@@ -21245,6 +21361,12 @@ impl HistoryView {
                 };
                 view.pan = (0.0, 0.0);
             }
+            Some(Hit::Checker) => match self.session.renderer.image_tone(key, usize::MAX) {
+                Some(tone) if tone.transparent() => {
+                    view.dark = Some(!image::dark_checker(view, tone));
+                }
+                _ => return false,
+            },
             Some(Hit::ZoomOut) => image::zoom_by(view, 1.0 / 1.5, common, layout.canvas),
             Some(Hit::ZoomIn) => image::zoom_by(view, 1.5, common, layout.canvas),
             Some(Hit::ZoomFit) => {
@@ -22402,6 +22524,7 @@ fn attach_sidebar(element: &IInspectable) -> windows_core_reactor::Result<()> {
         } else {
             (item, None)
         };
+        SIDEBAR_POINT.with(|p| p.set(place.1));
         SIDEBAR_AT.with(|a| *a.borrow_mut() = Some(place));
         with_history(|h| {
             h.sender.send(Message::SidebarMenu(key));
@@ -23124,6 +23247,21 @@ fn attach_input(element: &IInspectable, target: Target) -> windows_core_reactor:
                                 h.session.data.toggle_working_hunk(row)
                             }
                             _ => {}
+                        }
+                    } else if let Some(row) = row {
+                        // 印の外: 行を選ぶ（Shift で続けて、Ctrl で足す・外す。選んだ行に Discard Lines が効く。
+                        // macOS 版・GTK4 版と同じ）。
+                        let down = |key: xaml::VirtualKey| {
+                            xaml::InputKeyboardSource::GetKeyStateForCurrentThread(key)
+                                .is_ok_and(|s| s.contains(xaml::CoreVirtualKeyStates::Down))
+                        };
+                        let (shift, ctrl) = (
+                            down(xaml::VirtualKey::Shift),
+                            down(xaml::VirtualKey::Control),
+                        );
+                        if let Some(working) = h.session.data.working.as_mut() {
+                            working.select(row as u32, shift, ctrl);
+                            h.diff.dirty = true;
                         }
                     }
                 }

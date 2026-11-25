@@ -1207,12 +1207,9 @@ impl Browser {
         let (repo, commit, p) = (self.tree.repo.clone(), self.tree.commit, path.to_owned());
         let text = self.drawable_text.get();
         // 引けない色（Android のテーマ属性など）は、今の外観の文字の色（図の配色と同じ libadwaita の本文の色）で
-        // 描く。外観が変わったら描き直す
-        let fallback = if adw::StyleManager::default().is_dark() {
-            "#ffffff"
-        } else {
-            "#000000"
-        };
+        // 描く。色の資源も、暗い外観なら values-night などを先に引く。外観が変わったら描き直す
+        let dark = adw::StyleManager::default().is_dark();
+        let fallback = if dark { "#ffffff" } else { "#000000" };
         let weak = Rc::downgrade(self);
         let path = path.to_owned();
         glib::spawn_future_local(async move {
@@ -1222,7 +1219,7 @@ impl Browser {
                     return None;
                 }
                 let picture =
-                    (!text).then(|| repo.vector_drawable(&commit, &p, &data, Some(fallback)));
+                    (!text).then(|| repo.vector_drawable(&commit, &p, &data, Some(fallback), dark));
                 Some((data.len(), picture))
             })
             .await
