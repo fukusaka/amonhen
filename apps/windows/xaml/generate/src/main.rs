@@ -22,7 +22,7 @@ const FILTER: &[&str] = &[
     "Microsoft.UI.Xaml.DependencyObject",
     "Microsoft.UI.Xaml.Media.VisualTreeHelper",
     "Microsoft.UI.Xaml.Media.IVisualTreeHelperStatics::{GetParent,GetChild,GetChildrenCount}",
-    "Microsoft.UI.Xaml.IFrameworkElement::{DataContext,Tag,ActualWidth,ActualHeight,put_HorizontalAlignment,put_VerticalAlignment,put_Margin,\
+    "Microsoft.UI.Xaml.IFrameworkElement::{DataContext,Tag,ActualWidth,ActualHeight,put_HorizontalAlignment,put_VerticalAlignment,put_Margin,put_Width,put_Height,put_MaxWidth,put_MaxHeight,\
      Resources,RequestedTheme,put_RequestedTheme}",
     // Repositories の一覧で選んだ行（複数）。
     "Microsoft.UI.Xaml.Controls.ListViewBase",
@@ -108,6 +108,12 @@ const FILTER: &[&str] = &[
     "Microsoft.UI.Xaml.VerticalAlignment",
     "Microsoft.UI.Xaml.Thickness",
     "Microsoft.UI.Xaml.Visibility",
+    // Push の確認（ContentDialog）で、Enter で押すボタン（Push は色付き、Force Push は色なし）。
+    "Microsoft.UI.Xaml.Controls.ContentDialog",
+    "Microsoft.UI.Xaml.Controls.IContentDialog::{put_DefaultButton}",
+    "Microsoft.UI.Xaml.Controls.ContentDialogButton",
+    "Microsoft.UI.Xaml.Controls.IContentDialogFactory::{}",
+    "Microsoft.UI.Xaml.Controls.IContentDialogStatics::{}",
     // マージエディタの Result の欄（TextBox）を、選んだコンフリクトの行へスクロールする（中の ScrollViewer を動かす）。
     "Microsoft.UI.Xaml.Controls.ScrollViewer",
     "Microsoft.UI.Xaml.Controls.IScrollViewer::{ExtentHeight,ViewportHeight,ScrollToVerticalOffset}",
