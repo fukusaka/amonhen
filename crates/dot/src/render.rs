@@ -1080,6 +1080,88 @@ pub fn render(
             [p.0.min(q.0), p.1.min(q.1), p.0.max(q.0), p.1.max(q.1)]
         })
         .collect();
+    // 間を越える同じランクの弧（隣でない組と、隣でも 2 本目から）が水平に進む高さ（配置の座標）。ランクのすぐ上の
+    // 空きを通り、同じランクの間のノードの上を越える（上のランクのノードは越えない。Graphviz と同じ）。同じランクで
+    // 横の範囲が重なる弧は、短いものから置き、中に収まる弧より 1 段（8）上、一部だけ重なる弧とは別の高さにする
+    let flat_top: Vec<Option<f64>> = {
+        // (辺, 行の y, 左, 右, 間のノードを越える高さ)
+        let mut arcs: Vec<(usize, f64, f64, f64, f64)> = Vec::new();
+        for (ei, e) in model.edges.iter().enumerate() {
+            let Route::Flat { lane, adjacent } = lay.routes[ei] else {
+                continue;
+            };
+            if adjacent && lane == 0 {
+                continue;
+            }
+            let (pa, pb) = (lay.nodes[e.tail], lay.nodes[e.head]);
+            let (lo, hi) = (pa.0.min(pb.0), pa.0.max(pb.0));
+            let mut top = (pa.1 - lnodes[e.tail].h / 2.0).min(pb.1 - lnodes[e.head].h / 2.0) - 10.0;
+            for (v, &(x, y)) in lay.nodes.iter().enumerate() {
+                if v == e.tail || v == e.head || views[v].invis || (y - pa.1).abs() > 1.0 {
+                    continue;
+                }
+                let half = lnodes[v].w / 2.0;
+                if x + half > lo && x - half < hi {
+                    top = top.min(y - lnodes[v].h / 2.0 - 8.0);
+                }
+            }
+            // 同じ行の隣どうしの辺のラベル（その線の上に置く）も越える
+            for (fi, f) in model.edges.iter().enumerate() {
+                let (
+                    Route::Flat {
+                        adjacent: true,
+                        lane: 0,
+                    },
+                    Some(t),
+                ) = (&lay.routes[fi], eviews[fi].label.as_ref())
+                else {
+                    continue;
+                };
+                let (fa, fb) = (lay.nodes[f.tail], lay.nodes[f.head]);
+                let mid = (fa.0 + fb.0) / 2.0;
+                let (lw, lh) = if dir.sideways() {
+                    (t.height, t.width)
+                } else {
+                    (t.width, t.height)
+                };
+                if (fa.1 - pa.1).abs() < 1.0 && mid + lw / 2.0 > lo && mid - lw / 2.0 < hi {
+                    top = top.min(fa.1 - lh - 2.0 - 8.0);
+                }
+            }
+            arcs.push((ei, pa.1, lo, hi, top));
+        }
+        arcs.sort_by(|a, b| {
+            a.1.total_cmp(&b.1)
+                .then((a.3 - a.2).total_cmp(&(b.3 - b.2)))
+                .then(a.0.cmp(&b.0))
+        });
+        let mut out: Vec<Option<f64>> = vec![None; model.edges.len()];
+        let mut placed: Vec<(f64, f64, f64, f64)> = Vec::new(); // (行の y, 左, 右, 高さ)
+        for (ei, row, lo, hi, base) in arcs {
+            let same: Vec<(f64, f64, f64)> = placed
+                .iter()
+                .filter(|p| (p.0 - row).abs() < 1.0 && p.1 < hi + 1.0 && p.2 > lo - 1.0)
+                .map(|p| (p.1, p.2, p.3))
+                .collect();
+            // 中に収まる弧より上
+            let mut top = base;
+            for &(l, h, t) in &same {
+                if l >= lo - 1.0 && h <= hi + 1.0 {
+                    top = top.min(t - 8.0);
+                }
+            }
+            // 一部だけ重なる弧とは、同じ高さを避ける
+            for _ in 0..same.len() {
+                match same.iter().find(|s| (s.2 - top).abs() < 7.5) {
+                    Some(s) => top = top.min(s.2 - 8.0),
+                    None => break,
+                }
+            }
+            placed.push((row, lo, hi, top));
+            out[ei] = Some(top);
+        }
+        out
+    };
     let mut obstacles = {
         const NODE_PAD: f64 = 4.0;
         let mut rects: Vec<(route::Rect, Option<usize>)> = Vec::new();
@@ -1117,6 +1199,10 @@ pub fn render(
                         let (pa, pb) = (lay.nodes[e.tail], lay.nodes[e.head]);
                         Some(((pa.0 + pb.0) / 2.0, pa.1 - lh / 2.0 - 2.0))
                     }
+                    Route::Flat { .. } => flat_top[ei].map(|top| {
+                        let (pa, pb) = (lay.nodes[e.tail], lay.nodes[e.head]);
+                        ((pa.0 + pb.0) / 2.0, top - lh / 2.0 - 2.0)
+                    }),
                     _ => None,
                 };
                 if let Some((x, y)) = at {
@@ -1359,21 +1445,10 @@ pub fn render(
                         ((pa.0 + pb.0) / 2.0, pa.1 - lh / 2.0 - 2.0)
                     });
                 } else {
-                    // 間のノード・題の上を越える（弧の頂きは制御点の 3/4）
-                    let between = obstacles.overlapping(
-                        [pa.0.min(pb.0), pa.1 - 10_000.0, pa.0.max(pb.0), pa.1 + 1.0],
-                        &[e.tail, e.head],
-                    );
-                    let clear = between
-                        .iter()
-                        .map(|r| (pa.1 - r[1]) / 0.75 + 6.0)
-                        .fold(0.0, f64::max);
-                    let lift = (h_a + 14.0 + (pb.0 - pa.0).abs().min(400.0) * 0.05).max(clear)
-                        + 12.0 * *lane as f64;
-                    let top = pa.1.min(pb.1) - lift;
+                    // ランクのすぐ上を、上がる・水平に進む・下りる（角は丸める）
+                    let top = flat_top[ei].unwrap_or(pa.1 - h_a - 10.0);
                     path = if ortho {
                         // ポートの側から出て、上を越える
-                        let top = pa.1.min(pb.1) - lift * 0.75;
                         let (ca, cb) = (lay.nodes[e.tail], lay.nodes[e.head]);
                         let half = |v: usize| (lnodes[v].w / 2.0, lnodes[v].h / 2.0);
                         let pts = route::ortho_flat(
@@ -1388,11 +1463,22 @@ pub fn render(
                         );
                         pts.windows(2).map(|w| Cubic::line(w[0], w[1])).collect()
                     } else {
-                        vec![Cubic(pa, (pa.0, top), (pb.0, top), pb)]
+                        // 角の丸みの横の幅: 両端のノードの幅の半分（間が狭ければ真ん中まで）
+                        let span = (pb.0 - pa.0).abs();
+                        let sg = if pb.0 >= pa.0 { 1.0 } else { -1.0 };
+                        let ra = (lnodes[e.tail].w / 2.0).max(10.0).min(span / 2.0);
+                        let rb = (lnodes[e.head].w / 2.0).max(10.0).min(span / 2.0);
+                        let (qa, qb) = ((pa.0 + sg * ra, top), (pb.0 - sg * rb, top));
+                        let mut out = vec![Cubic(pa, (pa.0, top), (pa.0, top), qa)];
+                        if (qb.0 - qa.0).abs() > 0.5 {
+                            out.push(Cubic::line(qa, qb));
+                        }
+                        out.push(Cubic(qb, (pb.0, top), (pb.0, top), pb));
+                        out
                     };
                     label_at = ev.label.as_ref().map(|t| {
                         let lh = if dir.sideways() { t.width } else { t.height };
-                        ((pa.0 + pb.0) / 2.0, top + lift * 0.25 - lh / 2.0 - 2.0)
+                        ((pa.0 + pb.0) / 2.0, top - lh / 2.0 - 2.0)
                     });
                 }
                 path = path.iter().map(|c| c.map(to_final)).collect();

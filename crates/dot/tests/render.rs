@@ -903,3 +903,40 @@ fn dot_ortho_tracks_get_room_between_ranks() {
         }
     }
 }
+
+/// dot の同じランクの弧は、ランクのすぐ上の空きを通る（上のランクのノードは越えない）。重なる弧は別の高さ。
+#[test]
+fn dot_flat_arcs_stay_below_the_rank_above() {
+    let src = "digraph { p -> {b c d e}; q -> c; r -> d; {rank=same; b -> d; b -> e; c -> e} }";
+    let svg = render(src).unwrap().svg;
+    // 上のランク（p・q・r）の下の端
+    let bottom = svg
+        .split("<ellipse ")
+        .skip(1)
+        .filter_map(|e| {
+            let num = |k: &str| -> Option<f64> {
+                e.split(&format!("{k}=\""))
+                    .nth(1)?
+                    .split('"')
+                    .next()?
+                    .parse()
+                    .ok()
+            };
+            Some((num("cy")?, num("ry")?))
+        })
+        .map(|(cy, ry)| cy + ry)
+        .fold(f64::MAX, f64::min);
+    let lines = edge_polylines(&svg);
+    // 同じランクの弧は最後の 3 本
+    let arcs = &lines[lines.len() - 3..];
+    let mut tops: Vec<f64> = Vec::new();
+    for arc in arcs {
+        let top = arc.iter().map(|p| p.1).fold(f64::MAX, f64::min);
+        assert!(top > bottom + 4.0, "{arc:?} above {bottom}");
+        tops.push(top);
+    }
+    tops.sort_by(f64::total_cmp);
+    for w in tops.windows(2) {
+        assert!(w[1] - w[0] >= 4.0, "{tops:?}");
+    }
+}

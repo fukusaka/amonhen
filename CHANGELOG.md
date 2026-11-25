@@ -39,6 +39,8 @@ checkerboard behind transparent pictures can be switched between light and dark.
   run across it, so they no longer merge into one line.
 - DOT diagrams: edges in the dot layout are drawn as Graphviz does, as smooth curves along the shortest way between
   the nodes around them, instead of bending at every rank.
+- DOT diagrams: same-rank edges that skip over nodes run just above their rank, as in Graphviz, instead of arching
+  over the ranks above; overlapping arcs get their own heights and other edges keep clear of their labels.
 
 #### Changed
 
