@@ -22,6 +22,7 @@ mod files;
 mod forecast;
 mod github;
 mod historyedit;
+mod icons;
 mod imagediff;
 mod listen;
 mod markdownfind;

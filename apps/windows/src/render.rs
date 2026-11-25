@@ -1947,14 +1947,12 @@ impl Renderer {
             &secondary(),
             false,
         )?;
-        self.draw_small(
-            "\u{E8B7}",
-            &icons,
+        self.draw_icon(
+            "folder",
             DIFF_TEXT_INSET + indent + 16.0,
-            top + 3.0,
+            top + (DIFF_ROW_HEIGHT - 14.0) / 2.0,
             14.0,
             &secondary(),
-            false,
         )?;
         let format = self.file_format.clone();
         self.draw_small(
@@ -2143,17 +2141,16 @@ impl Renderer {
             layout.zoom_label,
             &secondary(),
         )?;
-        let icons = self.icon_format.clone();
         for (r, glyph) in [
-            (layout.zoom_out, "\u{E71F}"),
-            (layout.zoom_in, "\u{E8A3}"),
-            (layout.zoom_fit, "\u{E9A6}"),
+            (layout.zoom_out, "zoom-out"),
+            (layout.zoom_in, "zoom-in"),
+            (layout.zoom_fit, "zoom-fit"),
         ] {
             unsafe {
                 self.brush.SetColor(&diff_file());
                 self.d2d.FillRectangle(&d2d_rect(r), &self.brush);
             }
-            self.draw_centered(glyph, &icons, r, &foreground())?;
+            self.draw_icon_centered(glyph, r, 16.0, &foreground())?;
         }
         self.draw_checker_button(layout.checker, tone, dark)?;
         self.draw_small(
@@ -2373,8 +2370,7 @@ impl Renderer {
         // SVG の「テキストで見る」（Segoe Fluent Icons の Document）。
         if let Some(r) = layout.text {
             fill(self, r, diff_file());
-            let icons = self.icon_format.clone();
-            self.draw_centered("\u{E8A5}", &icons, r, &foreground())?;
+            self.draw_icon_centered("files", r, 16.0, &foreground())?;
         }
         // スワイプ・オニオンスキンの位置のスライダー。
         if let Some(slider) = layout.slider {
@@ -2408,14 +2404,13 @@ impl Renderer {
             layout.zoom_label,
             &secondary(),
         )?;
-        let icons = self.icon_format.clone();
         for (r, glyph) in [
-            (layout.zoom_out, "\u{E71F}"),
-            (layout.zoom_in, "\u{E8A3}"),
-            (layout.zoom_fit, "\u{E9A6}"),
+            (layout.zoom_out, "zoom-out"),
+            (layout.zoom_in, "zoom-in"),
+            (layout.zoom_fit, "zoom-fit"),
         ] {
             fill(self, r, diff_file());
-            self.draw_centered(glyph, &icons, r, &foreground())?;
+            self.draw_icon_centered(glyph, r, 16.0, &foreground())?;
         }
         let Some(entry) = self.image_entry(commit, file) else {
             return Ok(());
@@ -2765,6 +2760,100 @@ impl Renderer {
             );
         }
         Ok(())
+    }
+
+    /// どの FE でも同じ形のアイコン（`crates/icons`）`name` を、左上 (`x`, `y`) から一辺 `size` に、Segoe Fluent
+    /// Icons と同じ 1px の線で描く（WinUI の部分の `crate::icons` と同じ）。縦・横の線は画素に合わせる。
+    fn draw_icon(&self, name: &str, x: f32, y: f32, size: f32, color: &D2D1_COLOR_F) -> Result<()> {
+        let Some(icon) = amonhen_icons::get(name) else {
+            return Ok(());
+        };
+        let stroke = crate::icons::STROKE;
+        unsafe {
+            let (mut dpi_x, mut dpi_y) = (96.0f32, 96.0f32);
+            self.d2d.GetDpi(&mut dpi_x, &mut dpi_y);
+            let scale = (dpi_x / 96.0).max(1.0);
+            // 置く位置も画素の角に合わせる（中の線を画素に合わせたのが崩れないように）。
+            let (x, y) = ((x * scale).round() / scale, (y * scale).round() / scale);
+            self.brush.SetColor(color);
+            let base: &ID2D1Factory = &self.d2d_factory;
+            for s in icon.strokes(size, scale, stroke) {
+                let geometry = self.d2d_factory.CreatePathGeometry()?;
+                let sink = geometry.Open()?;
+                let p = |c: &[f32], k: usize| point(x + c[k], y + c[k + 1]);
+                let mut open = false;
+                let mut i = 0;
+                while let Some(op) = s
+                    .segments
+                    .get(i)
+                    .and_then(|&c| amonhen_icons::Op::from_code(c))
+                {
+                    let c = &s.segments[i + 1..i + 1 + op.arity()];
+                    match op {
+                        amonhen_icons::Op::Move => {
+                            if open {
+                                sink.EndFigure(D2D1_FIGURE_END_OPEN);
+                            }
+                            sink.BeginFigure(p(c, 0), D2D1_FIGURE_BEGIN_HOLLOW);
+                            open = true;
+                        }
+                        amonhen_icons::Op::Line => sink.AddLine(p(c, 0)),
+                        amonhen_icons::Op::Cubic => sink.AddBezier(&D2D1_BEZIER_SEGMENT {
+                            point1: p(c, 0),
+                            point2: p(c, 2),
+                            point3: p(c, 4),
+                        }),
+                        amonhen_icons::Op::Close => {
+                            sink.EndFigure(D2D1_FIGURE_END_CLOSED);
+                            open = false;
+                        }
+                    }
+                    i += 1 + op.arity();
+                }
+                if open {
+                    sink.EndFigure(D2D1_FIGURE_END_OPEN);
+                }
+                sink.Close()?;
+                // 破線は線の太さを 1 とした長さ。
+                let dashes: Vec<f32> = s.dash.iter().map(|d| d / stroke).collect();
+                let style = base.CreateStrokeStyle(
+                    &D2D1_STROKE_STYLE_PROPERTIES {
+                        startCap: D2D1_CAP_STYLE_ROUND,
+                        endCap: D2D1_CAP_STYLE_ROUND,
+                        dashCap: D2D1_CAP_STYLE_ROUND,
+                        lineJoin: D2D1_LINE_JOIN_ROUND,
+                        miterLimit: 10.0,
+                        dashStyle: if dashes.is_empty() {
+                            D2D1_DASH_STYLE_SOLID
+                        } else {
+                            D2D1_DASH_STYLE_CUSTOM
+                        },
+                        dashOffset: 0.0,
+                    },
+                    (!dashes.is_empty()).then_some(dashes.as_slice()),
+                )?;
+                self.d2d
+                    .DrawGeometry(&geometry, &self.brush, stroke, &style);
+            }
+        }
+        Ok(())
+    }
+
+    /// `draw_icon` を `rect` の真ん中に。
+    fn draw_icon_centered(
+        &self,
+        name: &str,
+        rect: crate::imagediff::Rect,
+        size: f32,
+        color: &D2D1_COLOR_F,
+    ) -> Result<()> {
+        self.draw_icon(
+            name,
+            rect.x + (rect.w - size) / 2.0,
+            rect.y + (rect.h - size) / 2.0,
+            size,
+            color,
+        )
     }
 
     /// 短い文字を `x` から幅 `width` に描く（`trailing` なら右に寄せる）。
