@@ -55,9 +55,9 @@ pub fn draw_with(
     if language.eq_ignore_ascii_case("mermaid") {
         return draw_mermaid(text, zone);
     }
-    // dot・graphviz・gv は `layout` の属性で配置を選ぶ。neato などの名前のフェンスはその配置が既定
+    // 配置は `layout` の属性で選ぶ。` ```neato ` など配置の名前のフェンスは図にせずコードのまま（GitHub と同じ）
     if DOT_FENCES.iter().any(|l| language.eq_ignore_ascii_case(l)) {
-        return draw_dot(text, language, images);
+        return draw_dot(text, images);
     }
     None
 }
@@ -148,25 +148,12 @@ pub fn resolve_image(src: &str, from: &str) -> Option<String> {
 }
 
 /// Graphviz の DOT として描くフェンスの言葉。
-const DOT_FENCES: &[&str] = &[
-    "dot",
-    "graphviz",
-    "gv",
-    "neato",
-    "fdp",
-    "sfdp",
-    "twopi",
-    "circo",
-    "osage",
-    "patchwork",
-];
+const DOT_FENCES: &[&str] = &["dot", "graphviz", "gv"];
 
 /// Graphviz の DOT の図。Mermaid と同じく大きなスタックの別スレッドで描き、panic は図の誤りにする。
 #[cfg(feature = "diagrams")]
-fn draw_dot(text: &str, language: &str, images: Option<&ImageSource>) -> Option<Drawn> {
+fn draw_dot(text: &str, images: Option<&ImageSource>) -> Option<Drawn> {
     let source = text.to_owned();
-    let engine = amonhen_dot::engines::Engine::from_name(language)
-        .unwrap_or(amonhen_dot::engines::Engine::Dot);
     let images = images.cloned();
     let drawn = std::thread::Builder::new()
         .name("dot".into())
@@ -180,7 +167,7 @@ fn draw_dot(text: &str, language: &str, images: Option<&ImageSource>) -> Option<
             });
             amonhen_dot::render_with_images(
                 &source,
-                engine,
+                amonhen_dot::engines::Engine::Dot,
                 loader.as_ref().map(|l| l as &amonhen_dot::image::Loader),
             )
         })
@@ -195,7 +182,7 @@ fn draw_dot(text: &str, language: &str, images: Option<&ImageSource>) -> Option<
 }
 
 #[cfg(not(feature = "diagrams"))]
-fn draw_dot(_text: &str, _language: &str, _images: Option<&ImageSource>) -> Option<Drawn> {
+fn draw_dot(_text: &str, _images: Option<&ImageSource>) -> Option<Drawn> {
     None
 }
 
@@ -1041,25 +1028,32 @@ mod tests {
         assert!(dark.contains("#d0d0d0") && dark.contains("#ff0000"));
         // 続く空白を保つ
         assert!(syntax.contains("xml:space=\"preserve\""), "{syntax}");
-        for language in ["graphviz", "Dot", "neato", "Circo"] {
+        for language in ["graphviz", "Dot", "gv"] {
             assert!(matches!(
                 draw(language, "digraph { a -> b }"),
                 Some(Drawn::Svg(_, None))
             ));
         }
-        // フェンスの言葉は既定の配置で、`layout` が勝つ
+        // 配置の名前のフェンスはコードのまま（GitHub と同じ）。配置は `layout` で選ぶ
+        for language in [
+            "neato",
+            "Circo",
+            "fdp",
+            "sfdp",
+            "twopi",
+            "osage",
+            "patchwork",
+        ] {
+            assert_eq!(draw(language, "digraph { a -> b }"), None);
+        }
         let Some(Drawn::Svg(lr, _)) = draw("dot", "digraph { rankdir=LR; a -> b }") else {
             panic!("not drawn");
         };
-        let Some(Drawn::Svg(free, _)) = draw("neato", "digraph { rankdir=LR; a -> b }") else {
-            panic!("not drawn");
-        };
-        let Some(Drawn::Svg(back, _)) = draw("neato", "digraph { layout=dot; rankdir=LR; a -> b }")
+        let Some(Drawn::Svg(free, _)) = draw("dot", "digraph { layout=neato; rankdir=LR; a -> b }")
         else {
             panic!("not drawn");
         };
         assert_ne!(lr, free);
-        assert_eq!(lr, back);
         assert!(matches!(draw("dot", "digraph {"), Some(Drawn::Error(_))));
         // グラデーションの塗りも残る
         let Some(Drawn::Svg(svg, _)) = draw(

@@ -10,7 +10,7 @@ import type { PictureColors } from './protocol.ts';
 export type Render = (op: string, fields: Record<string, unknown>) => Promise<Record<string, unknown>>;
 
 /** 図として描くフェンスの言葉（コアの `diagram::draw_with` と同じ: Mermaid と Graphviz の DOT） */
-const DIAGRAM_FENCES = new Set(['mermaid', 'dot', 'graphviz', 'gv', 'neato', 'fdp', 'sfdp', 'twopi', 'circo', 'osage', 'patchwork']);
+const DIAGRAM_FENCES = new Set(['mermaid', 'dot', 'graphviz', 'gv']);
 
 type Obj = Record<string, unknown>;
 

@@ -105,7 +105,7 @@ pub fn render(source: &str) -> Result<Drawing, Error> {
     render_with(source, engines::Engine::Dot)
 }
 
-/// DOT の文を描く。`default_engine` は `layout` の属性がないときの配置（` ```neato ` のようなフェンスの言葉）。
+/// DOT の文を描く。`default_engine` は `layout` の属性がないときの配置。
 pub fn render_with(source: &str, default_engine: engines::Engine) -> Result<Drawing, Error> {
     render_with_images(source, default_engine, None)
 }
