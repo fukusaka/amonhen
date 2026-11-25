@@ -7,10 +7,11 @@ import CAmonhen
 /// 押すとブラウザで開く（リポジトリの中のファイルへのリンクは、そのファイルを開く）。HTML の `<details>` は、
 /// 見出しを押すと開く・閉じる（組み直す）。`<picture>` は外観に合う画像を出し、外観が変わったら組み直す。数式
 /// （```` ```math ````・`$$…$$`・`$…$`）はコアが描いた SVG を、文字の色を当てて絵にする（文中の式は基線にそろえる）。
-final class MarkdownView: NSView, NSTextViewDelegate {
+/// ⌘F で、見えている文字（`<kbd>` の文字も）を探す。帯は差分・ファイルの検索と同じ形。絵と閉じた `<details>` の中は探さない。
+final class MarkdownView: NSView, NSTextViewDelegate, NSSearchFieldDelegate {
     private let scroll = NSScrollView()
     /// 文字の欄（試験も中の文字を読む）。
-    let text: NSTextView
+    let text: MarkdownTextView
     /// 文字の置き場（TextKit 1 では文字の置き場が NSLayoutManager を持ち、NSTextView は持たないので、ここで持つ）。
     private let storage = NSTextStorage()
     /// リポジトリの中のファイルへのリンクを押した（Markdown のファイルからの相対パスを解いたもの）。
@@ -26,6 +27,16 @@ final class MarkdownView: NSView, NSTextViewDelegate {
     /// 組み立てたときの外観（暗いか）。
     private var builtDark = false
 
+    // 検索（差分の検索と同じ帯・同じ色）
+    private let findBar = NSView()
+    private let findField = NSSearchField()
+    private let findCount = NSTextField(labelWithString: "")
+    private(set) var isFindBarVisible = false
+    /// 一致（文字の範囲、文書の順）。
+    private(set) var matches: [NSRange] = []
+    private(set) var currentMatch: Int?
+    private static let findBarHeight: CGFloat = 30
+
     /// `blocks` を組み立てる。`image` はリンクの場所（Markdown のファイルからの相対パス）からそのコミットの画像を読む。
     init(blocks: [MarkdownBlock], path: String, image: @escaping (String) -> NSImage?) {
         self.path = path
@@ -37,8 +48,9 @@ final class MarkdownView: NSView, NSTextViewDelegate {
         storage.addLayoutManager(layoutManager)
         let container = NSTextContainer(size: NSSize(width: 600, height: CGFloat.greatestFiniteMagnitude))
         layoutManager.addTextContainer(container)
-        text = NSTextView(frame: NSRect(x: 0, y: 0, width: 600, height: 400), textContainer: container)
+        text = MarkdownTextView(frame: NSRect(x: 0, y: 0, width: 600, height: 400), textContainer: container)
         super.init(frame: NSRect(x: 0, y: 0, width: 600, height: 400))
+        text.owner = self
         text.isEditable = false
         text.isSelectable = true
         text.drawsBackground = false
@@ -53,6 +65,8 @@ final class MarkdownView: NSView, NSTextViewDelegate {
         scroll.hasVerticalScroller = true
         scroll.drawsBackground = false
         addSubview(scroll)
+        buildFindBar()
+        addSubview(findBar)
         rebuild()
         // 図の配色・構文の色のテーマを変えたら描き直す（図は描くときに色を当てる）。
         NotificationCenter.default.addObserver(self, selector: #selector(themeChanged), name: .syntaxThemeChanged, object: nil)
@@ -76,6 +90,8 @@ final class MarkdownView: NSView, NSTextViewDelegate {
         fitAttachments()
         scroll.contentView.scroll(to: origin)
         scroll.reflectScrolledClipView(scroll.contentView)
+        // `<details>` を開け閉めしたら、見えている文字が変わる。
+        if isFindBarVisible { updateMatches(scrollToCurrent: false) }
     }
 
     private func cachedImage(_ src: String) -> NSImage? {
@@ -95,8 +111,152 @@ final class MarkdownView: NSView, NSTextViewDelegate {
 
     override func layout() {
         super.layout()
-        scroll.frame = bounds
+        let barHeight = isFindBarVisible ? Self.findBarHeight : 0
+        findBar.frame = NSRect(x: 0, y: bounds.height - barHeight, width: bounds.width, height: barHeight)
+        scroll.frame = NSRect(x: 0, y: 0, width: bounds.width, height: max(0, bounds.height - barHeight))
         fitAttachments()
+    }
+
+    // MARK: - 検索
+
+    private func buildFindBar() {
+        findBar.isHidden = true
+        findField.placeholderString = L("Search")
+        findField.sendsSearchStringImmediately = true
+        findField.delegate = self
+        findField.target = self
+        findField.action = #selector(findFieldChanged)
+        findField.controlSize = .small
+        findCount.textColor = .secondaryLabelColor
+        findCount.font = .systemFont(ofSize: NSFont.smallSystemFontSize)
+        let previous = NSButton(image: NSImage(systemSymbolName: "chevron.up", accessibilityDescription: L("Previous"))!,
+                                target: self, action: #selector(findPrevious))
+        let next = NSButton(image: NSImage(systemSymbolName: "chevron.down", accessibilityDescription: L("Next"))!,
+                            target: self, action: #selector(findNext))
+        let done = NSButton(title: L("Done"), target: self, action: #selector(hideFindBar))
+        for b in [previous, next, done] {
+            b.bezelStyle = .accessoryBarAction
+            b.controlSize = .small
+        }
+        let stack = NSStackView(views: [findField, findCount, previous, next, done])
+        stack.spacing = 6
+        stack.edgeInsets = NSEdgeInsets(top: 0, left: 8, bottom: 0, right: 8)
+        stack.frame = findBar.bounds
+        stack.autoresizingMask = [.width, .height]
+        findField.widthAnchor.constraint(greaterThanOrEqualToConstant: 180).isActive = true
+        findBar.addSubview(stack)
+    }
+
+    @objc func showFindBar() {
+        let selected = (text.string as NSString).substring(with: text.selectedRange())
+        if !selected.isEmpty, !selected.contains("\n") { findField.stringValue = selected }
+        if !isFindBarVisible {
+            isFindBarVisible = true
+            findBar.isHidden = false
+            needsLayout = true
+            layoutSubtreeIfNeeded()
+        }
+        window?.makeFirstResponder(findField)
+        findField.currentEditor()?.selectAll(nil)
+        updateMatches(scrollToCurrent: true)
+    }
+
+    @objc func hideFindBar() {
+        isFindBarVisible = false
+        findBar.isHidden = true
+        matches = []
+        currentMatch = nil
+        highlightMatches()
+        needsLayout = true
+        window?.makeFirstResponder(text)
+    }
+
+    /// 検索欄に文字を入れたまま、検索だけ行う（`--snapshot` の確認用）。
+    func find(_ query: String) {
+        findField.stringValue = query
+        showFindBar()
+    }
+
+    @objc private func findFieldChanged() { updateMatches(scrollToCurrent: true) }
+    @objc func findNext() { moveMatch(by: 1) }
+    @objc func findPrevious() { moveMatch(by: -1) }
+
+    func control(_ control: NSControl, textView: NSTextView, doCommandBy selector: Selector) -> Bool {
+        switch selector {
+        case #selector(NSResponder.insertNewline(_:)):
+            moveMatch(by: NSEvent.modifierFlags.contains(.shift) ? -1 : 1)
+            return true
+        case #selector(NSResponder.cancelOperation(_:)):
+            hideFindBar()
+            return true
+        default:
+            return false
+        }
+    }
+
+    /// 大文字・小文字を区別せずに、見えている文字から探す（絵は文字を持たないので当たらない）。今の一致は、見えている
+    /// 位置より後の最初のもの。
+    private func updateMatches(scrollToCurrent: Bool) {
+        matches = []
+        let query = findField.stringValue
+        let s = text.string as NSString
+        if !query.isEmpty {
+            var search = NSRange(location: 0, length: s.length)
+            while true {
+                let r = s.range(of: query, options: [.caseInsensitive], range: search)
+                guard r.location != NSNotFound else { break }
+                matches.append(r)
+                let next = r.location + max(r.length, 1)
+                guard next < s.length else { break }
+                search = NSRange(location: next, length: s.length - next)
+            }
+        }
+        var firstVisible = 0
+        if let layout = text.layoutManager, let container = text.textContainer {
+            var visible = text.visibleRect
+            visible.origin.y -= text.textContainerOrigin.y
+            let glyphs = layout.glyphRange(forBoundingRect: visible, in: container)
+            firstVisible = layout.characterIndexForGlyph(at: glyphs.location)
+        }
+        currentMatch = matches.isEmpty ? nil : (matches.firstIndex { $0.location >= firstVisible } ?? 0)
+        updateFindCount()
+        highlightMatches()
+        if scrollToCurrent { revealCurrentMatch() }
+    }
+
+    private func moveMatch(by step: Int) {
+        if !isFindBarVisible { showFindBar() }
+        guard !matches.isEmpty else { return NSSound.beep() }
+        currentMatch = ((currentMatch ?? -step) + step + matches.count) % matches.count
+        updateFindCount()
+        highlightMatches()
+        revealCurrentMatch()
+    }
+
+    private func updateFindCount() {
+        if findField.stringValue.isEmpty {
+            findCount.stringValue = ""
+        } else if let current = currentMatch {
+            findCount.stringValue = "\(current + 1) / \(matches.count)"
+        } else {
+            findCount.stringValue = L("Not found")
+        }
+    }
+
+    /// 一致の地を塗る（差分の検索と同じ色。今の一致は濃く）。文字の置き場は変えない（一時の属性）。
+    private func highlightMatches() {
+        guard let layout = text.layoutManager else { return }
+        let whole = NSRange(location: 0, length: (text.string as NSString).length)
+        layout.removeTemporaryAttribute(.backgroundColor, forCharacterRange: whole)
+        for (i, range) in matches.enumerated() {
+            let color = i == currentMatch ? NSColor.systemOrange.withAlphaComponent(0.7) : NSColor.systemYellow.withAlphaComponent(0.35)
+            layout.addTemporaryAttribute(.backgroundColor, value: color, forCharacterRange: range)
+        }
+    }
+
+    private func revealCurrentMatch() {
+        guard let current = currentMatch else { return }
+        text.scrollRangeToVisible(matches[current])
     }
 
     /// 絵（画像・図）を列の幅に収める（640 pt まで、高さは比を保つ）。幅が変わったときだけ直す。
@@ -323,6 +483,20 @@ nonisolated final class FittingAttachment: NSTextAttachment {
         let limit = min(width, 640)
         guard natural.width > limit, natural.width > 0 else { return natural }
         return NSSize(width: limit, height: natural.height * limit / natural.width)
+    }
+}
+
+/// Markdown の文字の欄。⌘F・⌘G・⇧⌘G を MarkdownView の検索へ渡す（差分の欄と同じく、この欄で探していなければ
+/// ⌘G は History の検索の一致へ）。
+final class MarkdownTextView: NSTextView {
+    weak var owner: MarkdownView?
+
+    @objc func showFindBar(_ sender: Any?) { owner?.showFindBar() }
+    @objc func findNext(_ sender: Any?) {
+        if owner?.isFindBarVisible == true || !moveHistoryMatch(from: window, by: 1) { owner?.findNext() }
+    }
+    @objc func findPrevious(_ sender: Any?) {
+        if owner?.isFindBarVisible == true || !moveHistoryMatch(from: window, by: -1) { owner?.findPrevious() }
     }
 }
 
