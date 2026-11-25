@@ -374,8 +374,13 @@ pub fn view(state: &State, callbacks: Callbacks) -> View {
         .spacing(6.0)
         .margin(Thickness::new(10.0, 6.0, 8.0, 6.0))
         .children((
+            // Working Copy に埋め込んだときは、ファイルは左の一覧で選んでいるので位置だけ（帯を短くする）。
             TextBlock::new()
-                .text(format!("{} — {position}", state.path))
+                .text(if state.separate {
+                    format!("{} — {position}", state.path)
+                } else {
+                    position
+                })
                 .vertical_alignment(VerticalAlignment::Center),
             button("previous", "∧".to_owned(), has),
             button("next", "∨".to_owned(), has),

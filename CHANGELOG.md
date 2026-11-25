@@ -24,6 +24,12 @@ becomes the GitHub Release notes.
   Theme > Diagrams, and pele's colors are now called the Obsidian style.
 - Why a Markdown diagram can't be drawn is shown in Japanese too: every DOT error, and Mermaid's common ones (syntax
   errors, unknown diagram types, limits).
+- Markdown previews no longer turn bare URLs inside HTML into links; as on GitHub, only those in Markdown text are.
+- Markdown previews leave one space where an HTML comment is dropped between words, as browsers do, instead of two.
+- Markdown previews size `<img width="50%">` as a share of the column's width (of the cell's, in tables) instead of the
+  picture's own size (macOS, GTK4).
+- Markdown previews decode all of HTML5's named character references (such as `&rarr;` or `&NotEqualTilde;`), and
+  the old names without `;` (`&copy`, `&amp`) by HTML's rules, where they were limited to 27 common ones.
 - Fences named after a Graphviz engine, such as ` ```neato `, stay code, as on GitHub; ` ```dot `, ` ```graphviz `
   and ` ```gv ` are drawn, and `layout` still picks the engine.
 - DOT diagrams follow Graphviz's defaults: unfilled nodes and clusters stay transparent, cluster titles take the text
@@ -1419,6 +1425,7 @@ First release.
 
 #### Fixed
 
+- Starting VSCode no longer reports that a Copy Short IDs menu item has no title.
 - Restoring the version before a commit that renamed a file brings back the old name instead of only deleting the new
   one, and Restore This Version isn't offered for a file the commit deleted.
 - Renaming a branch without the engine can be undone, as it already could with the engine.
