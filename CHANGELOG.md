@@ -1352,6 +1352,9 @@ First release.
   edit mode reads "drop — Remove", and the Reflog names its worktree when there are several.
 - History starts on All Branches, a branch chosen in the sidebar shows its upstream too, the search field has the
   app's ▾ of ways to search, the counts read "3 / 10", and ancestors are highlighted from the start, as in the app.
+- All Files follows the app: a list or a tree, changed folders open at first, a deleted file shows its version before,
+  the path reads "@ commit", Show This Change goes to the file's diff, any file opens in the editor, relative Markdown
+  links open that file, the SVG and Markdown views are remembered, and the mobile check switches between renderers.
 
 #### Changed
 

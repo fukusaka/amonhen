@@ -873,13 +873,11 @@ export class HistoryController implements vscode.Disposable {
     const repo = this.repo;
     const client = this.daemon?.client;
     if (!repo || !client) return;
-    const send = (view: FileView) => this.post({ type: 'treeFile', oid, path, view });
     const change = this.details.get(oid)?.files.find((f) => f.path === path);
-    if (change?.status === 'D') {
-      send({ kind: 'error', message: 'Deleted in this commit' });
-      return;
-    }
-    const data = (await repo.backend.object(`${oid}:${path}`))?.data;
+    // このコミットで消したファイルは、前の版を出す（「このコミットで消した」と添える。アプリと同じ）
+    const deleted = change?.status === 'D';
+    const send = (view: FileView) => this.post({ type: 'treeFile', oid, path, view: deleted ? { ...view, deleted: true } : view });
+    const data = (await repo.backend.object(`${oid}${deleted ? '^' : ''}:${path}`))?.data;
     if (!data) {
       send({ kind: 'error', message: `${path} isn’t in this commit` });
       return;
@@ -894,7 +892,7 @@ export class HistoryController implements vscode.Disposable {
       send({ kind: 'binary', bytes: data.length });
       return;
     }
-    const lines = change ? await this.markedLines(client, oid, path) : undefined;
+    const lines = change && !deleted ? await this.markedLines(client, oid, path) : undefined;
     const view: FileView = lines ?? { kind: 'text', lines: await this.plainLines(client, path, data.toString('utf8')) };
     if (view.kind !== 'text') {
       send(view);
