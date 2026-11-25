@@ -594,11 +594,11 @@ struct CommitHeaderRenderer {
         }
     }
 
-    /// 色を付けた SF Symbols の画像（文字の中に置く）。形に色を塗るだけにして、塗りつぶしの seal の中の
+    /// 色を付けたアイコン（共通のアイコン、なければ SF Symbols。文字の中に置く）。形に色を塗るだけにして、塗りつぶしの seal の中の
     /// チェックや × は抜いたまま残す（色を指定して描かせると、中の印まで同じ色になって塊に見える）。
     static func symbolImage(_ name: String, color: NSColor, size: CGFloat) -> NSImage? {
         let config = NSImage.SymbolConfiguration(pointSize: size, weight: .medium)
-        guard let symbol = NSImage(systemSymbolName: name, accessibilityDescription: nil)?.withSymbolConfiguration(config)
+        guard let symbol = AppIcons.image(symbol: name, pointSize: size, config: config)
         else { return nil }
         return NSImage(size: symbol.size, flipped: false) { rect in
             symbol.draw(in: rect)
@@ -606,6 +606,18 @@ struct CommitHeaderRenderer {
             rect.fill(using: .sourceAtop)
             return true
         }
+    }
+
+    /// `image`（テンプレートの画像）を `color` で塗った写し。
+    static func tinted(_ image: NSImage, _ color: NSColor) -> NSImage {
+        let tinted = NSImage(size: image.size, flipped: false) { rect in
+            image.draw(in: rect)
+            color.set()
+            rect.fill(using: .sourceAtop)
+            return true
+        }
+        tinted.isTemplate = false
+        return tinted
     }
 
     /// 信用度の 3 段の目盛り（`bars` 段を色で塗る）。

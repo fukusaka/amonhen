@@ -1286,7 +1286,7 @@ final class RepositoryWindow: NSObject, NSWindowDelegate, NSMenuItemValidation, 
         retryButton.isHidden = !Self.canRetryThreeWay(sequence, conflicts: conflicts)
         continueButton.keyEquivalent = conflicts == 0 && retryButton.isHidden ? "\r" : ""
         guard !sequenceRowShown, let statusBar else { return }
-        let icon = NSImageView(image: NSImage(systemSymbolName: "arrow.triangle.merge", accessibilityDescription: nil) ?? NSImage())
+        let icon = NSImageView(image: AppIcons.image(symbol: "arrow.triangle.merge") ?? NSImage())
         icon.contentTintColor = .systemOrange
         icon.symbolConfiguration = .init(pointSize: 18, weight: .regular)
         sequenceLabel.font = .boldSystemFont(ofSize: NSFont.systemFontSize)
@@ -1388,8 +1388,7 @@ final class RepositoryWindow: NSObject, NSWindowDelegate, NSMenuItemValidation, 
         hideFailure()
         self.failure = failure
         let cancelled = CoreLanguage.isCancelled(failure.message)
-        let icon = NSImageView(image: NSImage(
-            systemSymbolName: cancelled ? "stop.circle" : "xmark.octagon.fill", accessibilityDescription: nil) ?? NSImage())
+        let icon = NSImageView(image: AppIcons.image(symbol: cancelled ? "stop.circle" : "xmark.octagon.fill") ?? NSImage())
         icon.contentTintColor = cancelled ? .secondaryLabelColor : .systemRed
         let label = NSTextField(labelWithString: cancelled ? L("Operation Cancelled") : title ?? failure.title)
         label.font = .boldSystemFont(ofSize: NSFont.smallSystemFontSize)
@@ -1475,7 +1474,7 @@ final class RepositoryWindow: NSObject, NSWindowDelegate, NSMenuItemValidation, 
 
     /// ツールバーの下に、切れたことと「つなぎ直す」を出す。
     private func showDisconnected(reason: String) {
-        let icon = NSImageView(image: NSImage(systemSymbolName: "bolt.horizontal.circle", accessibilityDescription: nil) ?? NSImage())
+        let icon = NSImageView(image: AppIcons.image(symbol: "bolt.horizontal.circle") ?? NSImage())
         icon.contentTintColor = .systemOrange
         let host = RepositoryLocation.host(location) ?? location
         let heading = L("Lost connection to %@", host)

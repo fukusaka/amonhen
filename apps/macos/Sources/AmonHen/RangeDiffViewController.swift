@@ -69,7 +69,7 @@ final class RangeDiffViewController: NSSplitViewController, NSTableViewDataSourc
         compareButton.controlSize = .small
         compareButton.target = self
         compareButton.action = #selector(compare)
-        let close = NSButton(image: NSImage(systemSymbolName: "xmark", accessibilityDescription: L("Close"))!,
+        let close = NSButton(image: AppIcons.image(symbol: "xmark", label: L("Close"))!,
                              target: self, action: #selector(closeView))
         close.isBordered = false
         close.toolTip = L("Close Range Diff")

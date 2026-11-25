@@ -73,7 +73,7 @@ final class MainToolbar: NSObject, NSToolbarDelegate {
             self, selector: #selector(runningChanged), name: .runningOperationsChanged, object: nil)
         // 今のリポジトリ。押すとリポジトリの一覧を出し、選んだものにこのタブを切り替える。
         repositoryButton.bezelStyle = .texturedRounded
-        repositoryButton.image = NSImage(systemSymbolName: "chevron.down", accessibilityDescription: L("Switch Repository"))?
+        repositoryButton.image = AppIcons.image(symbol: "chevron.down", label: L("Switch Repository"))?
             .withSymbolConfiguration(.init(pointSize: 9, weight: .semibold))
         repositoryButton.imagePosition = .imageTrailing
         repositoryButton.font = .boldSystemFont(ofSize: NSFont.systemFontSize)
@@ -290,7 +290,7 @@ final class MainToolbar: NSObject, NSToolbarDelegate {
         item.paletteLabel = label
         // 共通のアイコン（どの FE でも同じ形）。Finder だけは Finder の印（`sf:`、SF Symbols）のまま。
         item.image = symbol.hasPrefix("sf:")
-            ? NSImage(systemSymbolName: String(symbol.dropFirst(3)), accessibilityDescription: label)
+            ? AppIcons.image(symbol: String(symbol.dropFirst(3)), label: label)
             : AppIcons.image(symbol, size: Self.iconSize, label: label)
         item.action = action
         if item.toolTip == nil { item.toolTip = tip }
@@ -321,7 +321,7 @@ extension MainToolbar {
         }
         item.menu = menu
         item.showsIndicator = false
-        item.image = NSImage(systemSymbolName: "line.3.horizontal", accessibilityDescription: L("More"))
+        item.image = AppIcons.image(symbol: "line.3.horizontal", label: L("More"))
         item.label = L("More")
         item.paletteLabel = L("More")
         item.toolTip = L("Worktrees, pull requests, Terminal, Editor and Finder, History, settings")
