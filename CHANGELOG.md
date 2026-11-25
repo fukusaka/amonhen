@@ -1388,6 +1388,7 @@ First release.
 
 #### Changed
 
+- Formatted Markdown in All Files sizes `<img width="50%">` as a share of its column, or of the cell in tables.
 - The sidebar's title buttons and branch rows draw the icons shared by every front end (see `docs/icons.md`).
 - Copy Short ID copies 8 characters, as the app does.
 - The sidebar's in-progress row says what is being done where and the step, and why it stopped with what to do next

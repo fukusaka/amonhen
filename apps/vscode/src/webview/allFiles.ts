@@ -496,6 +496,8 @@ interface MdRun {
   /** 画像の HTML の `width`・`height` */
   width?: number;
   height?: number;
+  /** 画像の幅の割合（`width="50%"`、1〜100）。`width` とは同時に付かない */
+  width_percent?: number;
   footnote?: string;
   /** GitHub 独自の絵文字（`:octocat:` などの画像だけのもの）。`text` を薄い札で見せる */
   custom_emoji?: string;
@@ -823,6 +825,8 @@ function renderRuns(runs: readonly MdRun[]): Node[] {
         img.src = image;
         img.alt = run.text;
         if (run.width) img.width = run.width;
+        // 割合は GitHub（ブラウザ）と同じく、入っている欄（表ならマス）の幅に対して
+        else if (run.width_percent) img.style.width = `${run.width_percent}%`;
         if (run.height) img.height = run.height;
         return linked(img, run.link);
       }
