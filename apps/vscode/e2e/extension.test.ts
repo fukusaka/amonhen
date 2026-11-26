@@ -4144,6 +4144,8 @@ suite('Amon Hen in VSCode', () => {
   test('speeds up status with git’s fsmonitor when it’s on', async function () {
     // git の fsmonitor--daemon は macOS と Windows だけ（Linux・BSD は Watchman で、CI にはない）
     if (process.platform !== 'darwin' && process.platform !== 'win32') this.skip();
+    // 起こすのと、止まったままを確かめる待ち（下）を合わせても足りるように
+    this.timeout(WAIT * 5);
     const config = () => vscode.workspace.getConfiguration('amonhen');
     const watching = () => {
       try {
@@ -4163,17 +4165,22 @@ suite('Amon Hen in VSCode', () => {
     } finally {
       await config().update('fsmonitor', false, vscode.ConfigurationTarget.Global);
       // 設定は daemon に後から届く。届く前の status は fsmonitor--daemon を起こし直すので、止めて、読み直しても
-      // 起きないところまで待つ（残ると、Windows では一時ディレクトリを掴んだままになり、消せない）
-      await until('fsmonitor--daemon が止まったまま', async () => {
-        try {
-          git('fsmonitor--daemon', 'stop');
-        } catch {
-          // 起きていなかった
-        }
-        await vscode.commands.executeCommand('amonhen.refresh');
-        await vscode.commands.executeCommand('amonhen.refresh');
-        return !watching();
-      });
+      // 起きないところまで待つ（残ると、Windows では一時ディレクトリを掴んだままになり、消せない）。混んだ CI の
+      // Windows では stop の 1 回に 40 秒かかったことがあるので、ほかより長く待つ
+      await until(
+        'fsmonitor--daemon が止まったまま',
+        async () => {
+          try {
+            git('fsmonitor--daemon', 'stop');
+          } catch {
+            // 起きていなかった
+          }
+          await vscode.commands.executeCommand('amonhen.refresh');
+          await vscode.commands.executeCommand('amonhen.refresh');
+          return !watching();
+        },
+        WAIT * 3,
+      );
     }
   });
 
