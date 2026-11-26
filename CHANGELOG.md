@@ -96,6 +96,8 @@ becomes the GitHub Release notes.
   instead of on top of each other.
 - DOT diagrams: self-loops are flat rings beside the node (above it with `rankdir=LR`), sized as Graphviz sizes them,
   instead of one large round curve.
+- DOT diagrams: an edge to a subgraph that names a node twice (`a -> {b c b}`) draws one edge to it, as Graphviz
+  does, not two.
 - Exporting chosen folders as an archive in a partial clone fetches only the contents it asked about, not every missing
   file of the commit (git 2.41 or later; older git fetches them all, and the question now counts them all).
 - Markdown previews put a list item's mark on the same line as a list nested at its start (`- 1. text`), as GitHub
