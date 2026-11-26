@@ -1438,3 +1438,20 @@ fn dot_cluster_cycles_do_not_flatten_outer_edges() {
     assert!(cy("x") < cy("a1") && cy("a1") < cy("p"), "{svg}");
     assert!((cy("p") - cy("a2")).abs() < 0.5, "{svg}");
 }
+
+/// クラスタを含む閉路でも、クラスタに触れない辺は向きを守る（Graphviz の絵と同じ）。状態遷移の図の骨組み:
+/// `rs -> co -> ct -> un` は 1 段ずつ上がり、閉路は `un -> wc` を逆にして切る。
+#[test]
+fn dot_cluster_cycles_keep_outer_edges_pointing_down() {
+    let svg = render(
+        "digraph { rankdir=BT; sa -> un; un -> sa; un -> wc; subgraph cluster_t { wc -> wr } wr -> sa; wr -> co; subgraph cluster_b { bs; bt } wr -> bs; wr -> bt; bs -> rs; bt -> rs; rs -> co; wr -> ct; co -> ct; rs -> ct; ct -> un }",
+    )
+    .unwrap()
+    .svg;
+    let cy = |id: &str| attr_num(part(&svg, id), "cy");
+    // BT: 上ほど y が小さい
+    assert!(
+        cy("rs") > cy("co") && cy("co") > cy("ct") && cy("ct") > cy("un"),
+        "{svg}"
+    );
+}
