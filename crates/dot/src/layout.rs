@@ -769,6 +769,8 @@ struct Ordering<'a> {
     after: Vec<Vec<usize>>,
     /// その辺のあるランク。
     has_flat: Vec<bool>,
+    /// 並べ替えで、同じ値の要素の順を逆にする（1 回おきの上り下りで。Gansner ほか 1993 §3）。
+    flip: bool,
 }
 
 impl Ordering<'_> {
@@ -891,7 +893,7 @@ impl Ordering<'_> {
                 let (vb, pb) = value(b);
                 va.partial_cmp(&vb)
                     .unwrap_or(std::cmp::Ordering::Equal)
-                    .then(pa.cmp(&pb))
+                    .then(if self.flip { pb.cmp(&pa) } else { pa.cmp(&pb) })
             });
             let mut next = movable.into_iter();
             for it in items.iter_mut() {
@@ -1413,6 +1415,7 @@ pub fn layout(
         global: vec![0.0; k],
         after: vec![Vec::new(); total],
         has_flat: vec![false; max_rank + 1],
+        flip: false,
     };
     // 輪になる辺は、先に書いた辺を守って外す（Graphviz の文書どおり、輪は深さ優先で切る）
     for &(t, h) in &flat_edges {
@@ -1488,7 +1491,10 @@ pub fn layout(
                 break;
             }
             ord.global_keys();
+            // 上り下りの 1 組おきに、同じ値の要素の順を逆にする（同じ交差の数の並びの間を動いて、減る形を探す）
+            ord.flip = i % 4 >= 2;
             ord.sweep((i + start) % 2 == 0, &mut val);
+            ord.flip = false;
             if transpose {
                 ord.transpose(i % 2 == 1);
             }
@@ -2731,6 +2737,27 @@ mod tests {
             (5, 7),
             (5, 8),
             (6, 7),
+        ];
+        assert_eq!(crossings_of(&g), 0);
+    }
+
+    #[test]
+    fn equal_medians_flip_on_alternate_sweeps() {
+        // 同じ中央値のノードの順を 1 組おきに逆にすると、同じ交差の数で止まっていた並びから抜けられる
+        let g = [
+            (0, 6),
+            (0, 7),
+            (0, 8),
+            (1, 4),
+            (1, 5),
+            (2, 3),
+            (2, 5),
+            (2, 8),
+            (3, 5),
+            (3, 6),
+            (4, 8),
+            (5, 6),
+            (6, 8),
         ];
         assert_eq!(crossings_of(&g), 0);
     }
