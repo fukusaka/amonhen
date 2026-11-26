@@ -20793,7 +20793,12 @@ impl HistoryView {
         }
         if self.hwnd.get() != 0 && self.hwnd.get() != HWND_UNKNOWN {
             let (window, hwnd) = (self.window, self.hwnd.get());
-            WINDOW_HANDLES.with(|w| w.borrow_mut().insert(window, hwnd));
+            if WINDOW_HANDLES
+                .with(|w| w.borrow_mut().insert(window, hwnd))
+                .is_none()
+            {
+                set_window_icon(hwnd);
+            }
         }
         let only = crate::tabs::windows().len() == 1;
         let active =
@@ -23170,6 +23175,46 @@ fn monospace_above(element: &IInspectable) -> windows_core_reactor::Result<bool>
 fn monospace(element: &IInspectable) -> windows_core_reactor::Result<()> {
     let font = xaml::FontFamily::CreateInstanceWithName(&MONOSPACE.into())?;
     element.cast::<xaml::Control>()?.SetFontFamily(&font)
+}
+
+/// exe のリソースのアプリのアイコンの番号（`build.rs` が入れる）。
+const APP_ICON: u16 = 1;
+
+/// 窓にアプリのアイコンを付ける（タスクバー・Alt+Tab）。WinUI 3 の窓は、付けなければ既定の絵になる。
+fn set_window_icon(hwnd: u64) {
+    use windows::Win32::Foundation::{HWND, LPARAM, WPARAM};
+    use windows::Win32::System::LibraryLoader::GetModuleHandleW;
+    use windows::Win32::UI::WindowsAndMessaging::{
+        GetSystemMetrics, ICON_BIG, ICON_SMALL, IMAGE_ICON, LR_DEFAULTCOLOR, LoadImageW, SM_CXICON,
+        SM_CXSMICON, SendMessageW, WM_SETICON,
+    };
+    let window = HWND(hwnd as *mut core::ffi::c_void);
+    let Ok(module) = (unsafe { GetModuleHandleW(None) }) else {
+        return;
+    };
+    for (kind, metric) in [(ICON_BIG, SM_CXICON), (ICON_SMALL, SM_CXSMICON)] {
+        let size = unsafe { GetSystemMetrics(metric) };
+        let icon = unsafe {
+            LoadImageW(
+                Some(module.into()),
+                windows::core::PCWSTR(APP_ICON as usize as *const u16),
+                IMAGE_ICON,
+                size,
+                size,
+                LR_DEFAULTCOLOR,
+            )
+        };
+        if let Ok(icon) = icon {
+            unsafe {
+                SendMessageW(
+                    window,
+                    WM_SETICON,
+                    Some(WPARAM(kind as usize)),
+                    Some(LPARAM(icon.0 as isize)),
+                );
+            }
+        }
+    }
 }
 
 /// ツールバーを入れる要素から TitleBar までの親を、幅いっぱいに広げる（TitleBar は中身を中身の幅に縮めて置くので、
