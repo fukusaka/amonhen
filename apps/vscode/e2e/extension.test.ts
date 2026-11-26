@@ -3638,7 +3638,8 @@ async function conflictsWithoutMarkersFlow(): Promise<void> {
     );
     assert.equal(asked, undefined, 'マーカーが残っているとは聞かない');
     assert.equal(doc.isDirty, false);
-    assert.equal(readFileSync(join(root, 'open.txt'), 'utf8'), '1\nopen.txt both\n3\n');
+    // 文書の改行はファイルに合わせて保存する（CRLF のこともある）ので、改行をそろえて比べる
+    assert.equal(readFileSync(join(root, 'open.txt'), 'utf8').replace(/\r\n/g, '\n'), '1\nopen.txt both\n3\n');
     await until('すべて解決済み', () => git('diff', '--name-only', '--diff-filter=U').trim() === '');
     await vscode.commands.executeCommand('workbench.action.closeActiveEditor');
   } finally {
