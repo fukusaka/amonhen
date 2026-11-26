@@ -1581,6 +1581,10 @@ enum Message {
     SearchSubmit(bool),
     /// 差分の中を探す帯を開く・閉じる、探す文字、前・次へ、件数の文字。
     DiffFindOpen(bool),
+    /// すべてのファイルで開いているファイルを、アプリの外のプレビュー（既定のアプリ）で開く。
+    AllFilesPreview,
+    /// プレビューで開いた（開けなければ false。エラー音を鳴らす）。
+    PreviewOpened(bool),
     /// Settings > Theme: gantt の時間帯を選んだ（IANA の名前、空なら OS の時間帯）。
     SettingsGanttZone(String),
     /// Settings > Theme: 数式の大きさ・1 つのファイルで描く時間の上限を選んだ（選ぶ欄の番号）。
@@ -2985,6 +2989,26 @@ impl Root {
                         h.session.data.show_file = false;
                         h.diff_replaced();
                     });
+                }
+            }
+            // 開いているファイルを、その時点の中身でアプリの外のプレビューに（中身は裏で読む）。
+            Message::AllFilesPreview => {
+                let (Some(repo), Some(browser)) = (self.repo.clone(), self.browser.as_ref()) else {
+                    return beep();
+                };
+                let Some(path) = browser.open.clone() else {
+                    return beep();
+                };
+                let (commit, change) = (browser.commit, browser.change_of(&path).cloned());
+                context.spawn_background(move |_| {
+                    let opened = crate::data::blob_at(&repo, &commit, change.as_ref(), &path)
+                        .is_some_and(|data| crate::preview::show(&data, &path));
+                    Message::PreviewOpened(opened)
+                });
+            }
+            Message::PreviewOpened(opened) => {
+                if !opened {
+                    beep();
                 }
             }
             Message::AllFilesShowChange => {
@@ -17647,6 +17671,7 @@ impl Root {
                     context.callback(|()| Message::AllFilesShowChange),
                     markdown,
                     svg,
+                    context.callback(|()| Message::AllFilesPreview),
                 )
             }
             _ => View::empty(),
