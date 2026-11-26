@@ -3637,6 +3637,21 @@ async function conflictsWithoutMarkersFlow(): Promise<void> {
     assert.match(detail ?? '', /may already be resolved/);
     assert.equal(readFileSync(join(root, 'hand.txt'), 'utf8'), '1\nhand.txt both\n3\n', '断れば変わらない');
 
+    // ほかのエディタでマーカーを消すと、status は UU のままでも、取り直したときに数え直す（保存の通知は来ない）
+    const withMarkers = readFileSync(join(root, 'open.txt'), 'utf8');
+    const wcMark = posted.length;
+    write('open.txt', '1\nopen.txt elsewhere\n3\n');
+    await vscode.commands.executeCommand('amonhen.refresh');
+    await until('外で消した分も数える', () => String(sequenceItem()?.description ?? '').includes('(3 without markers)'), undefined, () =>
+      String(sequenceItem()?.description),
+    );
+    await waitPosted('wcFiles', wcMark, (m) => m.files.some((f) => f.group === 'conflicts' && f.path === 'open.txt' && f.markers === 0));
+    write('open.txt', withMarkers);
+    await vscode.commands.executeCommand('amonhen.refresh');
+    await until('戻せば数も戻る', () => String(sequenceItem()?.description ?? '').includes('(2 without markers)'), undefined, () =>
+      String(sequenceItem()?.description),
+    );
+
     // 途中の行のボタン（Conflicts の見出しの Mark N as Resolved と同じ）は、マーカーのないものだけを解決済みにする
     await vscode.commands.executeCommand('amonhen.markResolvedWithoutMarkers');
     await until('解決済み', () => git('diff', '--name-only', '--diff-filter=U').trim() === 'open.txt');

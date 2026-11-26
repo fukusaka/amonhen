@@ -54,6 +54,9 @@ export class WorkingCopyController implements vscode.Disposable {
       ? [
           repo.onDidChange((changed) => changed.has('workingCopy') && this.schedule()),
           repo.onDidChangeContents(() => this.schedule()),
+          // コンフリクトのファイルは、status が UU のままでもマーカーが消えることがある（ほかのエディタ・rerere）。
+          // 取り直すたびに読み直す（アプリと同じ）。コンフリクトがなければ何もしない
+          repo.onDidRefresh(() => this.files.some((f) => f.group === 'conflicts') && this.schedule()),
         ]
       : [];
     this.schedule();

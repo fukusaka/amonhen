@@ -92,6 +92,13 @@ export class Repository implements vscode.Disposable {
    */
   readonly onDidChangeContents = this._onDidChangeContents.event;
 
+  private readonly _onDidRefresh = new vscode.EventEmitter<void>();
+  /**
+   * 取り直し終えた（変わったものがなくても）。status が同じままのファイルの中身（ほかのエディタでコンフリクトの
+   * マーカーを消したなど）を読み直したいときに使う
+   */
+  readonly onDidRefresh = this._onDidRefresh.event;
+
   private readonly _onDidStop = new vscode.EventEmitter<void>();
   /** 操作がコンフリクトや途中（break・edit）で止まった（アプリと同じく Working Copy で最初のコンフリクトを開く） */
   readonly onDidStop = this._onDidStop.event;
@@ -247,6 +254,7 @@ export class Repository implements vscode.Disposable {
     if (contentsChanged) {
       this._onDidChangeContents.fire();
     }
+    this._onDidRefresh.fire();
   }
 
   private async loadLazy(section: LazySection, changed: Set<Section>, refs?: string): Promise<void> {

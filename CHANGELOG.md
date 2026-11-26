@@ -1517,6 +1517,8 @@ First release.
 - Renaming a branch without the engine can be undone, as it already could with the engine.
 - The Working Copy's worktree row counts new untracked files in the worktree being edited; it no longer waits for HEAD
   or the index to change.
+- The in-progress row and Working Copy notice when another editor or rerere removes a conflicted file's markers, as the
+  app does, instead of waiting for a save in VSCode.
 
 ### [0.2.9] - 2026-11-24
 
