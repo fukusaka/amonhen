@@ -63,9 +63,20 @@ export async function closeMergeEditors(root: string): Promise<void> {
     });
   if (tabs.length === 0) return;
   // マージエディタの Result は開いた時から保存していない扱い。保存せずにファイルの中身（やめた後のもの）へ戻してから
-  // 閉じる（保存すると古い Result で上書きしうるうえ、閉じるときに保存を聞かれることがある）
-  for (const result of new Set(tabs.map((t) => (t.input as { result: vscode.Uri }).result.toString()))) {
-    await vscode.commands.executeCommand('workbench.action.files.revert', vscode.Uri.parse(result));
+  // 閉じる。戻せなかった（やめた直後でファイルがまだ読めない、やめてファイルが消えた）ものは、閉じると保存を聞かれて
+  // 止まるので、少し待ってもう一度戻し、それでも戻らなければ開いたままにする
+  const resultOf = (t: vscode.Tab) => (t.input as { result: vscode.Uri }).result;
+  const dirty = (t: vscode.Tab) => vscode.workspace.textDocuments.some((d) => d.isDirty && d.uri.toString() === resultOf(t).toString());
+  const revert = async (list: readonly vscode.Tab[]) => {
+    for (const uri of new Set(list.map((t) => resultOf(t).toString()))) {
+      await Promise.resolve(vscode.commands.executeCommand('workbench.action.files.revert', vscode.Uri.parse(uri))).catch(() => undefined);
+    }
+  };
+  await revert(tabs);
+  if (tabs.some(dirty)) {
+    await new Promise((r) => setTimeout(r, 500));
+    await revert(tabs.filter(dirty));
   }
-  await vscode.window.tabGroups.close(tabs, true);
+  const clean = tabs.filter((t) => !dirty(t));
+  if (clean.length > 0) await vscode.window.tabGroups.close(clean, true);
 }
