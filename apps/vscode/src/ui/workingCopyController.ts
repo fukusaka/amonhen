@@ -217,6 +217,12 @@ export class WorkingCopyController implements vscode.Disposable {
     }
   }
 
+  /** ファイルを選ぶ（操作がコンフリクトで止まったとき、最初のコンフリクトのファイルを）。差分を送ると一覧でも選ばれる */
+  select(change: Change): void {
+    this.selected = { group: change.group, path: change.path };
+    this.schedule();
+  }
+
   /** 差分で行を比べるときに無視する空白（エンジンがあるときだけ。覚えない） */
   private whitespace: DiffWhitespace = 'exact';
 
