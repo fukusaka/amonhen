@@ -30,11 +30,14 @@ const FILTER: &[&str] = &[
     "Windows.Foundation.Size",
     // Repositories の一覧で選んだ行（複数）。
     "Microsoft.UI.Xaml.Controls.ListViewBase",
-    "Microsoft.UI.Xaml.Controls.IListViewBase::{SelectedItems,DragItemsStarting,remove_DragItemsStarting}",
+    "Microsoft.UI.Xaml.Controls.IListViewBase::{SelectedItems,DragItemsStarting,remove_DragItemsStarting,DragItemsCompleted,remove_DragItemsCompleted}",
     // Repositories の行を、左のお気に入り・グループへ引いて入れる（引いた行の Tag を文字で載せる）。
     "Microsoft.UI.Xaml.Controls.DragItemsStartingEventArgs",
     "Microsoft.UI.Xaml.Controls.IDragItemsStartingEventArgs::{Items,Data,Cancel,put_Cancel}",
     "Microsoft.UI.Xaml.Controls.DragItemsStartingEventHandler",
+    // ツールバーのタイルを帯の外に落としたら外す（落とした先が受けなかった）。
+    "Microsoft.UI.Xaml.Controls.DragItemsCompletedEventArgs",
+    "Microsoft.UI.Xaml.Controls.IDragItemsCompletedEventArgs::{Items,DropResult}",
     "Windows.ApplicationModel.DataTransfer.DataPackage",
     "Windows.ApplicationModel.DataTransfer.IDataPackage::{SetText,put_RequestedOperation}",
     "Windows.ApplicationModel.DataTransfer.DataPackageOperation",
