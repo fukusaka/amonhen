@@ -523,14 +523,17 @@ pub fn render(
             w = min_w;
             h = min_h;
         } else {
-            let (fw, fh) = shapes::fit(&spec.kind, lw, lh);
             let plain = spec.no_margin;
-            w = if plain { fw } else { fw.max(min_w) };
-            h = if plain { fh } else { fh.max(min_h) };
+            let (fw, fh) = shapes::fit(&spec.kind, lw, lh, if plain { 0.0 } else { min_h });
             if spec.regular {
-                let m = w.max(h);
+                // 同じ幅と高さ: 下限は幅と高さの下限の小さいほう（Graphviz の絵と同じ）
+                let floor = if plain { 0.0 } else { min_w.min(min_h) };
+                let m = fw.max(fh).max(floor);
                 w = m;
                 h = m;
+            } else {
+                w = if plain { fw } else { fw.max(min_w) };
+                h = if plain { fh } else { fh.max(min_h) };
             }
         }
         if !w.is_finite() || !h.is_finite() {
@@ -621,7 +624,7 @@ pub fn render(
             .map(|c| c.to_ascii_lowercase())
         {
             Some(side @ ('t' | 'b')) if rec.is_none() && !point => {
-                let (_, ky) = shapes::fit(&spec.kind, 1.0, 1.0);
+                let (_, ky) = shapes::fit(&spec.kind, 1.0, 1.0, 0.0);
                 let room = (h / ky.max(1e-9) - lh).max(0.0) / 2.0;
                 if side == 't' { -room } else { room }
             }

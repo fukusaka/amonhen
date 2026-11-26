@@ -65,6 +65,8 @@ becomes the GitHub Release notes.
   Graphviz.
 - DOT diagrams: in a cycle through a `rank=min` node, the dot layout keeps the edges as written where it can, as
   Graphviz does.
+- DOT diagrams: ellipses, polygons, stars and cylinders are sized as Graphviz sizes them, so triangles, diamonds and
+  houses are no longer much larger, and a short label no longer widens an ellipse past its default height.
 - Exporting chosen folders as an archive in a partial clone fetches only the contents it asked about, not every missing
   file of the commit (git 2.41 or later; older git fetches them all, and the question now counts them all).
 - Markdown previews put a list item's mark on the same line as a list nested at its start (`- 1. text`), as GitHub

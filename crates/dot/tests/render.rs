@@ -1254,3 +1254,42 @@ fn dot_follows_written_edges_before_turned_ones() {
     let cy = |id: &str| attr_num(part(&svg, id), "cy");
     assert!(cy("d") < cy("e") && cy("e") < cy("r"), "{svg}");
 }
+
+/// 形の大きさは Graphviz の絵で測った大きさ（ラベルの箱 w×h を余白なしで入れたとき）。
+#[test]
+fn node_shapes_size_like_graphviz() {
+    let size = |shape: &str, w: u32, h: u32| {
+        let src = format!(
+            "digraph {{ pad=0; n [shape={shape} margin=0 penwidth=0 label=<<table fixedsize=\"true\" width=\"{w}\" height=\"{h}\" border=\"0\" cellpadding=\"0\" cellspacing=\"0\"><tr><td></td></tr></table>>] }}"
+        );
+        let svg = render(&src).unwrap().svg;
+        let v: Vec<f64> = svg
+            .split("viewBox=\"")
+            .nth(1)
+            .unwrap()
+            .split('"')
+            .next()
+            .unwrap()
+            .split(' ')
+            .map(|n| n.parse().unwrap())
+            .collect();
+        (v[2].round(), v[3].round())
+    };
+    let near = |got: (f64, f64), want: (f64, f64)| {
+        (got.0 - want.0).abs() <= 1.0 && (got.1 - want.1).abs() <= 1.0
+    };
+    for (shape, w, h, want) in [
+        ("ellipse", 40, 40, (57.0, 57.0)),
+        ("ellipse", 100, 10, (104.0, 36.0)),
+        ("triangle", 100, 20, (241.0, 40.0)),
+        ("diamond", 40, 40, (80.0, 80.0)),
+        ("house", 100, 10, (129.0, 36.0)),
+        ("hexagon", 200, 5, (233.0, 36.0)),
+        ("Msquare", 40, 40, (40.0, 40.0)),
+        ("cylinder", 40, 40, (54.0, 55.0)),
+        ("star", 100, 20, (262.0, 249.0)),
+    ] {
+        let got = size(shape, w, h);
+        assert!(near(got, want), "{shape} {w}x{h}: {got:?}, want {want:?}");
+    }
+}
