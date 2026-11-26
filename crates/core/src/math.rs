@@ -305,12 +305,13 @@ mod tests {
     use super::*;
     use crate::markdown::{Item, Run, parse};
 
-    /// 段落の文字（数式は `[tex]`、コードは `` `text` ``）。
+    /// 段落の文字（数式は `[tex]`、コードは `` `text` ``、硬い改行は `\n`）。
     fn line(runs: &[Run]) -> String {
         runs.iter()
             .map(|r| match &r.math_tex {
                 Some(tex) => format!("[{tex}]"),
                 None if r.code => format!("`{}`", r.text),
+                None if r.line_break => "\n".to_owned(),
                 None => r.text.clone(),
             })
             .collect()
@@ -354,6 +355,10 @@ mod tests {
         assert_eq!(paragraphs(r"\$x$ and $x\$"), ["[x] and [x]"]);
         assert_eq!(paragraphs(r"$x\$ y$"), ["[x] y$"]);
         assert_eq!(paragraphs(r"$\$$ and $\$x$"), ["$$$ and $$x$"]);
+        // `\\$` は文字の `\$`（閉じにならず、式の中なら文字の `$`）
+        assert_eq!(paragraphs(r"$x \\$ and $y$"), [r"$x \$ and [y]"]);
+        assert_eq!(paragraphs(r"$a\$ and $b \\$ c$"), [r"[a] and [b \$ c]"]);
+        assert_eq!(paragraphs(r"$a \\ b$ \\$x$"), [r"[a \\ b] \$x$"]);
         // 斜体・リンクの中は数式にしない。太字の中はする
         assert_eq!(
             paragraphs("*$x$* [$y$](https://example.com) **$z$**"),
@@ -378,6 +383,32 @@ mod tests {
         };
         assert_eq!(runs[1].text, "$x^2$");
         assert!(runs[1].code && !runs[1].math_display);
+    }
+
+    #[test]
+    fn inline_math_across_lines_follows_github() {
+        // 行の境をまたいでよい。次の行の頭の閉じは、前が空白でも閉じる（GitHub で確かめた）
+        assert_eq!(paragraphs("a $x +\ny$ b"), ["a [x +\ny] b"]);
+        assert_eq!(paragraphs("a $x\n$ b"), ["a [x\n] b"]);
+        assert_eq!(
+            paragraphs("a $\nx$ b and $5 and\n$6"),
+            ["a $ x$ b and $5 and $6"]
+        );
+        assert_eq!(paragraphs("$x$\nb and a\n$y$"), ["[x] b and a [y]"]);
+        // 硬い改行はまたがない
+        let blocks = parse("a $x +  \ny$ b\n\nc $x +\\\ny$ d");
+        assert_eq!(paragraphs_of(&blocks), ["a $x +\ny$ b", "c $x +\ny$ d"]);
+        // 引用・リストの中でも、TeX に入れ物の印や字下げを入れない
+        let quote = parse("> a $x +\n> y$ b");
+        let Some(Block::Quote { blocks, .. }) = quote.first() else {
+            panic!("{quote:?}")
+        };
+        assert_eq!(paragraphs_of(blocks), ["a [x +\ny] b"]);
+        let list = parse("- a $x +\n  y$ b");
+        let Some(Block::List { items, .. }) = list.first() else {
+            panic!("{list:?}")
+        };
+        assert_eq!(paragraphs_of(&items[0].blocks), ["a [x +\ny] b"]);
     }
 
     #[test]

@@ -48,10 +48,11 @@ pub(super) fn find(blocks: &mut [Block]) {
     }
 }
 
-/// pulldown-cmark が数式にした原文を、段落に置く文字にする（`\$` は `$` に。`\\` はそのまま）。
+/// pulldown-cmark が数式にした原文を、段落に置く文字にする（`\$` は `$` に。`\\` はそのままで、`$` の前の `\\` だけ
+/// `\` にする。GitHub と同じく、その `$` は文字の `$` で、式の開きにも閉じにもならない）。
 pub(super) fn unescape(raw: &str) -> String {
     let mut out = String::with_capacity(raw.len());
-    let mut chars = raw.chars();
+    let mut chars = raw.chars().peekable();
     while let Some(c) = chars.next() {
         if c != '\\' {
             out.push(c);
@@ -59,6 +60,7 @@ pub(super) fn unescape(raw: &str) -> String {
         }
         match chars.next() {
             Some('$') => out.push('$'),
+            Some('\\') if chars.peek() == Some(&'$') => out.push('\\'),
             Some(next) => {
                 out.push('\\');
                 out.push(next);
@@ -121,6 +123,45 @@ fn split(runs: &mut Vec<Run>) {
         }
     }
     *runs = out;
+}
+
+/// 行の境（`\n`）を空白にする（式を選び終えた後で。式の原文はそのまま）。
+pub(super) fn settle(blocks: &mut [Block]) {
+    let runs = |runs: &mut [Run]| {
+        for run in runs.iter_mut().filter(|r| r.math_tex.is_none()) {
+            if run.text.contains('\n') {
+                run.text = run.text.replace('\n', " ");
+            }
+        }
+    };
+    for block in blocks {
+        match block {
+            Block::Heading { runs: r, .. } | Block::Paragraph { runs: r, .. } => runs(r),
+            Block::Quote { blocks, .. } | Block::Footnote { blocks, .. } => settle(blocks),
+            Block::Details {
+                summary, blocks, ..
+            } => {
+                runs(summary);
+                settle(blocks);
+            }
+            Block::List { items, .. } => {
+                for item in items {
+                    settle(&mut item.blocks);
+                }
+            }
+            Block::Table { head, rows, .. } => {
+                for cell in head.iter_mut().chain(rows.iter_mut().flatten()) {
+                    runs(cell);
+                }
+            }
+            Block::HtmlTable { cells, .. } => {
+                for cell in cells {
+                    runs(&mut cell.runs);
+                }
+            }
+            Block::Code { .. } | Block::Diagram { .. } | Block::Math { .. } | Block::Rule => {}
+        }
+    }
 }
 
 /// 数式を探してよい文字か。
@@ -194,11 +235,17 @@ fn scan(text: &str) -> Vec<(std::ops::Range<usize>, String, bool)> {
             }
             Some(_) => {}
         }
-        let Some(end) = text[i + 1..].find('$').map(|j| i + 1 + j) else {
+        // `\$` は文字の `$`（閉じにならない）
+        let Some(end) = text[i + 1..]
+            .match_indices('$')
+            .map(|(j, _)| i + 1 + j)
+            .find(|&j| text.as_bytes()[j - 1] != b'\\')
+        else {
             break;
         };
         let next = char_at(end + 1);
-        let spaced = char_before(end).is_some_and(|c| c.is_whitespace());
+        // 行の境（次の行の頭の閉じ）は空白に数えない
+        let spaced = char_before(end).is_some_and(|c| c.is_whitespace() && c != '\n');
         let fits =
             closes_before(next) && (!spaced || next.is_none_or(|c| c.is_ascii_punctuation()));
         if fits {

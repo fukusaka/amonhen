@@ -19,7 +19,8 @@ becomes the GitHub Release notes.
 - Android VectorDrawables take their colors from `values-night*/` (and `color-night*/`, `drawable-night*/`) in the dark
   appearance, picking qualified folders in Android's order.
 - Markdown math finds `$…$` by GitHub's rules: only at the start, after a space or after `(`, and not before a letter,
-  digit or `_`, nor in italics, links or footnotes. So `a$x$b` and `日本語の$x$` stay text, as on GitHub.
+  digit or `_`, nor in italics, links or footnotes. So `a$x$b` and `日本語の$x$` stay text, as on GitHub. Math may run
+  across lines but not across a hard line break, and a `$` after `\\` doesn't close it, as on GitHub.
 - Diagrams take Mermaid's colors for the appearance by default, closer to GitHub. The setting moved to Settings >
   Theme > Diagrams, and pele's colors are now called the Obsidian style.
 - Why a Markdown diagram can't be drawn is shown in Japanese too: every DOT error, and Mermaid's common ones (syntax
