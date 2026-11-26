@@ -735,6 +735,7 @@ pub fn render(
             label: size,
             tail_off: off(e.tail, tail_port),
             head_off: off(e.head, head_port),
+            invisible: has(&styles(a.get("style")), "invis"),
         });
         eviews.push(EdgeView {
             label,
@@ -1125,7 +1126,7 @@ pub fn render(
             let Route::Flat { lane, adjacent } = lay.routes[ei] else {
                 continue;
             };
-            if adjacent && lane == 0 {
+            if (adjacent && lane == 0) || has(&styles(e.attrs.get("style")), "invis") {
                 continue;
             }
             let (pa, pb) = (lay.nodes[e.tail], lay.nodes[e.head]);

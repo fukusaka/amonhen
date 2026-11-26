@@ -54,6 +54,8 @@ becomes the GitHub Release notes.
   Graphviz does, instead of leaning to the left.
 - DOT diagrams: the dot layout keeps edges within a rank pointing left to right while it orders the nodes, so the
   ranks above no longer cross to make room for them.
+- DOT diagrams: an invisible edge between two nodes of a rank no longer pushes the visible edge between them into an
+  arc.
 - Exporting chosen folders as an archive in a partial clone fetches only the contents it asked about, not every missing
   file of the commit (git 2.41 or later; older git fetches them all, and the question now counts them all).
 

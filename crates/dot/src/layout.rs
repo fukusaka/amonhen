@@ -35,6 +35,8 @@ pub struct Edge {
     /// ポートの並びの向きのずれ。
     pub tail_off: f64,
     pub head_off: f64,
+    /// 見えない辺（配置には効くが、同じランクの弧の段や空きは取らない）。
+    pub invisible: bool,
 }
 
 #[derive(Clone, Debug)]
@@ -1118,7 +1120,10 @@ pub fn layout(
                 lane: *lane,
                 adjacent: false,
             };
-            *lane += 1;
+            // 見えない辺は段を取らない（見える 1 本目が、隣どうしなら真っすぐ通る）
+            if !e.invisible {
+                *lane += 1;
+            }
             flat_edges.push((e.tail, e.head));
             continue;
         }
@@ -1446,6 +1451,7 @@ pub fn layout(
     for (ei, e) in input_edges.iter().enumerate() {
         if let (Route::Flat { adjacent, .. }, Some((_, lh))) = (&routes[ei], e.label)
             && e.tail != e.head
+            && !e.invisible
         {
             let r = nodes[e.tail].rank;
             let room = if *adjacent {
@@ -1464,6 +1470,7 @@ pub fn layout(
         for (ei, e) in input_edges.iter().enumerate() {
             if let Route::Flat { adjacent, lane } = routes[ei]
                 && e.tail != e.head
+                && !e.invisible
                 && !(adjacent && lane == 0)
             {
                 let r = nodes[e.tail].rank;
@@ -2453,6 +2460,7 @@ mod tests {
             label: None,
             tail_off: 0.0,
             head_off: 0.0,
+            invisible: false,
         }
     }
 

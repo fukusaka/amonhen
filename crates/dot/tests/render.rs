@@ -1152,3 +1152,22 @@ fn dot_keeps_flat_edge_order_while_ordering() {
     assert!(x("link") < x("exe"), "{svg}");
     assert!(x("cpp") < x("impl"), "{svg}");
 }
+
+/// 見えない辺は同じランクの弧の段を取らない: 隣どうしの見える辺は、見えない辺があっても真っすぐ通る。
+#[test]
+fn dot_invisible_flat_edges_leave_the_straight_lane() {
+    let with = render("digraph { {rank=same a b} a -> b [style=invis]; a -> b }")
+        .unwrap()
+        .svg;
+    let without = render("digraph { {rank=same a b} a -> b }").unwrap().svg;
+    let path = |svg: &str| {
+        svg.split("<path")
+            .nth(1)
+            .unwrap()
+            .split("/>")
+            .next()
+            .unwrap()
+            .to_owned()
+    };
+    assert_eq!(path(&with), path(&without), "{with}");
+}
