@@ -958,16 +958,22 @@ impl<'a> Builder<'a> {
         }
     }
 
-    /// 段落の形（左の下げ・ぶら下げ・引用の背景・下の間隔）を、`start` から終わりまでに付ける。
-    fn paragraph(&self, start: i32, ctx: &Ctx, hanging: bool, gap: i32) {
+    /// 段落の形（左の下げ・ぶら下げ・引用の背景・下の間隔）を、`start` から終わりまでに付ける。`hanging` はぶら下げる
+    /// 印の数（入れ子のリストの最初の項目は、外の項目の印と同じ行に並べる）。
+    fn paragraph(&self, start: i32, ctx: &Ctx, hanging: usize, gap: i32) {
         let margin = ctx.margin;
-        let indent = if hanging { -STEP } else { 0 };
+        let levels = i32::try_from(hanging).unwrap_or(1);
+        let indent = -STEP * levels;
+        // 1 行目は左の余白から始まり、2 行目からが下がる。外の印の分だけ余白を戻して、外の項目の印の位置から始める。
+        let back = STEP * (levels - 1).max(0);
         let shape = self.tag(&format!("shape-{margin}-{indent}"), |t| {
-            t.set_left_margin(24 + margin);
+            t.set_left_margin(24 + margin - back);
             t.set_indent(indent);
-            if hanging {
-                let mut tabs = pango::TabArray::new(1, true);
-                tabs.set_tab(0, pango::TabAlign::Left, STEP);
+            if levels > 0 {
+                let mut tabs = pango::TabArray::new(levels, true);
+                for level in 0..levels {
+                    tabs.set_tab(level, pango::TabAlign::Left, STEP * (level + 1));
+                }
                 t.set_tabs(Some(&tabs));
             }
         });
@@ -994,14 +1000,14 @@ impl<'a> Builder<'a> {
         self.tag("dim", |t| t.set_foreground_rgba(Some(&DIM)))
     }
 
-    /// リストの印があれば、段落の頭に置く（印はぶら下げる）。置いたら true。
-    fn marker(&self, ctx: &Ctx) -> bool {
+    /// リストの印があれば、段落の頭に置く（印はぶら下げる）。置いた印の数（入れ子の外の印も並べたら 2 つ以上）。
+    fn marker(&self, ctx: &Ctx) -> usize {
         let Some(marker) = ctx.marker.borrow_mut().take() else {
-            return false;
+            return 0;
         };
         let dim = self.dim();
         self.insert(&format!("{marker}\t"), &[dim]);
-        true
+        marker.matches('\t').count() + 1
     }
 
     /// 飾りの文字。`size` は pt、`bold` なら見出し・表の頭。
@@ -1222,7 +1228,7 @@ impl<'a> Builder<'a> {
                 self.insert(&code.replace('\n', "\u{2028}"), &[mono]);
                 self.syntax(start, code, &format!("code.{}", file_extension(language)));
                 self.insert("\n", &[]);
-                self.paragraph(start, ctx, false, 12);
+                self.paragraph(start, ctx, 0, 12);
             }
             Block::Diagram {
                 language,
@@ -1254,7 +1260,7 @@ impl<'a> Builder<'a> {
                         });
                         self.insert(&error.replace('\n', "\u{2028}"), &[red]);
                         self.insert("\n", &[]);
-                        self.paragraph(start, ctx, false, 10);
+                        self.paragraph(start, ctx, 0, 10);
                     }
                     return;
                 };
@@ -1264,7 +1270,7 @@ impl<'a> Builder<'a> {
                 let anchor = self.buffer.create_child_anchor(&mut end);
                 self.view.add_child_at_anchor(&picture, &anchor);
                 self.insert("\n", &[]);
-                self.paragraph(start, ctx, false, 12);
+                self.paragraph(start, ctx, 0, 12);
                 // 近いもので描いた図には、そのことを絵の下に添える
                 if let Some(note) = note {
                     let start = self.offset();
@@ -1274,7 +1280,7 @@ impl<'a> Builder<'a> {
                     });
                     self.insert(note, &[dim]);
                     self.insert("\n", &[]);
-                    self.paragraph(start, ctx, false, 10);
+                    self.paragraph(start, ctx, 0, 10);
                 }
             }
             Block::Math { text, math, error } => {
@@ -1296,7 +1302,7 @@ impl<'a> Builder<'a> {
                         });
                         self.insert(&error.replace('\n', "\u{2028}"), &[red]);
                         self.insert("\n", &[]);
-                        self.paragraph(start, ctx, false, 10);
+                        self.paragraph(start, ctx, 0, 10);
                     }
                     return;
                 };
@@ -1320,7 +1326,7 @@ impl<'a> Builder<'a> {
                 let start = self.offset();
                 self.embed(&picture);
                 self.insert("\n", &[]);
-                self.paragraph(start, ctx, false, 12);
+                self.paragraph(start, ctx, 0, 12);
                 self.justify(start, Align::Center);
             }
             Block::Quote {
@@ -1347,13 +1353,13 @@ impl<'a> Builder<'a> {
                     });
                     self.insert(&title, &[tag]);
                     self.insert("\n", &[]);
-                    self.paragraph(start, &inner, false, 4);
+                    self.paragraph(start, &inner, 0, 4);
                 }
                 self.blocks(blocks, &inner);
             }
             Block::List { start, items } => {
-                // 項目の最初が入れ子のリストなら、外の印はその前の行に。
-                self.lone_marker(ctx);
+                // 項目の最初が入れ子のリストなら、外の印は最初の項目の印と同じ行に並べる（GitHub と同じ）。
+                let mut outer = ctx.marker.borrow_mut().take();
                 let depth = (ctx.margin / STEP) as usize;
                 for (i, item) in items.iter().enumerate() {
                     let marker = match (item.task, start) {
@@ -1361,6 +1367,10 @@ impl<'a> Builder<'a> {
                         (Some(false), _) => "☐".to_owned(),
                         (None, Some(n)) => format!("{}.", n + i as u64),
                         (None, None) => ["•", "◦", "▪\u{fe0e}"][depth % 3].to_owned(),
+                    };
+                    let marker = match outer.take() {
+                        Some(outer) => format!("{outer}\t{marker}"),
+                        None => marker,
                     };
                     let inner = Ctx {
                         margin: ctx.margin + STEP,
@@ -1385,7 +1395,7 @@ impl<'a> Builder<'a> {
                     t.set_pixels_above_lines(8);
                 });
                 self.insert(" \n", &[rule]);
-                self.paragraph(start, ctx, false, 12);
+                self.paragraph(start, ctx, 0, 12);
             }
             Block::Details {
                 summary, blocks, ..
@@ -1416,7 +1426,7 @@ impl<'a> Builder<'a> {
                     format!("{DETAILS_LINK}{index}"),
                 ));
                 self.insert("\n", &[]);
-                self.paragraph(start, ctx, false, if open { 6 } else { 10 });
+                self.paragraph(start, ctx, 0, if open { 6 } else { 10 });
                 if open {
                     self.blocks(blocks, ctx);
                 } else {
@@ -1436,7 +1446,7 @@ impl<'a> Builder<'a> {
                 });
                 self.insert(&format!("[{label}]"), &[dim, small]);
                 self.insert("\n", &[]);
-                self.paragraph(start, ctx, false, 2);
+                self.paragraph(start, ctx, 0, 2);
                 let inner = Ctx {
                     margin: ctx.margin + 16,
                     marker: Rc::default(),
@@ -1450,9 +1460,10 @@ impl<'a> Builder<'a> {
     /// 段落でないブロック（コード・表など）の前に、残っているリストの印を 1 行で置く。
     fn lone_marker(&self, ctx: &Ctx) {
         let start = self.offset();
-        if self.marker(ctx) {
+        let hanging = self.marker(ctx);
+        if hanging > 0 {
             self.insert("\n", &[]);
-            self.paragraph(start, ctx, true, 2);
+            self.paragraph(start, ctx, hanging, 2);
         }
     }
 
@@ -1522,7 +1533,7 @@ impl<'a> Builder<'a> {
         self.tables.borrow_mut().push((grid.clone(), ctx.margin));
         self.embed(&grid);
         self.insert("\n", &[]);
-        self.paragraph(start, ctx, false, 10);
+        self.paragraph(start, ctx, 0, 10);
     }
 
     /// HTML の表（マスは `colspan`・`rowspan` をまたぐ。見出しのマスは、決めなければ中央）。
@@ -1555,7 +1566,7 @@ impl<'a> Builder<'a> {
         self.tables.borrow_mut().push((grid.clone(), ctx.margin));
         self.embed(&grid);
         self.insert("\n", &[]);
-        self.paragraph(start, ctx, false, 10);
+        self.paragraph(start, ctx, 0, 10);
     }
 
     /// 幅を割合で決めた絵（HTML の `width="50%"`）なら、欄の幅（表のマスの中なら、欄の幅の `share` の分）に合わせる
