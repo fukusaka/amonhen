@@ -270,6 +270,13 @@ struct Pictures<'a> {
     details: Cell<usize>,
     /// 本文の欄の今の幅（幅の割合の画像の基準）。
     column: f64,
+    /// 今いるリストの項目の入れ子の深さ（箇条書きの印を深さで変える）。
+    lists: Cell<usize>,
+}
+
+/// 入れ子の深さ `depth`（いちばん外が 0）の箇条書きの印（macOS 版・GTK4 版と同じく 3 つを順に）。
+fn bullet(depth: usize) -> &'static str {
+    ["•", "◦", "▪\u{fe0e}"][depth % 3]
 }
 
 /// 読めた画像を見せる大きさ: HTML の `width`・`height`（片方なら比を保つ）か、もとの大きさ（幅は 640 まで）。
@@ -1072,7 +1079,10 @@ fn block(b: &Block, pictures: &Pictures) -> View {
                 )
         }
         Block::List { start, items } => {
-            StackPanel::new()
+            // 項目の中身は 1 段深い（中の箇条書きの印を変える）。組み立て終えたら戻す。
+            let depth = pictures.lists.get();
+            pictures.lists.set(depth + 1);
+            let list = StackPanel::new()
                 .spacing(4.0)
                 .children((View::keyed_fragment(
                     items
@@ -1083,7 +1093,7 @@ fn block(b: &Block, pictures: &Pictures) -> View {
                                 (Some(true), _) => "☑".to_owned(),
                                 (Some(false), _) => "☐".to_owned(),
                                 (None, Some(n)) => format!("{}.", n + i as u64),
-                                (None, None) => "•".to_owned(),
+                                (None, None) => bullet(depth).to_owned(),
                             };
                             Grid::new()
                                 .columns([GridLength::Pixel(STEP), GridLength::Star(1.0)])
@@ -1100,7 +1110,9 @@ fn block(b: &Block, pictures: &Pictures) -> View {
                         })
                         .enumerate()
                         .map(|(i, v)| (i.to_string(), v)),
-                ),))
+                ),));
+            pictures.lists.set(depth);
+            list
         }
         Block::Table { aligns, head, rows } => table(aligns, head, rows),
         Block::Rule => Border::new().height(1.0).background(shade()).into(),
@@ -1259,6 +1271,7 @@ pub fn view(
     });
     let pictures = Pictures {
         details: Cell::new(0),
+        lists: Cell::new(0),
         list: diagrams,
         next: Cell::new(0),
         images,
@@ -1286,6 +1299,14 @@ pub fn view(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn bullets_change_with_depth() {
+        assert_eq!(bullet(0), "•");
+        assert_eq!(bullet(1), "◦");
+        assert_eq!(bullet(2), "▪\u{fe0e}");
+        assert_eq!(bullet(3), "•");
+    }
 
     #[test]
     fn percent_widths_follow_the_column() {
