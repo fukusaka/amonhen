@@ -20,7 +20,7 @@ VSCode 上で快適に Git を操作するための自分用の拡張。Marketpl
 | Working Copy | 変更の数。選ぶとメインビューに Working Copy を出す。worktree が 2 つ以上あれば、その下に並べる |
 | History | 現在のブランチ。選ぶとメインビューに History を出す |
 | Conflicts | コンフリクトがある間だけ、数を添えて出す。選ぶと最初のファイルをマージエディタで開く |
-| merge / rebase の途中 | 「Rebase in progress (2/5)」のような行。Continue / Skip / Abort |
+| merge / rebase の途中 | 「Rebase in progress (2/5)」のような行。Continue / Skip / Abort。マーカーの残っていないコンフリクトがあれば、その数とまとめて解決済みにするボタンを出す |
 | Branches | `feature/x` はフォルダにまとめる。現在のブランチに ✓、upstream との差（↑↓）、upstream が消えていれば gone |
 | Remotes / Tags / Stashes / Submodules / Subtrees | 開いたときに取得する。Stashes は stash がある間だけ、Subtrees はエンジンがあり git に `git subtree` があるとき |
 | Range Diff | Range Diff を開いている間だけ。選ぶとメインビューに出す |
@@ -78,7 +78,7 @@ VSCode 上で快適に Git を操作するための自分用の拡張。Marketpl
 - hunk ごとの Stage Hunk、Stage File、一覧の `+` / `−`、Stage All でもできる。一覧では上下キーで選び、Space か Enter で stage / unstage する。
 - Changes のファイルは、一覧の ↺、Discard File、Discard Hunk、Discard N Lines で変更を破棄できる。untracked のファイルは消す（Delete File…）。ファイルごとのときは確かめてから、選んだ行・hunk はすぐに破棄する。破棄した内容は Undo で戻せる。
 - コミット欄は Summary と Description（複数行）。どちらかだけでもコミットできる。Amend にすると直前のコミットのメッセージが入る。`⌘Enter` / `Ctrl+Enter` でもコミットできる。Recent… で最近のコミットのメッセージを（Summary では ⌥↑ / ⌥↓）、Insert… で Conventional Commits の種類・Co-authored-by・Signed-off-by を入れる。Commit の隣の ▾ に Commit and Push（`⌘⇧Enter`）、Fixup Commit For…、Squash Commit For… がある。
-- コンフリクトしたファイルでは、Open in Merge Editor（標準の 3-way マージエディタ）、Take Current File、Take Incoming File、Mark as Resolved を選べる。片側で削除されたファイルも片側のファイルを取って解決できる。解決済みにするとき、マーカーが残っていれば確認する。マーカーの残っていないファイル（git の rerere が前の解決を当てた、ほかのエディタで直した）は ✓ と「マーカーなし」か「rerere」を出して Mark as Resolved を先に勧め、Conflicts の見出しからまとめて解決済みにできる。そうしたファイルで片側を取るときと、エディタに保存していない変更があるときは、置き換える前に確認する。
+- コンフリクトしたファイルでは、Open in Merge Editor（標準の 3-way マージエディタ）、Take Current File、Take Incoming File、Mark as Resolved を選べる。片側で削除されたファイルも片側のファイルを取って解決できる。解決済みにするとき、エディタ（マージエディタの Result も）に保存していない変更があれば先に保存し、マーカーが残っていれば確認する。マーカーの残っていないファイル（git の rerere が前の解決を当てた、ほかのエディタで直した）は ✓ と「マーカーなし」か「rerere」を出して Mark as Resolved を先に勧め、Conflicts の見出しからまとめて解決済みにできる。そうしたファイルで片側を取るときと、エディタに保存していない変更があるときは、置き換える前に確認する。
 - エンジンがあるとき、rerere が解決したコンフリクトのファイルの右クリックに Forget Resolution があり、コンフリクトのマーカーに戻す（Undo でファイルは戻る）。Repository Settings > Operations の Forget All… で、覚えた解決をすべて忘れる。
 
 ### History
@@ -118,7 +118,7 @@ Apply Patch…、またはエクスプローラーで .patch・.diff・.mbox・.
 
 ### 途中で止まった merge / rebase
 
-コンフリクトや Edit・Split で止まると、ナビに「Rebase in progress (2/5)」のような行が出る。解決して stage したら Continue で続ける。rebase では Skip で今のコミットを飛ばせる。Abort で始める前の状態に戻る。
+コンフリクトや Edit・Split で止まると、ナビに「Rebase in progress (2/5)」のような行が出て、メインビューは Working Copy に切り替わり、最初のコンフリクトのファイルを選んでマージエディタで開く。解決して stage したら Continue で続ける。rebase では Skip で今のコミットを飛ばせる。Abort で始める前の状態に戻る。
 
 ### Undo
 

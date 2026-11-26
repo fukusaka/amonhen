@@ -1474,6 +1474,10 @@ First release.
   keys under collapsible section headers and sorts by any column, as in the app.
 - A commit message template from a file shows its first lines under the row in Repository Settings > Commits.
 - The Daemon page shows how much each of this window's connections has sent and received.
+- When an operation stops on conflicts, the main view switches to Working Copy and opens the first conflicted file in
+  the merge editor, as in the app.
+- The in-progress row says how many conflicted files have no markers left, with a button that marks them all resolved.
+- Mark as Resolved saves unsaved changes in the editor or merge editor first, instead of warning that markers are left.
 
 #### Fixed
 

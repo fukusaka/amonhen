@@ -54,6 +54,10 @@ export class RepositoryManager implements vscode.Disposable {
   private readonly _onDidChangeCurrent = new vscode.EventEmitter<Repository | undefined>();
   readonly onDidChangeCurrent = this._onDidChangeCurrent.event;
 
+  private readonly _onDidStop = new vscode.EventEmitter<Repository>();
+  /** どれかのリポジトリで、操作がコンフリクトや途中で止まった */
+  readonly onDidStop = this._onDidStop.event;
+
   constructor(log: vscode.LogOutputChannel) {
     this.log = log;
   }
@@ -133,7 +137,7 @@ export class RepositoryManager implements vscode.Disposable {
     const entry: Entry = {
       repository,
       apiRepo,
-      disposables: [repository],
+      disposables: [repository, repository.onDidStop(() => this._onDidStop.fire(repository))],
     };
     if (apiRepo) {
       let timer: NodeJS.Timeout | undefined;
@@ -246,6 +250,7 @@ export class RepositoryManager implements vscode.Disposable {
     this.entries.clear();
     vscode.Disposable.from(...this.disposables).dispose();
     this._onDidChangeCurrent.dispose();
+    this._onDidStop.dispose();
   }
 }
 

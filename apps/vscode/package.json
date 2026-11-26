@@ -710,6 +710,12 @@
         "icon": "$(git-merge)"
       },
       {
+        "command": "amonhen.markResolvedWithoutMarkers",
+        "title": "Mark Files Without Markers Resolved",
+        "category": "Amon Hen",
+        "icon": "$(check-all)"
+      },
+      {
         "command": "amonhen.open",
         "title": "Open Amon Hen",
         "category": "Amon Hen",
@@ -1399,6 +1405,11 @@
           "group": "inline@0"
         },
         {
+          "command": "amonhen.markResolvedWithoutMarkers",
+          "when": "view == amonhen.sidebar && viewItem =~ /^sequence\\..*;unmarked$/",
+          "group": "inline@0"
+        },
+        {
           "command": "amonhen.continueSequence",
           "when": "view == amonhen.sidebar && viewItem =~ /^sequence\\./",
           "group": "inline@1"
@@ -1959,6 +1970,10 @@
         },
         {
           "command": "amonhen.amRetryThreeWay",
+          "when": "false"
+        },
+        {
+          "command": "amonhen.markResolvedWithoutMarkers",
           "when": "false"
         },
         {

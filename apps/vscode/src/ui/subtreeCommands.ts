@@ -21,7 +21,10 @@ async function subtree(repo: Repository, action: Json): Promise<OperationResult>
   if (!client) throw new Error('Subtrees need the Amon Hen engine (amonhen.daemon.enabled)');
   const reply = (await client.call({ op: 'run', command: { op: 'subtree', action } })).json;
   if (reply['ok'] !== true) throw new Error(String(reply['error'] ?? 'git subtree failed'));
-  return reply['outcome'] === 'conflict' || reply['outcome'] === 'stopped' ? 'conflict' : 'done';
+  if (reply['outcome'] !== 'conflict' && reply['outcome'] !== 'stopped') return 'done';
+  // backend を通らないので、止まったことはここで知らせる（Working Copy で最初のコンフリクトを開く）
+  repo.stopped();
+  return 'conflict';
 }
 
 /** 相手の URL と ref を聞く。既定は覚えているもの */
