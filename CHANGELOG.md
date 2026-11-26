@@ -43,6 +43,8 @@ becomes the GitHub Release notes.
 
 - DOT diagrams: edges to record fields and compass ports in the dot layout use the same smooth curves as other edges.
 - DOT diagrams: dot-layout curves bulge less between ranks, crossing fewer edges and nodes.
+- DOT diagrams: `splines=ortho` in the dot layout keeps tracks between ranks at least 3 points apart, even past
+  the `ranksep` cap, so crowded edges no longer run on top of each other.
 - Exporting chosen folders as an archive in a partial clone fetches only the contents it asked about, not every missing
   file of the commit (git 2.41 or later; older git fetches them all, and the question now counts them all).
 

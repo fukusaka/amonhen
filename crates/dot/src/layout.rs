@@ -116,6 +116,8 @@ type Chain = (Vec<usize>, bool, Option<usize>);
 
 /// 仮のノードの上限。
 const MAX_DUMMIES: usize = 12_000;
+/// 直角の線の段の間の下限（ランクの間を広げる上限を超えても保つ）。
+const MIN_TRACK: f64 = 3.0;
 /// 並べ替えで、交差が減らない回がこれだけ続けばやめる。
 const MINCROSS_STALE: usize = 12;
 /// 隣どうしの入れ替えを使う、ランクの間の線の切れ端の数の上限（大きな図の時間のため）。
@@ -1649,7 +1651,7 @@ pub fn layout(
 /// 直角の線（`splines=ortho`）の段の場所をランクの間に空ける。ランクの間を横に動く線（仮のノードの間の横のずれ）の
 /// 重なりの最大から段の数を見積もり、`track` の間で並べて両側に `margin`（矢じりの分）を残せるだけ、下のランクを
 /// 下げる（ノード・道筋・ラベル・クラスタの箱の y と高さ）。1 つの間で下げるのは `most_add` まで（込んだ図が縦に
-/// 伸びすぎないように。足りない分は段の間を詰める）。`heights` はノードの高さ（配置の向き）。
+/// 伸びすぎないように。足りない分は段の間を詰める）。ただし段の間が `MIN_TRACK` を切る分は、上限を超えても下げる。`heights` はノードの高さ（配置の向き）。
 pub fn make_room_for_tracks(
     lay: &mut Layout,
     heights: &[f64],
@@ -1711,7 +1713,9 @@ pub fn make_room_for_tracks(
         }
         let gap = rows[g + 1].1 - rows[g].2;
         let need = 2.0 * margin + (most.max(1) - 1) as f64 * track;
-        add[g] = (need - gap).clamp(0.0, most_add);
+        // 上限を超えても、段の間は MIN_TRACK は保つ（それより詰めると違う辺の線が 1 本に見える）
+        let least = 2.0 * margin + (most.max(1) - 1) as f64 * MIN_TRACK;
+        add[g] = (need - gap).clamp(0.0, most_add).max(least - gap);
     }
     if add.iter().all(|&a| a <= 0.0) {
         return;

@@ -1088,3 +1088,28 @@ fn dot_port_edges_run_one_way() {
         }
     }
 }
+
+/// dot の ortho で、ランクの間を広げる上限（ranksep）を超えるほど段が要っても、違う辺の横の線は 3pt より近く重ねない。
+#[test]
+fn dot_ortho_tracks_keep_a_least_gap() {
+    let src = "digraph { splines=ortho; {a b c d e f g h} -> {i j k l m n o p} }";
+    let svg = render(src).unwrap().svg;
+    let lines = edge_polylines(&svg);
+    let mut runs: Vec<(usize, f64, f64, f64)> = Vec::new();
+    for (i, p) in lines.iter().enumerate() {
+        for w in p.windows(2) {
+            let (a, b) = (w[0], w[1]);
+            if (a.1 - b.1).abs() < 0.02 && (a.0 - b.0).abs() > 3.0 {
+                runs.push((i, a.1, a.0.min(b.0), a.0.max(b.0)));
+            }
+        }
+    }
+    for (k, a) in runs.iter().enumerate() {
+        for b in &runs[k + 1..] {
+            if a.0 == b.0 || a.3.min(b.3) - a.2.max(b.2) <= 3.0 {
+                continue;
+            }
+            assert!((a.1 - b.1).abs() >= 2.9, "{a:?} {b:?}");
+        }
+    }
+}
