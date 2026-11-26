@@ -1113,3 +1113,26 @@ fn dot_ortho_tracks_keep_a_least_gap() {
         }
     }
 }
+
+/// dot の横の位置は、同じ費用で動ける幅の真ん中: 2 つの子を持つノードは子の間に、その上の 1 本道も一緒に。
+#[test]
+fn dot_centers_nodes_between_their_children() {
+    let cx = |svg: &str, id: &str| attr_num(part(svg, id), "cx");
+    // ラベルがあるとランクが倍になり、辺は仮のノードを通る
+    for src in [
+        "digraph { x -> a; a -> {b c}; {rank=same; b -> c} }",
+        "digraph { x -> a; a -> {b c}; {rank=same; b -> c [label=\"next\"]} }",
+    ] {
+        let svg = render(src).unwrap().svg;
+        let mid = (cx(&svg, "b") + cx(&svg, "c")) / 2.0;
+        assert!((cx(&svg, "a") - mid).abs() <= 1.0, "{svg}");
+        assert!((cx(&svg, "x") - cx(&svg, "a")).abs() <= 1.0, "{svg}");
+    }
+    let svg = render(
+        "digraph { s -> {a b}; subgraph cluster_a { a -> a2 } subgraph cluster_b { b -> b2 } }",
+    )
+    .unwrap()
+    .svg;
+    let mid = (cx(&svg, "a") + cx(&svg, "b")) / 2.0;
+    assert!((cx(&svg, "s") - mid).abs() <= 1.0, "{svg}");
+}
