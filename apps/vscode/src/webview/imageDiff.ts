@@ -115,12 +115,24 @@ export function checkerToggle(scope: HTMLElement, images: readonly HTMLImageElem
 /** 拡大縮小の倍率（0 は欄に合わせる）。欄をまたいで同じにする（開いている間だけ） */
 let lastZoom = 0;
 
-/** 画像の差分の欄。onShowText があれば（SVG）、帯に「文字で見る」を置く */
-export function renderImageDiff(
-  before: ImageBlob | undefined,
-  after: ImageBlob | undefined,
-  options: { onShowText?: () => void } = {},
-): HTMLElement {
+/** 画像の比較の欄の作り方 */
+export interface ImageDiffOptions {
+  /** あれば（SVG）、帯に「文字で見る」を置く */
+  onShowText?: () => void;
+  /** 前と後の見出し（なければ Before・After、片方だけなら Added・Deleted） */
+  titles?: [string, string];
+  /** 絵の下の説明（1 行。SVG のモバイルの確認の、絵の作り方） */
+  caption?: string;
+  /** 帯の左に置く部品（SVG のモバイルの確認の、部品の切り替え） */
+  accessory?: HTMLElement;
+  /** 絵の下に置く説明（SVG のモバイルの確認の、崩れる機能の一覧） */
+  notes?: HTMLElement;
+  /** 最初の比べ方（あれば、選んだ比べ方をほかの欄に持ち越さない。SVG のモバイルの確認はいつも並べるから。アプリと同じ） */
+  mode?: ImageMode;
+}
+
+/** 画像の差分の欄（SVG のモバイルの確認の、元の絵と部品での見え方の比較にも使う） */
+export function renderImageDiff(before: ImageBlob | undefined, after: ImageBlob | undefined, options: ImageDiffOptions = {}): HTMLElement {
   const box = el('div', 'image-diff');
   if (!before && !after) {
     box.append(el('div', 'empty', 'Can’t read the image'));
@@ -130,7 +142,8 @@ export function renderImageDiff(
   const bar = el('div', 'image-modes');
   const modes = el('span', 'segmented');
   const stage = el('div', 'image-stage');
-  // 帯: 比べ方（2 枚あるとき）・文字で見る（SVG）・拡大縮小（アプリと同じ）
+  // 帯: 置く部品・比べ方（2 枚あるとき）・文字で見る（SVG）・拡大縮小（アプリと同じ）
+  if (options.accessory) bar.append(options.accessory);
   bar.append(modes);
   if (options.onShowText) {
     const text = el('button', 'bar-button', 'Show as Text');
@@ -159,6 +172,9 @@ export function renderImageDiff(
   );
   zoomLabel.addEventListener('click', () => setZoom(lastZoom === 1 ? 0 : 1));
   box.append(bar, stage);
+  if (options.caption) box.append(el('div', 'image-caption image-note', options.caption));
+  if (options.notes) box.append(options.notes);
+  const [beforeTitle, afterTitle] = options.titles ?? ['Before', 'After'];
   /** 今の倍率（合わせているときは、いちばん大きい画像の見えている倍率） */
   const currentZoom = () => {
     if (lastZoom > 0) return lastZoom;
@@ -200,7 +216,7 @@ export function renderImageDiff(
   void Promise.all([before ? load(before.url) : undefined, after ? load(after.url) : undefined]).then(([old, now]) => {
     checkerSlot.replaceWith(checkerToggle(box, [old, now].filter((i): i is HTMLImageElement => i !== undefined)));
     const show = (mode: ImageMode) => {
-      lastMode = mode;
+      if (!options.mode) lastMode = mode;
       for (const b of modes.querySelectorAll<HTMLElement>('button')) b.classList.toggle('on', b.dataset.mode === mode);
       stage.replaceChildren(...render(mode));
       applyZoom();
@@ -209,14 +225,15 @@ export function renderImageDiff(
       if (!both || mode === 'side') {
         const figures: Node[] = [];
         for (const [label, blob, img] of [
-          ['Before', before, old],
-          ['After', after, now],
+          [beforeTitle, before, old],
+          [afterTitle, after, now],
         ] as const) {
           if (!blob || !img) continue;
           const figure = el('figure', 'image-figure');
           const frame = el('div', 'checker');
           frame.append(img.cloneNode());
-          figure.append(frame, caption(both ? label : blob === after ? 'Added' : 'Deleted', blob, img));
+          const single = blob === after ? 'Added' : 'Deleted';
+          figure.append(frame, caption(both || options.titles ? label : single, blob, img));
           figures.push(figure);
         }
         return [wrap('image-side', figures)];
@@ -259,7 +276,7 @@ export function renderImageDiff(
     };
     const captions = () => {
       const row = el('div', 'image-captions');
-      row.append(caption('Before', before!, old!), caption('After', after!, now!));
+      row.append(caption(beforeTitle, before!, old!), caption(afterTitle, after!, now!));
       return row;
     };
     for (const m of MODES) {
@@ -269,7 +286,7 @@ export function renderImageDiff(
       button.addEventListener('click', () => show(m.mode));
       if (both) modes.append(button);
     }
-    show(both ? lastMode : 'side');
+    show(both ? (options.mode ?? lastMode) : 'side');
   });
   return box;
 }

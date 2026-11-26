@@ -119,10 +119,24 @@ export interface ViewLine {
   removedBefore?: number;
 }
 
-/** SVG のモバイル向けの描画部品の確認（崩れる機能と、部品ごとの崩れ方の近似の SVG） */
+/**
+ * ある描画部品での SVG の見え方（コアの `svgmobile::Preview`）。`svg` は描ける SVG（部品が読めなければなし。わけは
+ * `error`）、`title` は絵の見出し（近似なら「（approximation）」つき）、`caption` は絵の作り方の説明、`messages` は
+ * 取り込みの警告と同じに描けなかったこと、`exact` は本物の取り込みを移したものか
+ */
+export interface MobilePreview {
+  svg?: string;
+  title: string;
+  caption: string;
+  messages: string[];
+  error?: string;
+  exact: boolean;
+}
+
+/** SVG のモバイル向けの描画部品の確認（崩れる機能と、部品ごとの見え方。android・ios・flutter・reactNative） */
 export interface SvgCheckView {
   issues: { targets: string[]; feature: string; message: string; count: number }[];
-  approximations: Record<string, string>;
+  previews: Record<string, MobilePreview>;
 }
 
 /** 「すべてのファイル」で開いたファイル */
@@ -134,6 +148,8 @@ export type FileView =
       removedAtEnd?: number;
       /** Markdown なら、整形して見せるブロック（コアの `markdown::Block`） */
       markdown?: unknown[];
+      /** 数式の大きさ（本文の字に対する倍率。設定 `amonhen.math.formulaSize`） */
+      mathScale?: number;
       /** SVG なら、絵とモバイルの確認 */
       svg?: { image: ImageBlob; check?: SvgCheckView };
       /** Android の VectorDrawable なら、描いた絵と、絵の下に添える説明（引けなかった色など） */
@@ -341,9 +357,10 @@ export type HistoryWebviewMessage =
   | { type: 'treeEntries'; oid: string; path: string }
   /**
    * コミットのファイル `path` の中身を求める（「すべてのファイル」。エンジンだけ）。`colors` は図・数式・VectorDrawable
-   * の絵に当てる色、`utcOffset` は gantt の日付を数える時差（分、地方時 − UTC）
+   * の絵に当てる色、`timeZone` は Webview の時間帯の IANA の名前（設定の時間帯が「OS の時間帯」のとき、gantt の日付を
+   * 数える）
    */
-  | { type: 'treeFile'; oid: string; path: string; colors?: PictureColors; utcOffset?: number }
+  | { type: 'treeFile'; oid: string; path: string; colors?: PictureColors; timeZone?: string }
   /** そのコミットのファイルをエディタで開く（「すべてのファイル」のバイナリ） */
   | { type: 'openTreeFile'; oid: string; path: string }
   /** コミットの中の画像の前と後を求める（画像の差分） */

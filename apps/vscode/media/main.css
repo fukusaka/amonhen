@@ -2817,10 +2817,6 @@ aside.details.all-files-page .details-body {
   height: auto;
 }
 
-.svg-check {
-  padding: 8px 16px;
-}
-
 .svg-check h4 {
   margin: 12px 0 4px;
 }
@@ -2830,10 +2826,21 @@ aside.details.all-files-page .details-body {
   padding-left: 20px;
 }
 
-.svg-check img {
-  display: block;
-  max-width: 100%;
-  max-height: 240px;
+/* モバイルの確認の絵の下: 部品が読めなかったわけ（赤）・取り込みの警告（等幅）・崩れる機能（アプリと同じ） */
+.svg-check .mobile-notes {
+  margin-top: 8px;
+}
+
+.svg-check .mobile-error {
+  font-weight: 600;
+  color: var(--vscode-errorForeground);
+}
+
+.svg-check .mobile-messages,
+.svg-check .mobile-notes code {
+  font-family: var(--vscode-editor-font-family);
+  font-size: 0.9em;
+  color: var(--vscode-descriptionForeground);
 }
 
 /* 整形した Markdown */
@@ -3246,21 +3253,9 @@ body.monospace-message .details-head pre.body {
   background: var(--vscode-button-background);
 }
 
-.svg-check-bar {
-  display: flex;
-  align-items: center;
-  gap: 8px;
-}
-
-.svg-check-bar .bar-button {
-  padding: 1px 8px;
-  color: var(--vscode-foreground);
-  background: transparent;
-}
-
-.svg-check-bar .bar-button.on {
-  color: var(--vscode-button-foreground);
-  background: var(--vscode-button-background);
+/* モバイルの確認の部品の切り替え（比べる欄の帯の左。比べ方と間を空ける） */
+.image-modes .segmented + .segmented {
+  margin-left: 8px;
 }
 
 /* 整形した Markdown の検索の帯（⌘F）。中身の上に留める */

@@ -157,6 +157,11 @@ is chosen; if the chosen git isn't there, commands that run git stop with an err
 | `amonhen.daemon.path` | `""` | An engine (`amonhen`) to use instead of the bundled one |
 | `amonhen.writeCommitGraph` | `false` | Write the commit-graph when a repository is opened and after fetch and pull (not where `git maintenance` looks after it) |
 | `amonhen.fsmonitor` | `true` | Speed up status with git's fsmonitor (macOS and Windows: `git fsmonitor--daemon`; Linux and the BSDs: Watchman through the engine, with git 2.26 or newer) |
+| `amonhen.diagrams.colors` | `"mermaid"` | The colors of Markdown diagrams in All Files: Mermaid's theme for the appearance, a named Mermaid theme, the syntax colors, the Obsidian style, or an imported Mermaid theme (as in the app) |
+| `amonhen.diagrams.mermaidTheme` | `""` | The mermaid-cli config file used when the colors are the imported Mermaid theme |
+| `amonhen.diagrams.timeZone` | `""` | The time zone of gantt dates: empty for the window's, `UTC` or an IANA name such as `Asia/Tokyo` |
+| `amonhen.math.formulaSize` | `1.21` | The size of math against the text (100–150%; 121% is KaTeX's) |
+| `amonhen.math.timeLimit` | `2` | Seconds one Markdown file's formulas may take to draw (0: no limit); later ones show their TeX |
 
 ## Install / update
 

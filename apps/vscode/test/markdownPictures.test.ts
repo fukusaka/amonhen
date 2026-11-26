@@ -38,13 +38,21 @@ test('diagrams and formulas are drawn by the helper and written into the blocks'
     };
   };
   const b = blocks();
-  await drawMarkdownPictures(b, 'docs/a.md', colors, 540, render);
+  await drawMarkdownPictures(b, 'docs/a.md', colors, { scheme: 'mermaid-forest', timeZone: 'Asia/Tokyo', timeLimit: 5 }, render);
   const diagrams = asked.filter(([op]) => op === 'diagram').map(([, f]) => f);
   assert.equal(diagrams.length, 3);
-  assert.deepEqual(diagrams[0], { language: 'mermaid', text: 'flowchart LR\n  A --> B', from: 'docs/a.md', colors, utcOffset: 540 });
+  assert.deepEqual(diagrams[0], {
+    language: 'mermaid',
+    text: 'flowchart LR\n  A --> B',
+    from: 'docs/a.md',
+    colors,
+    scheme: 'mermaid-forest',
+    timeZone: 'Asia/Tokyo',
+  });
   const math = asked.find(([op]) => op === 'math')?.[1];
   assert.deepEqual(math, {
     color: '#333333',
+    timeLimit: 5,
     formulas: [
       { tex: 'x^2', display: true },
       { tex: '\\pi r^2', display: false },
@@ -66,7 +74,7 @@ test('without the helper, diagrams and formulas stay as their code', async () =>
   const b = blocks();
   // エンジンが描いた（色のない）図も、コードに戻す
   b.push({ kind: 'diagram', language: 'mermaid', text: 'pie', svg: '<svg>var(--pele-fg)</svg>' });
-  await drawMarkdownPictures(b, 'a.md', colors, undefined, () => Promise.reject(new Error('No drawing helper')));
+  await drawMarkdownPictures(b, 'a.md', colors, {}, () => Promise.reject(new Error('No drawing helper')));
   assert.deepEqual(b[0], { kind: 'code', language: 'mermaid', text: 'flowchart LR\n  A --> B' });
   assert.deepEqual(b[4], { kind: 'math', text: 'x^2' });
   const heading = b[6] as { runs: Record<string, unknown>[] };
@@ -76,9 +84,19 @@ test('without the helper, diagrams and formulas stay as their code', async () =>
 
 test('a file without diagrams or formulas never starts the helper', async () => {
   let started = false;
-  await drawMarkdownPictures([{ kind: 'paragraph', runs: [{ text: 'x' }] }], 'a.md', colors, undefined, async () => {
+  await drawMarkdownPictures([{ kind: 'paragraph', runs: [{ text: 'x' }] }], 'a.md', colors, {}, async () => {
     started = true;
     return {};
   });
   assert.equal(started, false);
+});
+
+test('an imported Mermaid theme the helper can’t read is reported', async () => {
+  const b = blocks();
+  const drawn = await drawMarkdownPictures(b, 'a.md', colors, { scheme: 'mermaid-import:mine', importedTheme: 'not json' }, async (op, fields) => {
+    if (op !== 'diagram') return { formulas: [] };
+    assert.equal(fields['importedTheme'], 'not json');
+    return { svg: '<svg/>', themeError: 'expected value' };
+  });
+  assert.deepEqual(drawn, { themeError: 'expected value' });
 });
