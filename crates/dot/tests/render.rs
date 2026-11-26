@@ -1189,3 +1189,35 @@ fn dot_orders_nodes_by_their_ports() {
     let x = |id: &str| attr_num(part(&svg, id), "x");
     assert!(x("b") < x("a"), "{svg}");
 }
+
+/// ratio はノードの大きさを変えずに位置を伸ばして縦横の比を合わせる。数ならその比、fill は size の比。
+#[test]
+fn dot_ratio_stretches_positions() {
+    let view = |src: &str| {
+        let svg = render(src).unwrap().svg;
+        let v: Vec<f64> = svg
+            .split("viewBox=\"")
+            .nth(1)
+            .unwrap()
+            .split('"')
+            .next()
+            .unwrap()
+            .split(' ')
+            .map(|n| n.parse().unwrap())
+            .collect();
+        (v[2], v[3], svg)
+    };
+    let (w, h, svg) = view("digraph { ratio=2; a -> {b c d} }");
+    assert!((h / w - 2.0).abs() < 0.1, "{w} {h}");
+    assert!(
+        (attr_num(part(&svg, "a"), "rx") - 27.0).abs() < 0.01,
+        "{svg}"
+    );
+    let (w, h, _) = view("digraph { rankdir=LR; ratio=fill; size=\"7,1\"; a -> {b c d} }");
+    assert!((h / w - 1.0 / 7.0).abs() < 0.03, "{w} {h}");
+    // ratio がなければ size は配置を変えない
+    assert_eq!(
+        view("digraph { a -> {b c d} }").0,
+        view("digraph { size=\"1,9\"; a -> {b c d} }").0
+    );
+}

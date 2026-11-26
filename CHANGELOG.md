@@ -59,6 +59,8 @@ becomes the GitHub Release notes.
 - DOT diagrams: the dot layout orders nodes by the ports their edges reach, so edges to a record's fields cross less.
 - DOT diagrams: a polygon with fewer than 3 sides is drawn as an ellipse (or an egg when distorted or skewed), as
   Graphviz does, not as a triangle.
+- DOT diagrams: the dot layout reads the graph's `ratio` (a number, `fill` or `expand` with `size`) and spreads the nodes
+  to that shape, as Graphviz does.
 - Exporting chosen folders as an archive in a partial clone fetches only the contents it asked about, not every missing
   file of the commit (git 2.41 or later; older git fetches them all, and the question now counts them all).
 

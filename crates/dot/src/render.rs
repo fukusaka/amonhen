@@ -873,6 +873,16 @@ pub fn render(
             let heights: Vec<f64> = lnodes.iter().map(|n| n.h).collect();
             layout::make_room_for_tracks(&mut lay, &heights, route::TRACK, 4.0, ranksep);
         }
+        // ratio: 位置だけを伸ばして縦横の比を合わせる（仕上がりの向きで比べる）
+        let (span_x, span_y) = layout::center_span(&lay);
+        let (w, h, span) = if dir.sideways() {
+            (lay.height, lay.width, (span_y, span_x))
+        } else {
+            (lay.width, lay.height, (span_x, span_y))
+        };
+        let (fx, fy) = ratio_scale(g.get("ratio"), g.get("size"), w, h, span);
+        let (sx, sy) = if dir.sideways() { (fy, fx) } else { (fx, fy) };
+        layout::stretch(&mut lay, sx, sy);
         lay
     };
     let lnodes: Vec<layout::Node> = if free {
@@ -2814,3 +2824,75 @@ impl BBox {
         self.add((x1, y1));
     }
 }
+
+/// `ratio` と `size`（インチ）から、仕上がりの向きの横と縦の位置の伸ばし（どちらも 1 以上）。`w`・`h` は図の
+/// 大きさ、`span` はノードの中心の広がりで、伸びるのはこの分だけ。数なら縦横の比（高さ / 幅）に足りない側を伸ばす。
+/// `fill` は `size` の比に合わせ、両方とも `size` より小さければ両方を `size` まで伸ばす。`expand` は両方とも
+/// 小さければ同じ倍率で `size` に届くまで。`compress`・`auto` は読まない。
+fn ratio_scale(
+    ratio: Option<&str>,
+    size: Option<&str>,
+    w: f64,
+    h: f64,
+    span: (f64, f64),
+) -> (f64, f64) {
+    let none = (1.0, 1.0);
+    let Some(ratio) = ratio.map(|r| r.trim().to_ascii_lowercase()) else {
+        return none;
+    };
+    if w <= 0.0 || h <= 0.0 {
+        return none;
+    }
+    let size = size.and_then(|s| {
+        let s = s.trim().trim_end_matches('!');
+        let mut it = s.split(',').map(|v| v.trim().parse::<f64>().ok());
+        let a = it.next().flatten()?;
+        let b = it.next().flatten().unwrap_or(a);
+        (a.is_finite() && b.is_finite() && a > 0.0 && b > 0.0).then_some((a * INCH, b * INCH))
+    });
+    // 横（縦）を `to` の大きさにする位置の倍率
+    let grow_x = |to: f64| {
+        if span.0 > 0.0 {
+            1.0 + (to - w) / span.0
+        } else {
+            1.0
+        }
+    };
+    let grow_y = |to: f64| {
+        if span.1 > 0.0 {
+            1.0 + (to - h) / span.1
+        } else {
+            1.0
+        }
+    };
+    let to_aspect = |r: f64| -> (f64, f64) {
+        if h / w < r {
+            (1.0, grow_y(r * w))
+        } else {
+            (grow_x(h / r), 1.0)
+        }
+    };
+    let (fx, fy) = match ratio.as_str() {
+        "fill" => match size {
+            Some((sw, sh)) if sw > w && sh > h => (grow_x(sw), grow_y(sh)),
+            Some((sw, sh)) => to_aspect(sh / sw),
+            None => none,
+        },
+        "expand" => match size {
+            Some((sw, sh)) if sw > w && sh > h => {
+                let k = grow_x(sw).min(grow_y(sh));
+                (k, k)
+            }
+            _ => none,
+        },
+        _ => match ratio.parse::<f64>() {
+            Ok(r) if r.is_finite() && r > 0.0 => to_aspect(r),
+            _ => none,
+        },
+    };
+    // 図が大きくなりすぎないように
+    (fx.clamp(1.0, MAX_STRETCH), fy.clamp(1.0, MAX_STRETCH))
+}
+
+/// `ratio` で伸ばす倍率の上限。
+const MAX_STRETCH: f64 = 20.0;

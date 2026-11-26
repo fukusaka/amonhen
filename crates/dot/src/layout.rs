@@ -120,9 +120,9 @@ type Chain = (Vec<usize>, bool, Option<usize>);
 const MAX_DUMMIES: usize = 12_000;
 /// 直角の線の段の間の下限（ランクの間を広げる上限を超えても保つ）。
 const MIN_TRACK: f64 = 3.0;
-/// 並べ替えで、交差が減らない回がこれだけ続けばやめる。
 /// 同じランクの辺の輪を調べる辺の数の上限（辺ごとに深さ優先でたどるので、2 乗で増える）。
 const FLAT_CYCLE_EDGES: usize = 4096;
+/// 並べ替えで、交差が減らない回がこれだけ続けばやめる。
 const MINCROSS_STALE: usize = 12;
 /// 隣どうしの入れ替えを使う、ランクの間の線の切れ端の数の上限（大きな図の時間のため）。
 const TRANSPOSE_SEGS: usize = 1500;
@@ -1735,6 +1735,59 @@ pub fn layout(
 }
 
 /// 直角の線（`splines=ortho`）の段の場所をランクの間に空ける。ランクの間を横に動く線（仮のノードの間の横のずれ）の
+/// ノードの中心の広がり（横、縦）。`stretch` で伸びるのはこの分だけ。
+pub fn center_span(lay: &Layout) -> (f64, f64) {
+    let span = |f: fn(&(f64, f64)) -> f64| {
+        let lo = lay.nodes.iter().map(f).fold(f64::INFINITY, f64::min);
+        let hi = lay.nodes.iter().map(f).fold(f64::NEG_INFINITY, f64::max);
+        if hi > lo { hi - lo } else { 0.0 }
+    };
+    (span(|p| p.0), span(|p| p.1))
+}
+
+/// ノードの大きさはそのままに、位置を横に `sx`・縦に `sy` 倍する（`ratio` の伸ばし。どちらも 1 以上）。いちばん
+/// 左上のノードの中心を起点に、ノード・道筋・ラベル・クラスタの箱・通り道を伸ばす。
+pub fn stretch(lay: &mut Layout, sx: f64, sy: f64) {
+    let sx = if sx.is_finite() { sx.max(1.0) } else { 1.0 };
+    let sy = if sy.is_finite() { sy.max(1.0) } else { 1.0 };
+    if (sx == 1.0 && sy == 1.0) || lay.nodes.is_empty() {
+        return;
+    }
+    let (span_x, span_y) = center_span(lay);
+    let ox = lay.nodes.iter().map(|p| p.0).fold(f64::INFINITY, f64::min);
+    let oy = lay.nodes.iter().map(|p| p.1).fold(f64::INFINITY, f64::min);
+    // 起点より先は伸ばし、手前（起点の左・上の縁）はそのまま
+    let mx = |v: f64| if v > ox { ox + (v - ox) * sx } else { v };
+    let my = |v: f64| if v > oy { oy + (v - oy) * sy } else { v };
+    let f = |p: &mut (f64, f64)| *p = (mx(p.0), my(p.1));
+    lay.nodes.iter_mut().for_each(f);
+    for r in &mut lay.routes {
+        if let Route::Path { points, label } = r {
+            points.iter_mut().for_each(f);
+            if let Some(l) = label {
+                f(l);
+            }
+        }
+    }
+    // クラスタの箱の縁も同じく（中のノードとの間は伸びるだけで、ノードを囲んだまま）
+    let mut right = lay.width + span_x * (sx - 1.0);
+    let mut bottom = lay.height + span_y * (sy - 1.0);
+    for b in lay.clusters.iter_mut().flatten() {
+        *b = [mx(b[0]), my(b[1]), mx(b[2]), my(b[3])];
+        right = right.max(b[2]);
+        bottom = bottom.max(b[3]);
+    }
+    for gates in &mut lay.corridors {
+        for g in gates {
+            g.y = my(g.y);
+            g.lo = mx(g.lo);
+            g.hi = mx(g.hi);
+        }
+    }
+    lay.width = right;
+    lay.height = bottom;
+}
+
 /// 重なりの最大から段の数を見積もり、`track` の間で並べて両側に `margin`（矢じりの分）を残せるだけ、下のランクを
 /// 下げる（ノード・道筋・ラベル・クラスタの箱の y と高さ）。1 つの間で下げるのは `most_add` まで（込んだ図が縦に
 /// 伸びすぎないように。足りない分は段の間を詰める）。ただし段の間が `MIN_TRACK` を切る分は、上限を超えても下げる。`heights` はノードの高さ（配置の向き）。
