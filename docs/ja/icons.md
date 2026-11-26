@@ -71,60 +71,60 @@ swift figures.swift alternatives alternatives-rest.ja.tsv alternatives ../../../
 - Unicode の東アジアの幅が N か Na の文字だけにし、どの言語の設定でも 1 マスに収める。● ↑ ★ ▸ のような曖昧幅の文字は、日本語の設定の GNOME 端末では 2 マスで描かれるが、`unicode-width` は 1 マスと数える。
 - 絵文字の性質を持つ文字は使わない。Windows Terminal はフォントにない字を色つきの絵文字で描くことがある（✔ と ⏲ がそうだった）。
 - 3 つの端末の既定のフォントで確かめた。GNOME 端末（Ubuntu Sans Mono、日本語の設定）、macOS の Terminal（SF Mono）、Windows Terminal（Cascadia Mono）。ほとんどの文字はこれらのフォントになく、ほかのフォントで補われる。macOS の Terminal は字形をマスに縮め、GNOME 端末は隣のマスへはみ出させ、Windows Terminal は Segoe UI Symbol から取る。どれかではみ出した文字は替えたので、丸い形（円の矢印・歯車・丸で囲んだ星）はほとんど使えない。
-- できるところは共通の形に合わせる。リモートは上の横線（`⊤`、食い違うときは `⍡`）、元に戻すは点線の矢印（点線は前の位置）、確かめられないは丸に「!」と同じ `!`。
-- 同じ意味の名前は同じ文字にする（失敗と CI 失敗は `✗`、取り消しと CI 取り消しは `⊘`、2 つの新しいブランチは `⁺`、変更のある worktree と Working Copy は `✎`）。署名が不正も `✗` を使う（署名の中にしか出ない）。意味が違えば文字も分ける。変更なし `=`・署名あり `ʃ`・CI 成功 `✓`、確かめられない `!` と未追跡のファイル `?`（`git status` の `??` と同じ）。
+- できるところは共通の形に合わせる。リモートは上の横線（`⊤`、リモートに同じ名前の別のタグがあるときは `⍡`）、詳細を広げるは斜めの両向きの矢印（`⤢`）、広げた詳細を戻すはもう一方の斜め（`⤡`。内向きの矢印の字はない）、枠に合わせるは枠（`⬚`）、確かめられないは丸に「!」と同じ `!`。
+- 同じ意味の名前は同じ文字にする（失敗と CI 失敗は `✗`、取り消しと CI 取り消しは `⊘`、2 つの新しいブランチは `⁺`、書き込む先の worktree と Working Copy は同じ形なので `✎`）。署名が不正も `✗` を使う（署名の中にしか出ない）。意味が違えば文字も分ける。変更なし `=`・署名あり `ʃ`・CI 成功 `✓`、確かめられない `!`（丸に「!」）と種類の分からないもの `?`（紙に「?」）。
 - CI 実行中の `⣾` は点字の回る印の 1 こまなので、⣾⣽⣻⢿⡿⣟⣯⣷ を順に出せる。更新の `⤸` は macOS の Terminal では小さく描かれる。読みやすい円の矢印は GNOME 端末ではみ出す。
 
 | 名前 | 意味 | 文字 | 符号位置 |
 | --- | --- | --- | --- |
-| `account` | アカウント | `@` | U+0040 |
-| `activity` | Activity（裏の動き） | `≋` | U+224B |
-| `ahead-behind` | 先行・遅れ | `↨` | U+21A8 |
-| `ai` | AI | `✦` | U+2726 |
-| `appearance` | 外観（明暗） | `☾` | U+263E |
+| `account` | Accounts | `@` | U+0040 |
+| `activity` | Activity | `≋` | U+224B |
+| `ahead-behind` | 先／遅れ | `↨` | U+21A8 |
+| `ai` | AI の解説・提案 | `✦` | U+2726 |
+| `appearance` | Appearance | `☾` | U+263E |
 | `back` | 戻る | `‹` | U+2039 |
-| `bad-signature` | 署名が不正 | `✗` | U+2717 |
-| `branch` | ブランチ | `⑂` | U+2442 |
-| `cancelled` | 取り消し | `⊘` | U+2298 |
-| `cannot-verify` | 確かめられない | `!` | U+0021 |
-| `changed-pixels` | 変わった画素 | `⊹` | U+22B9 |
-| `checkerboard` | 市松（透明） | `▚` | U+259A |
-| `ci-cancelled` | CI 取り消し | `⊘` | U+2298 |
-| `ci-failed` | CI 失敗 | `✗` | U+2717 |
-| `ci-none` | CI なし | `◌` | U+25CC |
-| `ci-passed` | CI 成功 | `✓` | U+2713 |
-| `ci-running` | CI 実行中 | `⣾` | U+28FE |
+| `bad-signature` | 不正な署名 | `✗` | U+2717 |
+| `branch` | Branch | `⑂` | U+2442 |
+| `cancelled` | 取り消した | `⊘` | U+2298 |
+| `cannot-verify` | この git では確かめられない | `!` | U+0021 |
+| `changed-pixels` | 違うピクセル | `⊹` | U+22B9 |
+| `checkerboard` | 市松模様 | `▚` | U+259A |
+| `ci-cancelled` | CI を取り消した | `⊘` | U+2298 |
+| `ci-failed` | CI が失敗した | `✗` | U+2717 |
+| `ci-none` | CI がない | `◌` | U+25CC |
+| `ci-passed` | CI が通った | `✓` | U+2713 |
+| `ci-running` | CI が走っている | `⣾` | U+28FE |
 | `clean` | 変更なし | `=` | U+003D |
-| `collapse-all` | すべてたたむ | `⊟` | U+229F |
+| `collapse-all` | すべて畳む | `⊟` | U+229F |
 | `conflict` | コンフリクト | `‼` | U+203C |
 | `current-branch` | 今のブランチ | `▹` | U+25B9 |
-| `disconnected` | つながらない | `⌁` | U+2301 |
-| `display-options` | 表示の設定 | `⁑` | U+2051 |
+| `disconnected` | 切れたつながり | `⌁` | U+2301 |
+| `display-options` | 表示のメニュー | `⁑` | U+2051 |
 | `edit-mode` | 編集モード | `✐` | U+2710 |
-| `edited-worktree` | 変更のある worktree | `✎` | U+270E |
-| `editor` | エディター | `⟨` | U+27E8 |
-| `expand` | 開く（▸） | `›` | U+203A |
+| `edited-worktree` | 書き込む先 | `✎` | U+270E |
+| `editor` | Editor | `⟨` | U+27E8 |
+| `expand` | 詳細を広げる | `⤢` | U+2922 |
 | `expand-all` | すべて開く | `⊞` | U+229E |
-| `expired-key` | 期限切れの鍵 | `⧖` | U+29D6 |
+| `expired-key` | 期限の切れた鍵 | `⧖` | U+29D6 |
 | `failed` | 失敗 | `✗` | U+2717 |
 | `favorite` | お気に入り | `✭` | U+272D |
 | `fetch` | Fetch | `⇣` | U+21E3 |
-| `files` | ファイル | `▯` | U+25AF |
+| `files` | Files | `▯` | U+25AF |
 | `filter` | 絞り込み | `⋎` | U+22CE |
-| `folder` | フォルダー | `▭` | U+25AD |
-| `go-to-head` | HEAD へ | `⇥` | U+21E5 |
+| `folder` | フォルダ | `▭` | U+25AD |
+| `go-to-head` | Go to HEAD | `⇥` | U+21E5 |
 | `history` | History | `↺` | U+21BA |
 | `list` | 一覧 | `≣` | U+2263 |
-| `main-worktree` | 本体の worktree | `⌂` | U+2302 |
+| `main-worktree` | メインの worktree | `⌂` | U+2302 |
 | `merge` | Merge | `⑃` | U+2443 |
 | `missing-key` | 鍵がない | `⚷` | U+26B7 |
 | `modified` | 変更あり | `⁎` | U+204E |
 | `new-branch` | New Branch | `⁺` | U+207A |
-| `new-branch-row` | 新しいブランチ（行） | `⁺` | U+207A |
+| `new-branch-row` | 新しいブランチの行 | `⁺` | U+207A |
 | `not-checked-out` | 取り出していない | `∘` | U+2218 |
-| `onion-skin` | 重ね合わせ | `⊓` | U+2293 |
-| `partial` | 一部 | `⊏` | U+228F |
-| `performance` | 性能 | `ϟ` | U+03DF |
+| `onion-skin` | オニオンスキン | `⊓` | U+2293 |
+| `partial` | partial clone | `⊏` | U+228F |
+| `performance` | Performance | `ϟ` | U+03DF |
 | `pop` | Pop | `⤉` | U+2909 |
 | `preview` | プレビュー | `⌾` | U+233E |
 | `publish` | Publish | `⇡` | U+21E1 |
@@ -134,39 +134,39 @@ swift figures.swift alternatives alternatives-rest.ja.tsv alternatives ../../../
 | `range-diff` | Range Diff | `≍` | U+224D |
 | `rebase` | Rebase | `↱` | U+21B1 |
 | `reflog` | Reflog | `↜` | U+219C |
-| `refresh` | 更新 | `⤸` | U+2938 |
-| `remote` | リモート | `⊤` | U+22A4 |
-| `remote-conflict` | リモートと食い違う | `⍡` | U+2361 |
+| `refresh` | Refresh | `⤸` | U+2938 |
+| `remote` | Remotes | `⊤` | U+22A4 |
+| `remote-conflict` | リモートのタグの衝突 | `⍡` | U+2361 |
 | `repositories` | Repositories | `⦙` | U+2999 |
-| `restore` | 元に戻す（破棄） | `⇠` | U+21E0 |
-| `revoked-key` | 取り消された鍵 | `⌀` | U+2300 |
-| `search` | 検索 | `⌕` | U+2315 |
+| `restore` | 広げた詳細を戻す | `⤡` | U+2921 |
+| `revoked-key` | 失効した鍵 | `⌀` | U+2300 |
+| `search` | Search | `⌕` | U+2315 |
 | `settings` | 設定 | `⋮` | U+22EE |
 | `shallow` | shallow clone | `⋯` | U+22EF |
-| `side-by-side` | 左右に並べる | `⫴` | U+2AF4 |
-| `sidebar` | サイドバー | `⎸` | U+23B8 |
-| `signed` | 署名あり | `ʃ` | U+0283 |
-| `signer-mismatch` | 署名者が違う | `≁` | U+2241 |
+| `side-by-side` | 並べる | `⫴` | U+2AF4 |
+| `sidebar` | Sidebar | `⎸` | U+23B8 |
+| `signed` | 確かめた | `ʃ` | U+0283 |
+| `signer-mismatch` | 署名した人が違う | `≁` | U+2241 |
 | `sparse` | sparse checkout | `⁘` | U+2058 |
-| `stacked` | stacked | `⫶` | U+2AF6 |
+| `stacked` | 積んだブランチ | `⫶` | U+2AF6 |
 | `stash` | Stash | `⤈` | U+2908 |
-| `stashes` | Stashes（節） | `⊔` | U+2294 |
-| `submodule` | submodule | `⊡` | U+22A1 |
-| `subtree` | subtree | `⤷` | U+2937 |
+| `stashes` | Stashes | `⊔` | U+2294 |
+| `submodule` | Submodules | `⊡` | U+22A1 |
+| `subtree` | Subtrees | `⤷` | U+2937 |
 | `swipe` | スワイプ | `⇹` | U+21F9 |
-| `tag` | タグ | `⬦` | U+2B26 |
-| `terminal` | 端末 | `≻` | U+227B |
-| `theme` | テーマ | `◬` | U+25EC |
-| `translate` | 翻訳 | `⥊` | U+294A |
+| `tag` | Tags | `⬦` | U+2B26 |
+| `terminal` | Terminal | `≻` | U+227B |
+| `theme` | Theme | `◬` | U+25EC |
+| `translate` | AI の翻訳 | `⥊` | U+294A |
 | `tree` | 木 | `⊢` | U+22A2 |
-| `trust-unknown` | 信頼が不明 | `⸮` | U+2E2E |
+| `trust-unknown` | 信用度が未定 | `⸮` | U+2E2E |
 | `undo` | Undo | `↩` | U+21A9 |
-| `unknown-file` | 未追跡のファイル | `?` | U+003F |
-| `upstream-gone` | upstream がない | `⍊` | U+234A |
+| `unknown-file` | 種類の分からないもの | `?` | U+003F |
+| `upstream-gone` | 上流が消えた | `⍊` | U+234A |
 | `whitespace` | 空白 | `␣` | U+2423 |
 | `working-copy` | Working Copy | `✎` | U+270E |
 | `wrap-lines` | 折り返し | `↵` | U+21B5 |
-| `zoom-fit` | 大きさを合わせる | `⤢` | U+2922 |
+| `zoom-fit` | 枠に合わせる | `⬚` | U+2B1A |
 | `zoom-in` | 拡大 | `+` | U+002B |
 | `zoom-out` | 縮小 | `-` | U+002D |
 
