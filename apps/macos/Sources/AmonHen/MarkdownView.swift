@@ -999,11 +999,14 @@ private struct MarkdownBuilder {
                     }
                     let before = out.length
                     add(item.blocks, depth: depth + 1, outer: outer, indent: indent + step)
-                    // 項目の最初の段落の頭に印を置く（印はぶら下げる）。
+                    // 項目の最初の段落の頭に印を置く（印はぶら下げる）。項目の最初が入れ子のリストなら、その印のタブは残して
+                    // 同じ行に並べる（GitHub と同じ）。
                     let style = (out.attribute(.paragraphStyle, at: min(before, max(out.length - 1, 0)), effectiveRange: nil)
                         as? NSParagraphStyle)?.mutableCopy() as? NSMutableParagraphStyle ?? paragraph(indent: indent + step)
+                    let nested: [NSTextTab]
+                    if case .list? = item.blocks.first { nested = style.tabStops.filter { $0.location > indent + step } } else { nested = [] }
                     style.firstLineHeadIndent = indent
-                    style.tabStops = [NSTextTab(textAlignment: .left, location: indent + step)]
+                    style.tabStops = [NSTextTab(textAlignment: .left, location: indent + step)] + nested
                     style.paragraphSpacing = 4
                     let firstEnd = (out.string as NSString).range(of: "\n", range: NSRange(location: before, length: out.length - before)).location
                     if firstEnd != NSNotFound {
