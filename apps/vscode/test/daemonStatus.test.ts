@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict';
 import { test } from 'node:test';
-import { bytes, clientsCell, duration, indexCell, sshCell, statusLine, type DaemonRepo } from '../src/daemonStatus/protocol.ts';
+import { bytes, clientsCell, duration, indexCell, sshCell, statusLine, trafficCell, type DaemonRepo } from '../src/daemonStatus/protocol.ts';
 
 const repo = (r: Partial<DaemonRepo>): DaemonRepo => ({ path: '/r', clients: 1, idleMs: 0, history: true, watching: true, ...r });
 
@@ -27,4 +27,8 @@ test('the Daemon page writes the status and each repository as the app does', ()
   assert.equal(clientsCell(repo({ clients: 0, idleMs: 65_000 })), 'None (for 1 min 5 s)');
   assert.equal(indexCell(repo({ indexRows: 52_000, indexBytes: 3_100_000 })), '52,000 rows · 3.1 MB');
   assert.equal(indexCell(repo({})), '—');
+});
+
+test('this window’s connections show what each sent and received', () => {
+  assert.equal(trafficCell({ path: '/r', sent: 2_000, received: 3_000_000 }), '2 KB · 3 MB');
 });
