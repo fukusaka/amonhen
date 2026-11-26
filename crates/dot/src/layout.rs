@@ -849,8 +849,11 @@ impl Ordering<'_> {
             let mut c = self.nodes[v].cluster;
             let mut hops = 0;
             while let Some(ci) = c {
-                gsum[ci] += val[v];
-                gcount[ci] += 1;
+                // 値のないノード（その側に隣がない）は数えない
+                if !val[v].is_nan() {
+                    gsum[ci] += val[v];
+                    gcount[ci] += 1;
+                }
                 gfirst[ci] = gfirst[ci].min(self.pos[v]);
                 if !seen[ci] {
                     seen[ci] = true;
@@ -866,7 +869,8 @@ impl Ordering<'_> {
         let value = |it: &Item| -> (f64, usize) {
             match *it {
                 Item::Node(v) => (val[v], self.pos[v]),
-                Item::Cluster(c) => (gsum[c] / gcount[c].max(1) as f64, gfirst[c]),
+                Item::Cluster(c) if gcount[c] == 0 => (f64::NAN, gfirst[c]),
+                Item::Cluster(c) => (gsum[c] / gcount[c] as f64, gfirst[c]),
             }
         };
         let mut out: Vec<usize> = Vec::with_capacity(layer.len());
@@ -875,13 +879,28 @@ impl Ordering<'_> {
         let mut sorted: Vec<Vec<Item>> = vec![Vec::new(); k + 1];
         let prepare = |g: usize, groups: &mut Vec<Vec<Item>>, sorted: &mut Vec<Vec<Item>>| {
             let mut items = std::mem::take(&mut groups[g]);
-            items.sort_by(|a, b| {
+            // 値のない要素（その側に隣がない）は今の場所に固定し、ほかを値の順に残りの場所へ並べる（Gansner ほか
+            // 1993 §3: "left fixed in their current positions with non-fixed vertices sorted into the remaining positions"）
+            let mut movable: Vec<Item> = items
+                .iter()
+                .copied()
+                .filter(|it| !value(it).0.is_nan())
+                .collect();
+            movable.sort_by(|a, b| {
                 let (va, pa) = value(a);
                 let (vb, pb) = value(b);
                 va.partial_cmp(&vb)
                     .unwrap_or(std::cmp::Ordering::Equal)
                     .then(pa.cmp(&pb))
             });
+            let mut next = movable.into_iter();
+            for it in items.iter_mut() {
+                if !value(it).0.is_nan()
+                    && let Some(m) = next.next()
+                {
+                    *it = m;
+                }
+            }
             // クラスタの場所は、兄弟のクラスタのいつもの順で埋め直す
             let mut slots: Vec<usize> = Vec::new();
             let mut clusters: Vec<usize> = Vec::new();
@@ -1018,7 +1037,8 @@ impl Ordering<'_> {
                 } else {
                     &self.nodes[v].down
                 };
-                val[v] = self.median(list, down).unwrap_or(self.pos[v] as f64);
+                // その側に隣のないノードは値なし（今の場所に固定する）
+                val[v] = self.median(list, down).unwrap_or(f64::NAN);
             }
             self.sort_layer(r, val);
         }
@@ -2674,6 +2694,45 @@ mod tests {
         assert_eq!(l.ranks[3], 0);
         assert!(l.ranks[0] >= 1);
         assert!(l.ranks[2] >= l.ranks[1]);
+    }
+
+    /// 名前の組の辺から、出てきた順にノードを作って配置し、交差の数を返す。
+    fn crossings_of(pairs: &[(u8, u8)]) -> usize {
+        let mut names: Vec<u8> = Vec::new();
+        let mut index = |n: u8| match names.iter().position(|&x| x == n) {
+            Some(i) => i,
+            None => {
+                names.push(n);
+                names.len() - 1
+            }
+        };
+        let edges: Vec<Edge> = pairs
+            .iter()
+            .map(|&(a, b)| edge(index(a), index(b)))
+            .collect();
+        let nodes = vec![node(None); names.len()];
+        layout(&nodes, &edges, &[], &[], &opts()).crossings
+    }
+
+    #[test]
+    fn nodes_without_neighbours_keep_their_place_while_sorting() {
+        // 上にも下にも隣のあるノードだけを中央値で並べ替え、その側に隣のないノードは今の場所に残す
+        // （Gansner ほか 1993 §3）。一緒に並べ替えると交差が 1 つ残っていた
+        let g = [
+            (0, 3),
+            (0, 5),
+            (1, 8),
+            (2, 4),
+            (2, 5),
+            (2, 7),
+            (3, 6),
+            (3, 7),
+            (3, 8),
+            (5, 7),
+            (5, 8),
+            (6, 7),
+        ];
+        assert_eq!(crossings_of(&g), 0);
     }
 
     #[test]
