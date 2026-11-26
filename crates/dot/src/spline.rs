@@ -105,14 +105,51 @@ pub fn shortest(start: P, end: P, gates: &[Portal]) -> Vec<P> {
     out
 }
 
-/// 曲線が関の区間に収まるか（`SAMPLES` 点の間の線で、y が関をまたぐ所の x を見る）。
+/// 曲線が通り道に収まるか（`SAMPLES` 点の間の線で見る）。関の高さではその区間、続く 2 つの関の間（行の中と、
+/// ランクの間）では 2 つの区間を合わせた幅（Gansner ほか 1993 §5 の、行の箱とランクの間の箱の並び）。
 fn fits(c: &Cubic, gates: &[Portal]) -> bool {
-    const SAMPLES: usize = 16;
+    const SAMPLES: usize = 24;
+    // 関は y の順（上りか下り）に並ぶので、y の入る間を二分探索で探す
+    let ascending = gates.first().map(|g| g.y) <= gates.last().map(|g| g.y);
+    let inside = |x: f64, y: f64| -> bool {
+        let k = if ascending {
+            gates.partition_point(|g| g.y < y)
+        } else {
+            gates.partition_point(|g| g.y > y)
+        };
+        // gates[k - 1] と gates[k] の間（端の外は見ない）
+        if k == 0 || k >= gates.len() {
+            return match gates.get(k) {
+                Some(g) if (y - g.y).abs() < 1e-9 => x >= g.lo - SLACK && x <= g.hi + SLACK,
+                _ => true,
+            };
+        }
+        let (g, h) = (gates[k - 1], gates[k]);
+        if (y - h.y).abs() < 1e-9 {
+            return x >= h.lo - SLACK && x <= h.hi + SLACK;
+        }
+        x >= g.lo.min(h.lo) - SLACK && x <= g.hi.max(h.hi) + SLACK
+    };
     let mut prev = c.0;
     for i in 1..=SAMPLES {
         let p = c.at(i as f64 / SAMPLES as f64);
+        if !inside(p.0, p.1) {
+            return false;
+        }
         let (y0, y1) = (prev.1.min(p.1), prev.1.max(p.1));
-        for g in gates {
+        // y0..=y1 に入る関だけ（y の順なので二分探索で範囲を絞る）
+        let (from, to) = if ascending {
+            (
+                gates.partition_point(|g| g.y < y0),
+                gates.partition_point(|g| g.y <= y1),
+            )
+        } else {
+            (
+                gates.partition_point(|g| g.y > y1),
+                gates.partition_point(|g| g.y >= y0),
+            )
+        };
+        for g in &gates[from..to.max(from)] {
             if g.y < y0 || g.y > y1 {
                 continue;
             }
@@ -130,8 +167,10 @@ fn fits(c: &Cubic, gates: &[Portal]) -> bool {
     true
 }
 
-/// 折れ線 `points` を通るなめらかな曲線（中の点では前後の点を結ぶ向き、両端では隣の点への向き）。関 `gates` から
-/// はみ出す切れ端は、接線を縮めてやり直し、だめなら直線にする。
+/// 折れ線 `points` を近似するなめらかな曲線。両端の間を 1 本の 3 次曲線で近似し（端の向きは隣の点への向き、制御点
+/// の長さは折れ線の上の点への最小二乗。Schneider 1990）、通り道からはみ出すか、折れ線から `FIT_ERROR` より離れれば、
+/// ずれのいちばん大きい所に近い折れ点で分けて（そこでの向きは前後の点を結ぶ向き）それぞれやり直す（Dobkin ほか
+/// 1997 の当てはめ）。隣どうしの点まで分けてもだめなら、接線を縮め、さらにだめなら直線。
 pub fn fit(points: &[P], gates: &[Portal]) -> Vec<Cubic> {
     let n = points.len();
     if n < 2 {
@@ -145,27 +184,196 @@ pub fn fit(points: &[P], gates: &[Portal]) -> Vec<Cubic> {
         } else {
             (points[i - 1], points[i + 1])
         };
-        let (dx, dy) = (b.0 - a.0, b.1 - a.1);
-        let l = dx.hypot(dy);
-        if l < 1e-9 {
-            (0.0, 0.0)
-        } else {
-            (dx / l, dy / l)
-        }
+        unit((b.0 - a.0, b.1 - a.1))
     };
     let mut out = Vec::with_capacity(n - 1);
-    for i in 0..n - 1 {
-        piece(
-            points[i],
-            points[i + 1],
-            tangent(i),
-            tangent(i + 1),
-            gates,
-            3,
-            &mut out,
-        );
+    span(
+        points,
+        0,
+        n - 1,
+        tangent(0),
+        tangent(n - 1),
+        &tangent,
+        gates,
+        &mut out,
+    );
+    out
+}
+
+/// 近似の曲線が折れ線から離れてよい距離。
+const FIT_ERROR: f64 = 8.0;
+/// 1 本の曲線で近似を試す区間の折れ点の数の上限。
+const SPAN_POINTS: usize = 16;
+
+fn unit(d: P) -> P {
+    let l = d.0.hypot(d.1);
+    if l < 1e-9 {
+        (0.0, 0.0)
+    } else {
+        (d.0 / l, d.1 / l)
+    }
+}
+
+/// 折れ線 `poly` の上に、間がおよそ `step` の点を取る（両端と折れ点を含む）。
+fn samples(poly: &[P], step: f64) -> Vec<P> {
+    let mut out = vec![poly[0]];
+    for w in poly.windows(2) {
+        let len = (w[1].0 - w[0].0).hypot(w[1].1 - w[0].1);
+        let k = (len / step).ceil().max(1.0) as usize;
+        for i in 1..=k {
+            let t = i as f64 / k as f64;
+            out.push((
+                w[0].0 + (w[1].0 - w[0].0) * t,
+                w[0].1 + (w[1].1 - w[0].1) * t,
+            ));
+        }
     }
     out
+}
+
+/// 点の列 `d` を、`t1` で出て `t2` で入る 3 次曲線で最小二乗に近似する（媒介変数は弦の長さの割合）。曲線と、点の
+/// うちいちばん離れたものの距離と番号。
+fn least_squares(d: &[P], t1: P, t2: P) -> (Cubic, f64, usize) {
+    let n = d.len();
+    let (p0, p3) = (d[0], d[n - 1]);
+    let mut u = vec![0.0; n];
+    for i in 1..n {
+        u[i] = u[i - 1] + (d[i].0 - d[i - 1].0).hypot(d[i].1 - d[i - 1].1);
+    }
+    let total = u[n - 1].max(1e-9);
+    for v in &mut u {
+        *v /= total;
+    }
+    let chord = (p3.0 - p0.0).hypot(p3.1 - p0.1);
+    let solve = |u: &[f64]| -> (f64, f64) {
+        let (mut c00, mut c01, mut c11, mut x0, mut x1) = (0.0, 0.0, 0.0, 0.0, 0.0);
+        for (i, &t) in u.iter().enumerate() {
+            let s = 1.0 - t;
+            let (b0, b1, b2, b3) = (s * s * s, 3.0 * t * s * s, 3.0 * t * t * s, t * t * t);
+            let a0 = (t1.0 * b1, t1.1 * b1);
+            let a1 = (-t2.0 * b2, -t2.1 * b2);
+            c00 += a0.0 * a0.0 + a0.1 * a0.1;
+            c01 += a0.0 * a1.0 + a0.1 * a1.1;
+            c11 += a1.0 * a1.0 + a1.1 * a1.1;
+            let base = (
+                p0.0 * (b0 + b1) + p3.0 * (b2 + b3),
+                p0.1 * (b0 + b1) + p3.1 * (b2 + b3),
+            );
+            let r = (d[i].0 - base.0, d[i].1 - base.1);
+            x0 += a0.0 * r.0 + a0.1 * r.1;
+            x1 += a1.0 * r.0 + a1.1 * r.1;
+        }
+        let det = c00 * c11 - c01 * c01;
+        let (mut al, mut ar) = if det.abs() < 1e-12 {
+            (0.0, 0.0)
+        } else {
+            ((x0 * c11 - x1 * c01) / det, (c00 * x1 - c01 * x0) / det)
+        };
+        // 小さすぎる・負なら、弦の 1/3（Schneider の取り決め）
+        if al < chord * 1e-3 || ar < chord * 1e-3 {
+            al = chord / 3.0;
+            ar = chord / 3.0;
+        }
+        (al, ar)
+    };
+    let build = |al: f64, ar: f64| {
+        Cubic(
+            p0,
+            (p0.0 + t1.0 * al, p0.1 + t1.1 * al),
+            (p3.0 - t2.0 * ar, p3.1 - t2.1 * ar),
+            p3,
+        )
+    };
+    let err = |c: &Cubic, u: &[f64]| -> (f64, usize) {
+        let mut worst = (0.0, n / 2);
+        for (i, &t) in u.iter().enumerate() {
+            let q = c.at(t);
+            let e = (q.0 - d[i].0).hypot(q.1 - d[i].1);
+            if e > worst.0 {
+                worst = (e, i);
+            }
+        }
+        worst
+    };
+    let (al, ar) = solve(&u);
+    let mut c = build(al, ar);
+    let (mut e, mut at) = err(&c, &u);
+    // 媒介変数を曲線のいちばん近い点に寄せて解き直す（ニュートン法を 1 回ずつ、2 回まで）
+    for _ in 0..2 {
+        if e <= FIT_ERROR {
+            break;
+        }
+        for (i, t) in u.iter_mut().enumerate() {
+            *t = newton(&c, d[i], *t);
+        }
+        let (al, ar) = solve(&u);
+        let c2 = build(al, ar);
+        let (e2, at2) = err(&c2, &u);
+        if e2 >= e {
+            break;
+        }
+        (c, e, at) = (c2, e2, at2);
+    }
+    (c, e, at)
+}
+
+/// 媒介変数 `t` を、点 `p` にいちばん近い曲線の点へ寄せる（ニュートン法 1 回）。
+fn newton(c: &Cubic, p: P, t: f64) -> f64 {
+    let q = c.at(t);
+    let d1 = c.derivative(t);
+    let d2 = c.second_derivative(t);
+    let num = (q.0 - p.0) * d1.0 + (q.1 - p.1) * d1.1;
+    let den = d1.0 * d1.0 + d1.1 * d1.1 + (q.0 - p.0) * d2.0 + (q.1 - p.1) * d2.1;
+    if den.abs() < 1e-12 {
+        t
+    } else {
+        (t - num / den).clamp(0.0, 1.0)
+    }
+}
+
+/// `points[i..=j]` を、`tp` で出て `tq` で入る曲線で近似する。
+#[allow(clippy::too_many_arguments)]
+fn span(
+    points: &[P],
+    i: usize,
+    j: usize,
+    tp: P,
+    tq: P,
+    tangent: &dyn Fn(usize) -> P,
+    gates: &[Portal],
+    out: &mut Vec<Cubic>,
+) {
+    if j - i == 1 {
+        piece(points[i], points[j], tp, tq, gates, 3, out);
+        return;
+    }
+    // 折れ点が多すぎれば、近似を試さずに真ん中で分ける（込んだ長い線は 1 本に収まらず、試すだけ遅い）
+    if j - i > SPAN_POINTS {
+        let m = (i + j) / 2;
+        let tm = tangent(m);
+        span(points, i, m, tp, tm, tangent, gates, out);
+        span(points, m, j, tm, tq, tangent, gates, out);
+        return;
+    }
+    let d = samples(&points[i..=j], 16.0);
+    let (c, e, at) = least_squares(&d, tp, tq);
+    if e <= FIT_ERROR && fits(&c, gates) {
+        out.push(c);
+        return;
+    }
+    // いちばん離れた点に近い折れ点（両端を除く）で分ける
+    let far = d[at];
+    let m = (i + 1..j)
+        .min_by(|&a, &b| {
+            let dist = |k: usize| (points[k].0 - far.0).hypot(points[k].1 - far.1);
+            dist(a)
+                .partial_cmp(&dist(b))
+                .unwrap_or(std::cmp::Ordering::Equal)
+        })
+        .unwrap_or((i + j) / 2);
+    let tm = tangent(m);
+    span(points, i, m, tp, tm, tangent, gates, out);
+    span(points, m, j, tm, tq, tangent, gates, out);
 }
 
 /// p から q への切れ端（接線 tp・tq）。はみ出せば接線を縮め、それでもだめなら直線の真ん中で 2 つに分けて（向きは
@@ -202,6 +410,35 @@ mod tests {
 
     fn gate(y: f64, lo: f64, hi: f64) -> Portal {
         Portal { y, lo, hi }
+    }
+
+    #[test]
+    fn fits_one_long_curve_through_a_gentle_polyline() {
+        // 広い通り道のゆるい折れ線は、折れ点ごとに分けず 1 本の曲線にする
+        let points = [
+            (0.0, 0.0),
+            (10.0, 50.0),
+            (16.0, 100.0),
+            (19.0, 150.0),
+            (20.0, 200.0),
+        ];
+        let gates: Vec<Portal> = (1..8)
+            .map(|k| gate(k as f64 * 25.0, -100.0, 100.0))
+            .collect();
+        let c = fit(&points, &gates);
+        assert_eq!(c.len(), 1, "{c:?}");
+        // 大きなジグザグは 1 本では折れ線から離れすぎるので、折れ点で分ける
+        let zig = [
+            (0.0, 0.0),
+            (40.0, 50.0),
+            (0.0, 100.0),
+            (40.0, 150.0),
+            (0.0, 200.0),
+        ];
+        let c = fit(&zig, &gates);
+        assert!(c.len() > 1, "{c:?}");
+        assert_eq!(c[0].0, zig[0]);
+        assert_eq!(c[c.len() - 1].3, zig[4]);
     }
 
     #[test]

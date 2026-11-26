@@ -24,6 +24,27 @@ impl Cubic {
         )
     }
 
+    /// t での向き（1 階の微分）。
+    pub fn derivative(&self, t: f64) -> P {
+        let u = 1.0 - t;
+        let (a, b, c) = (3.0 * u * u, 6.0 * u * t, 3.0 * t * t);
+        (
+            a * (self.1.0 - self.0.0) + b * (self.2.0 - self.1.0) + c * (self.3.0 - self.2.0),
+            a * (self.1.1 - self.0.1) + b * (self.2.1 - self.1.1) + c * (self.3.1 - self.2.1),
+        )
+    }
+
+    /// t での 2 階の微分。
+    pub fn second_derivative(&self, t: f64) -> P {
+        let u = 1.0 - t;
+        (
+            6.0 * u * (self.2.0 - 2.0 * self.1.0 + self.0.0)
+                + 6.0 * t * (self.3.0 - 2.0 * self.2.0 + self.1.0),
+            6.0 * u * (self.2.1 - 2.0 * self.1.1 + self.0.1)
+                + 6.0 * t * (self.3.1 - 2.0 * self.2.1 + self.1.1),
+        )
+    }
+
     /// t で 2 つに分ける。
     pub fn split(&self, t: f64) -> (Cubic, Cubic) {
         let ab = lerp(self.0, self.1, t);
