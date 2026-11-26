@@ -7,7 +7,7 @@ import { basename, join } from 'node:path';
 import { afterEach, beforeEach, test } from 'node:test';
 import { CliBackend } from '../src/git/backend.ts';
 import { GitExecutor } from '../src/git/exec.ts';
-import { cleanSubject, decodeWords, parsePatch, patchPaths } from '../src/git/patch.ts';
+import { cleanSubject, decodeWords, parsePatch, patchFileLine, patchFileName, patchPaths } from '../src/git/patch.ts';
 import { UndoLog } from '../src/state/undo.ts';
 import { initMain } from './git.ts';
 
@@ -182,4 +182,22 @@ test('applies a diff to the working tree, undoably', async () => {
   await undo.undo();
   assert.equal(readFileSync(join(dir, 'a.txt'), 'utf8'), '1\n2\n3\n');
   assert.ok(!existsSync(join(dir, '.git', 'rebase-apply')));
+});
+
+test('one mbox file is named after the first subject as git format-patch does', () => {
+  assert.equal(patchFileName('Fix foo'), 'Fix-foo');
+  assert.equal(patchFileName('[core] Add the: thing (v2)!'), 'core-Add-the-thing-v2');
+  assert.equal(patchFileName('Bump to 1.2.3_rc'), 'Bump-to-1.2.3_rc');
+  assert.equal(patchFileName('日本語だけ'), 'patches');
+  assert.equal(patchFileName(''), 'patches');
+  assert.equal(patchFileName('x'.repeat(80)).length, 52);
+});
+
+test('the apply preview marks each file A, D, R, C or M before its path', () => {
+  const file = { added: 2, removed: 1, binary: false };
+  assert.equal(patchFileLine({ ...file, path: 'a.txt', status: 'added' }), '  A a.txt  +2 −1');
+  assert.equal(patchFileLine({ ...file, path: 'b.txt', status: 'deleted' }), '  D b.txt  +2 −1');
+  assert.equal(patchFileLine({ ...file, path: 'new.txt', oldPath: 'old.txt', status: 'renamed' }), '  R old.txt → new.txt  +2 −1');
+  assert.equal(patchFileLine({ ...file, path: 'copy.txt', oldPath: 'orig.txt', status: 'copied' }), '  C orig.txt → copy.txt  +2 −1');
+  assert.equal(patchFileLine({ ...file, path: 'img.png', status: 'modified', binary: true }), '  M img.png  bin');
 });
