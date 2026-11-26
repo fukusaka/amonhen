@@ -4,7 +4,8 @@
  */
 import type { ReflogEntry } from '../reflog/protocol.ts';
 import type { HostMessage } from '../view/protocol.ts';
-import { el, formatDate, post, type View } from './api.ts';
+import { relativeTime } from '../history/relativeTime.ts';
+import { el, post, type View } from './api.ts';
 import { attachSplitter, createDetailsPane } from './details.ts';
 
 const ROW_HEIGHT = 24;
@@ -72,7 +73,8 @@ export function createReflogView(): View {
       lost.title = 'No branch or tag reaches this commit. Create a branch to keep it.';
       row.append(lost);
     }
-    row.append(el('span', 'date', formatDate(entry.time)), el('span', 'oid', entry.oid.slice(0, 8)));
+    // いつかは今からどれだけ前か（アプリと同じ）
+    row.append(el('span', 'date', relativeTime(entry.time)), el('span', 'oid', entry.oid.slice(0, 8)));
     return row;
   }
 

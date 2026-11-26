@@ -5,7 +5,8 @@
  */
 import { rangeDiffFile, shortRange, type RangePair, type RangeStatus } from '../git/rangeDiff.ts';
 import type { HostMessage } from '../view/protocol.ts';
-import { el, formatDate, post, type View } from './api.ts';
+import { relativeTime } from '../history/relativeTime.ts';
+import { el, post, type View } from './api.ts';
 import { attachSplitter, createDetailsPane } from './details.ts';
 import { renderDiffBody } from './diffView.ts';
 
@@ -170,7 +171,7 @@ export function createRangeDiffView(): View {
   function onRangeDiff(message: Extract<HostMessage, { type: 'rangeDiff' }>): void {
     // 書いている途中の範囲は消さない（結果が届いたときだけ入れ直す）
     if (document.activeElement !== field || message.pairs === null) field.value = message.ranges.map(shortRange).join(' ');
-    summary.textContent = message.error ?? [message.summary, message.time ? formatDate(message.time) : ''].filter(Boolean).join(' · ');
+    summary.textContent = message.error ?? [message.summary, message.time ? relativeTime(message.time) : ''].filter(Boolean).join(' · ');
     summary.title = message.ranges.length > 0 ? `git range-diff ${message.ranges.join(' ')}` : '';
     summary.classList.toggle('error', !!message.error);
     if (message.pairs === null) {
