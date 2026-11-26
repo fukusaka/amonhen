@@ -1465,17 +1465,15 @@ First release.
 - The Working Copy follows the app in the small things: List at first and "File Name", the file menu's Stage, Discard…
   or Delete File…, both .gitignore items, Reveal and Open File, no question before discarding lines, a commit with only
   a description, "Amend Commit", diff errors in the pane, and Take Current / Incoming File.
-
-#### Changed
-
 - History folds or shows any merge on its own (its context menu, ←/→), and the display menu has Fold All and Show
   All Merged Commits; the folds are kept per repository and shared with the apps and the TUI.
-
-#### Changed
-
 - A failure the app knows (sign-in, host key, network, rejected push, diverged branches, local changes, a lock, no
   upstream, a branch in another worktree) is said in plain words with the app's next steps, such as Pull…, Set
   Upstream… or Try Again; Details adds the advice.
+- Keys and Values in Repository Settings lists the app's Basic keys, shows every value of a multi-valued key, groups
+  keys under collapsible section headers and sorts by any column, as in the app.
+- A commit message template from a file shows its first lines under the row in Repository Settings > Commits.
+- The Daemon page shows how much each of this window's connections has sent and received.
 
 #### Fixed
 
