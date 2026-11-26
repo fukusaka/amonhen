@@ -761,15 +761,21 @@ pub fn render(
         });
     }
 
-    // 自分への辺の輪の分を右に空ける
+    // 自分への辺の輪の分を脇に空ける。i 本目の輪は、ノードの脇から `nodesep` の i 倍まで出る（Graphviz の絵と同じ）。
+    // 内側の輪にラベルがあれば、その分だけ外の輪を外へ出す（Graphviz はラベルと外の輪を重ねる）
     let mut loop_room = vec![0f64; views.len()];
+    let mut loop_count = vec![0usize; views.len()];
+    let mut loop_reach = vec![0f64; model.edges.len()];
     for (i, e) in model.edges.iter().enumerate() {
         if e.tail == e.head {
             let lw = eviews[i]
                 .label
                 .as_ref()
                 .map_or(0.0, |t| if dir.sideways() { t.height } else { t.width });
-            loop_room[e.tail] += 18.0 + lw + 4.0;
+            let reach = loop_room[e.tail] + nodesep;
+            loop_reach[i] = reach;
+            loop_count[e.tail] += 1;
+            loop_room[e.tail] = reach + if lw > 0.0 { lw + 6.0 } else { 0.0 };
         }
     }
 
@@ -838,7 +844,9 @@ pub fn render(
                 w,
                 h,
                 cluster: model.nodes[i].cluster,
-                extra_right: loop_room[i],
+                // 輪は配置の右に出す。横向きの配置（LR・RL）では絵の上になる側（配置の左）
+                extra_left: if dir.sideways() { loop_room[i] } else { 0.0 },
+                extra_right: if dir.sideways() { 0.0 } else { loop_room[i] },
             }
         })
         .collect();
@@ -1774,85 +1782,34 @@ pub fn render(
                 let c = lay.nodes[e.tail];
                 let ln = &lnodes[e.tail];
                 let size = 18.0 + 8.0 * *index as f64;
-                // 輪の側: 向きのあるポートがあればその側（尾が先）、なければ配置の右（Graphviz と同じ）。
-                // ortho はポートを見ない
-                let port_side = [
+                let has_port = [
                     a.get("tailport").or(e.tail_port.as_deref()),
                     a.get("headport").or(e.head_port.as_deref()),
                 ]
                 .into_iter()
-                .filter(|_| !ortho)
-                .find_map(|p| match ortho_port(tv, p, dir) {
-                    route::OrthoPort::Point { dir: d, .. } => {
-                        Some(if d.0.abs() > d.1.abs() + 1e-6 {
-                            (d.0.signum(), 0.0)
-                        } else {
-                            (0.0, d.1.signum())
-                        })
-                    }
-                    _ => None,
-                });
-                let u = port_side.unwrap_or((1.0, 0.0));
-                let v = (-u.1, u.0);
-                // 外へ（u）の半分の大きさと、脇へ（v）の半分の大きさ
-                let ext = (u.0 * ln.w).abs().max((u.1 * ln.h).abs()) / 2.0;
-                let mut span = (v.0 * ln.w).abs().max((v.1 * ln.h).abs()) / 2.0;
-                if port_side.is_some() {
-                    span = span.min(ext * 1.5);
-                }
-                let at = |p: f64, q: f64| (c.0 + u.0 * p + v.0 * q, c.1 + u.1 * p + v.1 * q);
-                // 輪の両端（脇への位置 q0・q1）と、ノードの中の始まり（外への位置 inner）。上下の輪は、ランクの
-                // 間の線が出入りする真ん中を空けて、その側の右の肩（中心から 0.3〜0.85）に置く
-                let (q0, q1, inner) = if port_side.is_some() && u.0 == 0.0 {
-                    let sg = -u.1;
-                    (span * 0.3 * sg, span * 0.85 * sg, ext * 0.2)
-                } else {
-                    (-span * 0.6, span * 0.6, if ortho { ext } else { ext * 0.6 })
-                };
-                let bulge = if q1 >= q0 { 1.0 } else { -1.0 };
-                path = if ortho {
-                    let r = ext + size;
-                    vec![
-                        Cubic::line(at(inner, q0), at(r, q0)),
-                        Cubic::line(at(r, q0), at(r, q1)),
-                        Cubic::line(at(r, q1), at(inner, q1)),
-                    ]
-                } else {
-                    // 既定の右の輪は、両端の外へ少しふくらむ（上下の肩の輪は、真ん中の側へはふくらませない）
-                    let (b0, b1) = if port_side.is_some() && u.0 == 0.0 {
-                        (q0 - bulge * size * 0.1, q1 + bulge * size * 0.4)
-                    } else {
-                        (-span - size * 0.4, span + size * 0.4)
+                .flatten()
+                .any(|p| !p.trim().is_empty());
+                if !ortho && !has_port {
+                    // ポートのない輪（Graphviz の絵に合わせた形）: ノードの中心から出て中心へ戻る 1 本の曲線を、外形で
+                    // 切る。脇（配置の右。横向きの配置では絵の上になる左）へ `reach` まで出て、ランクの向きに始まりから
+                    // 終わりへ回る。いちばん外の輪の高さはノードの高さ（ランクの向き）の 0.385 倍で、内側の輪ほど低い
+                    let n = loop_count[e.tail].max(1) as f64;
+                    let i = (*index + 1).min(loop_count[e.tail].max(1)) as f64;
+                    let (hw, hh) = (ln.w / 2.0, ln.h / 2.0);
+                    let out = if dir.sideways() { -1.0 } else { 1.0 };
+                    let reach = loop_reach[ei].max(1.0);
+                    let most = hh * 0.385 * i / n;
+                    // 両端が同じ点の 3 次曲線: 横は制御点までの 3/4、縦は制御点までの 0.2887 倍（3·t(1−t)(1−2t) の最大）
+                    let x = out * (hw + reach) * 4.0 / 3.0;
+                    let y = most / 0.2887;
+                    let whole = Cubic(c, (c.0 + x, c.1 - y), (c.0 + x, c.1 + y), c);
+                    // 外形を出る所から入る所まで（いちばん外の点がまだ中なら切らない）
+                    let inside = |t: f64| {
+                        let f = to_final(whole.at(t));
+                        tv.geom.inside(f.0 - tv.pos.0, f.1 - tv.pos.1)
                     };
-                    vec![Cubic(
-                        at(inner, q0),
-                        at(ext + size, b0),
-                        at(ext + size, b1),
-                        at(inner, q1),
-                    )]
-                };
-                label_at = ev.label.as_ref().map(|t| {
-                    let (lw, lh) = if dir.sideways() {
-                        (t.height, t.width)
-                    } else {
-                        (t.width, t.height)
-                    };
-                    let l = (u.0 * lw).abs().max((u.1 * lh).abs());
-                    at(ext + size + l / 2.0 + 2.0, (q0 + q1) / 2.0)
-                });
-                path = path.iter().map(|c| c.map(to_final)).collect();
-                label_at = label_at.map(to_final);
-                if port_side.is_some() && u.0 == 0.0 && !ortho {
-                    // 肩の輪の両端は、その位置から外へ（u の向きに）進んで外形に出る点（輪は外形で切らない）
-                    let on = |q: f64| {
-                        let inside = |t: f64| {
-                            let f = to_final(at(t, q));
-                            tv.geom.inside(f.0 - tv.pos.0, f.1 - tv.pos.1)
-                        };
-                        if !inside(0.0) {
-                            return to_final(at(inner, q));
-                        }
-                        let (mut lo, mut hi) = (0.0, ext * 2.0 + 1.0);
+                    let edge = |from: f64| {
+                        let (mut lo, mut hi) = (from, 0.5);
                         for _ in 0..30 {
                             let mid = (lo + hi) / 2.0;
                             if inside(mid) {
@@ -1861,11 +1818,114 @@ pub fn render(
                                 hi = mid;
                             }
                         }
-                        to_final(at(lo, q))
+                        lo
                     };
-                    let last = path.len() - 1;
-                    path[0].0 = on(q0);
-                    path[last].3 = on(q1);
+                    let (t0, t1) = if inside(0.5) {
+                        (0.0, 1.0)
+                    } else {
+                        (edge(0.0), edge(1.0))
+                    };
+                    let (head, _) = whole.split(t1);
+                    let (_, cut) = head.split(if t1 > 0.0 { t0 / t1 } else { 0.0 });
+                    path = vec![cut.map(to_final)];
+                    label_at = ev.label.as_ref().map(|t| {
+                        let l = if dir.sideways() { t.height } else { t.width };
+                        to_final((c.0 + out * (hw + reach + l / 2.0 + 4.0), c.1))
+                    });
+                } else {
+                    // 輪の側: 向きのあるポートがあればその側（尾が先）、なければ配置の右（Graphviz と同じ）。
+                    // ortho はポートを見ない
+                    let port_side = [
+                        a.get("tailport").or(e.tail_port.as_deref()),
+                        a.get("headport").or(e.head_port.as_deref()),
+                    ]
+                    .into_iter()
+                    .filter(|_| !ortho)
+                    .find_map(|p| match ortho_port(tv, p, dir) {
+                        route::OrthoPort::Point { dir: d, .. } => {
+                            Some(if d.0.abs() > d.1.abs() + 1e-6 {
+                                (d.0.signum(), 0.0)
+                            } else {
+                                (0.0, d.1.signum())
+                            })
+                        }
+                        _ => None,
+                    });
+                    let u = port_side.unwrap_or((1.0, 0.0));
+                    let v = (-u.1, u.0);
+                    // 外へ（u）の半分の大きさと、脇へ（v）の半分の大きさ
+                    let ext = (u.0 * ln.w).abs().max((u.1 * ln.h).abs()) / 2.0;
+                    let mut span = (v.0 * ln.w).abs().max((v.1 * ln.h).abs()) / 2.0;
+                    if port_side.is_some() {
+                        span = span.min(ext * 1.5);
+                    }
+                    let at = |p: f64, q: f64| (c.0 + u.0 * p + v.0 * q, c.1 + u.1 * p + v.1 * q);
+                    // 輪の両端（脇への位置 q0・q1）と、ノードの中の始まり（外への位置 inner）。上下の輪は、ランクの
+                    // 間の線が出入りする真ん中を空けて、その側の右の肩（中心から 0.3〜0.85）に置く
+                    let (q0, q1, inner) = if port_side.is_some() && u.0 == 0.0 {
+                        let sg = -u.1;
+                        (span * 0.3 * sg, span * 0.85 * sg, ext * 0.2)
+                    } else {
+                        (-span * 0.6, span * 0.6, if ortho { ext } else { ext * 0.6 })
+                    };
+                    let bulge = if q1 >= q0 { 1.0 } else { -1.0 };
+                    path = if ortho {
+                        let r = ext + size;
+                        vec![
+                            Cubic::line(at(inner, q0), at(r, q0)),
+                            Cubic::line(at(r, q0), at(r, q1)),
+                            Cubic::line(at(r, q1), at(inner, q1)),
+                        ]
+                    } else {
+                        // 既定の右の輪は、両端の外へ少しふくらむ（上下の肩の輪は、真ん中の側へはふくらませない）
+                        let (b0, b1) = if port_side.is_some() && u.0 == 0.0 {
+                            (q0 - bulge * size * 0.1, q1 + bulge * size * 0.4)
+                        } else {
+                            (-span - size * 0.4, span + size * 0.4)
+                        };
+                        vec![Cubic(
+                            at(inner, q0),
+                            at(ext + size, b0),
+                            at(ext + size, b1),
+                            at(inner, q1),
+                        )]
+                    };
+                    label_at = ev.label.as_ref().map(|t| {
+                        let (lw, lh) = if dir.sideways() {
+                            (t.height, t.width)
+                        } else {
+                            (t.width, t.height)
+                        };
+                        let l = (u.0 * lw).abs().max((u.1 * lh).abs());
+                        at(ext + size + l / 2.0 + 2.0, (q0 + q1) / 2.0)
+                    });
+                    path = path.iter().map(|c| c.map(to_final)).collect();
+                    label_at = label_at.map(to_final);
+                    if port_side.is_some() && u.0 == 0.0 && !ortho {
+                        // 肩の輪の両端は、その位置から外へ（u の向きに）進んで外形に出る点（輪は外形で切らない）
+                        let on = |q: f64| {
+                            let inside = |t: f64| {
+                                let f = to_final(at(t, q));
+                                tv.geom.inside(f.0 - tv.pos.0, f.1 - tv.pos.1)
+                            };
+                            if !inside(0.0) {
+                                return to_final(at(inner, q));
+                            }
+                            let (mut lo, mut hi) = (0.0, ext * 2.0 + 1.0);
+                            for _ in 0..30 {
+                                let mid = (lo + hi) / 2.0;
+                                if inside(mid) {
+                                    lo = mid;
+                                } else {
+                                    hi = mid;
+                                }
+                            }
+                            to_final(at(lo, q))
+                        };
+                        let last = path.len() - 1;
+                        path[0].0 = on(q0);
+                        path[last].3 = on(q1);
+                    }
                 }
             }
         }

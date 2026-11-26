@@ -19,7 +19,8 @@ pub struct Node {
     pub w: f64,
     pub h: f64,
     pub cluster: Option<usize>,
-    /// 右に空ける分（自分への辺の輪）。
+    /// 左右に空ける分（自分への辺の輪）。
+    pub extra_left: f64,
     pub extra_right: f64,
 }
 
@@ -1218,7 +1219,7 @@ pub fn layout(
         .map(|(i, nd)| LNode {
             rank: ranks[i] as usize,
             cluster: nd.cluster.filter(|&c| c < k),
-            left: nd.w / 2.0,
+            left: nd.w / 2.0 + nd.extra_left,
             right: nd.w / 2.0 + nd.extra_right,
             h: nd.h,
             real: true,
@@ -2706,6 +2707,7 @@ mod tests {
             w: 54.0,
             h: 36.0,
             cluster: c,
+            extra_left: 0.0,
             extra_right: 0.0,
         }
     }

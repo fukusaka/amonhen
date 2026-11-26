@@ -1536,3 +1536,42 @@ fn dot_edges_between_the_same_two_nodes_are_drawn_apart() {
     };
     assert!((middle(0) - middle(1)).abs() > 8.0, "{svg}");
 }
+
+/// ポートのない自分への辺は、ノードの脇に出る平たい輪（Graphviz の絵と同じ）: i 本目は脇から `nodesep` の i 倍まで
+/// 出て、いちばん外の輪の高さはノードの高さの約 1/3、内側ほど低い。ノードの中は通らない。横向きの配置では絵の上。
+#[test]
+fn dot_self_loops_are_flat_rings_beside_the_node() {
+    let svg = render("digraph { a [shape=box]; a -> a; a -> a }")
+        .unwrap()
+        .svg;
+    let node = part(&svg, "a");
+    let (x, y, w, h) = (
+        attr_num(node, "x"),
+        attr_num(node, "y"),
+        attr_num(node, "width"),
+        attr_num(node, "height"),
+    );
+    let (right, cy) = (x + w, y + h / 2.0);
+    let lines = edge_cubics(&svg);
+    assert_eq!(lines.len(), 2, "{svg}");
+    for (i, curves) in lines.iter().enumerate() {
+        let p = edge_samples(curves);
+        let reach = p.iter().map(|q| q.0).fold(f64::MIN, f64::max) - right;
+        let tall = p.iter().map(|q| (q.1 - cy).abs()).fold(0.0, f64::max);
+        assert!(p.iter().all(|q| q.0 > right - 0.5), "{i} {svg}");
+        assert!((reach - 18.0 * (i + 1) as f64).abs() < 1.0, "{i} {reach}");
+        let most = h / 2.0 * 0.385 * (i + 1) as f64 / 2.0;
+        assert!((tall - most).abs() < 0.5, "{i} {tall} {most}");
+        // 上から出て下へ戻る
+        assert!(p[0].1 < cy && p[p.len() - 1].1 > cy, "{i} {svg}");
+    }
+
+    let svg = render("digraph { rankdir=LR; a [shape=box]; a -> a }")
+        .unwrap()
+        .svg;
+    let top = attr_num(part(&svg, "a"), "y");
+    let p = edge_samples(&edge_cubics(&svg)[0]);
+    assert!(p.iter().all(|q| q.1 < top + 0.5), "{svg}");
+    let rise = top - p.iter().map(|q| q.1).fold(f64::MAX, f64::min);
+    assert!((rise - 18.0).abs() < 1.0, "{rise}");
+}
