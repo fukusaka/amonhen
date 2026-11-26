@@ -19,6 +19,16 @@ export interface Failure {
   kind: FailureKind;
   /** 失敗に関わるパス（ほかの worktree の場所、ロックファイル） */
   path?: string;
+  /** ほかの worktree で checkout しているブランチ（git の文から読めたとき） */
+  branch?: string;
+}
+
+/** `marker` のすぐ前の `'…'` の中身 */
+function quotedBefore(message: string, marker: string): string | undefined {
+  const at = message.indexOf(`' ${marker}`);
+  if (at < 0) return undefined;
+  const start = message.lastIndexOf("'", at - 1);
+  return start < 0 ? undefined : message.slice(start + 1, at);
 }
 
 /** `marker` のすぐ後の `'…'` の中身 */
@@ -34,7 +44,10 @@ function quotedAfter(message: string, marker: string): string | undefined {
 export function classifyFailure(message: string): Failure | undefined {
   const has = (s: string) => message.includes(s);
   const worktree = quotedAfter(message, 'is already used by worktree at ') ?? quotedAfter(message, 'is already checked out at ');
-  if (worktree) return { kind: 'worktreeInUse', path: worktree };
+  if (worktree) {
+    const branch = quotedBefore(message, 'is already used by worktree at') ?? quotedBefore(message, 'is already checked out at');
+    return { kind: 'worktreeInUse', path: worktree, ...(branch ? { branch } : {}) };
+  }
   if (has("Unable to create '") && has(".lock': File exists")) {
     const path = quotedAfter(message, 'Unable to create ');
     return { kind: 'locked', ...(path ? { path } : {}) };
@@ -77,12 +90,75 @@ export function classifyFailure(message: string): Failure | undefined {
   return undefined;
 }
 
-/** 要点（1 行。アプリの帯と同じ言い直し）。言い直せない種類は undefined */
-export function failureSummary(f: Failure): string | undefined {
+/**
+ * 失敗した操作の見出し（アプリの帯の見出し。`apps/macos/Sources/AmonHen/Failures.swift` の title と同じ文）。op は
+ * コアの命令の名前。見出しのない操作は「Couldn’t Finish」
+ */
+export function failureTitle(op: string): string {
+  switch (op) {
+    case 'checkout':
+    case 'track':
+    case 'detach':
+      return 'Couldn’t Checkout';
+    case 'pull':
+      return 'Couldn’t Pull';
+    case 'push':
+    case 'pushTags':
+      return 'Couldn’t Push';
+    case 'fetch':
+    case 'deepen':
+    case 'unshallow':
+    case 'fetchAllContents':
+      return 'Couldn’t Fetch';
+    case 'sparseCheckout':
+    case 'disableSparseCheckout':
+      return 'Couldn’t Change the Folders';
+    case 'maintenance':
+      return 'Couldn’t Change git maintenance';
+    case 'merge':
+    case 'mergeInto':
+      return 'Couldn’t Merge';
+    case 'rebase':
+      return 'Couldn’t Rebase';
+    case 'cherryPick':
+      return 'Couldn’t Cherry-pick';
+    case 'revert':
+      return 'Couldn’t Revert';
+    case 'formatPatch':
+      return 'Couldn’t Save the Patches';
+    case 'am':
+    case 'amThreeWay':
+    case 'applyPatch':
+      return 'Couldn’t Apply the Patch';
+    case 'commit':
+      return 'Couldn’t Commit';
+    case 'continue':
+      return 'Couldn’t Continue';
+    case 'deleteBranch':
+      return 'Couldn’t Delete the Branch';
+    case 'stashPush':
+      return 'Couldn’t Stash';
+    case 'stashApply':
+      return 'Couldn’t Apply the Stash';
+    case 'discard':
+    case 'deleteUntracked':
+      return 'Couldn’t Discard';
+    case 'undo':
+      return 'Couldn’t Undo';
+    default:
+      return 'Couldn’t Finish';
+  }
+}
+
+/**
+ * 要点（1 行。アプリの帯と同じ言い直し）。言い直せない種類は undefined。branch は操作したブランチ（ほかの worktree
+ * で checkout しているとき、その名前を言う）
+ */
+export function failureSummary(f: Failure, branch?: string): string | undefined {
   switch (f.kind) {
     case 'worktreeInUse': {
       const place = f.path?.split(/[\\/]/).filter(Boolean).pop() ?? '';
-      return `The branch is checked out in the worktree ${place}. A branch can be checked out in only one worktree.`;
+      return `${branch ?? f.branch ?? 'The branch'} is checked out in the worktree ${place}. A branch can be checked out in only one worktree.`;
     }
     case 'auth':
       return 'The remote didn’t accept the sign-in (password, token or SSH key).';
@@ -150,4 +226,19 @@ export function failureRemedies(f: Failure, canRetry: boolean): Remedy[] {
     default:
       return [];
   }
+}
+
+/** 失敗した操作（コアの命令の名前）を添えたエラー。showError がアプリの帯と同じ見出し（failureTitle）を付ける */
+export class OperationError extends Error {
+  readonly op: string;
+
+  constructor(message: string, op: unknown) {
+    super(message);
+    this.op = typeof op === 'string' ? op : '';
+  }
+}
+
+/** エラーに添えた操作の名前（なければ undefined） */
+export function operationOf(err: unknown): string | undefined {
+  return err instanceof OperationError && err.op ? err.op : undefined;
 }

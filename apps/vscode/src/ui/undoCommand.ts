@@ -109,7 +109,7 @@ async function undo(manager: RepositoryManager, count: number): Promise<void> {
       void vscode.window.showInformationMessage('Nothing to Undo');
     }
   } catch (err) {
-    showError(err);
+    showError(err, { op: 'undo' });
   } finally {
     await repo.refresh();
   }

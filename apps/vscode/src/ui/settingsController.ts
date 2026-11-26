@@ -2,12 +2,15 @@
  * メインビューの Repository Settings の拡張ホスト側。共有の daemon のコアで、設定の並び（`configList`）・git の版
  * （`gitVersion`）・リポジトリの形（`repositoryForm`）を読み、行の値をこのリポジトリの設定に書く（`configSet`）
  */
+import { readFile } from 'node:fs/promises';
 import { homedir } from 'node:os';
 import { join } from 'node:path';
 import * as vscode from 'vscode';
+import { OperationError } from '../failure/kind.ts';
 import { daemonFor } from '../daemon/connection.ts';
 import { hooksDirectory } from '../settings/hookFiles.ts';
 import { HOOK_NAMES, hookWhen } from '../settings/hooks.ts';
+import { templateFilePath, templatePreview } from '../settings/templateFile.ts';
 import type { ConfigEntry } from '../settings/model.ts';
 import type { FetchingAction, RepositoryForm, SettingsFacts, SettingsHostMessage, SettingsWebviewMessage } from '../settings/protocol.ts';
 import type { Repository } from '../state/repository.ts';
@@ -141,7 +144,7 @@ export class SettingsController implements vscode.Disposable {
       const reply = await vscode.window.withProgress({ location: vscode.ProgressLocation.Notification, title }, async () =>
         (await client.call({ op: 'run', command })).json,
       );
-      if (reply['ok'] !== true) throw new Error(String(reply['error'] ?? `${title} failed`));
+      if (reply['ok'] !== true) throw new OperationError(String(reply['error'] ?? `${title} failed`), command['op']);
       if (command['op'] === 'configSet') signatureConfigWritten([String(command['key'])]);
     };
     const form = (await client.call({ op: 'run', command: { op: 'repositoryForm' } })).json['info'] as RepositoryForm | undefined;
@@ -378,6 +381,11 @@ export class SettingsController implements vscode.Disposable {
         .call({ op: 'run', command: { op: 'signingKeys', format: ['openpgp', 'ssh', 'x509'].includes(format) ? format : 'openpgp' } })
         .then((r) => ((r.json['info'] as { keys?: SettingsFacts['signingKeys'] } | undefined)?.keys ?? []))
         .catch(() => []);
+      // ファイルのテンプレートの中身（拡張ホストで読む。Remote-SSH では SSH 先のファイル）
+      const templatePath = [...entries].reverse().find((e) => e.key.toLowerCase() === 'commit.template')?.value;
+      const preview = templatePath
+        ? await readFile(templateFilePath(templatePath, repo.root, homedir()), 'utf8').then(templatePreview, () => undefined)
+        : undefined;
       if (generation !== this.generation) return;
       this.post({
         type: 'settings',
@@ -396,6 +404,7 @@ export class SettingsController implements vscode.Disposable {
           signingKeys: keys,
           ...(hooks ? { hooksAndLfs: hooks as unknown as NonNullable<SettingsFacts['hooksAndLfs']> } : {}),
           ...(template ? { commitTemplate: template as unknown as NonNullable<SettingsFacts['commitTemplate']> } : {}),
+          ...(preview ? { templatePreview: preview } : {}),
         },
       });
     } catch (err) {

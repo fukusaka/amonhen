@@ -9,12 +9,13 @@ import { createBlameView } from './blame.ts';
 import { createDaemonView } from './daemon.ts';
 import { setDetailsLayout, showWholeFile, fileAction, openAtCommit, setDetailsStyle, detailsViewAction } from './details.ts';
 import { setWrapLines } from './diffView.ts';
+import { redrawPictures } from './allFiles.ts';
 import { createFileHistoryView } from './fileHistory.ts';
 import { createHistoryView } from './history.ts';
 import { createRangeDiffView } from './rangeDiff.ts';
 import { createReflogView } from './reflog.ts';
 import { createSettingsView } from './settings.ts';
-import { openSheet } from './sheet.ts';
+import { openSheet, sheetChecked } from './sheet.ts';
 import { createWorkingCopyView } from './workingCopy.ts';
 
 const views: Record<ViewName, View> = {
@@ -59,12 +60,20 @@ window.addEventListener('message', (event: MessageEvent<HostMessage>) => {
     openSheet(message);
     return;
   }
+  if (message.type === 'sheetChecked') {
+    sheetChecked(message.id, message.text, message.ok);
+    return;
+  }
   if (message.type === 'detailsLayout') {
     setDetailsLayout(message.layout);
     return;
   }
   if (message.type === 'wrapLines') {
     setWrapLines(message.wrap);
+    return;
+  }
+  if (message.type === 'pictureSettings') {
+    redrawPictures();
     return;
   }
   if (message.type === 'messageFont') {

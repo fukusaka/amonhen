@@ -7,10 +7,13 @@ import { open } from 'node:fs/promises';
 import { existsSync } from 'node:fs';
 import { basename, dirname, join } from 'node:path';
 import * as vscode from 'vscode';
+import { OperationError } from '../failure/kind.ts';
 import {
   ARCHIVE_FORMATS,
   type ArchiveFormat,
+  archivePrefix,
   archiveTopFolder,
+  fileSafe,
   type BundleHeader,
   cloneBranch,
   defaultArchiveFormat,
@@ -33,7 +36,7 @@ async function run(repo: Repository, command: Json, title: string): Promise<Json
   const reply = await vscode.window.withProgress({ location: vscode.ProgressLocation.Notification, title }, async () =>
     (await client.call({ op: 'run', command })).json,
   );
-  if (reply['ok'] !== true) throw new Error(String(reply['error'] ?? `${title} failed`));
+  if (reply['ok'] !== true) throw new OperationError(String(reply['error'] ?? `${title} failed`), command['op']);
   return reply;
 }
 
@@ -78,14 +81,15 @@ async function exportArchive(repo: Repository, arg: unknown): Promise<void> {
   )?.format;
   if (!format) return;
   const top = archiveTopFolder(basename(repo.root), target.label);
-  const topPick = await vscode.window.showQuickPick(
-    [
-      { label: top, description: 'Top folder inside the archive', prefix: `${top}/` },
-      { label: 'None', description: 'Files at the top of the archive', prefix: '' },
-    ],
-    { title, placeHolder: 'Top folder' },
-  );
-  if (!topPick) return;
+  // 最上位のフォルダ（アプリと同じく好きな名前にでき、空ならなし）
+  const typed = await vscode.window.showInputBox({
+    title,
+    prompt: 'Top folder inside the archive. Leave it empty to put the files at the top.',
+    value: top,
+    placeHolder: 'None',
+  });
+  if (typed === undefined) return;
+  const folder = archivePrefix(typed);
   const scope = await vscode.window.showQuickPick(
     [
       { label: 'All Files', description: 'As git archive writes them; .gitattributes decides what is left out', one: false },
@@ -119,7 +123,9 @@ async function exportArchive(repo: Repository, arg: unknown): Promise<void> {
     );
     if (ok !== 'Fetch and Export') return;
   }
-  const name = `${paths[0] ? `${top}-${basename(paths[0])}` : top}.${format}`;
+  // ファイル名は最上位のフォルダから（なければ既定の名前。アプリと同じ）
+  const base = folder ? fileSafe(folder) : top;
+  const name = `${paths[0] ? `${base}-${basename(paths[0])}` : base}.${format}`;
   const uri = await vscode.window.showSaveDialog({
     title,
     defaultUri: vscode.Uri.file(join(dirname(repo.root), name)),
@@ -129,7 +135,7 @@ async function exportArchive(repo: Repository, arg: unknown): Promise<void> {
   await setArchiveFormat(format as ArchiveFormat);
   const reply = await run(
     repo,
-    { op: 'archive', rev: target.rev, format, prefix: topPick.prefix, paths, file: uri.fsPath },
+    { op: 'archive', rev: target.rev, format, prefix: folder ? `${folder}/` : '', paths, file: uri.fsPath },
     `Exporting ${basename(uri.fsPath)}`,
   );
   await saved('Exported', uri.fsPath, Number(info(reply)['size'] ?? 0));
@@ -172,7 +178,8 @@ async function saveBundle(repo: Repository, refs: string[]): Promise<void> {
   if (preview['beyondShallow'] === true) {
     throw new Error('This shallow clone doesn’t have all the history the bundle needs. Fetch more history, or choose a newer base.');
   }
-  if (Number(preview['commits'] ?? 0) === 0) {
+  const commits = Number(preview['commits'] ?? 0);
+  if (commits === 0) {
     void vscode.window.showInformationMessage('Nothing to Save: there are no commits to put in the bundle.');
     return;
   }
@@ -189,8 +196,9 @@ async function saveBundle(repo: Repository, refs: string[]): Promise<void> {
     if (ok !== 'Fetch and Save') return;
   }
   const name = refs.length === 1 ? `${basename(repo.root)}-${shortName(refs[0]!).replace(/\//g, '-')}` : basename(repo.root);
+  // 入るコミットの数を添える（アプリの保存のパネルの文）
   const uri = await vscode.window.showSaveDialog({
-    title,
+    title: `${title} (${commits} ${commits === 1 ? 'commit' : 'commits'})`,
     defaultUri: vscode.Uri.file(join(dirname(repo.root), `${name}.bundle`)),
     filters: { Bundle: ['bundle'] },
   });

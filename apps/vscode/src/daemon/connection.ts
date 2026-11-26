@@ -72,12 +72,12 @@ export async function daemonFor(root: string): Promise<DaemonClient | undefined>
   return client;
 }
 
-/** この窓の、daemon とのつながり（開き終えたものだけ。切れていれば、そのわけ） */
-export async function daemonConnections(): Promise<{ path: string; closed?: string }[]> {
+/** この窓の、daemon とのつながり（開き終えたものだけ。送受信量と、切れていれば、そのわけ） */
+export async function daemonConnections(): Promise<{ path: string; sent: number; received: number; closed?: string }[]> {
   const list = await Promise.all(
     [...clients].map(async ([key, client]) => {
       const c = await client.catch(() => undefined);
-      return c && { path: key.slice(key.indexOf('\n') + 1), ...(c.closed ? { closed: c.closed } : {}) };
+      return c && { path: key.slice(key.indexOf('\n') + 1), ...c.traffic, ...(c.closed ? { closed: c.closed } : {}) };
     }),
   );
   return list.filter((c) => c !== undefined);

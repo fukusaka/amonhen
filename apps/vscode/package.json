@@ -48,6 +48,101 @@
           "default": false,
           "markdownDescription": "Wrap lines wider than the diff instead of scrolling sideways, in every diff and file of the main view (History, Working Copy). **Wrap Long Lines** (Alt+Z in the main view) and the ↩︎ button above the diff switch it."
         },
+        "amonhen.diagrams.colors": {
+          "type": "string",
+          "default": "mermaid",
+          "enum": [
+            "syntax",
+            "pele",
+            "mermaid",
+            "mermaid-default",
+            "mermaid-neutral",
+            "mermaid-dark",
+            "mermaid-forest",
+            "mermaid-base",
+            "imported"
+          ],
+          "enumItemLabels": [
+            "Syntax colors",
+            "Obsidian style",
+            "Mermaid (follows the appearance)",
+            "Mermaid default",
+            "Mermaid neutral",
+            "Mermaid dark",
+            "Mermaid forest",
+            "Mermaid base",
+            "Imported Mermaid theme"
+          ],
+          "markdownEnumDescriptions": [
+            "The colors of the syntax theme.",
+            "pele’s own colors, as in Obsidian.",
+            "Mermaid’s default theme in a light appearance and its dark theme in a dark one, with the theme’s background.",
+            "Mermaid’s default theme, with its background, whatever the appearance.",
+            "Mermaid’s neutral theme, with its background, whatever the appearance.",
+            "Mermaid’s dark theme, with its background, whatever the appearance.",
+            "Mermaid’s forest theme, with its background, whatever the appearance.",
+            "Mermaid’s base theme, with its background, whatever the appearance.",
+            "The mermaid-cli config file set in `#amonhen.diagrams.mermaidTheme#`."
+          ],
+          "markdownDescription": "The colors of Mermaid and Graphviz DOT diagrams in formatted Markdown (History’s All Files, with the engine), as in the standalone app’s Settings > Theme > Diagrams. A diagram’s own `%%{init}%%` or front matter `theme`/`themeVariables` comes first."
+        },
+        "amonhen.diagrams.mermaidTheme": {
+          "type": "string",
+          "default": "",
+          "markdownDescription": "A mermaid-cli config file (`{\"theme\": …, \"themeVariables\": {…}}`, or just the variables) whose colors diagrams take when `#amonhen.diagrams.colors#` is Imported Mermaid theme. A relative path is from the repository’s root; `~` is the home folder."
+        },
+        "amonhen.diagrams.timeZone": {
+          "type": "string",
+          "default": "",
+          "examples": [
+            "",
+            "UTC",
+            "Asia/Tokyo",
+            "America/New_York",
+            "Europe/London"
+          ],
+          "markdownDescription": "The time zone Mermaid gantt charts count their dates in: empty for the time zone of the computer VSCode’s window runs on, `UTC`, or an IANA name such as `Asia/Tokyo` (daylight saving time is followed). A name that can’t be read means the time zone of the machine the repository is on."
+        },
+        "amonhen.math.formulaSize": {
+          "type": "number",
+          "default": 1.21,
+          "enum": [
+            1,
+            1.1,
+            1.21,
+            1.3,
+            1.4,
+            1.5
+          ],
+          "enumItemLabels": [
+            "100%",
+            "110%",
+            "121% (KaTeX)",
+            "130%",
+            "140%",
+            "150%"
+          ],
+          "markdownDescription": "The size of math in formatted Markdown (History’s All Files, with the engine), against the text, as in the standalone app’s Settings > Theme > Math."
+        },
+        "amonhen.math.timeLimit": {
+          "type": "number",
+          "default": 2,
+          "enum": [
+            1,
+            2,
+            5,
+            10,
+            0
+          ],
+          "enumItemLabels": [
+            "1 s",
+            "2 s",
+            "5 s",
+            "10 s",
+            "No limit"
+          ],
+          "markdownDescription": "How long one Markdown file’s formulas may take to draw. Formulas past the limit show their TeX."
+        },
         "amonhen.daemon.enabled": {
           "type": "boolean",
           "default": true,
@@ -121,7 +216,7 @@
       },
       {
         "command": "amonhen.fetch",
-        "title": "Fetch",
+        "title": "Fetch…",
         "category": "Amon Hen",
         "icon": {
           "light": "media/icons/light/fetch.svg",
@@ -710,6 +805,12 @@
         "icon": "$(git-merge)"
       },
       {
+        "command": "amonhen.markResolvedWithoutMarkers",
+        "title": "Mark Files Without Markers Resolved",
+        "category": "Amon Hen",
+        "icon": "$(check-all)"
+      },
+      {
         "command": "amonhen.open",
         "title": "Open Amon Hen",
         "category": "Amon Hen",
@@ -718,7 +819,7 @@
       },
       {
         "command": "amonhen.pull",
-        "title": "Pull",
+        "title": "Pull…",
         "category": "Amon Hen",
         "icon": {
           "light": "media/icons/light/pull.svg",
@@ -728,7 +829,7 @@
       },
       {
         "command": "amonhen.push",
-        "title": "Push",
+        "title": "Push…",
         "category": "Amon Hen",
         "icon": {
           "light": "media/icons/light/push.svg",
@@ -738,7 +839,7 @@
       },
       {
         "command": "amonhen.publish",
-        "title": "Publish Branch",
+        "title": "Publish Branch…",
         "category": "Amon Hen",
         "icon": {
           "light": "media/icons/light/publish.svg",
@@ -748,7 +849,7 @@
       },
       {
         "command": "amonhen.forcePush",
-        "title": "Force Push",
+        "title": "Force Push…",
         "category": "Amon Hen",
         "enablement": "amonhen.hasRepository"
       },
@@ -1309,11 +1410,6 @@
           "group": "1_navigation@1"
         },
         {
-          "command": "amonhen.worktree.new",
-          "when": "view == amonhen.sidebar && amonhen.engine && viewItem =~ /^(branch(\\.current)?(;\\w+)*|remoteBranch|tag(;\\w+)*)$/ && !listMultiSelection",
-          "group": "4_create@4"
-        },
-        {
           "command": "amonhen.remote.add",
           "when": "view == amonhen.sidebar && viewItem == section.remotes && amonhen.engine",
           "group": "inline"
@@ -1399,6 +1495,11 @@
           "group": "inline@0"
         },
         {
+          "command": "amonhen.markResolvedWithoutMarkers",
+          "when": "view == amonhen.sidebar && viewItem =~ /^sequence\\..*;unmarked$/",
+          "group": "inline@0"
+        },
+        {
           "command": "amonhen.continueSequence",
           "when": "view == amonhen.sidebar && viewItem =~ /^sequence\\./",
           "group": "inline@1"
@@ -1455,7 +1556,7 @@
         },
         {
           "command": "amonhen.nav.publish",
-          "when": "view == amonhen.sidebar && viewItem =~ /^branch(\\.current)?;unpublished(;\\w+)*$/ && !listMultiSelection",
+          "when": "view == amonhen.sidebar && viewItem =~ /^branch(\\.current)?;unpublished(;\\w+)*$/ && amonhen.hasRemote && !listMultiSelection",
           "group": "1_ref@2"
         },
         {
@@ -1465,7 +1566,7 @@
         },
         {
           "command": "amonhen.nav.rebase",
-          "when": "view == amonhen.sidebar && viewItem =~ /^(branch(;\\w+)*|remoteBranch|tag(;\\w+)*)$/ && !listMultiSelection",
+          "when": "view == amonhen.sidebar && viewItem =~ /^(branch(;\\w+)*|remoteBranch)$/ && !listMultiSelection",
           "group": "2_ref@2"
         },
         {
@@ -1480,7 +1581,7 @@
         },
         {
           "command": "amonhen.newTag",
-          "when": "view == amonhen.sidebar && viewItem =~ /^(branch(\\.current)?(;\\w+)*|remoteBranch|tag(;\\w+)*)$/ && !listMultiSelection",
+          "when": "view == amonhen.sidebar && viewItem =~ /^branch(\\.current)?(;\\w+)*$/ && !listMultiSelection",
           "group": "4_create@2"
         },
         {
@@ -1667,11 +1768,11 @@
       "commandPalette": [
         {
           "command": "amonhen.continueSequence",
-          "when": "amonhen.hasRepository"
+          "when": "amonhen.hasRepository && amonhen.sequence"
         },
         {
           "command": "amonhen.abortSequence",
-          "when": "amonhen.hasRepository"
+          "when": "amonhen.hasRepository && amonhen.sequence"
         },
         {
           "command": "amonhen.history.reword",
@@ -1731,7 +1832,19 @@
         },
         {
           "command": "amonhen.rebase",
-          "when": "amonhen.hasRepository"
+          "when": "amonhen.hasRepository && !amonhen.sequence"
+        },
+        {
+          "command": "amonhen.applyPatch",
+          "when": "amonhen.hasRepository && !amonhen.sequence"
+        },
+        {
+          "command": "amonhen.mergeBranches",
+          "when": "amonhen.hasRepository && !amonhen.sequence"
+        },
+        {
+          "command": "amonhen.pull",
+          "when": "amonhen.hasRepository && !amonhen.sequence"
         },
         {
           "command": "amonhen.history.goToHead",
@@ -1775,7 +1888,7 @@
         },
         {
           "command": "amonhen.skipSequence",
-          "when": "amonhen.hasRepository"
+          "when": "amonhen.hasRepository && amonhen.sequence =~ /^(rebase|cherry-pick|am)$/"
         },
         {
           "command": "amonhen.nav.fastForward",
@@ -1791,7 +1904,7 @@
         },
         {
           "command": "amonhen.publish",
-          "when": "amonhen.hasRepository && amonhen.unpublished"
+          "when": "amonhen.hasRepository && amonhen.unpublished && amonhen.hasRemote"
         },
         {
           "command": "amonhen.nav.checkout",
@@ -1959,6 +2072,10 @@
         },
         {
           "command": "amonhen.amRetryThreeWay",
+          "when": "false"
+        },
+        {
+          "command": "amonhen.markResolvedWithoutMarkers",
           "when": "false"
         },
         {
@@ -2719,7 +2836,7 @@
         },
         {
           "command": "amonhen.applyPatch",
-          "when": "amonhen.hasRepository && resourceExtname =~ /^\\.(patch|diff|mbox|eml)$/",
+          "when": "amonhen.hasRepository && !amonhen.sequence && resourceExtname =~ /^\\.(patch|diff|mbox|eml)$/",
           "group": "7_modification@9"
         }
       ]

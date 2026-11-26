@@ -3,9 +3,10 @@ import { readFile, stat } from 'node:fs/promises';
 import { join } from 'node:path';
 import * as vscode from 'vscode';
 import { failureCause, hasMoreThan } from '../failure/cause.ts';
-import { classifyFailure, failureAdvice, failureRemedies, failureSummary, type Failure, type Remedy } from '../failure/kind.ts';
+import { classifyFailure, failureAdvice, failureRemedies, failureSummary, failureTitle, operationOf, type Failure, type Remedy } from '../failure/kind.ts';
 import { GitError } from '../git/exec.ts';
-import type { Change } from '../state/changes.ts';
+import { groupChanges, type Change } from '../state/changes.ts';
+import { conflictStates } from '../state/conflicts.ts';
 import { predictStage, predictUnstage } from '../state/predict.ts';
 import type { Repository } from '../state/repository.ts';
 
@@ -16,6 +17,11 @@ export async function stageChanges(
   op: 'stage' | 'unstage',
 ): Promise<void> {
   if (!repo || changes.length === 0) {
+    return;
+  }
+  // 保存していない Result は、保存してから解決済みにする（アプリの Mark Resolved と同じ。git が解決済みにするのは
+  // 作業ツリーのファイルなので、エディタの変更を書いてから。残りのマーカーも保存した中身で数える）
+  if (op === 'stage' && !(await saveConflictEditors(repo, changes))) {
     return;
   }
   if (op === 'stage' && !(await confirmMarkers(repo, changes))) {
@@ -32,6 +38,30 @@ export async function stageChanges(
   } finally {
     await repo.refresh();
   }
+}
+
+/** コンフリクトのファイルを開いているエディタ（マージエディタの Result も）の、保存していない変更を保存する。保存できなければ false */
+async function saveConflictEditors(repo: Repository, changes: readonly Change[]): Promise<boolean> {
+  const paths = new Set(changes.filter((c) => c.group === 'conflicts').map((c) => vscode.Uri.file(join(repo.root, c.path)).fsPath));
+  const unsaved = vscode.workspace.textDocuments.filter((d) => d.isDirty && d.uri.scheme === 'file' && paths.has(d.uri.fsPath));
+  for (const doc of unsaved) {
+    if (!(await doc.save())) return false;
+  }
+  return true;
+}
+
+/**
+ * マーカーの残っていないコンフリクトのファイルを、まとめて解決済みにする（アプリの帯の Mark N Without Markers Resolved）。
+ * 保存していない Result は保存してから（保存した中身にマーカーが残っていれば確かめる）
+ */
+export async function markResolvedWithoutMarkers(repo: Repository | undefined): Promise<void> {
+  const status = repo?.current.status;
+  if (!repo || !status) return;
+  const states = await conflictStates(repo.root, repo.backend.dirs.gitDir, status.entries);
+  const changes = groupChanges(status.entries)
+    .flatMap(([, group]) => group)
+    .filter((c) => c.group === 'conflicts' && states.get(c.path)?.markers === 0);
+  await stageChanges(repo, changes, 'stage');
 }
 
 const MARKER = /^(<{7}|>{7})( |$)/m;
@@ -119,6 +149,13 @@ export interface ShowErrorOptions {
   retry?: () => unknown;
   /** 端末を開く場所（認証・ホスト鍵のとき） */
   cwd?: string;
+  /**
+   * 失敗した操作（コアの命令の名前。`failureTitle`）。あればアプリの帯と同じく「Couldn’t Push」などを見出しにして
+   * 原因を続ける。読み込みなど、操作でないものの失敗には渡さない
+   */
+  op?: string;
+  /** 操作したブランチ（ほかの worktree で checkout しているとき、その名前を言う） */
+  branch?: string;
 }
 
 const REMEDY_TITLES: Record<Remedy, string> = {
@@ -138,14 +175,17 @@ export function showError(err: unknown, options: ShowErrorOptions = {}): void {
   const message = err instanceof GitError || err instanceof Error ? err.message : String(err);
   const cause = failureCause(message);
   const failure = classifyFailure(err instanceof GitError ? `${err.stderr}\n${message}` : message);
-  const summary = failure && failureSummary(failure);
+  const summary = failure && failureSummary(failure, options.branch);
   const remedies = failure ? failureRemedies(failure, options.retry !== undefined) : [];
+  // 見出し（何が失敗したか）に原因を続ける（アプリの帯の見出しと要点）
+  const op = options.op ?? operationOf(err);
+  const headed = (text: string) => (op ? `${failureTitle(op)}: ${text}` : text);
   if (!summary && !hasMoreThan(cause, message) && !(err instanceof GitError)) {
-    void vscode.window.showErrorMessage(message);
+    void vscode.window.showErrorMessage(headed(message));
     return;
   }
   const buttons = [...remedies.map((r) => REMEDY_TITLES[r]), 'Details'];
-  void vscode.window.showErrorMessage(summary ?? cause, ...buttons).then((choice) => {
+  void vscode.window.showErrorMessage(headed(summary ?? cause), ...buttons).then((choice) => {
     const remedy = remedies.find((r) => REMEDY_TITLES[r] === choice);
     if (remedy) {
       runRemedy(remedy, failure!, options);
@@ -155,7 +195,7 @@ export function showError(err: unknown, options: ShowErrorOptions = {}): void {
     failures ??= vscode.window.createOutputChannel('Amon Hen Failures');
     const command = err instanceof GitError ? `git ${err.args.join(' ')}\n${err.exitCode === null ? '' : `exit code ${err.exitCode}\n`}` : '';
     const advice = failure && failureAdvice(failure);
-    failures.appendLine(`[${new Date().toLocaleString()}] ${summary ?? cause}`);
+    failures.appendLine(`[${new Date().toLocaleString()}] ${headed(summary ?? cause)}`);
     if (advice) failures.appendLine(advice);
     failures.appendLine(`${command}${(err instanceof GitError ? err.stderr : message).trimEnd()}`);
     failures.appendLine('');

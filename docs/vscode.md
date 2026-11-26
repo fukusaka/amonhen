@@ -89,7 +89,12 @@ is in [front.md](front.md), and the design in item 18 of
   (`src/daemon/render.ts`; the protocol is in [front.md](front.md#the-drawing-helper-amonhen-render)). The engine's
   `markdownBlocks` only parses the Markdown; the extension sends its diagram fences and formulas to the helper with
   the webview's theme colors and answers the helper's requests for DOT images and VectorDrawable resources from the
-  same commit. Without the helper, or when it fails, they stay as code and text.
+  same commit. Without the helper, or when it fails, they stay as code and text. The diagram colors, the gantt time
+  zone and the math size and time limit are the settings `amonhen.diagrams.*` and `amonhen.math.*` (the app's
+  Settings > Theme > Diagrams and Math, with the same choices and defaults; an imported Mermaid theme is a file path,
+  and the system time zone is the webview's); changing them redraws the open file. The SVG mobile check compares the
+  original with the chosen renderer's picture (Android and flutter_svg ported importers, iOS and react-native-svg
+  approximations) in the same comparison as image diffs.
 - Reflog, a sidebar row below the sections, opens a page of the main view with HEAD's reflog (the core's `reflog`) on the left
   and the selected entry's commit on the right, in the same details pane as History. Entries no ref reaches are marked
   "not on any branch". Its buttons and context menu create a branch or tag there, check it out (detached), reset to

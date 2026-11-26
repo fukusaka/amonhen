@@ -3,7 +3,8 @@
  * ブランチ・リモート・タグ・stash・サブモジュールを出す。中身はメインビューに出す。
  */
 import { daemonFor } from '../daemon/connection.ts';
-import { sequenceDetail, sequenceTitle, type SequenceInfo } from '../state/sequenceText.ts';
+import { conflictStates } from '../state/conflicts.ts';
+import { sequenceDetail, sequenceTitle, withoutMarkersNote, type SequenceInfo } from '../state/sequenceText.ts';
 import * as vscode from 'vscode';
 import { sharedIcon } from './sharedIcons.ts';
 import type { Sequence } from '../git/backend.ts';
@@ -111,6 +112,8 @@ export class SidebarProvider implements vscode.TreeDataProvider<Node>, vscode.Di
   private readonly expanded = new Set<LazySection>();
   /** 途中の merge・rebase などの中身（コアの `sequence`。エンジンだけ）。行の題と説明をアプリの帯と同じにする */
   private sequence: { root: string; info: SequenceInfo } | undefined;
+  /** マーカーの残っていないコンフリクトの数（途中の行に添え、まとめて解決済みにするボタンを出す） */
+  private withoutMarkers: { root: string; count: number } | undefined;
   /** sparse checkout のリポジトリ（Working Copy の行に印を付ける） */
   private readonly sparse = new Set<string>();
   /** 最後に出した節（変われば、いちばん上から描き直す） */
@@ -127,6 +130,11 @@ export class SidebarProvider implements vscode.TreeDataProvider<Node>, vscode.Di
     this.manager = manager;
     this.disposables.push(
       manager.onDidChangeCurrent((r) => this.watch(r)),
+      // コンフリクトのファイルを保存したら、マーカーの残っていない数を数え直す（status は UU のまま変わらない）
+      vscode.workspace.onDidSaveTextDocument(() => {
+        const repo = this.repo;
+        if (repo?.current.sequence && repo.current.status?.entries.some((e) => e.kind === 'unmerged')) void this.countWithoutMarkers(repo);
+      }),
       this.tagMarks,
       this.tagMarks.onDidChange(() => this._onDidChangeTreeData.fire(this.sections.get('tags'))),
       this.worktrees,
@@ -187,9 +195,11 @@ export class SidebarProvider implements vscode.TreeDataProvider<Node>, vscode.Di
     this.subtreeFacts.setRepository(this.engine ? repository : undefined);
     if (repository) void this.checkSparse(repository);
     if (repository) void this.loadSequence(repository);
+    if (repository) void this.countWithoutMarkers(repository);
     this.repoListener = repository?.onDidChange((changed) => {
       if (changed.has('workingCopy')) void this.loadSequence(repository);
-      if (changed.has('branches')) this.updateContext(repository);
+      if (changed.has('workingCopy')) void this.countWithoutMarkers(repository);
+      if (changed.has('branches') || changed.has('remotes') || changed.has('workingCopy')) this.updateContext(repository);
       // sparse checkout にしたかは設定（core.sparseCheckout。worktree の config.worktree のこともある）に出る
       if (changed.has('config') || changed.has('workingCopy')) void this.checkSparse(repository);
       // Working Copy の変化は、入口の数と途中の merge / rebase に出る
@@ -209,6 +219,22 @@ export class SidebarProvider implements vscode.TreeDataProvider<Node>, vscode.Di
       }
     });
     this._onDidChangeTreeData.fire(undefined);
+  }
+
+  /**
+   * コンフリクトのファイルのうち、マーカーの残っていないものを数える（作業ツリーのファイルを読むだけ。エンジンがなくても）。
+   * 変わっていれば描き直す。status が同じままでも、ファイルを保存したら数え直す
+   */
+  async countWithoutMarkers(repository: Repository): Promise<void> {
+    const status = repository.current.status;
+    const unmerged = status?.entries.some((e) => e.kind === 'unmerged') ?? false;
+    const states = status && unmerged ? await conflictStates(repository.root, repository.backend.dirs.gitDir, status.entries).catch(() => undefined) : undefined;
+    if (repository !== this.repo) return;
+    const count = states ? [...states.values()].filter((state) => state.markers === 0).length : 0;
+    const next = count > 0 ? { root: repository.root, count } : undefined;
+    if (next?.root === this.withoutMarkers?.root && next?.count === this.withoutMarkers?.count) return;
+    this.withoutMarkers = next;
+    if (repository.current.sequence) this._onDidChangeTreeData.fire(undefined);
   }
 
   /** sparse checkout かを読み、変わっていれば Working Copy の行を描き直す */
@@ -268,10 +294,17 @@ export class SidebarProvider implements vscode.TreeDataProvider<Node>, vscode.Di
     }
   }
 
-  /** 今のブランチに upstream が無ければ、ナビの上の Push を Publish にする */
+  /**
+   * 今のブランチに upstream が無ければ、ナビの上の Push を Publish にする。リモートがなければ Publish の先がないので、
+   * ブランチの行とコマンドパレットの Publish を出さない（`amonhen.hasRemote`）。途中の操作（merge・rebase など）の
+   * 種類は `amonhen.sequence` に置き、Continue・Abort・Skip はその間だけ、Pull・Merge…・Rebase…・Apply Patch… は
+   * その間は出さない（アプリのメニューと同じ）
+   */
   private updateContext(repository: Repository | undefined): void {
     const head = repository?.current.branches?.find((b) => b.isHead);
     void vscode.commands.executeCommand('setContext', 'amonhen.unpublished', !!head && (!head.upstream || !!head.gone));
+    void vscode.commands.executeCommand('setContext', 'amonhen.hasRemote', (repository?.current.remotes ?? []).length > 0);
+    void vscode.commands.executeCommand('setContext', 'amonhen.sequence', repository?.current.sequence ?? '');
   }
 
   /** 遅延セクションが展開されたら取得を始める */
@@ -505,12 +538,16 @@ export class SidebarProvider implements vscode.TreeDataProvider<Node>, vscode.Di
         const step = node.progress ? ` (${node.progress.current}/${node.progress.total})` : '';
         const am = node.sequence === 'am' ? state?.am : undefined;
         const conflicts = (state?.status?.entries ?? []).filter((e) => e.kind === 'unmerged').length;
+        // マーカーの残っていないコンフリクト（rerere やほかのエディタで解決した）。数を添え、まとめて解決済みにできる
+        const withoutMarkers = conflicts > 0 && this.withoutMarkers?.root === this.repo?.root ? (this.withoutMarkers?.count ?? 0) : 0;
         // エンジンがあれば、アプリの帯と同じ: 何をどこへしている途中か（何手目か）と、どこで・なぜ止まり、次に何をするか
         const info = this.sequence && this.sequence.root === this.repo?.root && this.sequence.info.kind === node.sequence ? this.sequence.info : undefined;
         const item = new vscode.TreeItem(info ? sequenceTitle(info) : `${sequenceRowName(node.sequence)}${step}`);
         item.id = 'sequence';
-        item.description = info ? sequenceDetail(info, conflicts) : 'Resolve and commit, then Continue';
-        if (info) item.tooltip = `${sequenceTitle(info)}\n${sequenceDetail(info, conflicts)}`;
+        item.description = info
+          ? sequenceDetail(info, conflicts, withoutMarkers)
+          : `Resolve and commit, then Continue${withoutMarkersNote(withoutMarkers)}`;
+        if (info) item.tooltip = `${sequenceTitle(info)}\n${sequenceDetail(info, conflicts, withoutMarkers)}`;
         item.iconPath = new vscode.ThemeIcon('debug-pause', new vscode.ThemeColor('notificationsWarningIcon.foreground'));
         item.contextValue = `sequence.${node.sequence}`;
         if (am) {
@@ -530,6 +567,11 @@ export class SidebarProvider implements vscode.TreeDataProvider<Node>, vscode.Di
             item.contextValue = 'sequence.am.retry';
           }
           if (info) Object.assign(item, shown);
+        }
+        // Mark N Without Markers Resolved（アプリの帯のボタン）。ボタンの題は決まっているので、数はツールチップに
+        if (withoutMarkers > 0) {
+          item.contextValue += ';unmarked';
+          item.tooltip = `${typeof item.tooltip === 'string' ? `${item.tooltip}\n` : ''}${withoutMarkers} without conflict markers left (rerere or another editor resolved them)`;
         }
         item.command = { command: 'amonhen.showWorkingCopy', title: 'Show Working Copy' };
         return item;

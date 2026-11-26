@@ -37,6 +37,9 @@ export interface DaemonRepo {
 /** この窓の、daemon とのつながり（リポジトリごと） */
 export interface WindowConnection {
   path: string;
+  /** これまでに送った・受け取ったバイト数 */
+  sent: number;
+  received: number;
   /** 切れていれば、そのわけ */
   closed?: string;
 }
@@ -90,4 +93,9 @@ export function clientsCell(r: DaemonRepo): string {
 /** Open Repositories の Search Index の欄 */
 export function indexCell(r: DaemonRepo): string {
   return r.indexRows == null ? '—' : `${r.indexRows.toLocaleString('en-US')} rows · ${bytes(r.indexBytes ?? 0)}`;
+}
+
+/** This Window’s Connections の Sent · Received の欄（アプリと同じ書き方） */
+export function trafficCell(c: WindowConnection): string {
+  return `${bytes(c.sent)} · ${bytes(c.received)}`;
 }

@@ -6,12 +6,16 @@ import type { Repository } from '../state/repository.ts';
 import { runAction } from './dragDrop.ts';
 import { pullWithSheet } from './pullSheet.ts';
 import { pushWithSheet } from './pushSheet.ts';
+import { refusedMidSequence } from './sequenceCommands.ts';
+
+/** 送るコミットを数える上限（それより多ければ「200+」） */
+const LIMIT = 200;
 
 export function registerSyncCommands(manager: RepositoryManager): vscode.Disposable {
   return vscode.Disposable.from(
     vscode.commands.registerCommand('amonhen.pull', async () => {
       const repo = manager.current;
-      if (repo) await pullWithSheet(repo);
+      if (repo && !(await refusedMidSequence(repo))) await pullWithSheet(repo);
     }),
     // Commit and Push は { quiet: true } を渡す（上流が先に進んでいなければ確かめずに送る）
     vscode.commands.registerCommand('amonhen.push', async (arg?: unknown) => {
@@ -40,7 +44,8 @@ export async function publish(repo: Repository, branch: string): Promise<void> {
   const { remotes, preferred } = await publishChoices(repo.backend, branch);
   const first = preferred ?? remotes[0];
   if (!first) {
-    void vscode.window.showErrorMessage('There’s no remote. Add one first.');
+    // アプリは Publish を押せなくし、ツールチップでこう言う（ブランチの行とコマンドパレットには出さない）
+    void vscode.window.showErrorMessage('No remote to publish to. Add one with Add Remote….');
     return;
   }
   const remote =
@@ -71,15 +76,25 @@ export async function publish(repo: Repository, branch: string): Promise<void> {
       }
       return;
     }
+    // 送るものがあれば Push、同じなら upstream にするだけ（アプリと同じ文とボタン）
+    const outgoing = (await repo.backend.log([`${target}..${branch}`], 0, LIMIT).catch(() => [])).length;
+    const count = outgoing >= LIMIT ? `${LIMIT}+` : String(outgoing);
     const choice = await vscode.window.showInformationMessage(
       `${short} already exists`,
-      { modal: true, detail: 'Pushes there and makes it the upstream.' },
-      'Push',
+      {
+        modal: true,
+        detail:
+          outgoing > 0
+            ? `This pushes ${count} ${outgoing === 1 ? 'commit' : 'commits'} to it and makes it the upstream.`
+            : `It is the same as ${name}. This makes it the upstream.`,
+      },
+      outgoing > 0 ? 'Push' : 'Set Upstream',
     );
     if (!choice) return;
   }
   await runAction(repo, {
     label: `$(cloud-upload) Publish ${name}`,
+    op: 'push',
     run: async () => {
       await publishBranch(repo.backend, branch, remote, remoteBranch);
       return 'pushed';

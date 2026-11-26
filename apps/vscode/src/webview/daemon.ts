@@ -2,7 +2,7 @@
  * メインビューの Daemon 画面（アプリの Activity の Daemon のタブと同じ）。手元の共有の daemon の様子と Start・Stop、
  * daemon が開いているリポジトリ、この窓の daemon とのつながり
  */
-import { clientsCell, duration, indexCell, sshCell, statusLine, type DaemonHostMessage } from '../daemonStatus/protocol.ts';
+import { clientsCell, duration, indexCell, sshCell, statusLine, trafficCell, type DaemonHostMessage } from '../daemonStatus/protocol.ts';
 import type { HostMessage } from '../view/protocol.ts';
 import { el, post, type View } from './api.ts';
 
@@ -81,7 +81,7 @@ export function createDaemonView(): View {
       const tr = el('tr');
       const status = el('td', c.closed ? 'error' : 'ok', c.closed ? 'Disconnected' : 'Connected');
       if (c.closed) status.title = c.closed;
-      tr.append(el('td', 'mono', c.path), el('td', 'muted', 'Local shared daemon'), status);
+      tr.append(el('td', 'mono', c.path), el('td', 'muted', 'Local shared daemon'), status, el('td', 'numeric', trafficCell(c)));
       return tr;
     });
     content.replaceChildren(
@@ -89,7 +89,7 @@ export function createDaemonView(): View {
       el('h3', '', 'Open Repositories'),
       table(['Repository', 'SSH', 'Connections', 'History', 'Watching', 'Search Index'], repos, 'None'),
       el('h3', '', 'This Window’s Connections to the Daemon'),
-      table(['Repository', 'Location', 'Status'], connections, 'None'),
+      table(['Repository', 'Location', 'Status', 'Sent · Received'], connections, 'None'),
       el(
         'div',
         'daemon-detail muted',

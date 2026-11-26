@@ -82,7 +82,11 @@ Webview はローカルで描画され、拡張ホストとの通信だけが SS
   `amonhen.daemon.path` でエンジンを指していればその隣）、見せるファイルごとに起動する（`src/daemon/render.ts`。
   取り決めは [front.md](front.md#絵の手伝いamonhen-render)）。エンジンの `markdownBlocks` は Markdown を読むだけで、
   拡張はその図のフェンスと式を Webview のテーマの色で手伝いに送り、手伝いが求める同じコミットの DOT の画像や
-  VectorDrawable の資源に答える。手伝いがない・失敗したときは、コードとテキストのまま。
+  VectorDrawable の資源に答える。手伝いがない・失敗したときは、コードとテキストのまま。図の配色・gantt の時間帯・
+  数式の大きさと時間の上限は設定 `amonhen.diagrams.*`・`amonhen.math.*`（アプリの Settings > Theme の Diagrams・Math と
+  同じ選択肢と既定。読み込んだ Mermaid のテーマはファイルのパス、OS の時間帯は Webview のもの）で、変えると開いている
+  ファイルを描き直す。SVG のモバイル向けの確認は、元の絵と選んだ部品での見え方（Android と flutter_svg は本物の取り込み
+  を移したもの、iOS と react-native-svg は近似）を画像の差分と同じ比較の欄で比べる。
 - サイドバーのセクションの下の Reflog は、メインビューのページを開く。左に HEAD の reflog（コアの `reflog`）、右に選んだ行の
   コミットを History と同じ詳細の欄に出す。どの ref からも辿れない行には「not on any branch」と付ける。ボタンと右クリック
   から、そこにブランチ・タグを作る、checkout する（detached）、そこへ reset する、History で見せる（今の範囲になければ

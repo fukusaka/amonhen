@@ -4,10 +4,10 @@
  * 足した行を緑、変えた行を青（前の行はツールチップ）、消したところに赤い印。画像は拡大縮小でき、SVG は絵・
  * テキスト・モバイル、Markdown は整形とテキストで見る。そのほかのバイナリはエディタで開く（アプリと同じ）
  */
-import type { FileView, FileViewNote, ImageBlob, PictureColors, SvgCheckView, TreeEntry, ViewLine } from '../history/protocol.ts';
+import type { FileView, FileViewNote, ImageBlob, MobilePreview, PictureColors, SvgCheckView, TreeEntry, ViewLine } from '../history/protocol.ts';
 import { el, post } from './api.ts';
 import { renderCode } from './diffView.ts';
-import { checkerToggle } from './imageDiff.ts';
+import { checkerToggle, renderImageDiff } from './imageDiff.ts';
 import { findAll, findCountText } from './textFind.ts';
 import { resolvePath } from '../history/repoPath.ts';
 import { hexColor } from '../history/cssColor.ts';
@@ -40,6 +40,14 @@ export interface AllFilesOptions {
 const lastMode: { markdown?: string; svg?: string; drawable?: string } = {};
 let lastRenderer = 'android';
 
+/** 図・数式の設定が変わったときに、開いている絵を描き直すもの（すべてのファイルの欄ごと） */
+const redrawers = new Set<() => void>();
+
+/** 図・数式の設定が変わった: 開いているファイルの絵を描き直す（テーマを変えたときと同じ） */
+export function redrawPictures(): void {
+  for (const redraw of redrawers) redraw();
+}
+
 /** 中身に並べる行の上限（それより長いファイルはエディタで） */
 const MAX_LINES = 20000;
 
@@ -63,15 +71,18 @@ export function createAllFiles(oid: string, changes: readonly ChangedFile[], opt
   let pendingLine: { path: string; line: number } | undefined;
   /** 開いているファイルの絵（図・数式・VectorDrawable）が、画面の色で描いたものか（テーマが変わったら求め直す） */
   let themed = false;
-  // テーマが変わったら、画面の色で描いた絵を描き直す（アプリと同じ）
-  const observer = new MutationObserver(() => {
+  // テーマ・図と数式の設定が変わったら、画面の色と設定で描いた絵を描き直す（アプリと同じ）
+  const redraw = () => {
     if (!root.isConnected) {
       observer.disconnect();
+      redrawers.delete(redraw);
       return;
     }
     if (themed && selected) requestFile(selected);
-  });
+  };
+  const observer = new MutationObserver(redraw);
   observer.observe(document.body, { attributes: true, attributeFilter: ['class'] });
+  redrawers.add(redraw);
 
   /** このフォルダの下に、このコミットで変えたファイルがあるか */
   const touches = (dir: string) => changes.some((c) => c.path.startsWith(`${dir}/`));
@@ -135,9 +146,13 @@ export function createAllFiles(oid: string, changes: readonly ChangedFile[], opt
     requestFile(full);
   }
 
-  /** ファイルの中身を求める（図・数式・VectorDrawable の絵は、今の画面の色と時間帯で描かせる） */
+  /**
+   * ファイルの中身を求める（図・数式・VectorDrawable の絵は、今の画面の色で描かせる。gantt の時間帯の設定が「OS の
+   * 時間帯」なら、この画面の時間帯で数える）
+   */
   function requestFile(full: string): void {
-    post({ type: 'treeFile', oid, path: full, colors: pictureColors(), utcOffset: -new Date().getTimezoneOffset() });
+    const timeZone = localTimeZone();
+    post({ type: 'treeFile', oid, path: full, colors: pictureColors(), ...(timeZone ? { timeZone } : {}) });
   }
 
   function showEntries(path: string, entries: TreeEntry[], error?: string): void {
@@ -208,6 +223,7 @@ export function createAllFiles(oid: string, changes: readonly ChangedFile[], opt
   function showFile(path: string, view: FileView & FileViewNote): void {
     if (path !== selected) return;
     themed = view.kind === 'text' && (view.drawable !== undefined || (view.markdown !== undefined && hasPictures(view.markdown)));
+    if (view.kind === 'text' && view.mathScale) mathScale = view.mathScale;
     const head = el('div', 'file-pane-head');
     // パスとコミット（アプリの「パス @ 短い ID」）。消したファイルは前の版を出すので、そう添える
     head.append(el('span', 'path', path), el('span', 'at', `@ ${oid.slice(0, 7)}`));
@@ -252,7 +268,7 @@ export function createAllFiles(oid: string, changes: readonly ChangedFile[], opt
           modes.push(['Picture', 'Show the SVG as a picture', () => zoomableImage(svg.image)]);
           if (svg.check) {
             const check = svg.check;
-            modes.push(['Mobile', 'What breaks on a mobile SVG renderer, beside an approximation of it', () => renderSvgCheck(svg.image, check)]);
+            modes.push(['Mobile', 'What breaks on the mobile SVG renderers, and the original beside how one draws it', () => renderSvgCheck(svg.image, check)]);
           }
         }
         if (view.drawable) {
@@ -442,26 +458,30 @@ const TARGET_NAMES: Record<string, string> = {
 };
 
 /**
- * SVG のモバイルの確認: 部品（Android・iOS・Flutter・React Native）を選び、その部品で崩れる機能と、元の絵と崩れ方の
- * 近似を並べる（アプリと同じ。選んだ部品は覚える）
+ * SVG のモバイルの確認（アプリと同じ）: 部品（Android・iOS・Flutter・React Native）を選び、元の絵とその部品での見え方を
+ * 画像の比較の欄（並べる・スワイプ・オニオンスキン・違うピクセル、拡大縮小）で比べる。Android と flutter_svg は本物の
+ * 取り込みを移したもの、iOS と react-native-svg は近似。絵の下に、部品が読めなかったわけ・取り込みの警告と、部品ごとの
+ * 崩れる機能の一覧を置く。選んだ部品は覚える
  */
 function renderSvgCheck(image: ImageBlob, check: SvgCheckView): HTMLElement {
   const box = el('div', 'svg-check');
-  if (check.issues.length === 0) {
-    box.append(el('div', 'empty', 'Nothing here breaks on the mobile SVG renderers.'));
-    return box;
-  }
   const switcher = el('span', 'segmented');
-  const body = el('div');
   const SHORT: Record<string, string> = { android: 'Android', ios: 'iOS', flutter: 'Flutter', reactNative: 'React Native' };
   const pick = (key: string) => {
     lastRenderer = key;
     for (const b of switcher.querySelectorAll<HTMLElement>('button')) b.classList.toggle('on', b.dataset.key === key);
-    const target = renderTarget(key);
-    body.replaceChildren(target);
-    const toggle = checkerToggle(box, [...target.querySelectorAll<HTMLImageElement>('.checker img')]);
-    head.querySelector('.checker-toggle')?.remove();
-    head.append(toggle);
+    const preview: MobilePreview = check.previews[key] ?? { title: TARGET_NAMES[key]!, caption: '', messages: [], exact: false };
+    const after = preview.svg ? { url: `data:image/svg+xml;base64,${base64(preview.svg)}`, bytes: new TextEncoder().encode(preview.svg).length } : undefined;
+    // 部品の切り替えは比べる欄の段の左に（アプリと同じ）。比べ方は部品を替えるたびに並べるから
+    box.replaceChildren(
+      renderImageDiff(image, after, {
+        titles: ['Original', preview.title],
+        caption: preview.caption,
+        accessory: switcher,
+        notes: mobileNotes(check.issues, preview),
+        mode: 'side',
+      }),
+    );
   };
   for (const key of Object.keys(TARGET_NAMES)) {
     const b = el('button', 'bar-button', SHORT[key] ?? key);
@@ -470,39 +490,40 @@ function renderSvgCheck(image: ImageBlob, check: SvgCheckView): HTMLElement {
     b.addEventListener('click', () => pick(key));
     switcher.append(b);
   }
-  // 市松模様の明暗は部品を選ぶ帯に（既定は元の絵と、選んだ部品の近似の色から）
-  const head = el('div', 'svg-check-bar');
-  head.append(switcher);
-  box.append(head, body);
   pick(TARGET_NAMES[lastRenderer] ? lastRenderer : 'android');
   return box;
+}
 
-  function renderTarget(key: string): HTMLElement {
-    const name = TARGET_NAMES[key]!;
-    const section = el('section', 'svg-target');
-    const issues = check.issues.filter((i) => i.targets.includes(key));
-    section.append(el('h4', '', `${name}${issues.length ? '' : ' — no problems'}`));
-    if (issues.length) {
-      const list = el('ul');
-      for (const i of issues) list.append(el('li', '', `${i.feature}${i.count > 1 ? ` (×${i.count})` : ''}: ${i.message}`));
-      section.append(list);
-    }
-    const pair = el('div', 'image-side');
-    const figure = (label: string, url: string) => {
-      const f = el('figure', 'image-figure');
-      const frame = el('div', 'checker');
-      const img = el('img');
-      img.src = url;
-      frame.append(img);
-      f.append(frame, el('div', 'image-caption', label));
-      return f;
-    };
-    const approx = check.approximations[key];
-    pair.append(figure('Original', image.url));
-    if (approx) pair.append(figure(`How ${name} draws it (approximation)`, `data:image/svg+xml;base64,${base64(approx)}`));
-    section.append(pair);
-    return section;
+/**
+ * モバイルの確認の絵の下の説明（アプリと同じ）: 見ている部品が読めなかったわけ（赤）と、その取り込みの警告、部品ごとの
+ * 崩れる機能（なければそう書く）
+ */
+function mobileNotes(issues: SvgCheckView['issues'], preview: MobilePreview): HTMLElement {
+  const notes = el('div', 'mobile-notes');
+  if (preview.error) notes.append(el('div', 'mobile-error', preview.error));
+  if (preview.messages.length) {
+    notes.append(el('h4', '', `What ${preview.title} reports`));
+    const list = el('ul', 'mobile-messages');
+    for (const message of preview.messages) list.append(el('li', '', message));
+    notes.append(list);
   }
+  if (issues.length === 0) {
+    notes.append(el('div', '', 'Nothing known to break on Android VectorDrawable, iOS (CoreSVG), flutter_svg or react-native-svg.'));
+    return notes;
+  }
+  for (const [key, name] of Object.entries(TARGET_NAMES)) {
+    notes.append(el('h4', '', name));
+    const own = issues.filter((i) => i.targets.includes(key));
+    const list = el('ul');
+    if (own.length === 0) list.append(el('li', '', 'Nothing known to break'));
+    for (const i of own) {
+      const item = el('li');
+      item.append(el('code', '', `${i.feature}${i.count > 1 ? ` ×${i.count}` : ''}`), ` ${i.message}`);
+      list.append(item);
+    }
+    notes.append(list);
+  }
+  return notes;
 }
 
 function base64(text: string): string {
@@ -543,7 +564,7 @@ interface MdRun {
   /** 文中の数式を描けなかった理由（`text` は書いたままの原文で、`code` の印つき） */
   math_error?: string;
 }
-/** コアが描いた数式（色は当ててある）。大きさは em（本文の字の大きさ × `MATH_SCALE`） */
+/** コアが描いた数式（色は当ててある）。大きさは em（本文の字の大きさ × `mathScale`） */
 interface MdFormula {
   svg: string;
   width: number;
@@ -786,8 +807,20 @@ function clearHighlights(): void {
 }
 
 
-/** 本文の字の大きさに対する数式の 1 em（コアの `math::FONT_SCALE`。KaTeX と同じ） */
-const MATH_SCALE = 1.21;
+/**
+ * 本文の字の大きさに対する数式の 1 em（設定 `amonhen.math.formulaSize`。既定はコアの `math::FONT_SCALE`、KaTeX と
+ * 同じ 1.21。開いたファイルの答えに付いてくる）
+ */
+let mathScale = 1.21;
+
+/** この画面の時間帯（IANA の名前。わからなければ undefined） */
+function localTimeZone(): string | undefined {
+  try {
+    return Intl.DateTimeFormat().resolvedOptions().timeZone || undefined;
+  } catch {
+    return undefined;
+  }
+}
 
 /** 図・数式の絵があるか（テーマが変わったら描き直す） */
 function hasPictures(blocks: readonly unknown[]): boolean {
@@ -824,9 +857,9 @@ function formulaImage(formula: MdFormula, tex: string, display: boolean): HTMLEl
   img.src = `data:image/svg+xml;base64,${base64(formula.svg)}`;
   img.alt = tex;
   img.title = tex;
-  img.style.width = `${formula.width * MATH_SCALE}em`;
-  img.style.height = `${(formula.height + formula.depth) * MATH_SCALE}em`;
-  if (!display) img.style.verticalAlign = `-${formula.depth * MATH_SCALE}em`;
+  img.style.width = `${formula.width * mathScale}em`;
+  img.style.height = `${(formula.height + formula.depth) * mathScale}em`;
+  if (!display) img.style.verticalAlign = `-${formula.depth * mathScale}em`;
   return img;
 }
 

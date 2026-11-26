@@ -1463,6 +1463,34 @@ First release.
 - The Working Copy follows the app in the small things: List at first and "File Name", the file menu's Stage, Discard…
   or Delete File…, both .gitignore items, Reveal and Open File, no question before discarding lines, a commit with only
   a description, "Amend Commit", diff errors in the pane, and Take Current / Incoming File.
+- History folds or shows any merge on its own (its context menu, ←/→), and the display menu has Fold All and Show
+  All Merged Commits; the folds are kept per repository and shared with the apps and the TUI.
+- A failure the app knows (sign-in, host key, network, rejected push, diverged branches, local changes, a lock, no
+  upstream, a branch in another worktree) is said in plain words with the app's next steps, such as Pull…, Set
+  Upstream… or Try Again; Details adds the advice.
+- Keys and Values in Repository Settings lists the app's Basic keys, shows every value of a multi-valued key, groups
+  keys under collapsible section headers and sorts by any column, as in the app.
+- A commit message template from a file shows its first lines under the row in Repository Settings > Commits.
+- The Daemon page shows how much each of this window's connections has sent and received.
+- When an operation stops on conflicts, the main view switches to Working Copy and opens the first conflicted file in
+  the merge editor, as in the app.
+- The in-progress row says how many conflicted files have no markers left, with a button that marks them all resolved.
+- Mark as Resolved saves unsaved changes in the editor or merge editor first, instead of warning that markers are left.
+- Diagrams in All Files take Mermaid's colors by default, as in the app, with the app's color choices, formula size,
+  math time limit and gantt time zone (now following daylight saving) as settings (with the engine).
+- The SVG mobile check shows Android's and flutter_svg's real conversions with their notes, and always compares the
+  original with the renderer's picture in the image comparison, even when nothing breaks (with the engine).
+- Failures are headed by the operation, as in the app ("Couldn't Push"), and a branch checked out in another worktree
+  is named.
+- Add Remote is one sheet in the main view with Name, Fetch URL, Push URL, where the URL points to, and Check
+  Connection, as in the app.
+- Continue, Abort and Skip appear only while an operation is in progress, and Pull, Merge Branches…, Rebase… and Apply
+  Patch… aren't offered during one.
+- Publish isn't offered without a remote, and publishing to an existing remote branch says how many commits it pushes
+  or that it only sets the upstream.
+- Export Archive takes any top folder name (empty for none), Save as Bundle shows the commit count, and removing a
+  remote says it can't be undone.
+- Fetch…, Pull…, Push… and Force Push… end with "…", and the sidebar's right-click menus offer the app's items.
 - Diffs highlight every changed word in a line and pair removed with added lines even when their counts differ, and
   long diffs are drawn in full instead of stopping at 5000 lines, as in the app.
 - A diff line's right-click has Open File at This Commit at that line, in All Files with the engine.
@@ -1470,17 +1498,6 @@ First release.
 - Save as Patch isn't offered for a merge, Apply Patch is refused during an operation, one mbox is named after the
   first commit's subject, and the Apply Patch preview marks each file A, D, R, C or M.
 - Reflog and Range Diff show how long ago, and the Edit drawing keeps the unchanged commit level in both columns.
-
-#### Changed
-
-- History folds or shows any merge on its own (its context menu, ←/→), and the display menu has Fold All and Show
-  All Merged Commits; the folds are kept per repository and shared with the apps and the TUI.
-
-#### Changed
-
-- A failure the app knows (sign-in, host key, network, rejected push, diverged branches, local changes, a lock, no
-  upstream, a branch in another worktree) is said in plain words with the app's next steps, such as Pull…, Set
-  Upstream… or Try Again; Details adds the advice.
 
 #### Fixed
 

@@ -79,7 +79,7 @@ async function switchBranch(repo: Repository, sidebar: SidebarProvider): Promise
       },
     );
   } catch (err) {
-    showError(err);
+    showError(err, { op: chosen.kind === 'remote' ? 'track' : chosen.kind === 'local' ? 'checkout' : 'createBranch', branch: chosen.name });
   } finally {
     await repo.refresh();
   }
