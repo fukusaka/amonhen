@@ -171,8 +171,10 @@ body.resizing {
   user-select: none;
 }
 
+/* 狭いときは一覧の最小の幅を残して縮める（縮めないと窓の外にはみ出し、右の文が切れる） */
 aside.details {
-  flex: none;
+  flex: 0 1 auto;
+  min-width: 0;
   width: 55%;
   display: flex;
   flex-direction: column;
