@@ -1293,3 +1293,31 @@ fn node_shapes_size_like_graphviz() {
         assert!(near(got, want), "{shape} {w}x{h}: {got:?}, want {want:?}");
     }
 }
+
+/// rotate=90・orientation=landscape は絵を左に 90° 回す（幅と高さが入れ替わる）。
+#[test]
+fn landscape_rotates_the_drawing() {
+    let view = |src: &str| {
+        let svg = render(src).unwrap().svg;
+        let v: Vec<f64> = svg
+            .split("viewBox=\"")
+            .nth(1)
+            .unwrap()
+            .split('"')
+            .next()
+            .unwrap()
+            .split(' ')
+            .map(|n| n.parse().unwrap())
+            .collect();
+        (v[2], v[3], svg)
+    };
+    let (w, h, _) = view("digraph { a -> b -> c }");
+    for src in [
+        "digraph { rotate=90; a -> b -> c }",
+        "digraph { orientation=landscape; a -> b -> c }",
+    ] {
+        let (rw, rh, svg) = view(src);
+        assert_eq!((rw, rh), (h, w), "{svg}");
+        assert!(svg.contains("rotate(-90)"), "{svg}");
+    }
+}

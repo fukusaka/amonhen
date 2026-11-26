@@ -2243,6 +2243,17 @@ pub fn render(
     if crate::take_cut_short() {
         ctx.notes.insert(Note::WorkLimit);
     }
+    // rotate=90・orientation=landscape: 絵を左に 90° 回す（Graphviz の絵と同じ。上が左、右が上になる）
+    let landscape = g.num("rotate").is_some_and(|r| r == 90.0)
+        || g.get("orientation")
+            .is_some_and(|o| o.trim().starts_with(['l', 'L']));
+    if landscape {
+        let content = format!(
+            "<g transform=\"translate(0,{}) rotate(-90)\">{content}</g>",
+            num(width)
+        );
+        return svg_document("dot", height, width, FONT_SIZE, &options, &acc, &content);
+    }
     svg_document("dot", width, height, FONT_SIZE, &options, &acc, &content)
 }
 
