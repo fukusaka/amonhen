@@ -1244,3 +1244,13 @@ fn dot_puts_the_taller_cluster_first_in_a_tied_cycle() {
         .svg;
     assert!(cy(&svg, "x1") < cy(&svg, "y1"), "{svg}");
 }
+
+/// rank=min のノードへ入る辺は逆にするが、閉路を探すときは書いた向きの辺を先にたどる（Graphviz の絵と同じ）。
+#[test]
+fn dot_follows_written_edges_before_turned_ones() {
+    let svg = render("digraph { e; d; r; e -> r; r -> d; d -> e; r -> e; {rank=min; d} }")
+        .unwrap()
+        .svg;
+    let cy = |id: &str| attr_num(part(&svg, id), "cy");
+    assert!(cy("d") < cy("e") && cy("e") < cy("r"), "{svg}");
+}

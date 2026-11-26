@@ -532,18 +532,22 @@ fn rank(
     let min_c = min_u.map(|u| dense[u]);
     let max_c = max_u.map(|u| dense[u]);
     let mut cons = Vec::new();
+    // 最小の組へ入る辺・最大の組から出る辺は逆にして、ほかの辺の後に置く（閉路を探す深さ優先は、書いたままの
+    // 向きの辺を先にたどる。Graphviz の絵と同じ）
+    let mut turned = Vec::new();
     for e in edges.iter().filter(|e| constraint(e)) {
         let (mut t, mut h) = (e.tail, e.head);
         let (mut ut, mut uh) = (dense[unit[t]], dense[unit[h]]);
         if ut == uh {
             continue;
         }
-        if Some(uh) == min_c || Some(ut) == max_c {
+        let turn = Some(uh) == min_c || Some(ut) == max_c;
+        if turn {
             std::mem::swap(&mut t, &mut h);
             std::mem::swap(&mut ut, &mut uh);
         }
         let m = minlen(e);
-        cons.push(Con {
+        (if turn { &mut turned } else { &mut cons }).push(Con {
             tail: ut,
             head: uh,
             fwd: m + off[t] - off[h],
@@ -551,6 +555,7 @@ fn rank(
             weight: e.weight.clamp(0.0, 1000.0),
         });
     }
+    cons.extend(turned);
     // 最小・最大の組と、根（すべてをつなぐ）
     let root = units;
     let mut fixed: Vec<NsEdge> = Vec::new();
