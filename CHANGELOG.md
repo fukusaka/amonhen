@@ -1421,6 +1421,7 @@ First release.
 #### Changed
 
 - The activity bar's Amon Hen mark is redrawn: the same two ridges in thinner lines, with the seat's ring at the summit.
+  The main view's tab shows it in the theme's icon color instead of black.
 - Formatted Markdown in All Files sizes `<img width="50%">` as a share of its column, or of the cell in tables.
 - The sidebar's title buttons and branch rows draw the icons shared by every front end (see `docs/icons.md`).
 - Copy Short ID copies 8 characters, as the app does.

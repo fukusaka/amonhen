@@ -108,7 +108,12 @@ export class MainPanel implements vscode.Disposable {
       (m) => this.post(m),
       () => this.watch(this.repo),
     );
-    panel.iconPath = vscode.Uri.joinPath(extensionUri, 'media', 'amonhen.svg');
+    // タブのアイコンは画像として描かれ、currentColor が黒になるので、テーマごとに色を書いた写しを渡す
+    // （色はサイドバーのアイコンと同じ、VSCode の既定のアイコンの色）。
+    panel.iconPath = {
+      light: vscode.Uri.joinPath(extensionUri, 'media', 'amonhen-light.svg'),
+      dark: vscode.Uri.joinPath(extensionUri, 'media', 'amonhen-dark.svg'),
+    };
     panel.webview.html = html(panel.webview, extensionUri);
     this.disposables.push(
       this.history,
