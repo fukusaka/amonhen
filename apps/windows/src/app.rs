@@ -2055,8 +2055,16 @@ impl Root {
                 .collect();
             let _ = strip.request_native_element(move |result| {
                 let Ok(element) = result else { return };
-                // 帯のタイルは引いて並べ替え（一覧がする）、パレットへ引いて外す。
+                // 帯のタイルは引いて並べ替え（一覧がする）、パレットへ引くか、どこも受けない所に落として外す
+                // （NSToolbar と同じ）。
                 if let Some(revoker) = xaml::drag_some_tags(&element, strip_tags.clone(), "bar:") {
+                    TOOLBAR_DRAG_REVOKERS.with(|r| r.borrow_mut().push(revoker));
+                }
+                if let Some(revoker) = xaml::dropped_nowhere(&element, |tags| {
+                    with_history(move |h| {
+                        h.sender.send(Message::ToolbarRemoved(tags));
+                    });
+                }) {
                     TOOLBAR_DRAG_REVOKERS.with(|r| r.borrow_mut().push(revoker));
                 }
                 let mut targets = strip_tags.clone();

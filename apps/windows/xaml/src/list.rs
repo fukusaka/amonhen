@@ -2,8 +2,8 @@
 //! 一覧への行のドラッグ。
 
 use crate::bindings::{
-    DataPackageOperation, DependencyObject, DragEventArgs, DragItemsStartingEventArgs,
-    FrameworkElement, ListViewBase, UIElement, VisualTreeHelper,
+    DataPackageOperation, DependencyObject, DragEventArgs, DragItemsCompletedEventArgs,
+    DragItemsStartingEventArgs, FrameworkElement, ListViewBase, UIElement, VisualTreeHelper,
 };
 use windows_core::{EventRevoker, HSTRING, IInspectable, Interface, Ref};
 
@@ -160,6 +160,33 @@ pub fn drag_some_tags(
         *DRAGGED.lock().unwrap_or_else(|e| e.into_inner()) =
             tags.into_iter().map(|t| format!("{prefix}{t}")).collect();
         attach_drop();
+    })
+    .ok()
+}
+
+/// `element` の中の最初の一覧から引いた行を、どこも受けない所に落としたら `dropped(引いた行の Tag)` を呼ぶ
+/// （ツールバーのタイルを帯の外に落として外す。NSToolbar と同じ）。一覧の中の並べ替えや、受け口に落としたときは
+/// 呼ばない。
+pub fn dropped_nowhere(
+    element: &IInspectable,
+    dropped: impl Fn(Vec<String>) + Send + 'static,
+) -> Option<EventRevoker> {
+    let list = find_list(element)?;
+    list.DragItemsCompleted(move |_, args: Ref<DragItemsCompletedEventArgs>| {
+        let Some(args) = args.as_ref() else { return };
+        if !args
+            .DropResult()
+            .is_ok_and(|r| r == DataPackageOperation::None)
+        {
+            return;
+        }
+        let Ok(items) = args.Items() else { return };
+        let tags: Vec<String> = (0..items.Size().unwrap_or(0))
+            .filter_map(|i| tag_up(&items.GetAt(i).ok()?))
+            .collect();
+        if !tags.is_empty() {
+            dropped(tags);
+        }
     })
     .ok()
 }

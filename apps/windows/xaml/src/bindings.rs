@@ -5527,6 +5527,51 @@ impl<
 }
 #[repr(transparent)]
 #[derive(Clone, Debug, Eq, PartialEq)]
+pub struct DragItemsCompletedEventArgs(windows_core::IUnknown);
+windows_core::imp::interface_hierarchy!(
+    DragItemsCompletedEventArgs,
+    windows_core::IUnknown,
+    windows_core::IInspectable
+);
+impl DragItemsCompletedEventArgs {
+    pub fn Items(
+        &self,
+    ) -> windows_core::Result<windows_collections::IVectorView<windows_core::IInspectable>> {
+        unsafe {
+            let mut result__ = core::mem::zeroed();
+            (windows_core::Interface::vtable(self).Items)(
+                windows_core::Interface::as_raw(self),
+                &mut result__,
+            )
+            .and_then(|| windows_core::imp::Type::from_abi(result__))
+        }
+    }
+    pub fn DropResult(&self) -> windows_core::Result<DataPackageOperation> {
+        unsafe {
+            let mut result__ = core::mem::zeroed();
+            (windows_core::Interface::vtable(self).DropResult)(
+                windows_core::Interface::as_raw(self),
+                &mut result__,
+            )
+            .map(|| result__)
+        }
+    }
+}
+impl windows_core::RuntimeType for DragItemsCompletedEventArgs {
+    const SIGNATURE: windows_core::imp::ConstBuffer =
+        windows_core::imp::ConstBuffer::for_class::<Self, IDragItemsCompletedEventArgs>();
+}
+unsafe impl windows_core::Interface for DragItemsCompletedEventArgs {
+    type Vtable = <IDragItemsCompletedEventArgs as windows_core::Interface>::Vtable;
+    const IID: windows_core::GUID = <IDragItemsCompletedEventArgs as windows_core::Interface>::IID;
+}
+impl windows_core::RuntimeName for DragItemsCompletedEventArgs {
+    const NAME: &'static str = "Microsoft.UI.Xaml.Controls.DragItemsCompletedEventArgs";
+}
+unsafe impl Send for DragItemsCompletedEventArgs {}
+unsafe impl Sync for DragItemsCompletedEventArgs {}
+#[repr(transparent)]
+#[derive(Clone, Debug, Eq, PartialEq)]
 pub struct DragItemsStartingEventArgs(windows_core::IUnknown);
 windows_core::imp::interface_hierarchy!(
     DragItemsStartingEventArgs,
@@ -7616,6 +7661,30 @@ pub struct IDragEventArgs_Vtbl {
     ) -> windows_core::HRESULT,
 }
 windows_core::imp::define_interface!(
+    IDragItemsCompletedEventArgs,
+    IDragItemsCompletedEventArgs_Vtbl,
+    0xc0138552_f467_5c3e_8af4_593607762844
+);
+impl windows_core::RuntimeType for IDragItemsCompletedEventArgs {
+    const SIGNATURE: windows_core::imp::ConstBuffer =
+        windows_core::imp::ConstBuffer::for_interface::<Self>();
+    const NAME: windows_core::imp::ConstBuffer = windows_core::imp::ConstBuffer::from_slice(
+        b"Microsoft.UI.Xaml.Controls.IDragItemsCompletedEventArgs",
+    );
+}
+#[repr(C)]
+pub struct IDragItemsCompletedEventArgs_Vtbl {
+    pub base__: windows_core::IInspectable_Vtbl,
+    pub Items: unsafe extern "system" fn(
+        *mut core::ffi::c_void,
+        *mut *mut core::ffi::c_void,
+    ) -> windows_core::HRESULT,
+    pub DropResult: unsafe extern "system" fn(
+        *mut core::ffi::c_void,
+        *mut DataPackageOperation,
+    ) -> windows_core::HRESULT,
+}
+windows_core::imp::define_interface!(
     IDragItemsStartingEventArgs,
     IDragItemsStartingEventArgs_Vtbl,
     0xa6938886_20df_558e_ac74_bb5b7f2f7e90
@@ -8355,6 +8424,13 @@ pub struct IListViewBase_Vtbl {
         *mut i64,
     ) -> windows_core::HRESULT,
     pub RemoveDragItemsStarting:
+        unsafe extern "system" fn(*mut core::ffi::c_void, i64) -> windows_core::HRESULT,
+    pub DragItemsCompleted: unsafe extern "system" fn(
+        *mut core::ffi::c_void,
+        *mut core::ffi::c_void,
+        *mut i64,
+    ) -> windows_core::HRESULT,
+    pub RemoveDragItemsCompleted:
         unsafe extern "system" fn(*mut core::ffi::c_void, i64) -> windows_core::HRESULT,
 }
 windows_core::imp::define_interface!(
@@ -12207,6 +12283,34 @@ impl ListViewBase {
                 self.clone(),
                 token__,
                 windows_core::Interface::vtable(self).RemoveDragItemsStarting,
+            ))
+        }
+    }
+    pub fn DragItemsCompleted<F>(
+        &self,
+        handler: F,
+    ) -> windows_core::Result<windows_core::EventRevoker>
+    where
+        F: Fn(windows_core::Ref<Self>, windows_core::Ref<DragItemsCompletedEventArgs>)
+            + Send
+            + 'static,
+    {
+        let handler = <TypedEventHandler<Self, DragItemsCompletedEventArgs>>::new(move |a0, a1| {
+            handler(a0, a1);
+            Ok(())
+        });
+        unsafe {
+            let mut result__ = core::mem::zeroed();
+            let token__ = (windows_core::Interface::vtable(self).DragItemsCompleted)(
+                windows_core::Interface::as_raw(self),
+                windows_core::Interface::as_raw(&handler),
+                &mut result__,
+            )
+            .map(|| result__)?;
+            Ok(windows_core::EventRevoker::new(
+                self.clone(),
+                token__,
+                windows_core::Interface::vtable(self).RemoveDragItemsCompleted,
             ))
         }
     }
