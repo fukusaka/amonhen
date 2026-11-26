@@ -531,7 +531,8 @@ pub fn render(
             h = min_h;
         } else {
             let plain = spec.no_margin;
-            let (fw, fh) = shapes::fit(&spec.kind, lw, lh, if plain { 0.0 } else { min_h });
+            let base = spec.base.as_ref().unwrap_or(&spec.kind);
+            let (fw, fh) = shapes::fit(base, lw, lh, if plain { 0.0 } else { min_h });
             if spec.regular {
                 // 同じ幅と高さ: 下限は幅と高さの下限の小さいほう（Graphviz の絵と同じ）
                 let floor = if plain { 0.0 } else { min_w.min(min_h) };
@@ -542,6 +543,9 @@ pub fn render(
                 w = if plain { fw } else { fw.max(min_w) };
                 h = if plain { fh } else { fh.max(min_h) };
             }
+            // ゆがみ・傾きの分（横向きの配置でも、形の向きで）
+            w *= spec.grow.0;
+            h *= spec.grow.1;
         }
         if !w.is_finite() || !h.is_finite() {
             w = min_w;

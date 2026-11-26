@@ -33,6 +33,10 @@ pub struct ShapeSpec {
     pub unknown: bool,
     /// 余白なし（plain）。
     pub no_margin: bool,
+    /// ゆがみ・傾きのある多角形: 大きさはゆがみのない形（`base`）で決めて、`grow` 倍する（Graphviz と同じく、
+    /// ゆがんだ形をそのまま囲む大きさにはしない）。
+    pub base: Option<Kind>,
+    pub grow: (f64, f64),
 }
 
 const SPECIALS: &[&str] = &[
@@ -65,25 +69,53 @@ const SPECIALS: &[&str] = &[
     "lpromoter",
 ];
 
-/// 辺の数・回転（度、時計回り）・ゆがみ・傾きからの単位の多角形。
+/// 辺の数・回転（度、反時計回り）・ゆがみ・傾きからの単位の多角形。
 pub fn polygon(sides: usize, orientation: f64, distortion: f64, skew: f64) -> Vec<(f64, f64)> {
-    let n = sides.clamp(3, 100);
-    let mut pts: Vec<(f64, f64)> = Vec::with_capacity(n);
-    for k in 0..n {
-        // 底が平らになる角度から（y は上向きで作り、あとで下向きにする）
-        let a = 1.5 * PI - PI / n as f64 + 2.0 * PI * k as f64 / n as f64;
-        let (x, y) = (a.cos(), a.sin());
-        let x = x * (1.0 + distortion * y) + skew * y;
-        pts.push((x, -y));
-    }
-    finish(rotate(pts, orientation))
+    finish(rotate(raw_polygon(sides, distortion, skew), orientation))
 }
 
+/// ゆがみ・傾きの分だけ、回さない形より大きくする倍率（横、縦）。回してから外接の箱を比べる。
+///
+/// Graphviz の絵の大きさ（辺の数 3〜100・ゆがみ・傾き・回転の 700 通り）に合わせた形: 単位円の上の頂点を、
+/// `x' = x·(k + d·y·0.5 / cos(π/n)) + 0.3·s·y`（`k = √(1 + (|d| + |s|)²)`）で動かす。大きさの違いは
+/// 中央値で 2% ほど、いちばん離れる三角と四角の一部で 30% ほど。
+pub fn polygon_growth(sides: usize, orientation: f64, distortion: f64, skew: f64) -> (f64, f64) {
+    if distortion == 0.0 && skew == 0.0 {
+        return (1.0, 1.0);
+    }
+    let half = |pts: Vec<(f64, f64)>| {
+        pts.iter().fold((0f64, 0f64), |(w, h), &(x, y)| {
+            (w.max(x.abs()), h.max(y.abs()))
+        })
+    };
+    let (qw, qh) = half(rotate(raw_polygon(sides, distortion, skew), orientation));
+    let (vw, vh) = half(rotate(raw_polygon(sides, 0.0, 0.0), orientation));
+    let grow = |q: f64, v: f64| if v > 1e-9 { (q / v).max(1.0) } else { 1.0 };
+    (grow(qw, vw), grow(qh, vh))
+}
+
+/// 単位円の上の頂点（底が平ら、y は下向き）をゆがみ・傾きで動かしたもの（大きさはそろえない）。
+fn raw_polygon(sides: usize, distortion: f64, skew: f64) -> Vec<(f64, f64)> {
+    let n = sides.clamp(3, 100);
+    let k = (distortion.abs() + skew.abs()).hypot(1.0);
+    let d = distortion * 0.5 / (PI / n as f64).cos();
+    let mut pts: Vec<(f64, f64)> = Vec::with_capacity(n);
+    for i in 0..n {
+        // 底が平らになる角度から（y は上向きで作り、あとで下向きにする）
+        let a = 1.5 * PI - PI / n as f64 + 2.0 * PI * i as f64 / n as f64;
+        let (x, y) = (a.cos(), a.sin());
+        let x = x * (k + d * y) + 0.3 * skew * y;
+        pts.push((x, -y));
+    }
+    pts
+}
+
+/// 絵の上で反時計回りに回す（Graphviz の `orientation` と同じ向き。y は下向きなので角度の符号を逆に）。
 fn rotate(pts: Vec<(f64, f64)>, degrees: f64) -> Vec<(f64, f64)> {
     if degrees % 360.0 == 0.0 {
         return pts;
     }
-    let r = degrees.to_radians();
+    let r = -degrees.to_radians();
     let (s, c) = r.sin_cos();
     pts.into_iter()
         .map(|(x, y)| (x * c - y * s, x * s + y * c))
@@ -137,6 +169,8 @@ pub fn spec(
         diagonals: false,
         unknown: false,
         no_margin: false,
+        base: None,
+        grow: (1.0, 1.0),
     };
     let poly = |n: usize, o: f64, d: f64, k: f64| Kind::Polygon(polygon(n, o + orientation, d, k));
     s.kind = match lower.as_str() {
@@ -157,11 +191,17 @@ pub fn spec(
             if n < 3.0 {
                 // 辺が 3 未満は楕円（Graphviz と同じ）。ゆがみがあれば、egg と同じ多角形
                 if distortion != 0.0 || skew != 0.0 {
+                    s.base = Some(Kind::Ellipse);
+                    s.grow = polygon_growth(48, orientation, distortion, skew);
                     poly(48, 0.0, distortion, skew)
                 } else {
                     Kind::Ellipse
                 }
             } else {
+                if distortion != 0.0 || skew != 0.0 {
+                    s.base = Some(poly(n as usize, 0.0, 0.0, 0.0));
+                    s.grow = polygon_growth(n as usize, orientation, distortion, skew);
+                }
                 poly(n as usize, 0.0, distortion, skew)
             }
         }
@@ -181,7 +221,11 @@ pub fn spec(
             Kind::Ellipse
         }
         "point" => Kind::Point,
-        "egg" => poly(48, 0.0, -0.3, 0.0),
+        "egg" => {
+            s.base = Some(Kind::Ellipse);
+            s.grow = polygon_growth(48, orientation, -0.3, 0.0);
+            poly(48, 0.0, -0.3, 0.0)
+        }
         "triangle" => poly(3, 0.0, 0.0, 0.0),
         "invtriangle" => poly(3, 180.0, 0.0, 0.0),
         "plaintext" | "none" => {
@@ -203,19 +247,19 @@ pub fn spec(
             s.diagonals = true;
             s.kind
         }
-        "trapezium" => Kind::Polygon(rotate(
+        "trapezium" => Kind::Polygon(finish(rotate(
             fixed(&[(-1.0, 1.0), (1.0, 1.0), (0.6, -1.0), (-0.6, -1.0)]),
             orientation,
-        )),
-        "invtrapezium" => Kind::Polygon(rotate(
+        ))),
+        "invtrapezium" => Kind::Polygon(finish(rotate(
             fixed(&[(-0.6, 1.0), (0.6, 1.0), (1.0, -1.0), (-1.0, -1.0)]),
             orientation,
-        )),
-        "parallelogram" => Kind::Polygon(rotate(
+        ))),
+        "parallelogram" => Kind::Polygon(finish(rotate(
             fixed(&[(-1.0, 1.0), (0.6, 1.0), (1.0, -1.0), (-0.6, -1.0)]),
             orientation,
-        )),
-        "house" => Kind::Polygon(rotate(
+        ))),
+        "house" => Kind::Polygon(finish(rotate(
             fixed(&[
                 (-1.0, 1.0),
                 (1.0, 1.0),
@@ -224,8 +268,8 @@ pub fn spec(
                 (-1.0, -0.2),
             ]),
             orientation,
-        )),
-        "invhouse" => Kind::Polygon(rotate(
+        ))),
+        "invhouse" => Kind::Polygon(finish(rotate(
             fixed(&[
                 (-1.0, -1.0),
                 (1.0, -1.0),
@@ -234,7 +278,7 @@ pub fn spec(
                 (-1.0, 0.2),
             ]),
             orientation,
-        )),
+        ))),
         "pentagon" => poly(5, 0.0, 0.0, 0.0),
         "hexagon" => poly(6, 0.0, 0.0, 0.0),
         "septagon" => poly(7, 0.0, 0.0, 0.0),
@@ -885,6 +929,46 @@ pub fn special(name: &str, w: f64, h: f64, cx: f64, cy: f64, fill: &str, stroke:
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn distortion_and_skew_grow_the_node_as_in_graphviz() {
+        // Graphviz の絵の大きさ（ラベルなし、10 インチの多角形）。(辺の数, ゆがみ, 回転, 傾き) → (横, 縦) の倍率
+        let seen = [
+            ((10, 0.85, 0.0, 0.0), (1.3625, 1.0)),
+            ((10, 0.0, 0.0, -0.9), (1.3528, 1.0)),
+            ((10, 0.5, 30.0, 0.0), (1.2306, 1.0514)),
+            ((100, 1.0, 45.0, 0.0), (1.4653, 1.4653)),
+            ((6, 2.0, 0.0, 0.0), (2.2361, 1.0)),
+            ((10, 1.0, 90.0, 0.0), (1.0, 1.4972)),
+        ];
+        for ((n, d, o, k), (gw, gh)) in seen {
+            let (w, h) = polygon_growth(n, o, d, k);
+            assert!((w / gw - 1.0).abs() < 0.06, "{n} {d} {o} {k}: {w} vs {gw}");
+            assert!((h / gh - 1.0).abs() < 0.06, "{n} {d} {o} {k}: {h} vs {gh}");
+        }
+        assert_eq!(polygon_growth(10, 32.0, 0.0, 0.0), (1.0, 1.0));
+    }
+
+    #[test]
+    fn orientation_turns_counterclockwise() {
+        // 底の平らな三角を 20 度: 頂点は左へ（Graphviz の絵と同じ）
+        let pts = polygon(3, 20.0, 0.0, 0.0);
+        let apex = pts
+            .iter()
+            .min_by(|a, b| a.1.total_cmp(&b.1))
+            .copied()
+            .unwrap();
+        assert!(apex.0 < 0.0, "{pts:?}");
+        // 回した家も箱からはみ出さない
+        let spec = spec("house", None, 30.0, 0.0, 0.0, false);
+        let Kind::Polygon(pts) = spec.kind else {
+            panic!()
+        };
+        assert!(
+            pts.iter()
+                .all(|p| p.0.abs() <= 1.0 + 1e-9 && p.1.abs() <= 1.0 + 1e-9)
+        );
+    }
 
     #[test]
     fn makes_named_shapes() {

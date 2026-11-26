@@ -98,6 +98,8 @@ becomes the GitHub Release notes.
   instead of one large round curve.
 - DOT diagrams: an edge to a subgraph that names a node twice (`a -> {b c b}`) draws one edge to it, as Graphviz
   does, not two.
+- DOT diagrams: polygons with `distortion` or `skew` keep the size of the plain polygon and widen only as much as
+  Graphviz's do, instead of growing to several times that, and `orientation` turns shapes counterclockwise, as in Graphviz.
 - Exporting chosen folders as an archive in a partial clone fetches only the contents it asked about, not every missing
   file of the commit (git 2.41 or later; older git fetches them all, and the question now counts them all).
 - Markdown previews put a list item's mark on the same line as a list nested at its start (`- 1. text`), as GitHub
