@@ -485,7 +485,7 @@ export class WorkingCopyController implements vscode.Disposable {
     try {
       await run();
     } catch (err) {
-      showError(err);
+      showError(err, { op: 'discard' });
     } finally {
       await repo.refresh();
     }

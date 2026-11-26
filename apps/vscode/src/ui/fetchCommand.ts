@@ -51,7 +51,7 @@ export function registerFetchCommand(manager: RepositoryManager, fetched?: () =>
           () => repo.backend.fetch(chosen.remote),
         );
       } catch (err) {
-        showError(err, { retry: run, cwd: repo.root });
+        showError(err, { retry: run, cwd: repo.root, op: 'fetch' });
       } finally {
         await repo.refresh();
         await fetched?.();

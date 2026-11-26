@@ -717,9 +717,28 @@ async function tagsAndRemotesFlow(): Promise<void> {
       assert.equal(iconName(tagItem(tag)!.item), 'tag');
     }
 
-    // リモートを足し、名前と URL を変え、prune して、外す
-    await withWindow({ showInputBox: inputs(remote, origin) }, async () => vscode.commands.executeCommand('amonhen.remote.add'));
+    // リモートを足し、名前と URL を変え、prune して、外す。足すのはアプリと同じ 1 つのシート（Name・Fetch URL・
+    // Push URL・Points to・Check Connection）で、メインビューが開いていなければ入力欄を順に
+    const pushUrl = join(origin, '.git');
+    let addSheet: Omit<Sheet, 'id'> | undefined;
+    await withSheets(
+      (sheet) => {
+        addSheet = sheet;
+        return { index: 0, choice: 0, values: [remote, origin, pushUrl] };
+      },
+      () =>
+        withWindow({ showInputBox: inputs(remote, origin, pushUrl) }, async () => vscode.commands.executeCommand('amonhen.remote.add')),
+    );
+    if (addSheet) {
+      assert.deepEqual(
+        addSheet.fields?.map((f) => f.label),
+        ['Name', 'Fetch URL', 'Push URL'],
+      );
+      assert.equal(addSheet.pointsTo, 1);
+      assert.equal(addSheet.check, 1);
+    }
     assert.equal(git('remote', 'get-url', remote).trim(), origin);
+    assert.equal(git('remote', 'get-url', '--push', remote).trim(), pushUrl);
     // ブランチのないリモートはサイドバーに出ない（アプリと同じ。操作は Repository Settings の Remotes から、同じ
     // コマンドで）。ブランチを置くと出る
     const remotesSection = () => sidebar.getChildren().find((n) => n.kind === 'section' && n.section === 'remotes');
@@ -1754,13 +1773,23 @@ async function bundleArchiveFlow(): Promise<void> {
   };
   const quiet = { showInformationMessage: async () => undefined };
   try {
-    // zip、最上位のフォルダは <リポジトリ>-<ブランチ>
+    // zip、最上位のフォルダは入力した名前（既定は <リポジトリ>-<ブランチ>。アプリと同じく好きな名前にできる）
     const zip = join(out, 'e2e.zip');
-    const top = `${basename(root)}-${branch}`.replace(/[\\/:*?"<>|\s]+/g, '-');
+    const top = 'archive-e2e-top';
+    let suggested: string | undefined;
     await withWindow(
-      { ...quiet, showQuickPick: pickLabels('zip', top, 'All Files'), showSaveDialog: async () => vscode.Uri.file(zip) },
+      {
+        ...quiet,
+        showQuickPick: pickLabels('zip', 'All Files'),
+        showInputBox: async (options?: vscode.InputBoxOptions) => {
+          suggested = options?.value;
+          return ` ${top}/ `;
+        },
+        showSaveDialog: async () => vscode.Uri.file(zip),
+      },
       async () => vscode.commands.executeCommand('amonhen.exportArchive'),
     );
+    assert.equal(suggested, `${basename(root)}-${branch}`.replace(/[\\/:*?"<>|\s]+/g, '-'));
     assert.ok(existsSync(zip), lastErrors());
     assert.equal(readFileSync(zip).subarray(0, 2).toString('latin1'), 'PK', 'zip の形');
     assert.ok(readFileSync(zip).includes(`${top}/${FILE}`), '最上位のフォルダの下に入る');

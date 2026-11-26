@@ -214,6 +214,7 @@ async function applyCommit(
   const onto = branch ? branch.replace(/^refs\/heads\//, '') : 'HEAD';
   await runAction(repo, {
     label: `$(${kind === 'cherry-pick' ? 'git-commit' : 'discard'}) ${label}`,
+    op: kind === 'cherry-pick' ? 'cherryPick' : 'revert',
     confirm: () =>
       confirmOperation(
         kind === 'cherry-pick' ? `Cherry-pick ${short(panel, oid)} onto ${onto}?` : `Revert ${short(panel, oid)} on ${onto}?`,
@@ -257,6 +258,7 @@ async function pickSelected(
   const label = `${name} ${what}`;
   await runAction(repo, {
     label: `$(${kind === 'cherry-pick' ? 'git-commit' : 'discard'}) ${label}`,
+    op: kind === 'cherry-pick' ? 'cherryPick' : 'revert',
     run: async () => {
       const result = await repo.undo.record(
         label,

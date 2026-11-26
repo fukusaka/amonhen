@@ -4,6 +4,7 @@
  * （git subtree がない git やエンジンがなければ、メニューに出さない）
  */
 import * as vscode from 'vscode';
+import { OperationError } from '../failure/kind.ts';
 import type { Json } from '../daemon/client.ts';
 import { daemonFor } from '../daemon/connection.ts';
 import { folderFromUrl } from '../git/submodules.ts';
@@ -20,7 +21,7 @@ async function subtree(repo: Repository, action: Json): Promise<OperationResult>
   const client = await daemonFor(repo.root);
   if (!client) throw new Error('Subtrees need the Amon Hen engine (amonhen.daemon.enabled)');
   const reply = (await client.call({ op: 'run', command: { op: 'subtree', action } })).json;
-  if (reply['ok'] !== true) throw new Error(String(reply['error'] ?? 'git subtree failed'));
+  if (reply['ok'] !== true) throw new OperationError(String(reply['error'] ?? 'git subtree failed'), 'subtree');
   return reply['outcome'] === 'conflict' || reply['outcome'] === 'stopped' ? 'conflict' : 'done';
 }
 
@@ -97,6 +98,7 @@ export function registerSubtreeCommands(manager: RepositoryManager, sidebar: Sid
       if (squash === undefined) return;
       await runAction(repo, {
         label: `Subtree Add ${dir}`,
+        op: 'subtree',
         run: () => subtree(repo, { kind: 'add', dir, url: source.url, ref: source.ref, squash }),
       });
       await facts.reload();
@@ -109,6 +111,7 @@ export function registerSubtreeCommands(manager: RepositoryManager, sidebar: Sid
       if (squash === undefined) return;
       await runAction(repo, {
         label: `Subtree Pull ${s.dir}`,
+        op: 'subtree',
         run: () => subtree(repo, { kind: 'pull', dir: s.dir, url: source.url, ref: source.ref, squash }),
       });
     }),
@@ -133,6 +136,7 @@ export function registerSubtreeCommands(manager: RepositoryManager, sidebar: Sid
       if (!branch) return;
       await runAction(repo, {
         label: `Subtree Split ${s.dir}`,
+        op: 'subtree',
         run: () => subtree(repo, { kind: 'split', dir: s.dir, branch }),
       });
     }),

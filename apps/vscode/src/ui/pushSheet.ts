@@ -75,6 +75,7 @@ export async function pushWithSheet(repo: Repository, request: PushRequest, publ
   const send = () =>
     runAction(repo, {
       label: `$(repo-push) ${request.force || diverged ? 'Force Push' : 'Push'} ${name} to ${upstream}`,
+      op: 'push',
       run: async () => {
         await repo.backend.push(target.remote, name, target.branch, {
           force: request.force || diverged,

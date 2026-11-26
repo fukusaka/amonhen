@@ -4,6 +4,7 @@
  * （エンジンがなければメニューに出さない）。どれも Undo には記録しない（Fetch と同じ）
  */
 import * as vscode from 'vscode';
+import { OperationError } from '../failure/kind.ts';
 import type { Json } from '../daemon/client.ts';
 import { daemonFor } from '../daemon/connection.ts';
 import type { RepositoryManager } from '../state/manager.ts';
@@ -17,7 +18,7 @@ async function run(repo: Repository, command: Json, title: string): Promise<void
   const reply = await vscode.window.withProgress({ location: vscode.ProgressLocation.Notification, title }, async () =>
     (await client.call({ op: 'run', command })).json,
   );
-  if (reply['ok'] !== true) throw new Error(String(reply['error'] ?? `${title} failed`));
+  if (reply['ok'] !== true) throw new OperationError(String(reply['error'] ?? `${title} failed`), command['op']);
   // ref は変わらないので、daemon は覚えている History（境目のある）を使い続ける。起点を決めずに開くと、shallow の
   // 境目が変わったことに気づいて読み直す（今のブランチの History もそこから作る）
   const history = (await client.call({ op: 'history' })).json['history'];

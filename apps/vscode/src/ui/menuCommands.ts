@@ -11,6 +11,7 @@ import { shortName } from '../state/operations.ts';
 import type { ViewName } from '../view/protocol.ts';
 import { rebaseAction, runAction } from './dragDrop.ts';
 import { MainPanel } from './mainPanel.ts';
+import { refusedMidSequence } from './sequenceCommands.ts';
 import { showError, stageChanges } from './stageCommands.ts';
 
 interface RefItem extends vscode.QuickPickItem {
@@ -96,6 +97,7 @@ async function setUpstream(repo: Repository): Promise<void> {
 
 /** 今のブランチを、選んだブランチ・タグ・History で選んでいるコミットの上に rebase する */
 async function rebase(repo: Repository): Promise<void> {
+  if (await refusedMidSequence(repo)) return;
   const head = (await repo.backend.head()).branch;
   if (!head) {
     void vscode.window.showWarningMessage('Rebase… needs a branch checked out (HEAD is detached).');

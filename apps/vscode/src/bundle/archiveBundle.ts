@@ -13,7 +13,17 @@ export function defaultArchiveFormat(platform: string, last: ArchiveFormat | und
 
 /** アーカイブの中の最上位のフォルダ: `<リポジトリ>-<タグ・ブランチ・短い ID>`（ファイル名に使えない文字は - に） */
 export function archiveTopFolder(repository: string, label: string): string {
-  return `${repository}-${label}`.replace(/[\\/:*?"<>|\s]+/g, '-');
+  return fileSafe(`${repository}-${label}`);
+}
+
+/** ファイル名に使えない文字を - に */
+export function fileSafe(text: string): string {
+  return text.replace(/[\\/:*?"<>|\s]+/g, '-');
+}
+
+/** 入力した最上位のフォルダ（前後の空白と `/` を除く。空ならフォルダなし）。アプリの Top folder と同じ */
+export function archivePrefix(text: string): string {
+  return text.replace(/^[\s/]+|[\s/]+$/g, '');
 }
 
 /** bundle のファイルの見出し（git を動かさずに読む）。HEAD は refs に入れない */

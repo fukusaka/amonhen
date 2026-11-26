@@ -3,6 +3,7 @@
  * Reflog の行を History で見せる・名前をコピーする
  */
 import * as vscode from 'vscode';
+import { OperationError } from '../failure/kind.ts';
 import { confirmOperation, uncommittedLine } from './confirm.ts';
 import { daemonFor } from '../daemon/connection.ts';
 import { moveDrawing, type MovePreview } from '../history/drawing.ts';
@@ -65,7 +66,7 @@ async function resetToCommit(repo: Repository, ctx: CommitContext): Promise<void
     const reply = await vscode.window.withProgress({ location: vscode.ProgressLocation.Window, title: label }, async () =>
       (await client.call({ op: 'run', command: { op: 'reset', oid: ctx.oid, mode } })).json,
     );
-    if (reply['ok'] !== true) throw new Error(String(reply['error'] ?? `${label} failed`));
+    if (reply['ok'] !== true) throw new OperationError(String(reply['error'] ?? `${label} failed`), 'reset');
     stashed = (reply['info'] as { stashed?: boolean } | undefined)?.stashed === true;
   } finally {
     await repo.refresh();

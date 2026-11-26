@@ -5,12 +5,14 @@
  * コアで行う（エンジンがなければメニューに出さない）
  */
 import * as vscode from 'vscode';
+import { OperationError } from '../failure/kind.ts';
 import type { Json } from '../daemon/client.ts';
 import { daemonFor } from '../daemon/connection.ts';
 import { manyTagTargets, tagStateText, type TagRemotes } from '../git/tagRemotes.ts';
 import type { RepositoryManager } from '../state/manager.ts';
 import { shortName } from '../state/operations.ts';
 import type { Repository } from '../state/repository.ts';
+import { MainPanel } from './mainPanel.ts';
 import type { Node, SidebarProvider } from './sidebar.ts';
 import { showError } from './stageCommands.ts';
 
@@ -27,7 +29,7 @@ async function run(repo: Repository, command: Json, title: string): Promise<Json
     await client.call({ op: 'refs' });
     return (await client.call({ op: 'run', command })).json;
   });
-  if (reply['ok'] !== true) throw new Error(String(reply['error'] ?? `${title} failed`));
+  if (reply['ok'] !== true) throw new OperationError(String(reply['error'] ?? `${title} failed`), command['op']);
   return reply;
 }
 
@@ -65,6 +67,73 @@ function remoteNameProblem(name: string, taken: readonly string[]): string | und
     return 'This name can’t be used for a remote';
   if (taken.includes(name)) return `${name} already exists`;
   return undefined;
+}
+
+/** URL へつないでみる（コアの `checkRemote`。git ls-remote）。つながらなければ投げる */
+async function checkRemote(repo: Repository, url: string): Promise<{ branches: number; tags: number; head?: string | null }> {
+  const client = await daemonFor(repo.root);
+  if (!client) throw new Error('Check Connection needs the Amon Hen engine (amonhen.daemon.enabled)');
+  const reply = (await client.call({ op: 'run', command: { op: 'checkRemote', url } })).json;
+  if (reply['ok'] !== true) throw new Error(String(reply['error'] ?? `Can’t reach ${url}`));
+  const info = reply['info'] as { branches?: number; tags?: number; head?: string | null } | undefined;
+  return { branches: info?.branches ?? 0, tags: info?.tags ?? 0, head: info?.head };
+}
+
+/**
+ * 新しいリモートの名前・fetch の URL・push の URL（空なら fetch と同じ）を聞く。メインビューが開いていればアプリと同じ
+ * 1 つのシートで（URL の先が何かの行と、足す前に確かめる Check Connection つき）、でなければ入力欄を順に。やめたら
+ * undefined
+ */
+async function askNewRemote(
+  repo: Repository,
+  taken: readonly string[],
+): Promise<{ name: string; fetchUrl: string; pushUrl: string } | undefined> {
+  const name = taken.includes('origin') ? '' : 'origin';
+  const panel = MainPanel.active;
+  if (panel?.canAsk) {
+    const answer = await panel.ask(
+      {
+        title: 'Add Remote',
+        lines: [],
+        fields: [
+          { label: 'Name', value: name, required: true, taken: [...taken] },
+          { label: 'Fetch URL', value: '', placeholder: 'git@github.com:owner/repo.git', required: true },
+          { label: 'Push URL', value: '', placeholder: 'Same as the fetch URL' },
+        ],
+        pointsTo: 1,
+        check: 1,
+        buttons: ['Add'],
+      },
+      undefined,
+      async (url) => {
+        const c = await checkRemote(repo, url);
+        return { text: `Reachable: ${c.branches} branches, ${c.tags} tags${c.head ? `, HEAD at ${c.head}` : ''}`, ok: true };
+      },
+    );
+    const [n = '', fetchUrl = '', pushUrl = ''] = (answer?.values ?? []).map((v) => v.trim());
+    return answer && n && fetchUrl ? { name: n, fetchUrl, pushUrl } : undefined;
+  }
+  const typed = await vscode.window.showInputBox({
+    title: 'Add Remote',
+    prompt: 'Name',
+    value: name,
+    validateInput: (v) => remoteNameProblem(v.trim(), taken),
+  });
+  if (typed === undefined) return undefined;
+  const fetchUrl = await vscode.window.showInputBox({
+    title: `Add Remote ${typed.trim()}`,
+    prompt: 'Fetch URL',
+    placeHolder: 'git@github.com:owner/repo.git',
+    validateInput: (v) => (v.trim() ? undefined : 'Enter a URL'),
+  });
+  if (fetchUrl === undefined) return undefined;
+  const pushUrl = await vscode.window.showInputBox({
+    title: `Add Remote ${typed.trim()}`,
+    prompt: 'Push URL. Empty to push to the fetch URL.',
+    placeHolder: 'Same as the fetch URL',
+  });
+  if (pushUrl === undefined) return undefined;
+  return { name: typed.trim(), fetchUrl: fetchUrl.trim(), pushUrl: pushUrl.trim() };
 }
 
 export function registerTagCommands(manager: RepositoryManager, sidebar: SidebarProvider): vscode.Disposable {
@@ -201,22 +270,15 @@ export function registerTagCommands(manager: RepositoryManager, sidebar: Sidebar
       const repo = manager.current;
       if (!repo) return;
       try {
-        const taken = remoteNames(repo);
-        const name = await vscode.window.showInputBox({
-          title: 'Add Remote',
-          prompt: 'Name',
-          value: taken.includes('origin') ? '' : 'origin',
-          validateInput: (v) => remoteNameProblem(v.trim(), taken),
-        });
-        if (name === undefined) return;
-        const url = await vscode.window.showInputBox({
-          title: `Add Remote ${name.trim()}`,
-          prompt: 'URL (fetch and push)',
-          placeHolder: 'git@github.com:owner/repo.git',
-          validateInput: (v) => (v.trim() ? undefined : 'Enter a URL'),
-        });
-        if (url === undefined) return;
-        await changeRemote(repo, { kind: 'add', name: name.trim(), url: url.trim() }, `Add remote ${name.trim()}`);
+        const remote = await askNewRemote(repo, remoteNames(repo));
+        if (!remote) return;
+        // シートでは名前の形を確かめない（もうある名前だけ）ので、ここで断る
+        const problem = remoteNameProblem(remote.name, remoteNames(repo));
+        if (problem) throw new Error(problem);
+        await changeRemote(repo, { kind: 'add', name: remote.name, url: remote.fetchUrl }, `Add remote ${remote.name}`);
+        if (remote.pushUrl && remote.pushUrl !== remote.fetchUrl) {
+          await changeRemote(repo, { kind: 'setPushUrl', name: remote.name, url: remote.pushUrl }, `Edit push URL of ${remote.name}`);
+        }
       } catch (err) {
         showError(err);
       } finally {
@@ -263,16 +325,12 @@ export function registerTagCommands(manager: RepositoryManager, sidebar: Sidebar
     remoteCommand('amonhen.remote.checkConnection', async (repo, remote) => {
       const url = repo.current.remotes?.find((r) => r.name === remote)?.fetchUrl;
       if (!url) return;
-      const client = await daemonFor(repo.root);
-      if (!client) throw new Error('Check Connection needs the Amon Hen engine (amonhen.daemon.enabled)');
-      const reply = await vscode.window.withProgress(
+      const info = await vscode.window.withProgress(
         { location: vscode.ProgressLocation.Notification, title: `Connecting to ${remote}…` },
-        async () => (await client.call({ op: 'run', command: { op: 'checkRemote', url } })).json,
+        () => checkRemote(repo, url),
       );
-      if (reply['ok'] !== true) throw new Error(String(reply['error'] ?? `Can’t reach ${remote}`));
-      const info = reply['info'] as { branches?: number; tags?: number; head?: string | null } | undefined;
       void vscode.window.showInformationMessage(
-        `${remote}: reachable, ${info?.branches ?? 0} branches, ${info?.tags ?? 0} tags${info?.head ? `, HEAD at ${info.head}` : ''}`,
+        `${remote}: reachable, ${info.branches} branches, ${info.tags} tags${info.head ? `, HEAD at ${info.head}` : ''}`,
       );
     }),
     // リモートで消えたブランチの追跡を消す。リモートと話す（消えたブランチを読む）ので、先に聞く
@@ -294,7 +352,7 @@ export function registerTagCommands(manager: RepositoryManager, sidebar: Sidebar
         `Remove ${remote}?`,
         {
           modal: true,
-          detail: `This removes the remote’s settings and its remote-tracking branches (${remote}/…). The remote repository isn’t touched.`,
+          detail: `This removes the remote’s settings and its remote-tracking branches (${remote}/…). The remote repository isn’t touched. ${CANT_UNDO}`,
         },
         'Remove',
       );

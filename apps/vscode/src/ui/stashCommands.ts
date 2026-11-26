@@ -15,20 +15,21 @@ import { showError } from './stageCommands.ts';
 type StashNode = Extract<Node, { kind: 'stash' }>;
 
 export function registerStashCommands(manager: RepositoryManager): vscode.Disposable {
-  const withRepo = (fn: (repo: Repository) => Promise<void>) => async () => {
+  // op は失敗の見出しにする操作（failureTitle）
+  const withRepo = (fn: (repo: Repository) => Promise<void>, op?: string) => async () => {
     const repo = manager.current;
     if (!repo) return;
     try {
       await fn(repo);
     } catch (err) {
-      showError(err);
+      showError(err, { op });
     } finally {
       await repo.refresh();
     }
   };
-  const onStash = (id: string, fn: (repo: Repository, node: StashNode) => Promise<void>) =>
+  const onStash = (id: string, fn: (repo: Repository, node: StashNode) => Promise<void>, op?: string) =>
     vscode.commands.registerCommand(id, (node?: Node) =>
-      node?.kind === 'stash' ? withRepo((repo) => fn(repo, node))() : undefined,
+      node?.kind === 'stash' ? withRepo((repo) => fn(repo, node), op)() : undefined,
     );
 
   return vscode.Disposable.from(
@@ -47,7 +48,7 @@ export function registerStashCommands(manager: RepositoryManager): vscode.Dispos
           return;
         }
         await repo.backend.stashPush({ message: message.trim() || undefined, includeUntracked: options.includeUntracked });
-      }),
+      }, 'stashPush'),
     ),
     // Working Copy のファイルの右クリック: そのファイルの変更だけを stash する（エンジンだけ）
     // いくつも選んでいれば（paths）、選んだファイルすべて。選び方はアプリと同じシート（untracked があれば最初から含める）
@@ -65,13 +66,13 @@ export function registerStashCommands(manager: RepositoryManager): vscode.Dispos
       try {
         await runEngine(repo, { op: 'stashPush', message: message.trim() || null, ...options, paths }, `Stash ${what}`);
       } catch (err) {
-        showError(err);
+        showError(err, { op: 'stashPush' });
       } finally {
         await repo.refresh();
       }
     }),
-    onStash('amonhen.stash.apply', (repo, node) => apply(repo, node, false)),
-    onStash('amonhen.stash.pop', (repo, node) => apply(repo, node, true)),
+    onStash('amonhen.stash.apply', (repo, node) => apply(repo, node, false), 'stashApply'),
+    onStash('amonhen.stash.pop', (repo, node) => apply(repo, node, true), 'stashApply'),
     onStash('amonhen.stash.drop', async (repo, node) => {
       const choice = await vscode.window.showWarningMessage(
         `Drop ${node.stash.name} (${node.stash.subject})?`,
@@ -101,7 +102,7 @@ export function registerStashCommands(manager: RepositoryManager): vscode.Dispos
         }
         // 確かめるのは apply（Stashes の Pop と同じ文）
         await apply(repo, { kind: 'stash', stash: latest }, true);
-      }),
+      }, 'stashApply'),
     ),
     // stash を作ったときの HEAD からブランチを作り、そこで stash を当てて消す（git stash branch。エンジンだけ）
     onStash('amonhen.stash.branch', async (repo, node) => {

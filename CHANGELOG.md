@@ -1463,6 +1463,17 @@ First release.
 - The Working Copy follows the app in the small things: List at first and "File Name", the file menu's Stage, Discard…
   or Delete File…, both .gitignore items, Reveal and Open File, no question before discarding lines, a commit with only
   a description, "Amend Commit", diff errors in the pane, and Take Current / Incoming File.
+- Failures are headed by the operation, as in the app ("Couldn't Push"), and a branch checked out in another worktree
+  is named.
+- Add Remote is one sheet in the main view with Name, Fetch URL, Push URL, where the URL points to, and Check
+  Connection, as in the app.
+- Continue, Abort and Skip appear only while an operation is in progress, and Pull, Merge Branches…, Rebase… and Apply
+  Patch… aren't offered during one.
+- Publish isn't offered without a remote, and publishing to an existing remote branch says how many commits it pushes
+  or that it only sets the upstream.
+- Export Archive takes any top folder name (empty for none), Save as Bundle shows the commit count, and removing a
+  remote says it can't be undone.
+- Fetch…, Pull…, Push… and Force Push… end with "…", and the sidebar's right-click menus offer the app's items.
 
 #### Changed
 
