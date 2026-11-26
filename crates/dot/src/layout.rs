@@ -120,6 +120,9 @@ type Chain = (Vec<usize>, bool, Option<usize>);
 const MAX_DUMMIES: usize = 12_000;
 /// 直角の線の段の間の下限（ランクの間を広げる上限を超えても保つ）。
 const MIN_TRACK: f64 = 3.0;
+/// クラスタを含む閉路で向きを強いない辺の、短すぎる（上を向く）側の重さ（長すぎる側の何倍か）。Graphviz の絵の
+/// 合成のクラスタの図と t12 に合う（1 倍ではクラスタを横に並べすぎる）。
+const SHORT_WEIGHT: f64 = 4.0;
 /// 同じランクの辺の輪を調べる辺の数の上限（辺ごとに深さ優先でたどるので、2 乗で増える）。
 const FLAT_CYCLE_EDGES: usize = 4096;
 /// 並べ替えで、交差が減らない回がこれだけ続けばやめる。
@@ -293,7 +296,7 @@ fn solve_ranks(
     let mut edges: Vec<NsEdge> = Vec::with_capacity(cons.len() + fixed.len());
     // 向きを強いない辺は補助のノード z で |x_h - (x_t + d)| にする（z → t は c - d、z → h は c、c = max(d, 0)。
     // z → t の重みは短すぎる（上を向く）分、z → h は長すぎる分）。同じ値の形がいくつもあれば、辺が下を向くほうを選び
-    // （短すぎる分をわずかに重く）、それでも同じなら背の高い単位（クラスタのランクの幅）から低い単位への辺を、
+    // （短すぎる分を SHORT_WEIGHT 倍に、さらにわずかに重く）、それでも同じなら背の高い単位（クラスタのランクの幅）から低い単位への辺を、
     // 同じ高さなら書いた順で先の単位から後の単位への辺を下に向ける（高いクラスタが上。Graphviz の絵と同じ）
     let key = |u: usize| (std::cmp::Reverse(shape.get(u).map_or(0, |s| s.span)), u);
     let mut aux = total;
@@ -301,11 +304,12 @@ fn solve_ranks(
         if s {
             let d = c.fwd;
             let m = d.max(0);
-            let short = if key(c.tail) < key(c.head) {
-                1.00101
-            } else {
-                1.001
-            };
+            let short = SHORT_WEIGHT
+                * if key(c.tail) < key(c.head) {
+                    1.00101
+                } else {
+                    1.001
+                };
             edges.push(NsEdge {
                 tail: aux,
                 head: c.tail,
