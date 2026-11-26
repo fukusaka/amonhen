@@ -20,7 +20,8 @@ How releases are made, and signing, notarization and build provenance attestatio
   does the same in one go.
 - The VSCode extension uses `vscode-v*` tags and publishes a .vsix with the engine bundled (see
   [VSCode extension](#vscode-extension) below).
-- Whenever CI (`ci.yml`) passes on main, a pre-release named `snapshot` is recreated from that commit (app, engine,
+- Whenever CI (`ci.yml`) passes on main and the commit is still main's tip (otherwise the newer commit's CI makes it),
+  a pre-release named `snapshot` is recreated from that commit (app, engine,
   extension; the version is `<next patch>-snapshot.<commit count>+<sha>`, or `<version>-snapshot.…` between bumping
   the version and tagging it, so a snapshot always sorts below the stable release after it). The Windows engines are built alongside the
   macOS build, and a last job bundles and publishes everything.
@@ -34,7 +35,7 @@ How releases are made, and signing, notarization and build provenance attestatio
 | Channel | When it is built | Version |
 | --- | --- | --- |
 | stable | On pushing a `vscode-v*` tag (separate from the app and engine's `v*`) | `x.y.z` |
-| snapshot | Whenever CI passes on main (put on the same `snapshot` pre-release as the app and engine) | `x.y.(z+1)-snapshot.<number of apps/vscode commits since the last release>+<sha>` |
+| snapshot | Whenever CI passes on main's tip (put on the same `snapshot` pre-release as the app and engine) | `x.y.(z+1)-snapshot.<number of apps/vscode commits since the last release>+<sha>` |
 
 A snapshot is treated as a pre-release of the next patch (or of the version itself between bumping it and tagging it), so installing a stable release is judged newer than the snapshot.
 

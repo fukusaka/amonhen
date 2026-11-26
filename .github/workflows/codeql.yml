@@ -49,9 +49,9 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        # Swift は macOS で 12〜15 分かかり、数の少ない macOS のランナーを長く取るので、PR では流さず、main への push と
-        # 週に 1 回だけ流す。
-        language: ${{ fromJSON(github.event_name != 'pull_request' && needs.changes.outputs.macos == 'true' && '["actions","javascript-typescript","rust","swift"]' || '["actions","javascript-typescript","rust"]') }}
+        # Swift は macOS で 12〜15 分かかり、数の少ない macOS のランナー（同時に 5 つまで）を長く取るので、PR でも
+        # main への push でも流さず、週に 1 回だけ流す（main にマージが続くと、push ごとの Swift が PR の CI を待たせた）。
+        language: ${{ fromJSON(github.event_name == 'schedule' && needs.changes.outputs.macos == 'true' && '["actions","javascript-typescript","rust","swift"]' || '["actions","javascript-typescript","rust"]') }}
     # Swift だけ macOS でビルドして調べる。ほかはビルドしない。
     runs-on: ${{ matrix.language == 'swift' && 'macos-latest' || 'ubuntu-latest' }}
     timeout-minutes: 60
