@@ -43,6 +43,10 @@ becomes the GitHub Release notes.
 
 #### Fixed
 
+- DOT diagrams: edges to record fields and compass ports in the dot layout use the same smooth curves as other edges.
+- DOT diagrams: dot-layout curves bulge less between ranks, crossing fewer edges and nodes.
+- DOT diagrams: `splines=ortho` in the dot layout keeps tracks between ranks at least 3 points apart, even past
+  the `ranksep` cap, so crowded edges no longer run on top of each other.
 - Exporting chosen folders as an archive in a partial clone fetches only the contents it asked about, not every missing
   file of the commit (git 2.41 or later; older git fetches them all, and the question now counts them all).
 
@@ -83,8 +87,6 @@ checkerboard behind transparent pictures can be switched between light and dark.
 - DOT diagrams: `splines=ortho` in the dot layout spreads crowded edge ends across more of a node's side, takes the
   outermost ones in from the left and right sides, and moves end lines apart when they would share a line.
 - DOT diagrams: the dot layout orders nodes with fewer edge crossings.
-- DOT diagrams: edges to record fields and compass ports in the dot layout use the same smooth curves as other edges.
-- DOT diagrams: dot-layout curves bulge less between ranks, crossing fewer edges and nodes.
 
 #### Changed
 
