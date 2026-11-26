@@ -196,9 +196,11 @@ async function saveBundle(repo: Repository, refs: string[]): Promise<void> {
     if (ok !== 'Fetch and Save') return;
   }
   const name = refs.length === 1 ? `${basename(repo.root)}-${shortName(refs[0]!).replace(/\//g, '-')}` : basename(repo.root);
-  // 入るコミットの数を添える（アプリの保存のパネルの文）
+  // 入るコミットの数を添える（アプリの保存のパネルの文）。macOS の保存のパネルは題を出さないので、保存のボタンにも出す
+  const count = `${commits} ${commits === 1 ? 'commit' : 'commits'}`;
   const uri = await vscode.window.showSaveDialog({
-    title: `${title} (${commits} ${commits === 1 ? 'commit' : 'commits'})`,
+    title: `${title} (${count})`,
+    saveLabel: `Save ${count}`,
     defaultUri: vscode.Uri.file(join(dirname(repo.root), `${name}.bundle`)),
     filters: { Bundle: ['bundle'] },
   });
