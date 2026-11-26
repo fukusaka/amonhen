@@ -255,7 +255,14 @@ impl Builder {
                             EdgeEnd::Subgraph(sub) => {
                                 let nodes = self.subgraph(sub, scope)?;
                                 touched.extend(nodes.iter().copied());
-                                nodes.into_iter().map(|n| (n, None)).collect()
+                                // subgraph はノードの集まりなので、中で 2 度出てくるノードにも辺は 1 本
+                                // （`a -> {b c b}` は b へ 1 本。Graphviz と同じ）
+                                let mut seen = std::collections::HashSet::new();
+                                nodes
+                                    .into_iter()
+                                    .filter(|n| seen.insert(*n))
+                                    .map(|n| (n, None))
+                                    .collect()
                             }
                         };
                         if let Some(prev) = &prev {
@@ -392,6 +399,21 @@ mod tests {
 
     fn model(src: &str) -> Model {
         build(&parse(src).unwrap(), LIMITS).unwrap()
+    }
+
+    #[test]
+    fn an_edge_to_a_subgraph_reaches_each_node_once() {
+        // 中で 2 度出てくるノード（並べ直しや、中の辺の端）にも 1 本
+        let m = model("digraph { a -> { b c b }; { x; y; x -> y } -> z }");
+        let pairs: Vec<(&str, &str)> = m
+            .edges
+            .iter()
+            .map(|e| (m.nodes[e.tail].name.as_str(), m.nodes[e.head].name.as_str()))
+            .collect();
+        assert_eq!(
+            pairs,
+            [("a", "b"), ("a", "c"), ("x", "y"), ("x", "z"), ("y", "z")]
+        );
     }
 
     #[test]
