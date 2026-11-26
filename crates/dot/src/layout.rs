@@ -119,6 +119,8 @@ const MAX_DUMMIES: usize = 12_000;
 /// 直角の線の段の間の下限（ランクの間を広げる上限を超えても保つ）。
 const MIN_TRACK: f64 = 3.0;
 /// 並べ替えで、交差が減らない回がこれだけ続けばやめる。
+/// 同じランクの辺の輪を調べる辺の数の上限（辺ごとに深さ優先でたどるので、2 乗で増える）。
+const FLAT_CYCLE_EDGES: usize = 4096;
 const MINCROSS_STALE: usize = 12;
 /// 隣どうしの入れ替えを使う、ランクの間の線の切れ端の数の上限（大きな図の時間のため）。
 const TRANSPOSE_SEGS: usize = 1500;
@@ -636,6 +638,10 @@ struct Ordering<'a> {
     parent: &'a [Option<usize>],
     /// 兄弟のクラスタの左右の順の手がかり。
     global: Vec<f64>,
+    /// 同じランク・同じクラスタの辺: 尾の右に置く頭（Gansner ほか 1993 §3 の、同じランクの辺が決める左右の順）。
+    after: Vec<Vec<usize>>,
+    /// その辺のあるランク。
+    has_flat: Vec<bool>,
 }
 
 impl Ordering<'_> {
@@ -774,6 +780,60 @@ impl Ordering<'_> {
         for (i, &v) in self.layers[r].iter().enumerate() {
             self.pos[v] = i;
         }
+        self.keep_flat_order(r);
+    }
+
+    /// 同じランクの辺の尾を頭の左に: 今の順をなるべく保つ位相の順（頭は、尾のすぐ後ろへ下がる）。輪になったら、
+    /// 残りでいちばん左のものから出す。
+    fn keep_flat_order(&mut self, r: usize) {
+        if !self.has_flat[r] {
+            return;
+        }
+        let layer = std::mem::take(&mut self.layers[r]);
+        let mut need = std::collections::HashMap::<usize, usize>::new();
+        for &v in &layer {
+            for &h in &self.after[v] {
+                *need.entry(h).or_insert(0) += 1;
+            }
+        }
+        let mut heap = std::collections::BinaryHeap::new();
+        for &v in &layer {
+            if !need.contains_key(&v) {
+                heap.push(std::cmp::Reverse((self.pos[v], v)));
+            }
+        }
+        let mut done = std::collections::HashSet::<usize>::new();
+        let mut out = Vec::with_capacity(layer.len());
+        while out.len() < layer.len() {
+            let v = match heap.pop() {
+                Some(std::cmp::Reverse((_, v))) => v,
+                None => match layer
+                    .iter()
+                    .copied()
+                    .filter(|v| !done.contains(v))
+                    .min_by_key(|&v| self.pos[v])
+                {
+                    Some(v) => v,
+                    None => break,
+                },
+            };
+            if !done.insert(v) {
+                continue;
+            }
+            out.push(v);
+            for &h in &self.after[v] {
+                if let Some(c) = need.get_mut(&h) {
+                    *c -= 1;
+                    if *c == 0 && !done.contains(&h) {
+                        heap.push(std::cmp::Reverse((self.pos[h], h)));
+                    }
+                }
+            }
+        }
+        self.layers[r] = out;
+        for (i, &v) in self.layers[r].iter().enumerate() {
+            self.pos[v] = i;
+        }
     }
 
     fn median(&self, list: &[usize], upper: bool) -> Option<f64> {
@@ -870,7 +930,8 @@ impl Ordering<'_> {
                 let len = self.layers[r].len();
                 for i in 0..len.saturating_sub(1) {
                     let (u, v) = (self.layers[r][i], self.layers[r][i + 1]);
-                    if self.nodes[u].cluster != self.nodes[v].cluster {
+                    if self.nodes[u].cluster != self.nodes[v].cluster || self.after[u].contains(&v)
+                    {
                         continue;
                     }
                     let before = self.pair_crossings(u, v);
@@ -1192,7 +1253,36 @@ pub fn layout(
         pos: vec![0; total],
         parent: &parent,
         global: vec![0.0; k],
+        after: vec![Vec::new(); total],
+        has_flat: vec![false; max_rank + 1],
     };
+    // 輪になる辺は、先に書いた辺を守って外す（Graphviz の文書どおり、輪は深さ優先で切る）
+    for &(t, h) in &flat_edges {
+        if nodes[t].cluster != nodes[h].cluster || ord.after[t].contains(&h) {
+            continue;
+        }
+        // h から t へ着けば輪になる（辺が多すぎるときは調べず、並べるときにいちばん左から出して切る）
+        let mut stack = if flat_edges.len() <= FLAT_CYCLE_EDGES {
+            vec![h]
+        } else {
+            Vec::new()
+        };
+        let mut seen = std::collections::HashSet::new();
+        let mut cycle = false;
+        while let Some(v) = stack.pop() {
+            if v == t {
+                cycle = true;
+                break;
+            }
+            if seen.insert(v) {
+                stack.extend(ord.after[v].iter().copied());
+            }
+        }
+        if !cycle {
+            ord.after[t].push(h);
+            ord.has_flat[nodes[t].rank] = true;
+        }
+    }
     ord.refresh();
     ord.global_keys();
     let mut val = vec![0f64; total];
@@ -1265,28 +1355,9 @@ pub fn layout(
     }
     ord.layers = best;
     ord.refresh();
-    // 同じランクの辺は尾を左に（同じクラスタのとき）
-    for _ in 0..3 {
-        let mut moved = false;
-        for &(t, h) in &flat_edges {
-            if nodes[t].cluster != nodes[h].cluster {
-                continue;
-            }
-            let (pt, ph) = (ord.pos[t], ord.pos[h]);
-            if pt > ph {
-                let r = nodes[t].rank;
-                let layer = &mut ord.layers[r];
-                layer.remove(pt);
-                layer.insert(ph, t);
-                for (i, &v) in layer.iter().enumerate() {
-                    ord.pos[v] = i;
-                }
-                moved = true;
-            }
-        }
-        if !moved {
-            break;
-        }
+    // 同じランクの辺は尾を左に（並べ替えの中で守っている。念のため）
+    for r in 0..ord.layers.len() {
+        ord.keep_flat_order(r);
     }
     // ordering=out: 同じ尾の頭を辺の順に
     if opt.ordering_out {

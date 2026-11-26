@@ -1136,3 +1136,19 @@ fn dot_centers_nodes_between_their_children() {
     let mid = (cx(&svg, "a") + cx(&svg, "b")) / 2.0;
     assert!((cx(&svg, "s") - mid).abs() <= 1.0, "{svg}");
 }
+
+/// dot の同じランクの辺は、並べ替えの中で尾を頭の左に保つ。後から直すと、上のランクの辺が交差していた。
+#[test]
+fn dot_keeps_flat_edge_order_while_ordering() {
+    let svg = render(
+        "digraph { node [shape=box]; impl -> exe; cpp -> link; {rank=same exe link} link -> exe }",
+    )
+    .unwrap()
+    .svg;
+    let x = |id: &str| {
+        let p = part(&svg, id);
+        attr_num(p, "x") + attr_num(p, "width") / 2.0
+    };
+    assert!(x("link") < x("exe"), "{svg}");
+    assert!(x("cpp") < x("impl"), "{svg}");
+}

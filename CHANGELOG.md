@@ -52,6 +52,8 @@ becomes the GitHub Release notes.
   the `ranksep` cap, so crowded edges no longer run on top of each other.
 - DOT diagrams: the dot layout centers a node between the nodes it links to when that costs no longer edges, as
   Graphviz does, instead of leaning to the left.
+- DOT diagrams: the dot layout keeps edges within a rank pointing left to right while it orders the nodes, so the
+  ranks above no longer cross to make room for them.
 - Exporting chosen folders as an archive in a partial clone fetches only the contents it asked about, not every missing
   file of the commit (git 2.41 or later; older git fetches them all, and the question now counts them all).
 
