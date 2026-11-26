@@ -9,6 +9,9 @@ use crate::layout::Portal;
 
 /// 関の端に触れる許し。
 const SLACK: f64 = 3.0;
+/// 切れ端の接線の長さ（切れ端の長さに対して）。関の高さの間でははみ出しを見ないので、長いと曲線が隣の線の通り道へ
+/// ふくらんで交わる（1/3 では 1/5 より交差が 1.6% 多く、ほかのノードを通る線が 1.7 倍）。
+const TANGENT: f64 = 0.2;
 
 /// `start` から `end` へ、関 `gates`（y の順）をすべて通る最短の折れ線（両端を含む）。
 pub fn shortest(start: P, end: P, gates: &[Portal]) -> Vec<P> {
@@ -169,7 +172,7 @@ pub fn fit(points: &[P], gates: &[Portal]) -> Vec<Cubic> {
 /// 直線の向き）やり直す。`depth` が尽きたら直線。
 fn piece(p: P, q: P, tp: P, tq: P, gates: &[Portal], depth: u32, out: &mut Vec<Cubic>) {
     let len = (q.0 - p.0).hypot(q.1 - p.1);
-    let mut scale = len / 3.0;
+    let mut scale = len * TANGENT;
     for _ in 0..3 {
         let c = Cubic(
             p,
