@@ -3075,6 +3075,15 @@ async function settingsFlow(): Promise<void> {
     assert.equal(config('commit.template'), templated.facts.commitTemplate?.path);
     await panel.settings.handle({ type: 'settingsSet', writes: [['commit.template', null]] });
     assert.equal(config('commit.template'), undefined);
+    // ファイルのテンプレートは、その中身を Commits のページに出す（アプリと同じく 12 行まで）
+    const templateFile = join(git('rev-parse', '--absolute-git-dir').trim(), 'e2e-template.txt');
+    writeFileSync(templateFile, `${Array.from({ length: 14 }, (_, i) => `line ${i + 1}`).join('\n')}\n`);
+    mark = posted.length;
+    await panel.settings.handle({ type: 'settingsSet', writes: [['commit.template', templateFile]] });
+    const previewed = await waitPosted('settings', mark, (m) => m.facts.templatePreview !== undefined);
+    assert.equal(previewed.facts.templatePreview, `${Array.from({ length: 12 }, (_, i) => `line ${i + 1}`).join('\n')}…`);
+    await panel.settings.handle({ type: 'settingsSet', writes: [['commit.template', null]] });
+    rmSync(templateFile, { force: true });
 
     // Hooks and LFS: フックを作り（エディタで開く）、実行の許可を外す（Windows では外せない）。LFS は入っていれば
     const hook = join(git('rev-parse', '--git-common-dir').trim().replace(/^(?![\\/]|[A-Za-z]:)/, `${root}/`), 'hooks', 'pre-commit');
@@ -3190,7 +3199,7 @@ async function daemonFlow(): Promise<void> {
       JSON.stringify(shown.status!.repos),
     );
     assert.ok(
-      shown.connections.some((c) => real(c.path) === real(root) && c.closed === undefined),
+      shown.connections.some((c) => real(c.path) === real(root) && c.closed === undefined && c.sent > 0 && c.received > 0),
       JSON.stringify(shown.connections),
     );
     // 2 秒ごとに読み直す

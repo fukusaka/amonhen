@@ -26,6 +26,8 @@ export interface SettingsFacts {
   signingKeys: { id: string; label: string; emails: string[] }[];
   /** このリポジトリ専用のテンプレート（`text` はなければ null）と、`commit.template` に書くそのパス */
   commitTemplate?: { text: string | null; path: string };
+  /** `commit.template` がファイルなら、その中身（前後の空白を除き 12 行まで。読めなければなし） */
+  templatePreview?: string;
   /** コアの `hooksAndLfs`（Hooks and LFS） */
   hooksAndLfs?: {
     hooks: { name: string; enabled: boolean }[];
