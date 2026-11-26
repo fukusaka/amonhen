@@ -99,13 +99,21 @@ export class Repository implements vscode.Disposable {
    */
   readonly onDidRefresh = this._onDidRefresh.event;
 
+  private readonly _onDidAbort = new vscode.EventEmitter<void>();
+  /** 途中の merge・rebase などをやめた（アプリと同じく、開いているマージエディタを閉じる） */
+  readonly onDidAbort = this._onDidAbort.event;
+
   private readonly _onDidStop = new vscode.EventEmitter<void>();
   /** 操作がコンフリクトや途中（break・edit）で止まった（アプリと同じく Working Copy で最初のコンフリクトを開く） */
   readonly onDidStop = this._onDidStop.event;
 
   constructor(backend: RepositoryBackend, log: vscode.LogOutputChannel) {
     // 止まりうる書き込みは、どこから呼んでも止まったことをここで知る
-    this.backend = withStopNotice(backend, () => this.stopped());
+    this.backend = withStopNotice(
+      backend,
+      () => this.stopped(),
+      () => this._onDidAbort.fire(),
+    );
     this.undo = new UndoLog(backend);
     this.log = log;
   }
@@ -361,6 +369,7 @@ export class Repository implements vscode.Disposable {
     this._onDidChange.dispose();
     this._onDidChangeContents.dispose();
     this._onDidStop.dispose();
+    this._onDidAbort.dispose();
     return this.backend.dispose();
   }
 }

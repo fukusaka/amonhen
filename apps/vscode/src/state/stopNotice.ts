@@ -28,13 +28,20 @@ export function isStopped(value: unknown): boolean {
   return typeof value === 'object' && value !== null && (value as { result?: unknown }).result === 'conflict';
 }
 
-/** inner の止まりうる書き込みが止まったら onStop を呼ぶ backend */
-export function withStopNotice(inner: RepositoryBackend, onStop: () => void): RepositoryBackend {
+/** inner の止まりうる書き込みが止まったら onStop を、途中の操作をやめたら（abort が済んだら）onAbort を呼ぶ backend */
+export function withStopNotice(inner: RepositoryBackend, onStop: () => void, onAbort: () => void = () => {}): RepositoryBackend {
   return new Proxy(inner, {
     get(target, prop, receiver) {
       const value: unknown = Reflect.get(target, prop, receiver);
       if (typeof value !== 'function') return value;
       const fn = value as (...a: unknown[]) => unknown;
+      if (prop === 'abort') {
+        return async (...args: unknown[]) => {
+          const result = await fn.apply(target, args);
+          onAbort();
+          return result;
+        };
+      }
       if (!STOPPABLE.has(prop as keyof RepositoryBackend)) return fn.bind(target);
       return async (...args: unknown[]) => {
         const result = await fn.apply(target, args);

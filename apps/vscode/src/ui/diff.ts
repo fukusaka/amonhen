@@ -1,4 +1,5 @@
-import { join } from 'node:path';
+import { readFile } from 'node:fs/promises';
+import { join, sep } from 'node:path';
 import * as vscode from 'vscode';
 import type { Sequence } from '../git/backend.ts';
 import { conflictSides } from '../git/status.ts';
@@ -39,4 +40,30 @@ async function openMergeEditor(root: string, change: Change, sequence: Sequence 
   } catch {
     return false;
   }
+}
+
+/**
+ * root の中のファイルを開いているマージエディタを閉じる（途中の操作をやめたあと。アプリも Abort でマージエディタを
+ * 閉じる）。保存していない Result は、やめた後の中身に戻してから閉じる（古い Result で上書きしない・保存を聞かない）
+ */
+export async function closeMergeEditors(root: string): Promise<void> {
+  const inside = (uri: vscode.Uri) => uri.scheme === 'file' && uri.fsPath.startsWith(root + sep);
+  const tabs = vscode.window.tabGroups.all
+    .flatMap((g) => g.tabs)
+    .filter((t) => {
+      // TabInputTextMerge（base・input1・input2・result を持つ）
+      const input = t.input as { result?: vscode.Uri; input1?: vscode.Uri } | undefined;
+      return !!input?.result && !!input.input1 && inside(input.result);
+    });
+  if (tabs.length === 0) return;
+  const results = new Set(tabs.map((t) => (t.input as { result: vscode.Uri }).result.fsPath));
+  for (const doc of vscode.workspace.textDocuments) {
+    if (!doc.isDirty || !results.has(doc.uri.fsPath)) continue;
+    const text = await readFile(doc.uri.fsPath, 'utf8').catch(() => undefined);
+    if (text === undefined) continue;
+    const edit = new vscode.WorkspaceEdit();
+    edit.replace(doc.uri, new vscode.Range(doc.positionAt(0), doc.positionAt(doc.getText().length)), text);
+    if (await vscode.workspace.applyEdit(edit)) await doc.save();
+  }
+  await vscode.window.tabGroups.close(tabs, true);
 }
