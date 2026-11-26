@@ -89,6 +89,8 @@ pub enum RankKind {
 pub struct RankSet {
     pub kind: RankKind,
     pub nodes: Vec<usize>,
+    /// クラスタの部分グラフそのものに書いた `rank`（dot はクラスタごとにランクを決めるとき読まない）。
+    pub on_cluster: bool,
 }
 
 #[derive(Clone, Debug)]
@@ -322,7 +324,11 @@ impl Builder {
                 list.sort_unstable();
                 list.dedup();
                 if !list.is_empty() {
-                    self.model.rank_sets.push(RankSet { kind, nodes: list });
+                    self.model.rank_sets.push(RankSet {
+                        kind,
+                        nodes: list,
+                        on_cluster: cluster.is_some(),
+                    });
                 }
             }
         }

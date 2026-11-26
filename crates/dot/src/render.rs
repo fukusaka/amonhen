@@ -842,9 +842,16 @@ pub fn render(
             }
         })
         .collect();
+    let cluster_rank = !g.flag("newrank").unwrap_or(false)
+        && !g
+            .get("clusterrank")
+            .is_some_and(|s| matches!(s.trim().to_ascii_lowercase().as_str(), "global" | "none"));
+    // クラスタごとにランクを決めるとき、クラスタの部分グラフそのものの `rank` は読まない（Graphviz の絵と同じ。
+    // 中の普通の部分グラフの `rank` は効く）
     let sets: Vec<(crate::graph::RankKind, Vec<usize>)> = model
         .rank_sets
         .iter()
+        .filter(|s| !(cluster_rank && s.on_cluster))
         .map(|s| (s.kind, s.nodes.clone()))
         .collect();
     let lopt = layout::Options {
@@ -857,10 +864,7 @@ pub fn render(
         rank_iter: budget.rank_iter,
         x_iter: budget.x_iter,
         sweeps: budget.sweeps,
-        cluster_rank: !g.flag("newrank").unwrap_or(false)
-            && !g.get("clusterrank").is_some_and(|s| {
-                matches!(s.trim().to_ascii_lowercase().as_str(), "global" | "none")
-            }),
+        cluster_rank,
     };
     let lay = if free {
         let placed = place_free(engine, model, &lnodes, &lclusters, &mut ctx);

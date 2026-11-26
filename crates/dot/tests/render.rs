@@ -1334,3 +1334,21 @@ fn plain_nodes_ignore_size_and_fill() {
     assert!(!e.contains("<rect") && !e.contains("#ff0000"), "{svg}");
     assert!(!part(&svg, "t").contains("#ff0000"), "{svg}");
 }
+
+/// クラスタの部分グラフそのものに書いた rank は、クラスタごとにランクを決めるとき読まない（Graphviz の絵と同じ）。
+/// 中の普通の部分グラフの rank と、newrank=true のときは効く。
+#[test]
+fn rank_on_a_cluster_subgraph_needs_newrank() {
+    let cy = |svg: &str, id: &str| attr_num(part(svg, id), "cy");
+    let svg = render("digraph { x -> a; subgraph cluster_c { rank=same; a; b } a -> b }")
+        .unwrap()
+        .svg;
+    assert!(cy(&svg, "a") < cy(&svg, "b"), "{svg}");
+    for src in [
+        "digraph { newrank=true; x -> a; subgraph cluster_c { rank=same; a; b } a -> b }",
+        "digraph { x -> a; subgraph cluster_c { subgraph { rank=same; a; b } } a -> b }",
+    ] {
+        let svg = render(src).unwrap().svg;
+        assert!((cy(&svg, "a") - cy(&svg, "b")).abs() < 0.5, "{svg}");
+    }
+}
