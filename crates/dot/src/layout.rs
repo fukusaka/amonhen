@@ -1808,6 +1808,11 @@ pub fn layout(
             }
         };
         gates.push(end_gate(a, true));
+        let (x0, x1) = chain
+            .iter()
+            .fold((f64::INFINITY, f64::NEG_INFINITY), |(lo, hi), &u| {
+                (lo.min(xs[u]), hi.max(xs[u]))
+            });
         for &v in &chain[1..chain.len() - 1] {
             let r = nodes[v].rank;
             let (left, right, mut lo, mut hi) = between(v);
@@ -1822,6 +1827,27 @@ pub fn layout(
             // 関の高さ: 左右の隣の本物のノード（避ける箱と同じく 4 広げる）とラベルの分。どちらもなければ行の中心だけ
             let mut half: f64 = 0.0;
             for u in [left, right].into_iter().flatten() {
+                if nodes[u].real {
+                    half = half.max(nodes[u].h / 2.0 + 4.0);
+                }
+            }
+            // 仮のノードどうしが隣り合う所では、線は行の中を斜めに抜けて、その先の本物のノードを横切る。線の通る横の
+            // 範囲（張った糸は列の点の左右の端を越えない）にある本物のノードの高さも関の高さに入れる（その高さの間は
+            // 左右の隣の間を通る。Gansner ほか 1993 §5 の、ランクの高さの仮のノードの箱）
+            let row = &layers[r];
+            for &u in row[pos[v] + 1..]
+                .iter()
+                .take_while(|&&u| xs[u] - nodes[u].left - 4.0 < x1)
+            {
+                if nodes[u].real {
+                    half = half.max(nodes[u].h / 2.0 + 4.0);
+                }
+            }
+            for &u in row[..pos[v]]
+                .iter()
+                .rev()
+                .take_while(|&&u| xs[u] + nodes[u].right + 4.0 > x0)
+            {
                 if nodes[u].real {
                     half = half.max(nodes[u].h / 2.0 + 4.0);
                 }
@@ -2802,6 +2828,67 @@ mod tests {
             (5, 6),
         ];
         assert_eq!(crossings_of(&g), 0);
+    }
+
+    /// 決まった乱数の図で、通り道の中のいちばん短い折れ線が、両端のほかのノードの箱を通る回数。
+    fn corridor_hits(seed: u64, n: usize, m: usize) -> usize {
+        let mut state = seed;
+        let mut next = |k: usize| {
+            state = state
+                .wrapping_mul(6364136223846793005)
+                .wrapping_add(1442695040888963407);
+            (state >> 33) as usize % k
+        };
+        let mut edges = Vec::new();
+        while edges.len() < m {
+            let (a, b) = (next(n), next(n));
+            if a < b {
+                edges.push(edge(a, b));
+            }
+        }
+        let nodes = vec![node(None); n];
+        let l = layout(&nodes, &edges, &[], &[], &opts());
+        let mut hits = 0;
+        for (ei, route) in l.routes.iter().enumerate() {
+            let Route::Path { points, .. } = route else {
+                continue;
+            };
+            let gates = &l.corridors[ei];
+            if gates.is_empty() {
+                continue;
+            }
+            let line = crate::spline::shortest(points[0], points[points.len() - 1], gates);
+            for (u, &(x, y)) in l.nodes.iter().enumerate() {
+                if u == edges[ei].tail || u == edges[ei].head {
+                    continue;
+                }
+                let inside = |p: (f64, f64)| (p.0 - x).abs() < 26.0 && (p.1 - y).abs() < 17.0;
+                let hit = line.windows(2).any(|w| {
+                    let len = (w[1].0 - w[0].0).hypot(w[1].1 - w[0].1);
+                    let steps = (len / 2.0).ceil().max(1.0) as usize;
+                    (0..=steps).any(|i| {
+                        let t = i as f64 / steps as f64;
+                        inside((
+                            w[0].0 + (w[1].0 - w[0].0) * t,
+                            w[0].1 + (w[1].1 - w[0].1) * t,
+                        ))
+                    })
+                });
+                if hit {
+                    hits += 1;
+                }
+            }
+        }
+        hits
+    }
+
+    #[test]
+    fn corridors_keep_the_line_off_the_nodes_of_a_row() {
+        // 仮のノードどうしが隣り合う所の関が行の中心だけだと、遠くへ向かう線が同じ行の先のノードを横切っていた
+        // （この 3 つの図で 2・5・16 回）
+        for (seed, n, m) in [(1, 40, 70), (2, 40, 70), (4, 80, 140)] {
+            assert_eq!(corridor_hits(seed, n, m), 0, "seed {seed}");
+        }
     }
 
     #[test]
