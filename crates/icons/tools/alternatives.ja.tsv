@@ -1,4 +1,4 @@
-title	見直した 5 つ — 描いた案と選んだ案
+title	案から選んだ形 — 描いた案と選んだ案
 note	A は最初の形。青い枠が選んだ案。各案は 48・20・16 の大きさ（右の黒い帯は暗い背景の 16）
 group	merge	Merge
 alt	merge-A	A 最初の形		下の 2 本が 1 本になり、上へ矢印。よくある図案。
@@ -26,3 +26,8 @@ alt	repositories-B	B 本棚	chosen	棚に立てた本。リポジトリのライ
 alt	repositories-C	C 重ねた窓		後ろに 1 枚、前に 1 枚の窓。
 alt	repositories-D	D 4 つの区画		2×2 の区画。意味が一般的すぎる。
 alt	repositories-E	E フォルダとコミット		フォルダの中にコミットの丸。
+group	pull-request	Pull request
+alt	pull-request-A	A 点で合わさる		Merge の形で、合わさる所を点にする（まだ取り込んでいない）。16 では Merge と見分けにくい。
+alt	pull-request-B	B 幹へ向かう矢印		右のコミットから幹へ矢印が向かうが、まだ届いていない。
+alt	pull-request-C	C 2 本の間の矢印		右の線から左の線へ矢印。小さいと詰まる。
+alt	pull-request-D	D リモートの上で頼む	chosen	B に上の横線（リモート）を足す。GitHub の上の申し出。

@@ -1,4 +1,4 @@
-title	Five shapes redrawn — the drafts and the choice
+title	Shapes chosen from drafts — the drafts and the choice
 note	A is the first draft; the blue frame is the one chosen. Each at 48, 20 and 16 (the dark tile is 16 on a dark background)
 group	merge	Merge
 alt	merge-A	A First draft		Two lines become one with an arrow on top. A common motif.
@@ -26,3 +26,8 @@ alt	repositories-B	B Bookshelf	chosen	Books on a shelf: the library of repositor
 alt	repositories-C	C Stacked windows		One window behind another.
 alt	repositories-D	D Four tiles		A 2×2 grid. Too generic.
 alt	repositories-E	E Folder with a commit		A commit circle inside a folder.
+group	pull-request	Pull request
+alt	pull-request-A	A Dotted join		Merge's shape with a dotted join: not merged yet. Hard to tell from Merge at 16.
+alt	pull-request-B	B Arrow toward the trunk		An arrow from the branch's commit heads for the trunk but doesn't reach it.
+alt	pull-request-C	C Arrow between two lines		An arrow from the right line to the left one. Crowded when small.
+alt	pull-request-D	D Asked on the remote	chosen	B under the line for a remote: the request is made on GitHub.
