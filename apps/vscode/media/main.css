@@ -3317,8 +3317,10 @@ body.monospace-message .details-head pre.body {
   background-color: var(--vscode-editor-findMatchHighlightBackground, rgba(255, 204, 0, 0.35));
 }
 
+/* テーマによっては 2 つの地がほぼ同じ色になる。エディタは枠で分けるが、::highlight は枠を引けないので下線で分ける */
 ::highlight(amonhen-md-find-current) {
   background-color: var(--vscode-editor-findMatchBackground, rgba(255, 149, 0, 0.7));
+  text-decoration: underline 2px var(--vscode-editor-findMatchBorder, var(--vscode-focusBorder));
 }
 
 /* Markdown の図（コアが描いた絵。列より広い図は縮める）と、近いもので描いたことの注記 */
