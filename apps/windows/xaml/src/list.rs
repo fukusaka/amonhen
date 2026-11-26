@@ -2,12 +2,14 @@
 //! 一覧への行のドラッグ。
 
 use crate::bindings::{
-    DataPackageOperation, DependencyObject, DragEventArgs, DragItemsCompletedEventArgs,
-    DragItemsStartingEventArgs, FrameworkElement, ListViewBase, UIElement, VisualTreeHelper,
+    ContentControl, DataPackageOperation, DependencyObject, DragEventArgs,
+    DragItemsCompletedEventArgs, DragItemsStartingEventArgs, FrameworkElement, ListViewBase,
+    UIElement, VisualTreeHelper,
 };
 use windows_core::{EventRevoker, HSTRING, IInspectable, Interface, Ref};
 
-/// `element` の中の最初の一覧（深さ 8 まで）。
+/// `element` の中の最初の一覧（深さ 8 まで）。ScrollViewer などの中身は、テンプレートがまだ付いていなくても
+/// たどれるよう、中身（Content）からもたどる（ツールバーの並びは ScrollViewer の中）。
 fn find_list(element: &IInspectable) -> Option<ListViewBase> {
     fn find(node: &DependencyObject, depth: u32) -> Option<ListViewBase> {
         if let Ok(list) = node.cast::<ListViewBase>() {
@@ -15,6 +17,15 @@ fn find_list(element: &IInspectable) -> Option<ListViewBase> {
         }
         if depth == 0 {
             return None;
+        }
+        if let Some(content) = node
+            .cast::<ContentControl>()
+            .ok()
+            .and_then(|c| c.Content().ok())
+            .and_then(|c| c.cast::<DependencyObject>().ok())
+            && let Some(list) = find(&content, depth - 1)
+        {
+            return Some(list);
         }
         let count = VisualTreeHelper::GetChildrenCount(node).ok()?;
         (0..count).find_map(|i| {

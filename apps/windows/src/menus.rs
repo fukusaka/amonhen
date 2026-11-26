@@ -860,6 +860,20 @@ pub fn dropped_on_toolbar(
     marked.into_iter().map(|(_, e)| e).collect()
 }
 
+/// 並べ替えた帯のタイルの Tag（`strip_tag`、`end`）が、今の並びの帯のタイルと同じ組か（違えば前の並びの知らせ）。
+pub fn same_strip(entries: &[ToolbarEntry], tags: &[String]) -> bool {
+    let mut now: Vec<String> = entries
+        .iter()
+        .enumerate()
+        .filter(|(_, e)| !matches!(e, ToolbarEntry::Item(_, false)))
+        .map(|(i, _)| strip_tag(i))
+        .collect();
+    let mut got: Vec<String> = tags.iter().filter(|t| *t != "end").cloned().collect();
+    now.sort();
+    got.sort();
+    now == got
+}
+
 /// 帯のタイル（`strip_tag` の Tag）をパレットへ引いて外した並び。ボタンは出さないで後ろへ、スペースは消す。
 pub fn removed_from_toolbar(entries: Vec<ToolbarEntry>, tags: &[String]) -> Vec<ToolbarEntry> {
     let gone: Vec<usize> = tags
@@ -894,7 +908,9 @@ pub fn palette_tags() -> Vec<String> {
 
 /// カスタマイズのパレット（macOS 版の NSToolbar のシート）: ツールバーに引いて足す項目と、既定のセット。
 /// `palette` と `defaults` は、引き始め・落とし先を付ける生の要素の置き場。
+/// `strip` は編集する並び（`toolbar_strip`）。窓の見出しの上では項目を引けないので、シートの一番上に置く。
 pub fn toolbar_palette(
+    strip: impl Into<View>,
     palette: &ElementRef<Grid>,
     defaults: &ElementRef<Grid>,
     on_display: Callback<Option<usize>>,
@@ -927,6 +943,12 @@ pub fn toolbar_palette(
         .spacing(8.0)
         .margin(Thickness::new(16.0, 12.0, 16.0, 12.0))
         .children((
+            Border::new()
+                .padding(Thickness::new(6.0, 4.0, 6.0, 4.0))
+                .corner_radius(6.0)
+                .border_thickness(Thickness::uniform(1.0))
+                .border_brush(Brush::Solid(Color::argb(0x80, 0x80, 0x80, 0x80)))
+                .content(strip),
             TextBlock::new().text(amonhen_model::tr!(
                 "Drag your favorite items into the toolbar…"
             )),
@@ -1108,6 +1130,21 @@ mod toolbar_tests {
             dropped_on_toolbar(entries, "t0", &["default".into()], false),
             default_toolbar()
         );
+    }
+
+    #[test]
+    fn a_reorder_of_the_previous_strip_is_stale() {
+        let entries = vec![
+            ToolbarEntry::Item("fetch".into(), true),
+            ToolbarEntry::Space,
+            ToolbarEntry::Item("pull".into(), true),
+            ToolbarEntry::Item("push".into(), false),
+        ];
+        let tags = |t: &[&str]| t.iter().map(|s| (*s).to_owned()).collect::<Vec<_>>();
+        assert!(same_strip(&entries, &tags(&["t2", "t0", "t1", "end"])));
+        // 外した後の並びに、外す前の帯の知らせが来た。
+        assert!(!same_strip(&entries, &tags(&["t0", "t1", "t2", "t3"])));
+        assert!(!same_strip(&entries, &tags(&["t0", "t2"])));
     }
 
     #[test]

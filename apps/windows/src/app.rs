@@ -1563,6 +1563,8 @@ enum Message {
     ToolbarReordered(Vec<String>),
     ToolbarDropped(String, Vec<String>, bool),
     ToolbarRemoved(Vec<String>),
+    /// カスタマイズしている間の、見るだけのツールバーのボタン（何もしない）。
+    ToolbarIdle,
     ToolbarDone,
     /// リモートの fetch の URL につないで確かめる。
     RemoteCheck,
@@ -2133,6 +2135,12 @@ impl Root {
             .border_thickness(Thickness::new(0.0, 0.0, 0.0, 1.0))
             .border_brush(Brush::Solid(Color::argb(0x40, 0x80, 0x80, 0x80)))
             .content(crate::menus::toolbar_palette(
+                Grid::new().element_ref(&self.toolbar_strip).children((
+                    crate::menus::toolbar_strip(
+                        &crate::menus::toolbar_entries(),
+                        context.callback(Message::ToolbarReordered),
+                    ),
+                )),
                 &self.toolbar_palette,
                 &self.toolbar_defaults,
                 context.callback(Message::ToolbarDisplay),
@@ -3802,6 +3810,10 @@ impl Root {
             Message::ToolbarReordered(tags) => {
                 use crate::menus::ToolbarEntry;
                 let entries = crate::menus::toolbar_entries();
+                if !crate::menus::same_strip(&entries, &tags) {
+                    // 前の並びの知らせ（帯の外に落として外した後に、一覧が出す並べ替えなど）。
+                    return;
+                }
                 let mut moved: Vec<ToolbarEntry> = tags
                     .iter()
                     .filter_map(|t| t.strip_prefix('t')?.parse::<usize>().ok())
@@ -3821,6 +3833,7 @@ impl Root {
                     entries, &target, &ids, after,
                 ));
             }
+            Message::ToolbarIdle => {}
             Message::ToolbarRemoved(tags) => {
                 let entries = crate::menus::toolbar_entries();
                 crate::menus::save_toolbar(&crate::menus::removed_from_toolbar(entries, &tags));
@@ -9659,12 +9672,12 @@ impl Root {
                             .vertical_alignment(VerticalAlignment::Center)
                             .margin(Thickness::new(8.0, 0.0, 64.0, 0.0))
                             .children((if self.toolbar_customizing {
-                                Grid::new().element_ref(&self.toolbar_strip).children((
-                                    crate::menus::toolbar_strip(
-                                        &crate::menus::toolbar_entries(),
-                                        context.callback(Message::ToolbarReordered),
-                                    ),
-                                ))
+                                // カスタマイズしている間は見るだけ（並べ替えはシートの一番上の帯で。窓の見出しの
+                                // 上では、項目を引き始めることも落とすこともできない）。
+                                Grid::new().opacity(0.45).children((crate::menus::toolbar(
+                                    context.callback(|_: String| Message::ToolbarIdle),
+                                    tracking,
+                                ),))
                             } else {
                                 crate::menus::toolbar(context.callback(Message::Command), tracking)
                             },)),
