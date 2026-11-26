@@ -740,6 +740,41 @@ impl Builder {
         self.runs.push(run);
     }
 
+    /// pulldown-cmark が数式にした所を、地の文として段落に置く（式にするかは `dollars` が選び直す）。原文 `raw` は
+    /// 行をまたぐと引用の `>`・字下げも含むので、行は `tex`（入れ物の印を外したもの）から取る。GitHub と同じく、
+    /// 行の境は文字の並びに残し（`$a` と次の行の頭の `$` は組になる）、硬い改行（行末の空白 2 つ・`\`）はそこで
+    /// 改行にする（それをまたぐ `$` は組にならない）。
+    fn math_source(&mut self, raw: &str, tex: &str) {
+        let delim = &raw[..raw.len() - raw.trim_start_matches('$').len()];
+        if !raw.contains('\n')
+            || delim.is_empty()
+            || raw.len() < 2 * delim.len()
+            || !raw.ends_with(delim)
+        {
+            self.push_run(&dollars::unescape(raw), false);
+            return;
+        }
+        let source = format!("{delim}{tex}{delim}");
+        let mut lines = source.split('\n').peekable();
+        while let Some(line) = lines.next() {
+            if lines.peek().is_none() {
+                self.push_run(&dollars::unescape(line), false);
+                break;
+            }
+            let slashes = line.len() - line.trim_end_matches('\\').len();
+            if line.ends_with("  ") {
+                self.push_run(&dollars::unescape(line.trim_end_matches(' ')), false);
+                self.line_break();
+            } else if slashes % 2 == 1 {
+                self.push_run(&dollars::unescape(&line[..line.len() - 1]), false);
+                self.line_break();
+            } else {
+                self.push_run(&dollars::unescape(line), false);
+                self.push_run("\n", false);
+            }
+        }
+    }
+
     fn line_break(&mut self) {
         self.runs.push(Run {
             line_break: true,
@@ -1454,6 +1489,7 @@ pub fn parse_with_images(
     let images = images.map(|i| i.bounded());
     let mut blocks = parse_blocks(text, zone, images.as_ref());
     dollars::find(&mut blocks);
+    dollars::settle(&mut blocks);
     crate::math::render_all(&mut blocks);
     for block in &mut blocks {
         linkify_block(block, github);
@@ -1749,7 +1785,7 @@ fn parse_blocks(
                     // 段落の中の `$$…$$` はブロック
                 } else {
                     // 文中の式は、段落ができてから GitHub と同じ決まりで選ぶ（`dollars`）
-                    b.push_run(&dollars::unescape(raw), false);
+                    b.math_source(raw, &tex);
                 }
             }
             Event::Html(text) => match &mut b.html_block {
@@ -1759,7 +1795,8 @@ fn parse_blocks(
             Event::InlineHtml(text) => b.html(&text),
             Event::SoftBreak => {
                 if !b.tokenizer.in_raw() {
-                    b.push_run(" ", false);
+                    // `dollars` が行の境を見分ける。式を選んだ後で空白にする（`dollars::settle`）
+                    b.push_run("\n", false);
                 }
             }
             Event::HardBreak => b.line_break(),

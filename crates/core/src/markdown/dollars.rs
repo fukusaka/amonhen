@@ -123,6 +123,45 @@ fn split(runs: &mut Vec<Run>) {
     *runs = out;
 }
 
+/// 行の境（`\n`）を空白にする（式を選び終えた後で。式の原文はそのまま）。
+pub(super) fn settle(blocks: &mut [Block]) {
+    let runs = |runs: &mut [Run]| {
+        for run in runs.iter_mut().filter(|r| r.math_tex.is_none()) {
+            if run.text.contains('\n') {
+                run.text = run.text.replace('\n', " ");
+            }
+        }
+    };
+    for block in blocks {
+        match block {
+            Block::Heading { runs: r, .. } | Block::Paragraph { runs: r, .. } => runs(r),
+            Block::Quote { blocks, .. } | Block::Footnote { blocks, .. } => settle(blocks),
+            Block::Details {
+                summary, blocks, ..
+            } => {
+                runs(summary);
+                settle(blocks);
+            }
+            Block::List { items, .. } => {
+                for item in items {
+                    settle(&mut item.blocks);
+                }
+            }
+            Block::Table { head, rows, .. } => {
+                for cell in head.iter_mut().chain(rows.iter_mut().flatten()) {
+                    runs(cell);
+                }
+            }
+            Block::HtmlTable { cells, .. } => {
+                for cell in cells {
+                    runs(&mut cell.runs);
+                }
+            }
+            Block::Code { .. } | Block::Diagram { .. } | Block::Math { .. } | Block::Rule => {}
+        }
+    }
+}
+
 /// 数式を探してよい文字か。
 fn scannable(run: &Run) -> bool {
     !run.code
@@ -198,7 +237,8 @@ fn scan(text: &str) -> Vec<(std::ops::Range<usize>, String, bool)> {
             break;
         };
         let next = char_at(end + 1);
-        let spaced = char_before(end).is_some_and(|c| c.is_whitespace());
+        // 行の境（次の行の頭の閉じ）は空白に数えない
+        let spaced = char_before(end).is_some_and(|c| c.is_whitespace() && c != '\n');
         let fits =
             closes_before(next) && (!spaced || next.is_none_or(|c| c.is_ascii_punctuation()));
         if fits {
