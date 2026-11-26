@@ -78,6 +78,8 @@ becomes the GitHub Release notes.
   room kept for wider app fonts.
 - DOT diagrams: edges leave and enter compass ports (`:e`, `:w`, ...) in the port's direction, and record or table fields
   along the ranks, as in Graphviz.
+- DOT diagrams: in graphs without clusters, the dot layout moves a node whose incoming and outgoing edges weigh the same
+  to the rank with the fewest nodes it can take, as Graphviz does.
 - Exporting chosen folders as an archive in a partial clone fetches only the contents it asked about, not every missing
   file of the commit (git 2.41 or later; older git fetches them all, and the question now counts them all).
 - Markdown previews put a list item's mark on the same line as a list nested at its start (`- 1. text`), as GitHub

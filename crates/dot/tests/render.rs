@@ -1391,3 +1391,36 @@ fn dot_edges_leave_compass_ports_along_their_direction() {
     assert!(c1x > x0 + 3.0, "{d}");
     assert!(c2x > x3 + 3.0, "{d}");
 }
+
+/// ランクの釣り合い（Gansner ほか 1993）: 入る辺と出る辺の重みが等しいノードは、ノードの少ないランクへ動く。
+#[test]
+fn dot_balances_nodes_across_feasible_ranks() {
+    let svg = render("digraph { top -> {a b c d e f}; {a b c d e f} -> bot; top -> bot; top -> m1 -> m2 -> bot }")
+        .unwrap()
+        .svg;
+    let cy = |id: &str| attr_num(part(&svg, id), "cy");
+    let low = ["a", "b", "c", "d", "e", "f", "m1"]
+        .iter()
+        .filter(|&&v| cy(v) > cy("m1") + 1.0)
+        .count();
+    // 7 つのうち 3 つが m2 のランクへ下りて、4 と 4 になる
+    assert_eq!(low, 3, "{svg}");
+    assert!(cy("a") > cy("d"), "{svg}");
+}
+
+/// クラスタのある図では、ランクの釣り合いをしない（Graphviz の絵と同じ）。
+#[test]
+fn dot_does_not_balance_ranks_with_clusters() {
+    let svg = render(
+        "digraph { top -> {a b c d e f}; {a b c d e f} -> bot; top -> bot; top -> m1 -> m2 -> bot; subgraph cluster_z { z1 -> z2 } }",
+    )
+    .unwrap()
+    .svg;
+    let cy = |id: &str| attr_num(part(&svg, id), "cy");
+    assert!(
+        ["a", "b", "c", "d", "e", "f"]
+            .iter()
+            .all(|v| (cy(v) - cy("m1")).abs() < 0.5),
+        "{svg}"
+    );
+}
