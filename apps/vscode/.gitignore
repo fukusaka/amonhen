@@ -1,4 +1,5 @@
-node_modules/
+# 別の作業ツリーの node_modules へのリンクも外す（末尾の / はリンクに当たらない）
+node_modules
 dist/
 *.vsix
 bin/
