@@ -1424,3 +1424,17 @@ fn dot_does_not_balance_ranks_with_clusters() {
         "{svg}"
     );
 }
+
+/// クラスタを含む閉路で向きを強いない辺は、短すぎる側を重く数える。外のノードの辺を縮めるためにクラスタを横に
+/// 並べることはしない（Graphviz の絵と同じ）。
+#[test]
+fn dot_cluster_cycles_do_not_flatten_outer_edges() {
+    let svg = render(
+        "digraph { subgraph cluster_A { label=A; a1 -> a2 } subgraph cluster_B { label=B; b1 -> b2 } a1 -> b2; b1 -> a2; x -> a1; x -> p [weight=3]; a1 -> p }",
+    )
+    .unwrap()
+    .svg;
+    let cy = |id: &str| attr_num(part(&svg, id), "cy");
+    assert!(cy("x") < cy("a1") && cy("a1") < cy("p"), "{svg}");
+    assert!((cy("p") - cy("a2")).abs() < 0.5, "{svg}");
+}
