@@ -69,4 +69,5 @@ swift figures.swift alternatives alternatives.ja.tsv alternatives ../../../docs/
   - Windows: 変更されたファイルの欄のボタン、差分の表示の設定、編集モード、すべてのファイル、画像の差分（Direct2D で描く）。サイドバーは、どの行も前に共通のアイコンを出し（今のブランチと開いている worktree は強調の色）、行の右端の印も共通の形にする。
 - [x] VSCode: サイドバーの見出しのボタンとブランチの行
 - [x] Pull request の形（macOS・GTK4・Windows のサイドバーの Pull request の行）。4 案から D（B の矢印に、リモートの上の横線を足す。GitHub の上の申し出）を選んだ
-- 未決: アプリのアイコンも描き直すか、VSCode の形式、端末の FE に何かするか（文字で表している）。
+- [x] Windows のアプリのアイコン: macOS のアプリのアイコンの絵を Windows の枠で（`scripts/make-icon.swift --windows`。枠いっぱいに、影なし、角の丸みは小さく、32 px までは淡い星を描かない）。exe に入れ、窓ごとにも付ける
+- 未決: アプリのアイコンを描き直すか（GTK4 と VSCode の Marketplace は macOS の枠の絵をそのまま使い、VSCode のアクティビティバーには別の印がある）、VSCode の形式、端末の FE に何かするか（文字で表している）。
