@@ -35,6 +35,8 @@ pub struct Edge {
     /// ポートの並びの向きのずれ。
     pub tail_off: f64,
     pub head_off: f64,
+    /// 見えない辺（配置には効くが、同じランクの弧の段や空きは取らない）。
+    pub invisible: bool,
 }
 
 #[derive(Clone, Debug)]
@@ -118,6 +120,8 @@ type Chain = (Vec<usize>, bool, Option<usize>);
 const MAX_DUMMIES: usize = 12_000;
 /// 直角の線の段の間の下限（ランクの間を広げる上限を超えても保つ）。
 const MIN_TRACK: f64 = 3.0;
+/// 同じランクの辺の輪を調べる辺の数の上限（辺ごとに深さ優先でたどるので、2 乗で増える）。
+const FLAT_CYCLE_EDGES: usize = 4096;
 /// 並べ替えで、交差が減らない回がこれだけ続けばやめる。
 const MINCROSS_STALE: usize = 12;
 /// 隣どうしの入れ替えを使う、ランクの間の線の切れ端の数の上限（大きな図の時間のため）。
@@ -636,9 +640,31 @@ struct Ordering<'a> {
     parent: &'a [Option<usize>],
     /// 兄弟のクラスタの左右の順の手がかり。
     global: Vec<f64>,
+    /// 同じランク・同じクラスタの辺: 尾の右に置く頭（Gansner ほか 1993 §3 の、同じランクの辺が決める左右の順）。
+    after: Vec<Vec<usize>>,
+    /// その辺のあるランク。
+    has_flat: Vec<bool>,
 }
 
 impl Ordering<'_> {
+    /// 切れ端の上か下の端の並びの値: 位置に、ポートのずれをノードの幅で割った分（±0.45 まで）を足す。同じノードに
+    /// 着く辺も、ポートの左右の順で並ぶ（Gansner ほか 1993 §3）。
+    fn end_key(&self, s: usize, upper: bool) -> f64 {
+        let seg = &self.segs[s];
+        let (v, off) = if upper {
+            (seg.upper, seg.upper_off)
+        } else {
+            (seg.lower, seg.lower_off)
+        };
+        let w = self.nodes[v].left + self.nodes[v].right;
+        let frac = if off != 0.0 && w > 0.0 {
+            (off / w).clamp(-0.45, 0.45)
+        } else {
+            0.0
+        };
+        self.pos[v] as f64 + frac
+    }
+
     fn refresh(&mut self) {
         for layer in &self.layers {
             for (i, &v) in layer.iter().enumerate() {
@@ -774,20 +800,64 @@ impl Ordering<'_> {
         for (i, &v) in self.layers[r].iter().enumerate() {
             self.pos[v] = i;
         }
+        self.keep_flat_order(r);
+    }
+
+    /// 同じランクの辺の尾を頭の左に: 今の順をなるべく保つ位相の順（頭は、尾のすぐ後ろへ下がる）。輪になったら、
+    /// 残りでいちばん左のものから出す。
+    fn keep_flat_order(&mut self, r: usize) {
+        if !self.has_flat[r] {
+            return;
+        }
+        let layer = std::mem::take(&mut self.layers[r]);
+        let mut need = std::collections::HashMap::<usize, usize>::new();
+        for &v in &layer {
+            for &h in &self.after[v] {
+                *need.entry(h).or_insert(0) += 1;
+            }
+        }
+        let mut heap = std::collections::BinaryHeap::new();
+        for &v in &layer {
+            if !need.contains_key(&v) {
+                heap.push(std::cmp::Reverse((self.pos[v], v)));
+            }
+        }
+        let mut done = std::collections::HashSet::<usize>::new();
+        let mut out = Vec::with_capacity(layer.len());
+        while out.len() < layer.len() {
+            let v = match heap.pop() {
+                Some(std::cmp::Reverse((_, v))) => v,
+                None => match layer
+                    .iter()
+                    .copied()
+                    .filter(|v| !done.contains(v))
+                    .min_by_key(|&v| self.pos[v])
+                {
+                    Some(v) => v,
+                    None => break,
+                },
+            };
+            if !done.insert(v) {
+                continue;
+            }
+            out.push(v);
+            for &h in &self.after[v] {
+                if let Some(c) = need.get_mut(&h) {
+                    *c -= 1;
+                    if *c == 0 && !done.contains(&h) {
+                        heap.push(std::cmp::Reverse((self.pos[h], h)));
+                    }
+                }
+            }
+        }
+        self.layers[r] = out;
+        for (i, &v) in self.layers[r].iter().enumerate() {
+            self.pos[v] = i;
+        }
     }
 
     fn median(&self, list: &[usize], upper: bool) -> Option<f64> {
-        let mut p: Vec<f64> = list
-            .iter()
-            .map(|&s| {
-                let seg = &self.segs[s];
-                if upper {
-                    self.pos[seg.upper] as f64
-                } else {
-                    self.pos[seg.lower] as f64
-                }
-            })
-            .collect();
+        let mut p: Vec<f64> = list.iter().map(|&s| self.end_key(s, upper)).collect();
         if p.is_empty() {
             return None;
         }
@@ -832,15 +902,23 @@ impl Ordering<'_> {
     fn crossings(&self) -> usize {
         let mut total = 0usize;
         for r in 0..self.layers.len().saturating_sub(1) {
-            let mut pairs: Vec<(usize, usize)> = Vec::new();
+            let mut keys: Vec<(f64, f64)> = Vec::new();
             for &u in &self.layers[r] {
                 for &s in &self.nodes[u].down {
-                    pairs.push((self.pos[u], self.pos[self.segs[s].lower]));
+                    keys.push((self.end_key(s, true), self.end_key(s, false)));
                 }
             }
-            pairs.sort_unstable();
+            // 下の端の値を順位に直す（同じ値は同じ順位）
+            let mut lows: Vec<f64> = keys.iter().map(|k| k.1).collect();
+            lows.sort_by(f64::total_cmp);
+            lows.dedup();
+            let mut pairs: Vec<(f64, usize)> = keys
+                .iter()
+                .map(|&(a, b)| (a, lows.partition_point(|&x| x < b)))
+                .collect();
+            pairs.sort_by(|x, y| x.0.total_cmp(&y.0).then(x.1.cmp(&y.1)));
             // 下の位置の逆順の数（BIT）
-            let size = self.layers[r + 1].len() + 1;
+            let size = lows.len() + 1;
             let mut tree = vec![0usize; size + 1];
             for (seen, &(_, b)) in pairs.iter().enumerate() {
                 // b より大きいものの数
@@ -870,7 +948,8 @@ impl Ordering<'_> {
                 let len = self.layers[r].len();
                 for i in 0..len.saturating_sub(1) {
                     let (u, v) = (self.layers[r][i], self.layers[r][i + 1]);
-                    if self.nodes[u].cluster != self.nodes[v].cluster {
+                    if self.nodes[u].cluster != self.nodes[v].cluster || self.after[u].contains(&v)
+                    {
                         continue;
                     }
                     let before = self.pair_crossings(u, v);
@@ -897,17 +976,9 @@ impl Ordering<'_> {
             (&self.nodes[u].down, &self.nodes[v].down, false),
         ] {
             for &a in lu {
-                let pa = if upper {
-                    self.pos[self.segs[a].upper]
-                } else {
-                    self.pos[self.segs[a].lower]
-                };
+                let pa = self.end_key(a, upper);
                 for &b in lv {
-                    let pb = if upper {
-                        self.pos[self.segs[b].upper]
-                    } else {
-                        self.pos[self.segs[b].lower]
-                    };
+                    let pb = self.end_key(b, upper);
                     if pa > pb {
                         c += 1;
                     }
@@ -1057,7 +1128,10 @@ pub fn layout(
                 lane: *lane,
                 adjacent: false,
             };
-            *lane += 1;
+            // 見えない辺は段を取らない（見える 1 本目が、隣どうしなら真っすぐ通る）
+            if !e.invisible {
+                *lane += 1;
+            }
             flat_edges.push((e.tail, e.head));
             continue;
         }
@@ -1192,7 +1266,36 @@ pub fn layout(
         pos: vec![0; total],
         parent: &parent,
         global: vec![0.0; k],
+        after: vec![Vec::new(); total],
+        has_flat: vec![false; max_rank + 1],
     };
+    // 輪になる辺は、先に書いた辺を守って外す（Graphviz の文書どおり、輪は深さ優先で切る）
+    for &(t, h) in &flat_edges {
+        if nodes[t].cluster != nodes[h].cluster || ord.after[t].contains(&h) {
+            continue;
+        }
+        // h から t へ着けば輪になる（辺が多すぎるときは調べず、並べるときにいちばん左から出して切る）
+        let mut stack = if flat_edges.len() <= FLAT_CYCLE_EDGES {
+            vec![h]
+        } else {
+            Vec::new()
+        };
+        let mut seen = std::collections::HashSet::new();
+        let mut cycle = false;
+        while let Some(v) = stack.pop() {
+            if v == t {
+                cycle = true;
+                break;
+            }
+            if seen.insert(v) {
+                stack.extend(ord.after[v].iter().copied());
+            }
+        }
+        if !cycle {
+            ord.after[t].push(h);
+            ord.has_flat[nodes[t].rank] = true;
+        }
+    }
     ord.refresh();
     ord.global_keys();
     let mut val = vec![0f64; total];
@@ -1265,28 +1368,9 @@ pub fn layout(
     }
     ord.layers = best;
     ord.refresh();
-    // 同じランクの辺は尾を左に（同じクラスタのとき）
-    for _ in 0..3 {
-        let mut moved = false;
-        for &(t, h) in &flat_edges {
-            if nodes[t].cluster != nodes[h].cluster {
-                continue;
-            }
-            let (pt, ph) = (ord.pos[t], ord.pos[h]);
-            if pt > ph {
-                let r = nodes[t].rank;
-                let layer = &mut ord.layers[r];
-                layer.remove(pt);
-                layer.insert(ph, t);
-                for (i, &v) in layer.iter().enumerate() {
-                    ord.pos[v] = i;
-                }
-                moved = true;
-            }
-        }
-        if !moved {
-            break;
-        }
+    // 同じランクの辺は尾を左に（並べ替えの中で守っている。念のため）
+    for r in 0..ord.layers.len() {
+        ord.keep_flat_order(r);
     }
     // ordering=out: 同じ尾の頭を辺の順に
     if opt.ordering_out {
@@ -1375,6 +1459,7 @@ pub fn layout(
     for (ei, e) in input_edges.iter().enumerate() {
         if let (Route::Flat { adjacent, .. }, Some((_, lh))) = (&routes[ei], e.label)
             && e.tail != e.head
+            && !e.invisible
         {
             let r = nodes[e.tail].rank;
             let room = if *adjacent {
@@ -1393,6 +1478,7 @@ pub fn layout(
         for (ei, e) in input_edges.iter().enumerate() {
             if let Route::Flat { adjacent, lane } = routes[ei]
                 && e.tail != e.head
+                && !e.invisible
                 && !(adjacent && lane == 0)
             {
                 let r = nodes[e.tail].rank;
@@ -1649,6 +1735,59 @@ pub fn layout(
 }
 
 /// 直角の線（`splines=ortho`）の段の場所をランクの間に空ける。ランクの間を横に動く線（仮のノードの間の横のずれ）の
+/// ノードの中心の広がり（横、縦）。`stretch` で伸びるのはこの分だけ。
+pub fn center_span(lay: &Layout) -> (f64, f64) {
+    let span = |f: fn(&(f64, f64)) -> f64| {
+        let lo = lay.nodes.iter().map(f).fold(f64::INFINITY, f64::min);
+        let hi = lay.nodes.iter().map(f).fold(f64::NEG_INFINITY, f64::max);
+        if hi > lo { hi - lo } else { 0.0 }
+    };
+    (span(|p| p.0), span(|p| p.1))
+}
+
+/// ノードの大きさはそのままに、位置を横に `sx`・縦に `sy` 倍する（`ratio` の伸ばし。どちらも 1 以上）。いちばん
+/// 左上のノードの中心を起点に、ノード・道筋・ラベル・クラスタの箱・通り道を伸ばす。
+pub fn stretch(lay: &mut Layout, sx: f64, sy: f64) {
+    let sx = if sx.is_finite() { sx.max(1.0) } else { 1.0 };
+    let sy = if sy.is_finite() { sy.max(1.0) } else { 1.0 };
+    if (sx == 1.0 && sy == 1.0) || lay.nodes.is_empty() {
+        return;
+    }
+    let (span_x, span_y) = center_span(lay);
+    let ox = lay.nodes.iter().map(|p| p.0).fold(f64::INFINITY, f64::min);
+    let oy = lay.nodes.iter().map(|p| p.1).fold(f64::INFINITY, f64::min);
+    // 起点より先は伸ばし、手前（起点の左・上の縁）はそのまま
+    let mx = |v: f64| if v > ox { ox + (v - ox) * sx } else { v };
+    let my = |v: f64| if v > oy { oy + (v - oy) * sy } else { v };
+    let f = |p: &mut (f64, f64)| *p = (mx(p.0), my(p.1));
+    lay.nodes.iter_mut().for_each(f);
+    for r in &mut lay.routes {
+        if let Route::Path { points, label } = r {
+            points.iter_mut().for_each(f);
+            if let Some(l) = label {
+                f(l);
+            }
+        }
+    }
+    // クラスタの箱の縁も同じく（中のノードとの間は伸びるだけで、ノードを囲んだまま）
+    let mut right = lay.width + span_x * (sx - 1.0);
+    let mut bottom = lay.height + span_y * (sy - 1.0);
+    for b in lay.clusters.iter_mut().flatten() {
+        *b = [mx(b[0]), my(b[1]), mx(b[2]), my(b[3])];
+        right = right.max(b[2]);
+        bottom = bottom.max(b[3]);
+    }
+    for gates in &mut lay.corridors {
+        for g in gates {
+            g.y = my(g.y);
+            g.lo = mx(g.lo);
+            g.hi = mx(g.hi);
+        }
+    }
+    lay.width = right;
+    lay.height = bottom;
+}
+
 /// 重なりの最大から段の数を見積もり、`track` の間で並べて両側に `margin`（矢じりの分）を残せるだけ、下のランクを
 /// 下げる（ノード・道筋・ラベル・クラスタの箱の y と高さ）。1 つの間で下げるのは `most_add` まで（込んだ図が縦に
 /// 伸びすぎないように。足りない分は段の間を詰める）。ただし段の間が `MIN_TRACK` を切る分は、上限を超えても下げる。`heights` はノードの高さ（配置の向き）。
@@ -2382,6 +2521,7 @@ mod tests {
             label: None,
             tail_off: 0.0,
             head_off: 0.0,
+            invisible: false,
         }
     }
 

@@ -462,7 +462,13 @@ fn ortho_edges_ignore_ports() {
         (x, y)
     };
     let (x, y) = start("a-&gt;b");
-    assert!(x > 0.5 && x < 53.5 && (y - 36.0).abs() < 0.01, "{svg}");
+    let a = part(&svg, "a");
+    let (left, top) = (attr_num(a, "x"), attr_num(a, "y"));
+    let bottom = top + attr_num(a, "height");
+    assert!(
+        x > left + 0.5 && x < left + attr_num(a, "width") - 0.5 && (y - bottom).abs() < 0.01,
+        "{svg}"
+    );
     let (x, _) = start("b-&gt;b");
     let b = part(&svg, "b");
     let right = attr_num(b, "x") + attr_num(b, "width");
@@ -1135,4 +1141,83 @@ fn dot_centers_nodes_between_their_children() {
     .svg;
     let mid = (cx(&svg, "a") + cx(&svg, "b")) / 2.0;
     assert!((cx(&svg, "s") - mid).abs() <= 1.0, "{svg}");
+}
+
+/// dot の同じランクの辺は、並べ替えの中で尾を頭の左に保つ。後から直すと、上のランクの辺が交差していた。
+#[test]
+fn dot_keeps_flat_edge_order_while_ordering() {
+    let svg = render(
+        "digraph { node [shape=box]; impl -> exe; cpp -> link; {rank=same exe link} link -> exe }",
+    )
+    .unwrap()
+    .svg;
+    let x = |id: &str| {
+        let p = part(&svg, id);
+        attr_num(p, "x") + attr_num(p, "width") / 2.0
+    };
+    assert!(x("link") < x("exe"), "{svg}");
+    assert!(x("cpp") < x("impl"), "{svg}");
+}
+
+/// 見えない辺は同じランクの弧の段を取らない: 隣どうしの見える辺は、見えない辺があっても真っすぐ通る。
+#[test]
+fn dot_invisible_flat_edges_leave_the_straight_lane() {
+    let with = render("digraph { {rank=same a b} a -> b [style=invis]; a -> b }")
+        .unwrap()
+        .svg;
+    let without = render("digraph { {rank=same a b} a -> b }").unwrap().svg;
+    let path = |svg: &str| {
+        svg.split("<path")
+            .nth(1)
+            .unwrap()
+            .split("/>")
+            .next()
+            .unwrap()
+            .to_owned()
+    };
+    assert_eq!(path(&with), path(&without), "{with}");
+}
+
+/// dot の並べ替えはポートの左右を見る: 右のポートへ着く辺の尾は、左のポートへ着く辺の尾の右に（Graphviz と同じ）。
+#[test]
+fn dot_orders_nodes_by_their_ports() {
+    let svg = render(
+        "digraph { node [shape=record]; r [label=\"<l>left|<r>right\"]; a; b; a -> r:r; b -> r:l }",
+    )
+    .unwrap()
+    .svg;
+    let x = |id: &str| attr_num(part(&svg, id), "x");
+    assert!(x("b") < x("a"), "{svg}");
+}
+
+/// ratio はノードの大きさを変えずに位置を伸ばして縦横の比を合わせる。数ならその比、fill は size の比。
+#[test]
+fn dot_ratio_stretches_positions() {
+    let view = |src: &str| {
+        let svg = render(src).unwrap().svg;
+        let v: Vec<f64> = svg
+            .split("viewBox=\"")
+            .nth(1)
+            .unwrap()
+            .split('"')
+            .next()
+            .unwrap()
+            .split(' ')
+            .map(|n| n.parse().unwrap())
+            .collect();
+        (v[2], v[3], svg)
+    };
+    let (w, h, svg) = view("digraph { ratio=2; a -> {b c d} }");
+    assert!((h / w - 2.0).abs() < 0.1, "{w} {h}");
+    assert!(
+        (attr_num(part(&svg, "a"), "rx") - 27.0).abs() < 0.01,
+        "{svg}"
+    );
+    let (w, h, _) = view("digraph { rankdir=LR; ratio=fill; size=\"7,1\"; a -> {b c d} }");
+    assert!((h / w - 1.0 / 7.0).abs() < 0.03, "{w} {h}");
+    // ratio がなければ size は配置を変えない
+    assert_eq!(
+        view("digraph { a -> {b c d} }").0,
+        view("digraph { size=\"1,9\"; a -> {b c d} }").0
+    );
 }
