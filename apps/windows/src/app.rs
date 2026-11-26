@@ -125,6 +125,7 @@ pub fn run(args: Args, started: Instant, more: Vec<u64>) -> Result<(), String> {
         crate::repositories::record_opened(&path);
     }
     ARGS.with(|a| *a.borrow_mut() = Some((args, started)));
+    windows_reactor::on_window_opened(|hwnd| set_window_icon(hwnd as u64));
     // 起動のときに戻す窓は、どれもこのプロセスの窓（1 つ目が前）。
     let windows = std::iter::once(crate::tabs::focused())
         .chain(more)
@@ -20793,12 +20794,7 @@ impl HistoryView {
         }
         if self.hwnd.get() != 0 && self.hwnd.get() != HWND_UNKNOWN {
             let (window, hwnd) = (self.window, self.hwnd.get());
-            if WINDOW_HANDLES
-                .with(|w| w.borrow_mut().insert(window, hwnd))
-                .is_none()
-            {
-                set_window_icon(hwnd);
-            }
+            WINDOW_HANDLES.with(|w| w.borrow_mut().insert(window, hwnd));
         }
         let only = crate::tabs::windows().len() == 1;
         let active =
@@ -23180,7 +23176,8 @@ fn monospace(element: &IInspectable) -> windows_core_reactor::Result<()> {
 /// exe のリソースのアプリのアイコンの番号（`build.rs` が入れる）。
 const APP_ICON: u16 = 1;
 
-/// 窓にアプリのアイコンを付ける（タスクバー・Alt+Tab）。WinUI 3 の窓は、付けなければ既定の絵になる。
+/// 窓にアプリのアイコンを付ける（タスクバー・Alt+Tab）。WinUI 3 の窓は、付けなければ既定の絵になる。窓ができて
+/// HWND が分かったときに呼ぶ。
 fn set_window_icon(hwnd: u64) {
     use windows::Win32::Foundation::{HWND, LPARAM, WPARAM};
     use windows::Win32::System::LibraryLoader::GetModuleHandleW;

@@ -617,6 +617,13 @@ thread_local! {
     // Amon Hen の足し: 外観を当てた窓の WinUI の Window を、窓の HWND で引けるように（窓がいくつもあるとき）。
     static WINDOWS_BY_HANDLE: RefCell<HashMap<usize, windows_core::IInspectable>> =
         RefCell::new(HashMap::new());
+    // Amon Hen の足し: 窓の HWND が初めて分かったときに呼ぶもの。
+    static WINDOW_OPENED: Cell<Option<fn(usize)>> = const { Cell::new(None) };
+}
+
+/// Amon Hen の足し: 窓の HWND が初めて分かったときに `opened` を呼ぶ（窓のアイコンを付けるため）。
+pub fn on_window_opened(opened: fn(usize)) {
+    WINDOW_OPENED.with(|o| o.set(Some(opened)));
 }
 
 /// Amon Hen の足し: HWND が `handle` の窓の WinUI の Window（外観を当てた窓のうち）。
@@ -955,8 +962,12 @@ impl WinUiRuntime {
             if let Ok(native) = window.cast::<IWindowNative>()
                 && unsafe { native.WindowHandle(&mut value) }.is_ok()
             {
-                WINDOWS_BY_HANDLE
-                    .with(|w| w.borrow_mut().insert(value as usize, inspectable.clone()));
+                let new = WINDOWS_BY_HANDLE
+                    .with(|w| w.borrow_mut().insert(value as usize, inspectable.clone()))
+                    .is_none();
+                if new && let Some(opened) = WINDOW_OPENED.with(|o| o.get()) {
+                    opened(value as usize);
+                }
             }
             LAST_WINDOW.with(|w| *w.borrow_mut() = Some(inspectable));
         }
