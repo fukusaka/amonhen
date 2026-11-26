@@ -1759,6 +1759,314 @@ pub fn make_room_for_tracks(
     lay.height += cum[rows.len()];
 }
 
+/// 横の位置の釣り合い。単体法の答えは、同じ費用で動ける幅があっても、その端に寄る（2 つの子を持つ親が
+/// 片方の真上に来る）。本物のノード 1 つ、まっすぐにつながったノード（長さ 0 の辺の両端）の塊、その塊のうち
+/// あるノードから上（下）の部分を、外への辺の長さの和が最も小さく、隣・クラスタの境の制約も守れる幅の
+/// 真ん中に動かす（底の外にいれば底へ）。辺が仮のノードを通るなら、その先の本物のノードを的にし、終わりに
+/// 仮のノードを両端の間にまっすぐ並べ直す（並べられず、辺が長くなる動きはしない）。上から下、下から上を 1 回ずつ。
+fn balance_x(
+    x: &mut [i64],
+    real: &[bool],
+    layers: &[Vec<usize>],
+    edges: &[NsEdge],
+    segs: &[Segment],
+    first_seg: usize,
+) {
+    let total = real.len();
+    let off = |s: &Segment| (s.upper_off.round() as i64, s.lower_off.round() as i64);
+    let segs: Vec<&Segment> = segs
+        .iter()
+        .filter(|s| s.weight > 0.0 && s.upper != s.lower && s.upper < total && s.lower < total)
+        .collect();
+    // 制約の辺（重みのないもの）
+    let cons: Vec<&NsEdge> = edges
+        .iter()
+        .filter(|e| {
+            e.weight == 0.0
+                && e.tail < first_seg
+                && e.head < first_seg
+                && (e.tail < total || e.head < total)
+        })
+        .collect();
+    let down: Vec<usize> = layers.iter().flatten().copied().collect();
+    let mut touch: Vec<Vec<usize>> = vec![Vec::new(); total];
+    for (i, s) in segs.iter().enumerate() {
+        touch[s.upper].push(i);
+        touch[s.lower].push(i);
+    }
+    let mut cons_of: Vec<Vec<usize>> = vec![Vec::new(); total];
+    for (i, e) in cons.iter().enumerate() {
+        if e.tail < total {
+            cons_of[e.tail].push(i);
+        }
+        if e.head < total {
+            cons_of[e.head].push(i);
+        }
+    }
+    // 辺の先: 自分の側の差、相手、相手の側の差
+    let far = |m: usize, i: usize| -> (usize, i64, i64) {
+        let s = segs[i];
+        let (a, b) = off(s);
+        if s.upper == m {
+            (s.lower, a, b)
+        } else {
+            (s.upper, b, a)
+        }
+    };
+    // 仮のノードの続き（上下に 1 本ずつ）をたどった先の本物のノードと、その側の差。たどった仮のノードは `via` に
+    let follow = |m: usize, i: usize, via: &mut Vec<usize>| -> (usize, i64, i64) {
+        let (mut o, mine, mut theirs) = far(m, i);
+        let mut came = i;
+        via.clear();
+        while !real[o] && touch[o].len() == 2 && via.len() < total {
+            via.push(o);
+            let next = if touch[o][0] == came {
+                touch[o][1]
+            } else {
+                touch[o][0]
+            };
+            let (n, _, t) = far(o, next);
+            came = next;
+            o = n;
+            theirs = t;
+        }
+        (o, mine, theirs)
+    };
+    // 組を動かす制約の幅
+    let bounds = |set: &[usize], x: &[i64], mark: &[usize], st: usize| -> (i64, i64) {
+        let inside = |u: usize| u < total && mark[u] == st;
+        let (mut flo, mut fhi) = (i64::MIN, i64::MAX);
+        for &m in set {
+            for &i in &cons_of[m] {
+                let e = cons[i];
+                if e.head == m && !inside(e.tail) {
+                    flo = flo.max(x[e.tail] + e.minlen - x[m]);
+                }
+                if e.tail == m && !inside(e.head) {
+                    fhi = fhi.min(x[e.head] - e.minlen - x[m]);
+                }
+            }
+        }
+        (flo, fhi)
+    };
+    let mut mark = vec![0usize; total];
+    let mut stamp = 0usize;
+    // 本物の m から辺 i の先の仮のノードを、両端の間のまっすぐな線へ寄せる（制約の中で、2 本の辺が長くならない
+    // ときだけ）。動かした仮のノードと前の位置を `moved` に足す
+    let straighten = |m: usize,
+                      i: usize,
+                      x: &mut [i64],
+                      mark: &mut [usize],
+                      stamp: &mut usize,
+                      chain: &mut Vec<usize>,
+                      moved: &mut Vec<(usize, i64)>| {
+        let (r, mine, rt) = follow(m, i, chain);
+        if !real[r] || chain.is_empty() {
+            return;
+        }
+        let (from, to) = (x[m] + mine, x[r] + rt);
+        let n = chain.len() as i64 + 1;
+        for (k, &v) in chain.iter().enumerate() {
+            let want = from + (to - from) * (k as i64 + 1) / n;
+            *stamp += 1;
+            mark[v] = *stamp;
+            let (flo, fhi) = bounds(&[v], x, mark, *stamp);
+            let d = (want - x[v]).clamp(flo.min(0), fhi.max(0));
+            if d == 0 {
+                continue;
+            }
+            let cost = |x: &[i64], at: i64| -> f64 {
+                touch[v]
+                    .iter()
+                    .map(|&j| {
+                        let (o, mine, theirs) = far(v, j);
+                        segs[j].weight * (at + mine - x[o] - theirs).abs() as f64
+                    })
+                    .sum()
+            };
+            if cost(x, x[v] + d) <= cost(x, x[v]) + 1e-9 {
+                moved.push((v, x[v]));
+                x[v] += d;
+            }
+        }
+    };
+    let seg_cost = |x: &[i64], list: &[usize]| -> f64 {
+        list.iter()
+            .map(|&j| {
+                let s = segs[j];
+                let (a, b) = off(s);
+                s.weight * (x[s.upper] + a - x[s.lower] - b).abs() as f64
+            })
+            .sum()
+    };
+    let mut ts: Vec<(i64, f64)> = Vec::new();
+    let mut via: Vec<usize> = Vec::new();
+    let mut chain: Vec<usize> = Vec::new();
+    let mut moved: Vec<(usize, i64)> = Vec::new();
+    let mut costed: Vec<usize> = Vec::new();
+    let mut seg_tag = vec![0usize; segs.len()];
+    let mut shift =
+        |set: &[usize], deep: bool, x: &mut [i64], mark: &mut [usize], stamp: &mut usize| -> bool {
+            *stamp += 1;
+            let st = *stamp;
+            for &m in set {
+                mark[m] = st;
+            }
+            ts.clear();
+            costed.clear();
+            for &m in set {
+                for &i in &touch[m] {
+                    let (o, mine, theirs) = if deep {
+                        follow(m, i, &mut via)
+                    } else {
+                        via.clear();
+                        far(m, i)
+                    };
+                    if mark[o] == st || via.iter().any(|&v| mark[v] == st) {
+                        continue;
+                    }
+                    ts.push((x[o] + theirs - mine - x[m], segs[i].weight));
+                    // 費用を比べる辺: m の辺と、その先の仮のノードの辺
+                    for &u in std::iter::once(&m).chain(via.iter()) {
+                        for &j in &touch[u] {
+                            if seg_tag[j] != st {
+                                seg_tag[j] = st;
+                                costed.push(j);
+                            }
+                        }
+                    }
+                }
+            }
+            if ts.is_empty() {
+                return false;
+            }
+            ts.sort_by_key(|t| t.0);
+            let half: f64 = ts.iter().map(|t| t.1).sum::<f64>() / 2.0;
+            let mut acc = 0.0;
+            let (mut lo, mut hi) = (ts[0].0, ts[0].0);
+            for (k, &(t, w)) in ts.iter().enumerate() {
+                acc += w;
+                if acc >= half - 1e-9 {
+                    lo = t;
+                    hi = if (acc - half).abs() <= 1e-9 {
+                        ts.get(k + 1).map_or(t, |n| n.0)
+                    } else {
+                        t
+                    };
+                    break;
+                }
+            }
+            let (flo, fhi) = bounds(set, x, mark, st);
+            if flo > 0 || fhi < 0 {
+                return false;
+            }
+            let d = if hi < flo {
+                flo
+            } else if lo > fhi {
+                fhi
+            } else {
+                let (l, h) = (lo.max(flo), hi.min(fhi));
+                l + (h - l) / 2
+            };
+            if d == 0 {
+                return false;
+            }
+            let before = seg_cost(x, &costed);
+            moved.clear();
+            for &m in set {
+                moved.push((m, x[m]));
+                x[m] += d;
+            }
+            if deep {
+                for &m in set {
+                    for &i in &touch[m] {
+                        straighten(m, i, x, mark, stamp, &mut chain, &mut moved);
+                    }
+                }
+            }
+            // 仮のノードがまっすぐに並べず、辺が長くなるなら戻す
+            if seg_cost(x, &costed) > before + 1e-9 {
+                for &(v, old) in moved.iter().rev() {
+                    x[v] = old;
+                }
+                return false;
+            }
+            true
+        };
+    let mut set: Vec<usize> = Vec::new();
+    let mut inset = vec![0usize; total];
+    let mut tag = 0usize;
+    // 隣を的にして上から下・下から上、仮のノードの先を的にして上から下・下から上
+    for pass in 0..4 {
+        let deep = pass >= 2;
+        let order: Vec<usize> = if pass % 2 == 0 {
+            down.clone()
+        } else {
+            down.iter().rev().copied().collect()
+        };
+        for v in order {
+            // 1 つ
+            if deep && !real[v] {
+                continue;
+            }
+            if shift(&[v], deep, x, &mut mark, &mut stamp) {
+                continue;
+            }
+            // v から上、v から下、つながり全体（長さ 0 の辺をたどる）
+            for dir in 0..3 {
+                set.clear();
+                set.push(v);
+                tag += 1;
+                inset[v] = tag;
+                let mut k = 0;
+                while k < set.len() {
+                    let u = set[k];
+                    k += 1;
+                    for &i in &touch[u] {
+                        let s = segs[i];
+                        let (a, b) = off(s);
+                        if x[s.upper] + a != x[s.lower] + b {
+                            continue;
+                        }
+                        let o = match dir {
+                            0 if s.lower == u => s.upper,
+                            1 if s.upper == u => s.lower,
+                            2 => {
+                                if s.upper == u {
+                                    s.lower
+                                } else {
+                                    s.upper
+                                }
+                            }
+                            _ => continue,
+                        };
+                        if inset[o] != tag {
+                            inset[o] = tag;
+                            set.push(o);
+                        }
+                    }
+                }
+                if set.len() > 1 && shift(&set, deep, x, &mut mark, &mut stamp) {
+                    break;
+                }
+            }
+        }
+    }
+    // 残りの仮のノードも、両端の間にまっすぐ
+    let mut chain: Vec<usize> = Vec::new();
+    let mut moved: Vec<(usize, i64)> = Vec::new();
+    for &u in &down {
+        if !real[u] {
+            continue;
+        }
+        for &i in &touch[u] {
+            if segs[i].upper == u {
+                straighten(u, i, x, &mut mark, &mut stamp, &mut chain, &mut moved);
+            }
+        }
+    }
+}
+
 /// 横の位置（補助グラフのネットワーク単体法）。ノードの x と、クラスタの左右の境を返す。
 fn place_x(
     nodes: &[LNode],
@@ -1993,6 +2301,8 @@ fn place_x(
         x[seg_node(s)] = (x[seg.upper] - (c - a)).min(x[seg.lower] - (c - b));
     }
     simplex::solve(count, &edges, &mut x, opt.x_iter);
+    let real: Vec<bool> = nodes.iter().map(|n| n.real).collect();
+    balance_x(&mut x, &real, layers, &edges, segs, seg_node(0));
     let mut min_x = f64::MAX;
     for (v, nd) in nodes.iter().enumerate() {
         min_x = min_x.min(x[v] as f64 - nd.left);
