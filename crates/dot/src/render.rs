@@ -1535,6 +1535,33 @@ pub fn render(
                     curve::through(&lp, straight || polyline, true)
                 };
                 path = path.iter().map(|c| c.map(to_final)).collect();
+                // 向きのあるポート（e など）の端は、その向きに出入りする（Graphviz の絵と同じ。e から出る線はいったん
+                // 右へ出てから曲がる。向きのない欄はランクの向き）。端の切れ端の制御点を、その向きに弦の 1/3（4〜36）
+                // だけ出す
+                if fitted && !path.is_empty() {
+                    let reach =
+                        |c: &Cubic| ((c.3.0 - c.0.0).hypot(c.3.1 - c.0.1) / 3.0).clamp(4.0, 36.0);
+                    // 向きのない欄（レコード・表）は、ランクの向きに出入りする
+                    let flow = |out_down: bool| -> P {
+                        let o = to_final((0.0, 0.0));
+                        let q = to_final((0.0, if out_down { 1.0 } else { -1.0 }));
+                        (q.0 - o.0, q.1 - o.1)
+                    };
+                    let along = |p: &Port, out_down: bool| -> Option<P> {
+                        p.dir.or(p.clip.map(|_| flow(out_down)))
+                    };
+                    if let Some(d) = tail_port.as_ref().and_then(|p| along(p, down)) {
+                        let c = &mut path[0];
+                        let l = reach(c);
+                        c.1 = (c.0.0 + d.0 * l, c.0.1 + d.1 * l);
+                    }
+                    if let Some(d) = head_port.as_ref().and_then(|p| along(p, !down)) {
+                        let last = path.len() - 1;
+                        let c = &mut path[last];
+                        let l = reach(c);
+                        c.2 = (c.3.0 + d.0 * l, c.3.1 + d.1 * l);
+                    }
+                }
                 // ラベルの仮のノードの脇のラベルは、文字を線の側に寄せる（箱は書体の違いの分だけ文字より広い。
                 // 文字の左端は仮のノードから 6）。横向きの配置では箱の余りは線と平行なので寄せない
                 let hug = match (&ev.label, label, dir.sideways()) {

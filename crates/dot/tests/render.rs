@@ -1366,3 +1366,28 @@ fn dot_breaks_cycles_following_heads_in_creation_order() {
         .svg;
     assert!(cy(&svg, "y") < cy(&svg, "x"), "{svg}");
 }
+
+/// 向きのあるポートは、その向きに出入りする（e から出る線は右へ出てから曲がる。Graphviz の絵と同じ）。
+#[test]
+fn dot_edges_leave_compass_ports_along_their_direction() {
+    let svg = render("digraph { node [shape=box]; a -> b [tailport=e, headport=e] }")
+        .unwrap()
+        .svg;
+    let d = part(&svg, "a-&gt;b")
+        .split("d=\"M")
+        .nth(1)
+        .unwrap()
+        .split('"')
+        .next()
+        .unwrap()
+        .to_owned();
+    let nums: Vec<f64> = d
+        .split(['C', ',', ' '])
+        .filter(|s| !s.is_empty())
+        .map(|s| s.parse().unwrap())
+        .collect();
+    let (x0, c1x) = (nums[0], nums[2]);
+    let (c2x, x3) = (nums[nums.len() - 4], nums[nums.len() - 2]);
+    assert!(c1x > x0 + 3.0, "{d}");
+    assert!(c2x > x3 + 3.0, "{d}");
+}
