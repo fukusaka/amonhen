@@ -121,6 +121,17 @@ async function until<T>(
   }
 }
 
+/** 開いているマージエディタのタブ（file で終わる Result のもの。省けばすべて） */
+function mergeEditorTabs(file?: string): vscode.Tab[] {
+  return vscode.window.tabGroups.all
+    .flatMap((g) => g.tabs)
+    .filter((t) => {
+      // TabInputTextMerge（使っている型定義にはまだない）。base・input1・input2・result を持つ
+      const input = t.input as { result?: vscode.Uri; input1?: vscode.Uri } | undefined;
+      return !!input?.result && !!input.input1 && (!file || input.result.fsPath.endsWith(file));
+    });
+}
+
 /** 時間切れのときに添える、直近に出たエラー（操作が失敗した理由） */
 const lastErrors = (): string => errors.slice(-3).map((e) => `エラー「${e}」`).join('、') || 'エラーなし';
 
@@ -3075,6 +3086,15 @@ async function settingsFlow(): Promise<void> {
     assert.equal(config('commit.template'), templated.facts.commitTemplate?.path);
     await panel.settings.handle({ type: 'settingsSet', writes: [['commit.template', null]] });
     assert.equal(config('commit.template'), undefined);
+    // ファイルのテンプレートは、その中身を Commits のページに出す（アプリと同じく 12 行まで）
+    const templateFile = join(git('rev-parse', '--absolute-git-dir').trim(), 'e2e-template.txt');
+    writeFileSync(templateFile, `${Array.from({ length: 14 }, (_, i) => `line ${i + 1}`).join('\n')}\n`);
+    mark = posted.length;
+    await panel.settings.handle({ type: 'settingsSet', writes: [['commit.template', templateFile]] });
+    const previewed = await waitPosted('settings', mark, (m) => m.facts.templatePreview !== undefined);
+    assert.equal(previewed.facts.templatePreview, `${Array.from({ length: 12 }, (_, i) => `line ${i + 1}`).join('\n')}…`);
+    await panel.settings.handle({ type: 'settingsSet', writes: [['commit.template', null]] });
+    rmSync(templateFile, { force: true });
 
     // Hooks and LFS: フックを作り（エディタで開く）、実行の許可を外す（Windows では外せない）。LFS は入っていれば
     const hook = join(git('rev-parse', '--git-common-dir').trim().replace(/^(?![\\/]|[A-Za-z]:)/, `${root}/`), 'hooks', 'pre-commit');
@@ -3190,7 +3210,7 @@ async function daemonFlow(): Promise<void> {
       JSON.stringify(shown.status!.repos),
     );
     assert.ok(
-      shown.connections.some((c) => real(c.path) === real(root) && c.closed === undefined),
+      shown.connections.some((c) => real(c.path) === real(root) && c.closed === undefined && c.sent > 0 && c.received > 0),
       JSON.stringify(shown.connections),
     );
     // 2 秒ごとに読み直す
@@ -3547,6 +3567,15 @@ async function conflictsWithoutMarkersFlow(): Promise<void> {
     const conflictsRow = api.sidebar.getChildren().find((n) => n.kind === 'conflicts');
     assert.ok(conflictsRow, 'Conflicts の行');
     assert.equal((api.sidebar.getTreeItem(conflictsRow) as vscode.TreeItem).description, '3');
+    // 途中の行は、アプリの帯と同じくマーカーの残っていない数を添え、まとめて解決済みにするボタンを出す
+    const sequenceItem = () => {
+      const row = api.sidebar.getChildren().find((n) => n.kind === 'sequence');
+      return row && (api.sidebar.getTreeItem(row) as vscode.TreeItem);
+    };
+    await until('マーカーのない数', () => String(sequenceItem()?.description ?? '').includes('(2 without markers)'), undefined, () =>
+      String(sequenceItem()?.description),
+    );
+    assert.equal(sequenceItem()?.contextValue, 'sequence.merge;unmarked');
 
     // Take Current File は、マーカーのないファイルでは解決した内容が失われると確かめる（ここでは断る）
     let detail: string | undefined;
@@ -3558,13 +3587,31 @@ async function conflictsWithoutMarkersFlow(): Promise<void> {
     assert.match(detail ?? '', /may already be resolved/);
     assert.equal(readFileSync(join(root, 'hand.txt'), 'utf8'), '1\nhand.txt both\n3\n', '断れば変わらない');
 
-    // Conflicts の見出しの Mark N as Resolved と同じく、マーカーのないものだけを解決済みにする
-    await wc.handle({
-      type: 'wcStageFiles',
-      op: 'stage',
-      files: ['rerere.txt', 'hand.txt'].map((path) => ({ group: 'conflicts' as const, path })),
-    });
+    // 途中の行のボタン（Conflicts の見出しの Mark N as Resolved と同じ）は、マーカーのないものだけを解決済みにする
+    await vscode.commands.executeCommand('amonhen.markResolvedWithoutMarkers');
     await until('解決済み', () => git('diff', '--name-only', '--diff-filter=U').trim() === 'open.txt');
+    await until('数が消える', () => !String(sequenceItem()?.description ?? '').includes('without markers'));
+
+    // エディタで直して保存していないファイルは、保存してから解決済みにする（マーカーが残っているとは聞かない）
+    const doc = await vscode.workspace.openTextDocument(vscode.Uri.file(join(root, 'open.txt')));
+    const editor = await vscode.window.showTextDocument(doc);
+    await editor.edit((e) => e.replace(new vscode.Range(doc.positionAt(0), doc.positionAt(doc.getText().length)), '1\nopen.txt both\n3\n'));
+    assert.ok(doc.isDirty);
+    let asked: string | undefined;
+    await withWindow(
+      {
+        showWarningMessage: async (message: string) => {
+          asked = message;
+          return undefined;
+        },
+      },
+      () => wc.handle({ type: 'wcStageFiles', op: 'stage', files: [{ group: 'conflicts', path: 'open.txt' }] }),
+    );
+    assert.equal(asked, undefined, 'マーカーが残っているとは聞かない');
+    assert.equal(doc.isDirty, false);
+    assert.equal(readFileSync(join(root, 'open.txt'), 'utf8'), '1\nopen.txt both\n3\n');
+    await until('すべて解決済み', () => git('diff', '--name-only', '--diff-filter=U').trim() === '');
+    await vscode.commands.executeCommand('workbench.action.closeActiveEditor');
   } finally {
     try {
       git('merge', '--abort');
@@ -3984,6 +4031,8 @@ async function mergeBranchesFlow(label: string): Promise<void> {
       // 1 つずつなら x は merge され、y で止まって中止する。残りの a を知らせる
       await until('1 つずつ', () => warned.some((m) => m.includes(`Not merged yet: ${name('a')}`)));
       await until('中止', async () => (await repo.backend.sequenceInProgress()) === undefined);
+      // 止まったときにアプリと同じく開いたマージエディタを閉じる（後のテストに残さない）
+      await vscode.window.tabGroups.close(mergeEditorTabs());
       // x は今のブランチの先にあるので、git の既定どおり fast-forward になる
       assert.equal(head(), git('rev-parse', name('x')).trim());
       await vscode.commands.executeCommand('amonhen.undo');
@@ -4094,6 +4143,9 @@ suite('Amon Hen in VSCode', () => {
       await merge('mm-topic', 'squash');
       await until('Squash の途中', async () => (await repo.backend.sequenceInProgress()) === 'squash', undefined, lastErrors);
       await repo.refresh();
+      // アプリと同じく、止まったら Working Copy に切り替え、最初のコンフリクトのファイルをマージエディタで開く
+      await until('マージエディタ', () => mergeEditorTabs('mm.txt').length > 0, undefined, lastErrors);
+      await vscode.window.tabGroups.close(mergeEditorTabs());
       // エンジンがあれば、アプリの帯と同じく何をどこへしている途中かと、なぜ止まったか（コンフリクト）を言う
       const row = await until('サイドバーの Squash の行', () =>
         api.sidebar.getChildren().map((n) => (n.kind === 'sequence' ? api.sidebar.getTreeItem(n) : undefined)).find((i) => /^Squash/.test(String(i?.label))),

@@ -1986,6 +1986,11 @@ button.sheet-list-item:hover {
   color: var(--vscode-errorForeground);
 }
 
+.daemon .settings-table .numeric {
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
+}
+
 .daemon-detail {
   margin-top: 2px;
   font-size: 0.9em;
@@ -2167,6 +2172,45 @@ button.sheet-list-item:hover {
 
 .settings-config .settings-actions {
   white-space: nowrap;
+}
+
+/* Keys and Values: 見出しで並べ替える */
+.settings-config th.sortable {
+  cursor: pointer;
+  user-select: none;
+  white-space: nowrap;
+}
+
+.settings-config .sort-mark {
+  color: var(--vscode-descriptionForeground);
+}
+
+/* Keys and Values: キーのドットでまとめた組（section・subsection）の見出し。押すと開閉 */
+.settings-config .config-group {
+  cursor: pointer;
+}
+
+.settings-config .config-group-label {
+  font-weight: bold;
+}
+
+.settings-config .config-toggle {
+  width: 1.2em;
+  padding: 0;
+  margin-right: 4px;
+  border: none;
+  background: none;
+  color: var(--vscode-foreground);
+  cursor: pointer;
+}
+
+/* Commits: ファイルのテンプレートの中身（12 行まで） */
+.setting-preview {
+  margin: 6px 0 0;
+  font-family: var(--vscode-editor-font-family);
+  color: var(--vscode-descriptionForeground);
+  white-space: pre-wrap;
+  user-select: text;
 }
 
 /* Levels の列で、効いている段の値 */

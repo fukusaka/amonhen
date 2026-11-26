@@ -145,7 +145,7 @@ GTK4 のアプリは macOS のアプリと同じふるまいをめざす。わ�
 | --- | :-: | :-: | :-: | :-: | :-: | :-: | --- |
 | 設定のページ（ページの一覧・git の行・行ごとの出どころ・↩︎・ⓘ） | ✓ | ✓ | ✓ | ✓ | n/a | n/a | VSCode: メインビューの Repository Settings（エンジンがあるとき）で、このリポジトリの設定だけ。<br>Windows: ページを左に並べる（一般・Git・表示・差分とマージ・パフォーマンス）。設定の行には設定元・↩︎・ⓘ（段ごとの値をツールチップで）。<br>TUI: 設定のページはない。アプリと `amonhen run` が変える。 |
 | Author and Signing（署名の選択・集めた鍵・mailmap） | ✓ | ✓ | ✓ | ✓ | △ | n/a | VSCode: 鍵は今の形式のものだけを集める。<br>CLI: `amonhen run`（`signingKeys`・`configSet`）から。 |
-| Commits: メッセージのテンプレート（なし・共有・独自・ファイル） | ✓ | ✓ | ✓ | △ | △ | n/a | VSCode: なし・このリポジトリ専用（その場で書く）・ファイル。共有のテンプレートはない。<br>CLI: `amonhen run` から。 |
+| Commits: メッセージのテンプレート（なし・共有・独自・ファイル） | ✓ | ✓ | ✓ | △ | △ | n/a | VSCode: なし・このリポジトリ専用（その場で書く）・ファイル（行の下に最初の数行を出す）。共有のテンプレートはない。<br>CLI: `amonhen run` から。 |
 | Branches: 既定のブランチを選ぶ | ✓ | ✓ | ✓ | ✓ | △ | n/a | CLI: `amonhen run` から。 |
 | Operations: pull・fetch.prune・autostash・updateRefs・コンフリクトの書き方・rerere | ✓ | ✓ | ✓ | ✓ | △ | n/a | CLI: `amonhen run` から。 |
 | rerere: 1 つの解決を忘れる（マージエディタ）・すべて忘れる（リポジトリの設定） | ✓ | ✓ | ✓ | ✓ | △ | n/a | VSCode: rerere が解決したコンフリクトの Working Copy の右クリックに Forget Resolution（マージエディタは VSCode のもの）、Repository Settings > Operations に Forget All…。<br>CLI: `amonhen run`（`forgetResolution`・`forgetAllResolutions`）から。 |
@@ -153,7 +153,7 @@ GTK4 のアプリは macOS のアプリと同じふるまいをめざす。わ�
 | Remotes: 表と、つながるか確かめるシート | ✓ | ✓ | ✓ | ✓ | △ | n/a | VSCode: 表と行ごとのボタン（Edit URL…・Push URL…・Check・Prune・Rename…・Remove…）と Add…。値はシートでなく入力欄で聞く。<br>CLI: `amonhen run` から。 |
 | Hooks: 表・Enabled・スクリプト・Create Hook… | ✓ | ✓ | ✓ | ✓ | △ | n/a | VSCode: Open で VSCode のエディターにスクリプトを開く。<br>CLI: `amonhen run` から。<br>Windows: Windows ではフックを止められない（git が実行の許可にかかわらず動かす）。Edit With はない |
 | LFS: 入っているか・パターン・Track Pattern…・ファイルの数 | ✓ | ✓ | ✓ | ✓ | △ | n/a | CLI: `amonhen run` から。 |
-| Keys and Values（git config の表、Basic / Customized / All、Combined / Levels） | ✓ | ✓ | ✓ | ✓ | △ | n/a | VSCode: Basic / Customized / All、Combined / Levels と検索。値は入力欄で変える。<br>CLI: `amonhen run`（`configList`・`configSet`）から。 |
+| Keys and Values（git config の表、Basic / Customized / All、Combined / Levels） | ✓ | ✓ | ✓ | ✓ | △ | n/a | VSCode: Basic / Customized / All、Combined / Levels と検索。section ごとの組、列での並べ替え、いくつもある値はすべて出す。値は入力欄で変える。<br>CLI: `amonhen run`（`configList`・`configSet`）から。 |
 | 要る git の版を添えて行を無効にする | ✓ | ✓ | ✓ | ✓ | n/a | n/a | Windows: 取得とフォルダの行（partial clone・sparse checkout・maintenance） |
 | git の行にリポジトリの形（shallow・partial・sparse・maintenance） | ✓ | ✓ | ✓ | ✓ | △ | n/a | CLI: `status` が shallow・partial・sparse を添える。 |
 | 取得とフォルダ: shallow clone の履歴を取り足す（数・日付まで・すべて） | ✓ | ✓ | ✓ | ✓ | △ | ✓ | CLI: `amonhen run`（`deepen`・`unshallow`）から。<br>TUI: History の `+`。 |
@@ -241,7 +241,7 @@ GTK4 のアプリは macOS のアプリと同じふるまいをめざす。わ�
 | 空白を無視する（その間は行ごとの stage・破棄はしない） | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | VSCode: エンジンがあれば。その間は選んだ側（Changes か Staged）の差分。<br>CLI: `diff -w`・`-b`・`--ignore-space-at-eol`（`--combined` とは使えない）。<br>TUI: 差分の `w` で順に替える。その間は片方の側だけ（`s` で替える）。 |
 | 行・hunk・ファイルを捨てる（Undo できる） | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | CLI: `discard --rows`。<br>Windows: Working Copy の差分で行を押して選び（Shift で範囲、Ctrl で足す・外す、hunk の見出しでその hunk）、右クリックの Discard Lines。選んでいない行・hunk の見出しを右クリックすれば、そこだけ。 |
 | Add to .gitignore | ✓ | ✓ | ✓ | ✓ | n/a | ✓ | VSCode: エンジンがあれば。<br>TUI: untracked のファイルで `i`、続けて `p` でそのパス、`e` で拡張子。 |
-| コンフリクトのファイルからマージエディターを開く | ✓ | ✓ | ✓ | ✓ | n/a | n/a | macOS, GTK4: UTF-8 でないファイルは開かない。片側を選ぶ。<br>VSCode: VSCode のマージエディターを開く。<br>TUI: ファイルの差分にマーカーを出し、`o` `t` `b` `a` で選んでいる行のコンフリクトを解く。 |
+| コンフリクトのファイルからマージエディターを開く | ✓ | ✓ | ✓ | ✓ | n/a | n/a | macOS, GTK4: UTF-8 でないファイルは開かない。片側を選ぶ。<br>VSCode: VSCode のマージエディターを開く。操作がコンフリクトで止まると、メインビューを Working Copy に切り替えて最初のファイルを開く。<br>TUI: ファイルの差分にマーカーを出し、`o` `t` `b` `a` で選んでいる行のコンフリクトを解く。 |
 | 一部のフォルダだけを取り出しているとき、一覧の上に知らせる | ✓ | ✓ | ✓ | ✓ | △ | ✓ | CLI: `status` が sparse checkout を添える。 |
 
 ## History
@@ -368,7 +368,7 @@ GTK4 のアプリは macOS のアプリと同じふるまいをめざす。わ�
 
 | 機能 | macOS | GTK4 | Windows | VSCode | CLI | TUI | Notes |
 | --- | :-: | :-: | :-: | :-: | :-: | :-: | --- |
-| 進行中の操作と Continue / Skip / Abort | ✓ | ✓ | ✓ | ✓ | n/a | ✓ | VSCode: サイドバーの行。エンジンがあれば、アプリの帯と同じく何をどこへしている途中か（何手目か）と、なぜ止まったか（コミット・コンフリクト・exec・編集で止まった）と次にすることを言う。revert には Skip を出さない（アプリと同じ）。<br>TUI: 一番下の行に出し、`C` `K` `A`。 |
+| 進行中の操作と Continue / Skip / Abort | ✓ | ✓ | ✓ | ✓ | n/a | ✓ | VSCode: サイドバーの行。エンジンがあれば、アプリの帯と同じく何をどこへしている途中か（何手目か）と、なぜ止まったか（コミット・コンフリクト・exec・編集で止まった）と次にすることを言う。revert には Skip を出さない（アプリと同じ）。マーカーの残っていないコンフリクトがあれば、その数を添え、まとめて解決済みにするボタンを出す。<br>TUI: 一番下の行に出し、`C` `K` `A`。 |
 | 失敗とその原因・Details | ✓ | ✓ | ✓ | ✓ | n/a | ✓ | VSCode: 見分けられる失敗（認証・ホスト鍵・つながらない・断られた・分かれた・作業中の変更・ロック・上流なし・worktree）は知らせを分かる言葉にし、アプリと同じ次の一手（Pull…・Open Working Copy・Set Upstream…・Open Worktree・Open in Terminal・Try Again）を添える。そうでなければ git の fatal:・error: の行。Details で助言と全文と git の命令を出力パネルに出す。<br>TUI: 原因は一番下の行に。`!` で git のコマンドと答えの全部を出す。 |
 | 切れたつながりと Reconnect | ✓ | ✓ | ✓ | n/a | n/a | ✓ | TUI: 一番下の行に出し、`R` で同じ場所を開き直す。 |
 | 終わった操作が何をしたか、数秒 | ✓ | ✓ | ✓ | ✓ | n/a | ✓ | VSCode: ステータスバーの文か、Undo 付きの知らせ。<br>TUI: 一番下の行に。 |

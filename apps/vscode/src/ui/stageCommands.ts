@@ -5,7 +5,8 @@ import * as vscode from 'vscode';
 import { failureCause, hasMoreThan } from '../failure/cause.ts';
 import { classifyFailure, failureAdvice, failureRemedies, failureSummary, type Failure, type Remedy } from '../failure/kind.ts';
 import { GitError } from '../git/exec.ts';
-import type { Change } from '../state/changes.ts';
+import { groupChanges, type Change } from '../state/changes.ts';
+import { conflictStates } from '../state/conflicts.ts';
 import { predictStage, predictUnstage } from '../state/predict.ts';
 import type { Repository } from '../state/repository.ts';
 
@@ -16,6 +17,11 @@ export async function stageChanges(
   op: 'stage' | 'unstage',
 ): Promise<void> {
   if (!repo || changes.length === 0) {
+    return;
+  }
+  // 保存していない Result は、保存してから解決済みにする（アプリの Mark Resolved と同じ。git が解決済みにするのは
+  // 作業ツリーのファイルなので、エディタの変更を書いてから。残りのマーカーも保存した中身で数える）
+  if (op === 'stage' && !(await saveConflictEditors(repo, changes))) {
     return;
   }
   if (op === 'stage' && !(await confirmMarkers(repo, changes))) {
@@ -32,6 +38,30 @@ export async function stageChanges(
   } finally {
     await repo.refresh();
   }
+}
+
+/** コンフリクトのファイルを開いているエディタ（マージエディタの Result も）の、保存していない変更を保存する。保存できなければ false */
+async function saveConflictEditors(repo: Repository, changes: readonly Change[]): Promise<boolean> {
+  const paths = new Set(changes.filter((c) => c.group === 'conflicts').map((c) => vscode.Uri.file(join(repo.root, c.path)).fsPath));
+  const unsaved = vscode.workspace.textDocuments.filter((d) => d.isDirty && d.uri.scheme === 'file' && paths.has(d.uri.fsPath));
+  for (const doc of unsaved) {
+    if (!(await doc.save())) return false;
+  }
+  return true;
+}
+
+/**
+ * マーカーの残っていないコンフリクトのファイルを、まとめて解決済みにする（アプリの帯の Mark N Without Markers Resolved）。
+ * 保存していない Result は保存してから（保存した中身にマーカーが残っていれば確かめる）
+ */
+export async function markResolvedWithoutMarkers(repo: Repository | undefined): Promise<void> {
+  const status = repo?.current.status;
+  if (!repo || !status) return;
+  const states = await conflictStates(repo.root, repo.backend.dirs.gitDir, status.entries);
+  const changes = groupChanges(status.entries)
+    .flatMap(([, group]) => group)
+    .filter((c) => c.group === 'conflicts' && states.get(c.path)?.markers === 0);
+  await stageChanges(repo, changes, 'stage');
 }
 
 const MARKER = /^(<{7}|>{7})( |$)/m;
