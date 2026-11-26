@@ -52,6 +52,13 @@ export function sequenceDetail(s: SequenceInfo, conflicts: number, withoutMarker
   return 'Conflicts resolved. Continue to finish, or Abort to go back to where you started.';
 }
 
+/**
+ * サイドバーの途中の行の説明の頭に付ける数（なければ空）。行の説明は長く末尾が切れるので、数は前に出す
+ */
+export function withoutMarkersLead(withoutMarkers: number): string {
+  return withoutMarkers > 0 ? `${withoutMarkers} without markers · ` : '';
+}
+
 /** マーカーの残っていないコンフリクトの数の注記（なければ空） */
 export function withoutMarkersNote(withoutMarkers: number): string {
   return withoutMarkers > 0 ? ` (${withoutMarkers} without markers)` : '';

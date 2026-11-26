@@ -4,7 +4,7 @@
  */
 import { daemonFor } from '../daemon/connection.ts';
 import { conflictStates } from '../state/conflicts.ts';
-import { sequenceDetail, sequenceTitle, withoutMarkersNote, type SequenceInfo } from '../state/sequenceText.ts';
+import { sequenceDetail, sequenceTitle, withoutMarkersLead, type SequenceInfo } from '../state/sequenceText.ts';
 import * as vscode from 'vscode';
 import { sharedIcon } from './sharedIcons.ts';
 import type { Sequence } from '../git/backend.ts';
@@ -548,9 +548,8 @@ export class SidebarProvider implements vscode.TreeDataProvider<Node>, vscode.Di
         const info = this.sequence && this.sequence.root === this.repo?.root && this.sequence.info.kind === node.sequence ? this.sequence.info : undefined;
         const item = new vscode.TreeItem(info ? sequenceTitle(info) : `${sequenceRowName(node.sequence)}${step}`);
         item.id = 'sequence';
-        item.description = info
-          ? sequenceDetail(info, conflicts, withoutMarkers)
-          : `Resolve and commit, then Continue${withoutMarkersNote(withoutMarkers)}`;
+        // 数は説明の頭に出す（説明は長く、末尾は幅で切れる）。ツールチップはアプリの帯と同じ言い方で数を添える
+        item.description = info ? sequenceDetail(info, conflicts) : 'Resolve and commit, then Continue';
         if (info) item.tooltip = `${sequenceTitle(info)}\n${sequenceDetail(info, conflicts, withoutMarkers)}`;
         item.iconPath = new vscode.ThemeIcon('debug-pause', new vscode.ThemeColor('notificationsWarningIcon.foreground'));
         item.contextValue = `sequence.${node.sequence}`;
@@ -574,6 +573,7 @@ export class SidebarProvider implements vscode.TreeDataProvider<Node>, vscode.Di
         }
         // Mark N Without Markers Resolved（アプリの帯のボタン）。ボタンの題は決まっているので、数はツールチップに
         if (withoutMarkers > 0) {
+          item.description = `${withoutMarkersLead(withoutMarkers)}${String(item.description ?? '')}`;
           item.contextValue += ';unmarked';
           item.tooltip = `${typeof item.tooltip === 'string' ? `${item.tooltip}\n` : ''}${withoutMarkers} without conflict markers left (rerere or another editor resolved them)`;
         }
