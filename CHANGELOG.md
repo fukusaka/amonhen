@@ -1506,6 +1506,8 @@ First release.
 - Save as Patch isn't offered for a merge, Apply Patch is refused during an operation, one mbox is named after the
   first commit's subject, and the Apply Patch preview marks each file A, D, R, C or M.
 - Reflog and Range Diff show how long ago, and the Edit drawing keeps the unchanged commit level in both columns.
+- The in-progress row puts the count of conflicted files without markers first ("2 without markers · …"), where a
+  narrow sidebar no longer cuts it off.
 
 #### Fixed
 

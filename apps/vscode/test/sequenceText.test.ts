@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict';
 import { test } from 'node:test';
-import { sequenceDetail, sequenceTitle } from '../src/state/sequenceText.ts';
+import { sequenceDetail, sequenceTitle, withoutMarkersLead } from '../src/state/sequenceText.ts';
 
 test('the first line says what is in progress and the step', () => {
   assert.equal(sequenceTitle({ kind: 'rebase', branch: 'topic', onto: 'main', current: 2, total: 5 }), 'Rebasing topic onto main · step 2 of 5');
@@ -23,4 +23,9 @@ test('the second line counts the conflicts with no markers left, as the app’s 
   assert.equal(sequenceDetail(s, 3, 2), '3 files have conflicts at “Fix it” (2 without markers). Resolve them in Working Copy, then Continue.');
   assert.equal(sequenceDetail({ kind: 'merge' }, 1, 1), '1 file has conflicts (1 without markers). Resolve them in Working Copy, then Continue.');
   assert.equal(sequenceDetail({ kind: 'merge' }, 0, 0), 'Conflicts resolved. Continue to finish, or Abort to go back to where you started.');
+});
+
+test('the sidebar row puts the count without markers first, where the width cuts nothing', () => {
+  assert.equal(withoutMarkersLead(2), '2 without markers · ');
+  assert.equal(withoutMarkersLead(0), '');
 });

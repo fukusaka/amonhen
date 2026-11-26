@@ -3622,7 +3622,7 @@ async function conflictsWithoutMarkersFlow(): Promise<void> {
       const row = api.sidebar.getChildren().find((n) => n.kind === 'sequence');
       return row && (api.sidebar.getTreeItem(row) as vscode.TreeItem);
     };
-    await until('マーカーのない数', () => String(sequenceItem()?.description ?? '').includes('(2 without markers)'), undefined, () =>
+    await until('マーカーのない数', () => String(sequenceItem()?.description ?? '').startsWith('2 without markers · '), undefined, () =>
       String(sequenceItem()?.description),
     );
     assert.equal(sequenceItem()?.contextValue, 'sequence.merge;unmarked');
@@ -3642,13 +3642,13 @@ async function conflictsWithoutMarkersFlow(): Promise<void> {
     const wcMark = posted.length;
     write('open.txt', '1\nopen.txt elsewhere\n3\n');
     await vscode.commands.executeCommand('amonhen.refresh');
-    await until('外で消した分も数える', () => String(sequenceItem()?.description ?? '').includes('(3 without markers)'), undefined, () =>
+    await until('外で消した分も数える', () => String(sequenceItem()?.description ?? '').startsWith('3 without markers · '), undefined, () =>
       String(sequenceItem()?.description),
     );
     await waitPosted('wcFiles', wcMark, (m) => m.files.some((f) => f.group === 'conflicts' && f.path === 'open.txt' && f.markers === 0));
     write('open.txt', withMarkers);
     await vscode.commands.executeCommand('amonhen.refresh');
-    await until('戻せば数も戻る', () => String(sequenceItem()?.description ?? '').includes('(2 without markers)'), undefined, () =>
+    await until('戻せば数も戻る', () => String(sequenceItem()?.description ?? '').startsWith('2 without markers · '), undefined, () =>
       String(sequenceItem()?.description),
     );
 
