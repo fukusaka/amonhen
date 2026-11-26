@@ -1,5 +1,5 @@
 import { readFile } from 'node:fs/promises';
-import { join, sep } from 'node:path';
+import { isAbsolute, join, relative } from 'node:path';
 import * as vscode from 'vscode';
 import type { Sequence } from '../git/backend.ts';
 import { conflictSides } from '../git/status.ts';
@@ -47,7 +47,14 @@ async function openMergeEditor(root: string, change: Change, sequence: Sequence 
  * 閉じる）。保存していない Result は、やめた後の中身に戻してから閉じる（古い Result で上書きしない・保存を聞かない）
  */
 export async function closeMergeEditors(root: string): Promise<void> {
-  const inside = (uri: vscode.Uri) => uri.scheme === 'file' && uri.fsPath.startsWith(root + sep);
+  // root と fsPath は大文字小文字（Windows のドライブ名など）や区切りが違うことがあるので、同じ形にしてから比べる
+  const base = vscode.Uri.file(root).fsPath;
+  const fold = (p: string) => (process.platform === 'win32' || process.platform === 'darwin' ? p.toLowerCase() : p);
+  const inside = (uri: vscode.Uri) => {
+    if (uri.scheme !== 'file') return false;
+    const rel = relative(fold(base), fold(uri.fsPath));
+    return rel !== '' && !rel.startsWith('..') && !isAbsolute(rel);
+  };
   const tabs = vscode.window.tabGroups.all
     .flatMap((g) => g.tabs)
     .filter((t) => {
