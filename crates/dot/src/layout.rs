@@ -1447,21 +1447,50 @@ pub fn layout(
     ord.refresh();
     ord.global_keys();
     let mut val = vec![0f64; total];
-    for r in 0..ord.layers.len() {
-        let layer = ord.layers[r].clone();
-        for &v in &layer {
-            val[v] = if r == 0 {
-                ord.pos[v] as f64
-            } else {
-                ord.median(&nodes[v].up, true)
-                    .unwrap_or(1e9 + ord.pos[v] as f64)
-            };
+    // 深さ優先の初めの並び（Gansner ほか 1993 §3 の init_order）: `top` なら小さいランクのノードから出る辺を、
+    // そうでなければ大きいランクのノードから入る辺をたどり、訪ねた順を各ランクの左からの順にする（木なら交差なし）
+    let dfs_order = |top: bool, val: &mut [f64]| {
+        let mut seen = vec![false; total];
+        let mut next = 0f64;
+        let mut starts: Vec<usize> = (0..total).collect();
+        if top {
+            starts.sort_by_key(|&v| (nodes[v].rank, nodes[v].seq, v));
+        } else {
+            starts.sort_by_key(|&v| (std::cmp::Reverse(nodes[v].rank), nodes[v].seq, v));
         }
+        for s0 in starts {
+            if seen[s0] {
+                continue;
+            }
+            let mut stack = vec![(s0, 0usize)];
+            seen[s0] = true;
+            val[s0] = next;
+            next += 1.0;
+            while let Some(&mut (v, ref mut k)) = stack.last_mut() {
+                let list = if top { &nodes[v].down } else { &nodes[v].up };
+                if *k < list.len() {
+                    let seg = &segs[list[*k]];
+                    let w = if top { seg.lower } else { seg.upper };
+                    *k += 1;
+                    if !seen[w] {
+                        seen[w] = true;
+                        val[w] = next;
+                        next += 1.0;
+                        stack.push((w, 0));
+                    }
+                } else {
+                    stack.pop();
+                }
+            }
+        }
+    };
+    dfs_order(true, &mut val);
+    for r in 0..ord.layers.len() {
         ord.sort_layer(r, &val);
     }
-    // 上からの初めの並びと、下からの初めの並び（下のランクの中央値）の 2 回。どちらも、中央値で上下に並べ替えて
-    // 入れ替え（1 回おきに交差の同じ入れ替えも）、減らなければいちばん良い並びに戻して続け、MINCROSS_STALE 回
-    // 続けて減らなければやめる。2 回のうち交差の少ないほう
+    // 上からの初めの並びと、下からの初めの並びの 2 回。どちらも、中央値で上下に並べ替えて入れ替え（1 回おきに
+    // 交差の同じ入れ替えも）、減らなければいちばん良い並びに戻して続け、MINCROSS_STALE 回続けて減らなければ
+    // やめる。2 回のうち交差の少ないほう
     let mut best = ord.layers.clone();
     let mut best_count = ord.crossings();
     let transpose = segs.len() <= TRANSPOSE_SEGS;
@@ -1470,16 +1499,9 @@ pub fn layout(
             break;
         }
         if start == 1 {
-            ord.layers = best.clone();
-            ord.refresh();
+            dfs_order(false, &mut val);
             ord.global_keys();
             for r in (0..ord.layers.len()).rev() {
-                let layer = ord.layers[r].clone();
-                for &v in &layer {
-                    val[v] = ord
-                        .median(&nodes[v].down, false)
-                        .unwrap_or(ord.pos[v] as f64);
-                }
                 ord.sort_layer(r, &val);
             }
         }
@@ -2758,6 +2780,26 @@ mod tests {
             (4, 8),
             (5, 6),
             (6, 8),
+        ];
+        assert_eq!(crossings_of(&g), 0);
+    }
+
+    #[test]
+    fn initial_orders_come_from_depth_first_walks() {
+        // 初めの並びを、上からと下からの深さ優先の訪ねた順で作る。中央値だけで作った並びからは交差が 2 つ残っていた
+        let g = [
+            (0, 4),
+            (0, 6),
+            (1, 3),
+            (1, 6),
+            (2, 3),
+            (2, 6),
+            (2, 7),
+            (3, 4),
+            (3, 6),
+            (3, 7),
+            (4, 6),
+            (5, 6),
         ];
         assert_eq!(crossings_of(&g), 0);
     }
