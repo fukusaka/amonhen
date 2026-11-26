@@ -242,6 +242,10 @@ fn solve_ranks(
     for (i, c) in cons.iter().enumerate() {
         out[c.tail].push(i);
     }
+    // 出る辺は、頭の単位の順（ノードのできた順）にたどる（Graphviz の絵と同じ。同じ頭なら書いた順）
+    for list in &mut out {
+        list.sort_by_key(|&i| cons[i].head);
+    }
     // クラスタを含む閉路（強連結成分）に入る単位に触れる辺（向きを強いない）
     let soft: Vec<bool> = if rigid.iter().any(|&r| r) {
         let comp = components(units, &out, cons);

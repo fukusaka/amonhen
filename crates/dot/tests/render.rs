@@ -1352,3 +1352,17 @@ fn rank_on_a_cluster_subgraph_needs_newrank() {
         assert!((cy(&svg, "a") - cy(&svg, "b")).abs() < 0.5, "{svg}");
     }
 }
+
+/// 閉路を切る深さ優先は、出る辺を頭のノードのできた順にたどる（Graphviz の絵と同じ）。
+#[test]
+fn dot_breaks_cycles_following_heads_in_creation_order() {
+    let cy = |svg: &str, id: &str| attr_num(part(svg, id), "cy");
+    let svg = render("digraph { x; y; a -> y; a -> x; x -> y; y -> x }")
+        .unwrap()
+        .svg;
+    assert!(cy(&svg, "x") < cy(&svg, "y"), "{svg}");
+    let svg = render("digraph { a -> y; a -> x; x -> y; y -> x }")
+        .unwrap()
+        .svg;
+    assert!(cy(&svg, "y") < cy(&svg, "x"), "{svg}");
+}
