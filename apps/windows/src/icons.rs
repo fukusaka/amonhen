@@ -52,3 +52,28 @@ pub fn icon(name: &str, size: f32) -> View {
         .height(f64::from(size))
         .children((View::keyed_fragment(strokes),))
 }
+
+/// 共通のアイコン `name` を一辺 `size` で、XAML の文字に（`XamlReader` で読む部品の中に入れる。サイドバーの行）。
+/// `color` はブラシ（`#rrggbb` か `{ThemeResource …}`）。ないアイコンなら何も描かない空の部品。
+pub fn xaml(name: &str, size: f32, color: &str) -> String {
+    let mut paths = String::new();
+    if let Some(icon) = amonhen_icons::get(name) {
+        for stroke in icon.strokes(size, DISPLAY_SCALE.get(), STROKE) {
+            let dash = if stroke.dash.is_empty() {
+                String::new()
+            } else {
+                let dash: Vec<String> = stroke
+                    .dash
+                    .iter()
+                    .map(|d| format!("{}", d / STROKE))
+                    .collect();
+                format!(r#" StrokeDashArray="{}""#, dash.join(" "))
+            };
+            paths.push_str(&format!(
+                r#"<Path Data="{}" Stroke="{color}" StrokeThickness="{STROKE}" StrokeStartLineCap="Round" StrokeEndLineCap="Round" StrokeDashCap="Round" StrokeLineJoin="Round"{dash}/>"#,
+                stroke.markup()
+            ));
+        }
+    }
+    format!(r#"<Grid Width="{size}" Height="{size}">{paths}</Grid>"#)
+}

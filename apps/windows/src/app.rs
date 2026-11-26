@@ -9446,7 +9446,12 @@ impl Root {
                                         });
                                     let changes =
                                         self.worktree_counts.get(&w.path).copied().unwrap_or(0);
-                                    (format!("worktree:{}", w.path), w.title(editing, changes))
+                                    (
+                                        format!("worktree:{}", w.path),
+                                        w.icon(editing),
+                                        editing,
+                                        w.title(changes),
+                                    )
                                 })
                                 .collect::<Vec<_>>(),
                             sidebar::Marks {
@@ -18895,19 +18900,22 @@ impl WorktreeInfo {
             .collect()
     }
 
-    /// サイドバーの見出し（フォルダの名前とブランチ。ロック・なくなったフォルダは、細いサイドバーでも切れない
-    /// よう前に印をつける）。
-    /// サイドバーの行の見出し。`editing` は開いている worktree か、`changes` は変更の数（GTK4 版と同じく、
-    /// ✎ 開いているもの・⌂ メイン・⑂ ほかの印と、` · n`）。
-    fn title(&self, editing: bool, changes: u64) -> String {
-        let mut text = String::new();
-        text.push_str(if editing {
-            "✎ "
+    /// サイドバーの行の前のアイコン（GTK4 版と同じく、開いているもの・メイン・ほか）。`editing` は開いている
+    /// worktree か。
+    fn icon(&self, editing: bool) -> &'static str {
+        if editing {
+            "edited-worktree"
         } else if self.main {
-            "⌂ "
+            "main-worktree"
         } else {
-            "⑂ "
-        });
+            "branch"
+        }
+    }
+
+    /// サイドバーの行の見出し（フォルダの名前とブランチ。ロック・なくなったフォルダは、細いサイドバーでも切れない
+    /// よう前に印をつける）。`changes` は変更の数（GTK4 版と同じく ` · n`）。
+    fn title(&self, changes: u64) -> String {
+        let mut text = String::new();
         if self.prunable {
             text.push_str("⚠ ");
         }
@@ -22903,11 +22911,10 @@ fn fit_push_dialog(element: &IInspectable) {
     let _ = root.SetHeight((height * 0.85 - 140.0).max(340.0).min(height - 160.0));
 }
 
-/// サイドバーの行（TreeViewItem）の中身を、名前と右端の色の印にする（印のない行は名前の文字のまま）。TreeView は
-/// 項目の文字を中身に入れ、行を使い回すときに入れ直すので、そのたびにここで差し替える。
+/// サイドバーの行（TreeViewItem）の中身を、前のアイコン・名前・右端の色の印にする（見出しは名前の文字のまま）。
+/// TreeView は項目の文字を中身に入れ、行を使い回すときに入れ直すので、そのたびにここで差し替える。
 fn mark_sidebar_row(item: &IInspectable, key: &str) {
-    // 印がなくなった行は、木を作り直したときに TreeView が名前の文字に戻している。
-    let Some((text, marks)) = sidebar::row_marks(key) else {
+    let Some(row) = sidebar::row(key) else {
         return;
     };
     let Ok(control) = item.cast::<xaml::ContentControl>() else {
@@ -22919,7 +22926,7 @@ fn mark_sidebar_row(item: &IInspectable, key: &str) {
         .as_ref()
         .and_then(xaml::tag_text)
         .filter(|t| t.starts_with("row:"));
-    let xaml_text = sidebar::row_xaml(&text, &marks);
+    let xaml_text = sidebar::row_xaml(&row);
     // 同じ行・同じ印なら作り直さない（鍵と中身のハッシュで見分ける）。
     let id = {
         use std::hash::{Hash, Hasher};
