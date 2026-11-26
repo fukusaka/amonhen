@@ -5,14 +5,14 @@
 #   ~/.local/lib/amonhen-gtk/        実行ファイルと、SSH 先に送るエンジン（engines/）
 #   ~/.local/bin/amonhen-gtk         実行ファイルへのリンク
 #   ~/.local/share/applications/     アプリの一覧に出す .desktop
-#   ~/.local/share/icons/hicolor/    アイコン
+#   ~/.local/share/icons/hicolor/    アイコン（大きさごと）
 # 同梱のエンジンのうち手元の CPU に合うものを `amonhen install` で置く（daemon: で開くときの共有の daemon。アプリも
 # 起動するたびに置き直すが、端末の CLI を起動の前から使えるように、ここでも置く）。
 set -eu
 here=$(cd "$(dirname "$0")" && pwd)
 prefix=${PREFIX:-$HOME/.local}
 lib="$prefix/lib/amonhen-gtk"
-mkdir -p "$lib" "$prefix/bin" "$prefix/share/applications" "$prefix/share/icons/hicolor/256x256/apps"
+mkdir -p "$lib" "$prefix/bin" "$prefix/share/applications" "$prefix/share/icons/hicolor"
 rm -rf "$lib/engines"
 cp "$here/amonhen-gtk" "$lib/amonhen-gtk"
 if [ -d "$here/engines" ]; then
@@ -21,7 +21,11 @@ fi
 ln -sf "$lib/amonhen-gtk" "$prefix/bin/amonhen-gtk"
 sed "s|^Exec=amonhen-gtk|Exec=$lib/amonhen-gtk|" "$here/io.github.fukusaka.amonhen.desktop" \
     > "$prefix/share/applications/io.github.fukusaka.amonhen.desktop"
-cp "$here/io.github.fukusaka.amonhen.png" "$prefix/share/icons/hicolor/256x256/apps/"
+for dir in "$here"/icons/*/apps; do
+    size=$(basename "$(dirname "$dir")")
+    mkdir -p "$prefix/share/icons/hicolor/$size/apps"
+    cp "$dir/io.github.fukusaka.amonhen.png" "$prefix/share/icons/hicolor/$size/apps/"
+done
 engine="$lib/engines/amonhen-linux-$(uname -m | sed 's/arm64/aarch64/')"
 if [ -x "$engine" ]; then
     # 端末の CLI のリンク（~/.local/bin/amonhen）は、既定の置き場所に置くときだけ張る（PREFIX を替えて試すときに、
