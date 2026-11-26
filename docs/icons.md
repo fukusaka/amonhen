@@ -66,6 +66,6 @@ swift figures.swift alternatives alternatives.en.tsv alternatives ../../../docs/
   - GTK4: every icon is from the shared set; the hand-drawn paths are gone.
   - macOS: SF Symbols with a shared shape are mapped by name (`AppIcons.bySymbol`), including History's signature marks; system controls (chevrons, plus, close, info), the pull request mark and CI's small dots in History stay as SF Symbols.
   - VSCode: tree rows (sections, worktrees, branches, tags and their signatures, stashes, remotes, submodules, subtrees) and the branch and ignored-file pickers; codicons stay in tooltips and for rows without a shared shape (a paused sequence, the inactive and archived branch groups, a signature being checked).
-  - Windows: the file list's buttons, diff options, edit mode, All Files and the image diff (drawn with Direct2D). The sidebar still shows text marks (⌂ ✎ ⑂) and no icons, as before.
+  - Windows: the file list's buttons, diff options, edit mode, All Files and the image diff (drawn with Direct2D). The sidebar puts the shared icon in front of every row (the current branch and the open worktree in the accent color) and uses the shared shapes for the marks at a row's end. A pull request's row has no shared shape and leaves the space empty, as macOS keeps an SF Symbol there.
 - [x] VSCode: the sidebar's title buttons and branch rows
 - Not decided: whether the app icon is redrawn too, the VSCode format, and whether the terminal front end gets anything (it shows text).

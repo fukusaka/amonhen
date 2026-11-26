@@ -54,8 +54,13 @@ thread_local! {
     static HISTORY_FLYOUT: RefCell<Option<xaml::FlyoutBase>> = const { RefCell::new(None) };
     /// サイドバーの木の生の要素と、右クリックで開く位置（キーボードで開いたときは項目そのものに出す）。
     static SIDEBAR_ELEMENT: RefCell<Option<xaml::UIElement>> = const { RefCell::new(None) };
-    /// 行のツールチップを付けた時（見えている行に、指が入る前から付けておく。0.5 秒ごとに付け直す）。
+    /// サイドバー全体をたどって行を探した時（`tip_sidebar_rows`）。
     static SIDEBAR_TIPS_AT: std::cell::Cell<Option<Instant>> = const { std::cell::Cell::new(None) };
+    /// 最後にたどって見つけた行（DataContext のある要素と、その行の TreeViewItem）。毎フレームこれだけを見直す。
+    static SIDEBAR_ROWS: RefCell<Vec<(xaml::FrameworkElement, IInspectable)>> =
+        const { RefCell::new(Vec::new()) };
+    /// 指がサイドバーの上で最後に動いた時（その後しばらくは、開いた・畳んだ行を早く探す）。
+    static SIDEBAR_HOT: std::cell::Cell<Option<Instant>> = const { std::cell::Cell::new(None) };
     /// 行の要素ごとに付けたツールチップ（同じなら付け直さない。付け直すと、出るまでの待ちが始めからになる）。
     static SIDEBAR_TIPS: RefCell<std::collections::HashMap<usize, Option<String>>> =
         RefCell::new(std::collections::HashMap::new());
@@ -9506,7 +9511,12 @@ impl Root {
                                         });
                                     let changes =
                                         self.worktree_counts.get(&w.path).copied().unwrap_or(0);
-                                    (format!("worktree:{}", w.path), w.title(editing, changes))
+                                    (
+                                        format!("worktree:{}", w.path),
+                                        w.icon(editing),
+                                        editing,
+                                        w.title(changes),
+                                    )
                                 })
                                 .collect::<Vec<_>>(),
                             sidebar::Marks {
@@ -18958,19 +18968,22 @@ impl WorktreeInfo {
             .collect()
     }
 
-    /// サイドバーの見出し（フォルダの名前とブランチ。ロック・なくなったフォルダは、細いサイドバーでも切れない
-    /// よう前に印をつける）。
-    /// サイドバーの行の見出し。`editing` は開いている worktree か、`changes` は変更の数（GTK4 版と同じく、
-    /// ✎ 開いているもの・⌂ メイン・⑂ ほかの印と、` · n`）。
-    fn title(&self, editing: bool, changes: u64) -> String {
-        let mut text = String::new();
-        text.push_str(if editing {
-            "✎ "
+    /// サイドバーの行の前のアイコン（GTK4 版と同じく、開いているもの・メイン・ほか）。`editing` は開いている
+    /// worktree か。
+    fn icon(&self, editing: bool) -> &'static str {
+        if editing {
+            "edited-worktree"
         } else if self.main {
-            "⌂ "
+            "main-worktree"
         } else {
-            "⑂ "
-        });
+            "branch"
+        }
+    }
+
+    /// サイドバーの行の見出し（フォルダの名前とブランチ。ロック・なくなったフォルダは、細いサイドバーでも切れない
+    /// よう前に印をつける）。`changes` は変更の数（GTK4 版と同じく ` · n`）。
+    fn title(&self, changes: u64) -> String {
+        let mut text = String::new();
         if self.prunable {
             text.push_str("⚠ ");
         }
@@ -22712,6 +22725,7 @@ fn attach_sidebar(element: &IInspectable) -> windows_core_reactor::Result<()> {
         let Ok(original) = args.OriginalSource() else {
             return;
         };
+        SIDEBAR_HOT.with(|h| h.set(Some(Instant::now())));
         let Some((_, key)) = tree_item_key(&original) else {
             SIDEBAR_MARK.with(|m| *m.borrow_mut() = None);
             return;
@@ -22729,23 +22743,40 @@ fn attach_sidebar(element: &IInspectable) -> windows_core_reactor::Result<()> {
     Ok(())
 }
 
-/// サイドバーの見えている行に、行のツールチップを付ける（0.5 秒ごと）。指が行に入ってから付けると、WinUI は
-/// その行を出るまでツールチップを出さないので、先に付けておく。行の要素は使い回されるので、付け直す。
+/// サイドバーの見えている行の中身を、アイコンと印のある部品に差し替え（`mark_sidebar_row`）、行のツールチップを
+/// 付ける。TreeView は行の部品を使い回し、そのたびに中身を名前の文字に戻すので、毎フレーム見直す。
+///
+/// サイドバー全体をたどるのは 1.5 ms ほどかかる（1 フレームは 8.3 ms）ので、たどるのはときどき（0.5 秒ごと。
+/// 木を作り直した後と、指がサイドバーの上で動いた後の 1 秒は 0.1 秒ごと）にし、毎フレームは前にたどって見つけた
+/// 行だけを見直す（スクロールで使い回された行はここで直る）。指が行に入ってから付けると、WinUI はその行を出るまで
+/// ツールチップを出さないので、ツールチップも先に付けておく。
 fn tip_sidebar_rows() {
+    let recent =
+        |at: Option<Instant>| at.is_some_and(|t| t.elapsed() < std::time::Duration::from_secs(1));
+    let busy = recent(SIDEBAR_HOT.with(|h| h.get())) || recent(sidebar::built_at());
+    let every = std::time::Duration::from_millis(if busy { 100 } else { 500 });
     let due = SIDEBAR_TIPS_AT
         .with(|t| t.get())
-        .is_none_or(|t| t.elapsed() >= std::time::Duration::from_millis(500));
+        .is_none_or(|t| t.elapsed() >= every);
     if !due {
+        let rows = SIDEBAR_ROWS.with(|r| r.borrow().clone());
+        for (element, item) in &rows {
+            refresh_sidebar_row(element, item);
+        }
         return;
     }
     SIDEBAR_TIPS_AT.with(|t| t.set(Some(Instant::now())));
     let Some(root) = SIDEBAR_ELEMENT.with(|e| e.borrow().clone()) else {
         return;
     };
-    fn walk(node: &xaml::DependencyObject, depth: u32) {
+    fn walk(
+        node: &xaml::DependencyObject,
+        depth: u32,
+        found: &mut Vec<(xaml::FrameworkElement, IInspectable)>,
+    ) {
         if let Ok(element) = node.cast::<xaml::FrameworkElement>()
             && let Ok(context) = element.DataContext()
-            && let Some(key) = node_key(&context)
+            && node_key(&context).is_some()
         {
             // 中身の ContentPresenter ではなく、行そのもの（TreeViewItem）に付ける（中身に付けると出ない）。
             let mut row = node.clone();
@@ -22765,20 +22796,8 @@ fn tip_sidebar_rows() {
                 }
             }
             if let Ok(item) = row.cast::<IInspectable>() {
-                let identity = item
-                    .cast::<windows_core_reactor::IUnknown>()
-                    .map_or(0, |u| u.as_raw() as usize);
-                let tip = sidebar::tooltip(&key);
-                let changed = SIDEBAR_TIPS.with(|t| {
-                    let mut t = t.borrow_mut();
-                    let changed = t.get(&identity) != Some(&tip);
-                    t.insert(identity, tip.clone());
-                    changed
-                });
-                if changed {
-                    let _ = windows_reactor::set_tooltip_text(&item, tip.as_deref());
-                }
-                mark_sidebar_row(&item, &key);
+                refresh_sidebar_row(&element, &item);
+                found.push((element, item));
             }
             return;
         }
@@ -22788,13 +22807,36 @@ fn tip_sidebar_rows() {
         let count = xaml::VisualTreeHelper::GetChildrenCount(node).unwrap_or(0);
         for i in 0..count {
             if let Ok(child) = xaml::VisualTreeHelper::GetChild(node, i) {
-                walk(&child, depth - 1);
+                walk(&child, depth - 1, found);
             }
         }
     }
+    let mut found = Vec::new();
     if let Ok(node) = root.cast::<xaml::DependencyObject>() {
-        walk(&node, 40);
+        walk(&node, 40, &mut found);
     }
+    SIDEBAR_ROWS.with(|r| *r.borrow_mut() = found);
+}
+
+/// サイドバーの行 1 つ（`element` の DataContext が木の項目、`item` がその TreeViewItem）の、ツールチップと中身。
+fn refresh_sidebar_row(element: &xaml::FrameworkElement, item: &IInspectable) {
+    let Some(key) = element.DataContext().ok().as_ref().and_then(node_key) else {
+        return;
+    };
+    let identity = item
+        .cast::<windows_core_reactor::IUnknown>()
+        .map_or(0, |u| u.as_raw() as usize);
+    let tip = sidebar::tooltip(&key);
+    let changed = SIDEBAR_TIPS.with(|t| {
+        let mut t = t.borrow_mut();
+        let changed = t.get(&identity) != Some(&tip);
+        t.insert(identity, tip.clone());
+        changed
+    });
+    if changed {
+        let _ = windows_reactor::set_tooltip_text(item, tip.as_deref());
+    }
+    mark_sidebar_row(item, &key);
 }
 
 thread_local! {
@@ -22966,14 +23008,49 @@ fn fit_push_dialog(element: &IInspectable) {
     let _ = root.SetHeight((height * 0.85 - 140.0).max(340.0).min(height - 160.0));
 }
 
-/// サイドバーの行（TreeViewItem）の中身を、名前と右端の色の印にする（印のない行は名前の文字のまま）。TreeView は
-/// 項目の文字を中身に入れ、行を使い回すときに入れ直すので、そのたびにここで差し替える。
+/// サイドバーの行（TreeViewItem）の中身を、前のアイコン・名前・右端の色の印にする（見出しは名前の文字のまま）。
+/// TreeView は項目の文字を中身に入れ、行を使い回すときに入れ直すので、そのたびにここで差し替える。
 fn mark_sidebar_row(item: &IInspectable, key: &str) {
-    // 印がなくなった行は、木を作り直したときに TreeView が名前の文字に戻している。
-    let Some((text, marks)) = sidebar::row_marks(key) else {
+    thread_local! {
+        /// 行の鍵 → 部品の Tag と XAML（木を作り直すか画面の倍率が変われば作り直す。毎フレーム見直すので）。
+        static MADE: RefCell<((u64, u32), MadeRows)> =
+            RefCell::new(((0, 0), std::collections::HashMap::new()));
+    }
+    let Ok(control) = item.cast::<xaml::ContentControl>() else {
         return;
     };
-    let Ok(control) = item.cast::<xaml::ContentControl>() else {
+    let made = MADE.with(|m| {
+        let mut m = m.borrow_mut();
+        let stamp = (sidebar::generation(), crate::icons::display_scale().to_bits());
+        if m.0 != stamp {
+            *m = (stamp, std::collections::HashMap::new());
+        }
+        if let Some(made) = m.1.get(key) {
+            return Some(made.clone());
+        }
+        let row = sidebar::row(key)?;
+        let xaml_text = sidebar::row_xaml(&row);
+        // 同じ行・同じ印なら作り直さない（鍵と中身のハッシュで見分ける）。
+        let id = {
+            use std::hash::{Hash, Hasher};
+            let mut h = std::collections::hash_map::DefaultHasher::new();
+            xaml_text.hash(&mut h);
+            format!("row:{:x}:{key}", h.finish())
+        };
+        let tagged = xaml_text.replacen(
+            r#"<Grid xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation""#,
+            &format!(
+                r#"<Grid xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation" Tag="{}""#,
+                id.replace('&', "&amp;")
+                    .replace('"', "&quot;")
+                    .replace('<', "&lt;")
+            ),
+            1,
+        );
+        m.1.insert(key.to_owned(), (id.clone(), tagged.clone()));
+        Some((id, tagged))
+    });
+    let Some((id, tagged)) = made else {
         return;
     };
     let shown = control
@@ -22982,27 +23059,9 @@ fn mark_sidebar_row(item: &IInspectable, key: &str) {
         .as_ref()
         .and_then(xaml::tag_text)
         .filter(|t| t.starts_with("row:"));
-    let xaml_text = sidebar::row_xaml(&text, &marks);
-    // 同じ行・同じ印なら作り直さない（鍵と中身のハッシュで見分ける）。
-    let id = {
-        use std::hash::{Hash, Hasher};
-        let mut h = std::collections::hash_map::DefaultHasher::new();
-        xaml_text.hash(&mut h);
-        format!("row:{:x}:{key}", h.finish())
-    };
     if shown.as_deref() == Some(id.as_str()) {
         return;
     }
-    let tagged = xaml_text.replacen(
-        r#"<Grid xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation""#,
-        &format!(
-            r#"<Grid xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation" Tag="{}""#,
-            id.replace('&', "&amp;")
-                .replace('"', "&quot;")
-                .replace('<', "&lt;")
-        ),
-        1,
-    );
     match xaml::XamlReader::Load(&windows_core_reactor::HSTRING::from(tagged)) {
         Ok(element) => {
             // 項目の文字を描く ContentTemplate を外して、差し替えた部品をそのまま描かせる。
@@ -23016,6 +23075,9 @@ fn mark_sidebar_row(item: &IInspectable, key: &str) {
         Err(e) => eprintln!("サイドバーの行を作れない: {e}"),
     }
 }
+
+/// 作った行の中身（鍵 → 部品の Tag と XAML）。
+type MadeRows = std::collections::HashMap<String, (String, String)>;
 
 /// 押した行 `key` の印（指がその印の上にあれば）と、サイドバーの中の位置。
 fn pressed_mark(key: &str) -> Option<(crate::sidebar::Mark, xaml::Point)> {
