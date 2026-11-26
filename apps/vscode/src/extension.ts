@@ -1,13 +1,15 @@
 import * as vscode from 'vscode';
 import { setSharedIconsRoot } from './ui/sharedIcons.ts';
-import { groupChanges } from './state/changes.ts';
+import { groupChanges, type Change } from './state/changes.ts';
 import { askpass, setAskpass } from './git/askpass.ts';
 import { setFsmonitor } from './git/fsmonitor.ts';
 import { startAskpass } from './ui/askpass.ts';
 import { openConflict } from './ui/diff.ts';
+import { markResolvedWithoutMarkers } from './ui/stageCommands.ts';
 import { setDaemonLanguage } from './daemon/client.ts';
 import { daemonPath, disposeDaemonClients, initDaemon } from './daemon/connection.ts';
 import { RepositoryManager } from './state/manager.ts';
+import type { Repository } from './state/repository.ts';
 import { registerBranchArrangeCommands } from './ui/branchArrangeCommands.ts';
 import { registerBranchCommands } from './ui/branchCommands.ts';
 import { registerContentProvider } from './ui/content.ts';
@@ -134,8 +136,25 @@ export async function activate(
     // サイドバーの Conflicts: 最初のコンフリクトのファイルをマージエディタで開く（アプリと同じ）
     vscode.commands.registerCommand('amonhen.openFirstConflict', async () => {
       const repo = manager.current;
-      const first = repo && groupChanges(repo.current.status?.entries ?? []).find(([group]) => group === 'conflicts')?.[1][0];
+      const first = repo && firstConflict(repo);
       if (repo && first) await openConflict(repo.root, first, repo.current.sequence);
+    }),
+    // 途中の行のボタン: マーカーの残っていないコンフリクトを、まとめて解決済みにする
+    vscode.commands.registerCommand('amonhen.markResolvedWithoutMarkers', () => markResolvedWithoutMarkers(manager.current)),
+    // 操作がコンフリクトや途中で止まったら、アプリと同じく Working Copy に切り替え、最初のコンフリクトのファイルを選んで
+    // マージエディタで開く（どこで・なぜ止まったかはサイドバーの途中の行に出る）
+    manager.onDidStop(async (repo) => {
+      try {
+        await repo.refresh();
+        if (repo !== manager.current) return;
+        const panel = show('workingCopy');
+        const first = firstConflict(repo);
+        if (!first) return;
+        panel.workingCopy.select(first);
+        await openConflict(repo.root, first, repo.current.sequence);
+      } catch (err) {
+        log.warn('could not open the first conflict', err);
+      }
     }),
     registerIgnoreCommand(manager),
     registerWcFileCommands(manager),
@@ -193,6 +212,11 @@ export async function activate(
   updateDescription();
   log.info(`activated in ${Math.round(performance.now() - start)}ms`);
   return { manager, sidebar, dragAndDrop, panel: () => MainPanel.active, askpass: () => askpass() };
+}
+
+/** 一覧でいちばん上の、コンフリクトのファイル */
+function firstConflict(repo: Repository): Change | undefined {
+  return groupChanges(repo.current.status?.entries ?? []).find(([group]) => group === 'conflicts')?.[1][0];
 }
 
 export function deactivate(): void {

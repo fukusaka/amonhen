@@ -20,7 +20,7 @@ Clicking the Amon Hen icon in the activity bar opens the nav in the sidebar and 
 | Working Copy | The number of changes. Selecting it shows the Working Copy in the main view. With two or more worktrees, they are listed under it |
 | History | The current branch. Selecting it shows the History in the main view |
 | Conflicts | While there are conflicts, with their count. Selecting it opens the first in the merge editor |
-| Merge / rebase in progress | A row like "Rebase in progress (2/5)". Continue / Skip / Abort |
+| Merge / rebase in progress | A row like "Rebase in progress (2/5)". Continue / Skip / Abort. With conflicted files that have no markers left, it says how many and a button marks them all resolved |
 | Branches | `feature/x` is grouped into folders. ✓ on the current branch, the difference from the upstream (↑↓), and gone if the upstream has been deleted |
 | Remotes / Tags / Stashes / Submodules / Subtrees | Fetched when expanded. Stashes only while there are stashes; Subtrees with the engine and a git that has `git subtree` |
 | Range Diff | While a range diff is open. Selecting it shows it in the main view |
@@ -78,7 +78,7 @@ The commit form is at the top left, the Conflicts / Staged / Changes files below
 - You can also use Stage Hunk per hunk, Stage File, `+` / `−` in the list, and Stage All. In the list, select with the up and down keys and stage / unstage with Space or Enter.
 - For files in Changes, you can discard changes with ↺ in the list, Discard File, Discard Hunk, and Discard N Lines. Untracked files are deleted (Delete File…). A whole file is discarded after asking; selected lines and hunks right away. Discarded content can be restored with Undo.
 - The commit form has a Summary and a Description (multiple lines); either alone is enough. Turning on Amend fills in the message of the previous commit. You can also commit with `⌘Enter` / `Ctrl+Enter`. Recent… inserts the message of a recent commit (⌥↑ / ⌥↓ in the Summary), and Insert… a Conventional Commits type, Co-authored-by or Signed-off-by. The ▾ next to Commit has Commit and Push (`⌘⇧Enter`), Fixup Commit For… and Squash Commit For….
-- For a conflicted file, you can choose Open in Merge Editor (the standard 3-way merge editor), Take Current File, Take Incoming File, and Mark as Resolved. A file deleted on one side can also be resolved by taking one side's file. When marking as resolved, you are asked to confirm if markers remain. A conflicted file with no markers left (git's rerere applied an earlier resolution, or another editor resolved it) shows ✓ with "no markers" or "rerere", leads with Mark as Resolved, and the Conflicts heading can mark all of them resolved at once; taking a side asks before replacing such a resolution, and also when the file has unsaved changes in an editor.
+- For a conflicted file, you can choose Open in Merge Editor (the standard 3-way merge editor), Take Current File, Take Incoming File, and Mark as Resolved. A file deleted on one side can also be resolved by taking one side's file. When marking as resolved, unsaved changes to the file in an editor (the merge editor's Result too) are saved first, and you are asked to confirm if markers remain. A conflicted file with no markers left (git's rerere applied an earlier resolution, or another editor resolved it) shows ✓ with "no markers" or "rerere", leads with Mark as Resolved, and the Conflicts heading can mark all of them resolved at once; taking a side asks before replacing such a resolution, and also when the file has unsaved changes in an editor.
 - With the engine, right-clicking a conflicted file that rerere resolved offers Forget Resolution, which puts the conflict markers back (Undo takes the file back), and Repository Settings > Operations has Forget All… to forget every remembered resolution.
 
 ### History
@@ -117,7 +117,7 @@ patches as commits (`git am`) or a diff to the working tree (`git apply`). If a 
 
 ### Stopped merge / rebase
 
-When stopped by a conflict or by Edit / Split, a row like "Rebase in progress (2/5)" appears in the nav. After resolving and staging, continue with Continue. In a rebase, Skip skips the current commit. Abort returns to the state before it started.
+When stopped by a conflict or by Edit / Split, a row like "Rebase in progress (2/5)" appears in the nav, and the main view switches to Working Copy with the first conflicted file selected and opened in the merge editor. After resolving and staging, continue with Continue. In a rebase, Skip skips the current commit. Abort returns to the state before it started.
 
 ### Undo
 
