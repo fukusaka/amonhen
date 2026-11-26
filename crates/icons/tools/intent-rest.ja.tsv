@@ -1,0 +1,88 @@
+title	残りの形 — 形の意図
+legend	約束（ツールバーと同じ。16×16 の格子、端と角は丸、色は FE が付ける）
+key	circle	丸 ＝ コミット
+key	line	横線 ＝ リモート
+key	arrow	矢印 ＝ 動く向き
+key	dot	点線 ＝ まだない・前の位置
+head	サイドバーの節	中身をそのまま絵にする
+icon	working-copy	Working Copy	枠（作業ツリー）に鉛筆。いま書き換えている所。macOS の前の印と同じ考え。
+icon	history	History	時計。コミットの積み重ね＝時間。
+icon	reflog	Reflog	各行の頭に小さな矢印（参照の移動）を付けた記録の行。checkout・reset などのたびに 1 行足される。
+icon	remote	Remotes	雲。リモートを単独で描くときの形（ほかの形と組むときは上の横線）。
+icon	tag	Tags	値札。コミットに付ける名札。穴は点で描く。
+icon	stashes	Stashes	2 段の引き出しの箪笥。Stash・Pop の引き出しを並べた所。
+icon	submodule	Submodules	角丸の枠いっぱいに Branch。中に別の履歴があることを強める。
+icon	subtree	Subtrees	フォルダの下の部分いっぱいに Branch。
+icon	folder	フォルダ	ふつうのフォルダ。名前の区切り（feature/ など）とパスを選ぶシート。
+head	ブランチ・worktree の状態	Branch の形と丸の約束を使い回す
+icon	current-branch	今のブランチ	Branch の右下に小さなチェック。
+icon	favorite	お気に入り	星。どの土台でも「お気に入り」で通じる形。
+icon	stacked	積んだブランチ	下へ折れて右へ進む矢印。ほかのブランチの上に続けて積んだもの。
+icon	upstream-gone	上流が消えた	雲に斜線。リモートにあった上流がもうない。
+icon	remote-conflict	リモートのタグの衝突	雲に「!」。リモートに同じ名前の別のタグがある。
+icon	main-worktree	メインの worktree	屋根と箱だけの家。元の作業ツリー。16 で扉が潰れないように扉は描かない。
+icon	edited-worktree	書き込む先	枠に鉛筆（サイドバーの Working Copy と同じ形）。この窓が書き込む worktree。
+icon	clean	変更なし	重ねた 2 枚の枠の手前に「=」。
+icon	ahead-behind	先／遅れ	上下の矢印 2 本。上流より先（push できる）と遅れ（pull できる）。
+icon	new-branch-row	新しいブランチの行	丸の中に＋。ブランチの切り替えで「ここから作る」行。
+icon	pull-request	Pull request	上の横線（リモート）の下で、右のコミットから幹へ矢印が向かう。取り込みをリモート（GitHub）の上で申し出る。
+head	表示と道具	見慣れた道具の形を、同じ線で描き直す
+icon	filter	絞り込み	下へ短くなる横線 3 本。広いものを絞る。
+icon	list	一覧	点と線の 3 行。平らな一覧。
+icon	tree	木	点と線を段にずらす。入れ子の木。
+icon	range-diff	Range Diff	右向きと左向きの矢印。2 つの範囲を突き合わせる。
+icon	display-options	表示のメニュー	つまみのある横線 3 本。表示の細かい調整。
+icon	go-to-head	Go to HEAD	照準。中央の点が HEAD。
+icon	edit-mode	編集モード	並んだ行に鉛筆。History の行（コミット）を並べ替え・書き換える。
+icon	settings	設定	8 枚の歯を山形の輪郭にした歯車。太陽に見えにくい。
+icon	expand	詳細を広げる	外向きの斜めの矢印 2 本。
+icon	restore	広げた詳細を戻す	内向きの斜めの矢印 2 本。詳細を広げるの逆。
+icon	expand-all	すべて開く	上と下へ開く山形を重ねる。
+icon	collapse-all	すべて畳む	上と下から閉じる山形を重ねる。
+icon	back	戻る	軸のある左向きの矢印。
+icon	preview	プレビュー	目。その時点のファイルを見る。
+icon	wrap-lines	折り返し	縦の線（右の端）で折れて次の行へ。
+icon	whitespace	空白	空白キーの形（下の受け皿）。差分で無視する空白。
+head	設定の画面・パスを選ぶシート	画面の中身を表す
+icon	account	Accounts	角丸の枠に人（アバターの枠）。
+icon	appearance	Appearance	右半分に斜線のある丸。明るい・暗いの外観。
+icon	theme	Theme	扇に開いた色見本の短冊。
+icon	performance	Performance	ストップウォッチ。速さを測る。
+icon	unknown-file	種類の分からないもの	角を折った紙に「?」。種類の分からないファイル。
+head	署名	ぎざぎざの丸＝署名、盾＝鍵の信用。状態の違いは FE の色でも分ける
+icon	signed	確かめた	ぎざぎざの丸（封印）にチェック。強く信用している鍵も同じ形で、色で分ける。
+icon	bad-signature	不正な署名	封印に ×。
+icon	trust-unknown	信用度が未定	盾にチェック。署名は正しいが、鍵をどこまで信じるか決まっていない。
+icon	revoked-key	失効した鍵	盾に「!」。
+icon	signer-mismatch	署名した人が違う	人に「?」。タガーと署名者が違う。
+icon	expired-key	期限の切れた鍵	右上の欠けた時計に「!」。
+icon	cannot-verify	この git では確かめられない	丸に「!」。
+icon	missing-key	鍵がない	丸に「?」。
+head	取得のしかた・submodule	取っていない・一部だけを形で言う
+icon	shallow	shallow clone	上の 2 つのコミットは実線、その下の幹は点線（取っていない）。
+icon	partial	partial clone	紙の上半分は実線、下半分は点線。一部だけ取ってある。
+icon	sparse	sparse checkout	木の 3 行のうち、真ん中の行だけ点線。
+icon	not-checked-out	取り出していない	Submodules の枠を点線にする。点線＝まだない。CI がない（点線の丸）とは別の形。
+icon	modified	変更あり	枠の右上から鉛筆が入る。
+head	状態・CI	丸の中の記号で状態を言う。色は FE が状態で付ける
+icon	conflict	コンフリクト	三角に「!」。注意。
+icon	failed	失敗	八角形（止まれ）に ×。ステータスバーの失敗。
+icon	cancelled	取り消した	丸に斜線（取り消し）。CI を取り消したと同じ形。
+icon	disconnected	切れたつながり	途切れた横線の両端に縦の線（差し口）と、間の斜線。つながりが切れている。
+icon	ci-passed	CI が通った	丸にチェック。
+icon	ci-failed	CI が失敗した	丸に ×。
+icon	ci-running	CI が走っている	4 分の 3 の弧（回っている途中）。
+icon	ci-none	CI がない	点線の丸（まだない）。
+icon	ci-cancelled	CI を取り消した	点線の丸に斜線。
+head	AI	前の印の考えのまま
+icon	ai	AI の解説・提案	大きなきらめきと小さな＋。
+icon	translate	AI の翻訳	吹き出しと、中の 2 行の文。
+head	画像の比べ	比べ方そのものを描く
+icon	side-by-side	並べる	枠を縦に 2 つに分ける。
+icon	swipe	スワイプ	枠の上を動く縦の線と、右向きの小さな矢印。
+icon	onion-skin	オニオンスキン	重なる 2 つの丸。2 枚を透かして重ねる。
+icon	changed-pixels	違うピクセル	ずれて重なる 2 枚の枠（差のある所）。
+icon	zoom-out	縮小	虫眼鏡に「−」。
+icon	zoom-in	拡大	虫眼鏡に「＋」。
+icon	zoom-fit	枠に合わせる	四隅の角（枠に合わせる）。外向きの角と同じ考え。
+icon	checkerboard	市松模様	4 つの升の 2 つに斜線。

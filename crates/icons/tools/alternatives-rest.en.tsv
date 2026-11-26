@@ -1,0 +1,201 @@
+title	The other shapes' drafts — the drafts and the choice
+note	A is the first draft; the blue frame is the one chosen. Each at 48, 20 and 16 (the dark tile is 16 on a dark background)
+group	reflog	Reflog
+alt	reflog-A	A First draft		A clock with a counter-clockwise arrow. Winding history back; can't be told from History.
+alt	reflog-B	B Line with a return arrow		Commits along a trunk and an arrow curling up from below: going back over where HEAD has been.
+alt	reflog-C	C Log rows and a return arrow		Rows of a log and an up arrow on the left: reading the log upward.
+alt	reflog-D	D Turning arrow and a commit		A commit inside a counter-clockwise arrow: back to the commits HEAD went through.
+alt	reflog-E	E The trail it left		A dotted trail crosses over two commits and comes down on the right one: a ref (HEAD, a branch) moved from the earlier commit to the current one. Dots = before.
+alt	reflog-F	F A log of moves	chosen	Rows of a log, each starting with a small arrow (a ref moving). Checkout, reset and the like each add a row.
+alt	reflog-G	G A tag that moved		The current tag (solid) points at a commit, and a dotted tag stays on the left where it was.
+group	submodule	Submodules
+alt	submodule-A	A First draft		A frame in a frame: a repository inside a repository.
+alt	submodule-B	B Box		A sealed box: a whole other repository put inside (the same idea as the earlier macOS mark).
+alt	submodule-C	C Commit in a folder		A commit inside a folder: there is another history inside.
+alt	submodule-D	D Branch in a frame		A small Branch in a frame: a repository inside a repository.
+alt	submodule-E	E Frame and a big Branch	chosen	Branch filling a rounded frame: there is another history inside.
+alt	submodule-F	F Frame and a trunk of commits		A trunk with two commits in a frame (a small History).
+alt	submodule-G	G Frame and one commit		One commit in the middle of a frame. The simplest shape.
+alt	submodule-H	H Double frame and Branch		An outer and an inner frame, a small Branch in the inner one.
+group	subtree	Subtrees
+alt	subtree-A	A First draft		A branch leaves the trunk and ends in a small folder: a folder brought in with its history. Hard to read at 16.
+alt	subtree-B	B Branch in a folder		A small Branch in a folder: a folder brought in with its history.
+alt	subtree-C	C Folder joins the trunk		A line from a folder at the top right comes down into the trunk on the left: bringing in another history.
+alt	subtree-D	D Tree in a folder		Stepped lines in a folder: nested contents.
+alt	subtree-E	E Folder and a big Branch	chosen	Branch filling the lower part of a folder.
+alt	subtree-F	F Folder and a trunk of commits		A trunk with two commits in a folder: a folder that came with its history.
+alt	subtree-G	G Folder and Merge		Merge's shape in a folder (brought in).
+alt	subtree-H	H Two folders joining		A line from a small folder joins the trunk on the left.
+group	current-branch	Current branch
+alt	current-branch-A	A First draft		Branch's tip circle doubled with a dot in the middle: the commit you are on. The difference is small.
+alt	current-branch-B	B Check		Just a check, like the earlier VSCode mark.
+alt	current-branch-C	C Crosshair at the tip		Branch's tip circle becomes a crosshair (like Go to HEAD).
+alt	current-branch-D	D Arrow at a commit		An arrow from the left points at a commit: where HEAD points.
+alt	current-branch-E	E Arrow from above		A down arrow from above points at a commit: HEAD is here.
+alt	current-branch-F	F Branch and a check	chosen	Branch with a small check at the bottom right.
+alt	current-branch-G	G Branch in a circle		Branch inside a circle (an early idea).
+alt	current-branch-H	H Location pin		A map pin (you are here).
+alt	current-branch-I	I Bold tip commit		Branch's tip circle made big, with a dot inside.
+group	main-worktree	Main worktree
+alt	main-worktree-A	A First draft		The first idea: roof, box and door.
+alt	main-worktree-B	B House without a door	chosen	A roof and a box.
+alt	main-worktree-C	C Root		A trunk grows from a double circle at the bottom.
+alt	main-worktree-D	D Anchor		An anchor (what holds the others).
+alt	main-worktree-E	E Folder and roof		A small house in a folder.
+alt	main-worktree-F	F House and Branch		A trunk and commits in a house.
+alt	main-worktree-G	G House with a low roof		A lower, wider roof.
+alt	main-worktree-H	H Folder with a star		A star on a folder.
+alt	main-worktree-I	I The ⌂ shape		A pentagon ⌂ (the same as the text mark in VSCode and the CLI).
+alt	main-worktree-J	J ⌂ and a pencil		A pencil on ⌂ (mixes with the worktree to write to).
+alt	main-worktree-K	K Frame with a star		A star on Working Copy's frame.
+alt	main-worktree-L	L ⌂ and a trunk		A trunk and commits in ⌂.
+alt	main-worktree-M	M ⌂ with a door line		One upright line for a door under ⌂. Reads as a house and holds up at 16.
+alt	main-worktree-N	N Roots		The trunk splits into three roots at the bottom: where other worktrees grow from.
+alt	main-worktree-O	O Flag		A flag on a pole (home base).
+alt	main-worktree-P	P Folder with a roof		A folder whose top edge is a roof: the original working tree's folder.
+group	edited-worktree	Worktree to write to
+alt	edited-worktree-A	A First draft		A pencil in a circle: Working Copy's pencil made the size of a row's mark.
+alt	edited-worktree-B	B Pencil		Just a pencil: where it writes.
+alt	edited-worktree-C	C Folder and pencil		A pencil on a folder: the working tree it writes to.
+alt	edited-worktree-D	D Same as Working Copy	chosen	A pencil on a frame (the same as Working Copy in the sidebar).
+group	clean	No changes
+alt	clean-A	A First draft		A check in a circle: the row gathering worktrees without changes.
+alt	clean-B	B Check		Just a check.
+alt	clean-C	C Folder and check		A check on a folder: a working tree without changes.
+alt	clean-D	D Frame and check		A check on a frame (Working Copy's frame).
+alt	clean-E	E Stacked frames and a check		A check in front of two stacked frames (the gathered worktrees).
+alt	clean-F	F "=" in a frame		"=" in a frame (no difference).
+alt	clean-G	G Stacked frames and "="	chosen	"=" in front of two stacked frames.
+alt	clean-H	H Frame and pencil struck out		Working Copy's frame and pencil, struck through (nothing being edited).
+group	settings	Settings
+alt	settings-A	A First draft		A gear (a circle and eight teeth). Also looks like a sun.
+alt	settings-B	B Gear with round teeth	chosen	A gear of eight teeth with a scalloped outline. Less like a sun.
+alt	settings-C	C Upright knobs		Three upright lines with knobs (Display options turned upright): where to adjust.
+alt	settings-D	D Spanner		A spanner: a tool for upkeep.
+group	expand	Expand the details
+alt	expand-A	A First draft	chosen	Two diagonal arrows pointing out.
+alt	expand-B	B Corners pointing out		Four corners pointing out: fill the frame.
+alt	expand-C	C Arrow out of a frame		An arrow leaving a frame at its top right.
+alt	expand-D	D Chevrons apart		Chevrons moving apart, up and down.
+group	restore	Restore the details
+alt	restore-A	A First draft	chosen	Two diagonal arrows pointing in: the reverse of expanding.
+alt	restore-B	B Corners pointing in		Four corners pointing in: undo the expanding.
+alt	restore-C	C Arrow into a frame		An arrow coming into a frame from outside.
+alt	restore-D	D Chevrons together		Chevrons coming together from above and below.
+group	expand-all	Expand all
+alt	expand-all-A	A First draft		Arrows moving up and down away from two lines: opening the diff.
+alt	expand-all-B	B Double chevrons	chosen	Chevrons opening up and down, stacked.
+alt	expand-all-C	C + in a frame		A + in a frame (the tree's open mark).
+alt	expand-all-D	D Two down chevrons		Two chevrons pointing down (spreading folded things downward).
+group	collapse-all	Collapse all
+alt	collapse-all-A	A First draft		Arrows coming from above and below toward two lines: folding the diff.
+alt	collapse-all-B	B Double chevrons	chosen	Chevrons closing from above and below, stacked.
+alt	collapse-all-C	C − in a frame		A − in a frame (the tree's fold mark).
+alt	collapse-all-D	D Two up chevrons		Two chevrons pointing up (folding upward).
+group	back	Back
+alt	back-A	A First draft		A left chevron: back to the tree.
+alt	back-B	B Left arrow	chosen	A left arrow with a shaft.
+alt	back-C	C Arrow back up		An arrow turning up and back left: one level up the tree.
+alt	back-D	D Chevron in a circle		A left chevron in a circle.
+group	wrap-lines	Wrap lines
+alt	wrap-lines-A	A First draft		An arrow curling down at the right end and back left, with a row under it.
+alt	wrap-lines-B	B Rows and a return arrow		A first row, a second that folds back at the right, a short third.
+alt	wrap-lines-C	C Return sign		↵ (from the right, down and around to the left).
+alt	wrap-lines-D	D Folds at the edge	chosen	A line folds at a vertical line (the right edge) onto the next row.
+group	whitespace	Whitespace
+alt	whitespace-A	A First draft	chosen	The space key's shape (a tray underneath): whitespace a diff ignores.
+alt	whitespace-B	B Middle dots		Three dots in a row (showing spaces as dots).
+alt	whitespace-C	C Between words		A tray between two words.
+alt	whitespace-D	D Tab		A right arrow and an upright line (a tab).
+group	account	Accounts
+alt	account-A	A First draft		A person (head and shoulders).
+alt	account-B	B Person in a circle		A person in a circle (the same idea as the earlier macOS mark).
+alt	account-C	C Name tag		A name tag (a face and two lines).
+alt	account-D	D Person in a rounded frame	chosen	A person in a rounded frame (an avatar's frame).
+group	appearance	Appearance
+alt	appearance-A	A First draft		A paintbrush: painting the look.
+alt	appearance-B	B Light and dark circle	chosen	A circle hatched on the right half: light or dark.
+alt	appearance-C	C Window and letter		An "A" in a window: how windows and text look.
+alt	appearance-D	D Window, half shaded		A window hatched on the left half (the background's shade).
+group	theme	Theme
+alt	theme-A	A First draft		A paint palette (three dots are the colors).
+alt	theme-B	B Swatches	chosen	Color swatch strips fanned out.
+alt	theme-C	C Three circles		Three overlapping circles (mixing colors).
+alt	theme-D	D Colored code		Rows of different lengths (a syntax color theme).
+group	performance	Performance
+alt	performance-A	A First draft		A speedometer (a half circle and a needle).
+alt	performance-B	B Stopwatch	chosen	A stopwatch: measuring speed.
+alt	performance-C	C Lightning		A lightning bolt: speed.
+alt	performance-D	D Rising line		Axes and a line rising to the right (a chart).
+group	unknown-file	Unknown kind
+alt	unknown-file-A	A First draft		"?" in a dotted frame. Dots = not known yet.
+alt	unknown-file-B	B "?" on a sheet	chosen	"?" on a sheet with a folded corner: a file of a kind we can't tell.
+alt	unknown-file-C	C Dotted sheet		A dotted sheet (Files' shape).
+alt	unknown-file-D	D "?" in a dotted circle		"?" in a dotted circle.
+group	shallow	Shallow clone
+alt	shallow-A	A First draft		Scissors: the old history is cut off.
+alt	shallow-B	B Broken history	chosen	The top two commits are solid and the trunk under them is dotted (not fetched).
+alt	shallow-C	C Arrow to the floor		A down arrow and a floor line: fetched only this far.
+alt	shallow-D	D Dotted bottom layer		Three lines, the bottom one dotted.
+group	partial	Partial clone
+alt	partial-A	A First draft		A down arrow from a cloud: contents are fetched when needed.
+alt	partial-B	B Arrow to a dotted sheet		An arrow down to a dotted sheet: contents come when needed.
+alt	partial-C	C Solid and dotted commits		The trunk's commits are solid and the branch's tip (the contents) dotted.
+alt	partial-D	D Dotted cloud and arrow		A down arrow from a dotted cloud.
+alt	partial-E	E Trunk commits and a dotted sheet		The trunk's commits on the left are solid and the sheet of contents on the right dotted: the history is here, the contents later.
+alt	partial-F	F Sheet, solid on top and dotted below	chosen	The top half of a sheet is solid and the bottom half dotted: only part of it is here.
+alt	partial-G	G Remote line and a dotted sheet		An arrow from the top line (the remote) down to a dotted sheet (Fetch's shape).
+alt	partial-H	H Dotted inside a folder		A dotted sheet in a folder: contents come when needed.
+group	sparse	Sparse checkout
+alt	sparse-A	A First draft		A "−" on a folder: only some folders are checked out.
+alt	sparse-B	B Tree, partly dotted		Rows of a tree; the ones not checked out are dotted.
+alt	sparse-C	C Solid and dotted folders		A checked-out folder and a dotted one.
+alt	sparse-D	D Funnel and folder		A funnel on a folder (checking out a narrowed set).
+alt	sparse-E	E Solid and dotted folders		Two larger folders, the right one dotted (not checked out).
+alt	sparse-F	F Only the middle row dotted	chosen	Of a tree's three rows, only the middle one is dotted.
+alt	sparse-G	G Rows in a folder		Two rows in a folder, the lower one dotted.
+alt	sparse-H	H Two folders in a frame		A solid and a dotted small folder in the working tree's frame.
+group	modified	Modified
+alt	modified-A	A First draft		A pencil: there are changes inside the submodule.
+alt	modified-B	B Frame and pencil		A pencil on the submodule's frame.
+alt	modified-C	C Frame and dot		A dot in the submodule's frame (VSCode's "modified" ●).
+alt	modified-D	D Circle and pencil		A pencil in a circle (the same as the worktree to write to).
+alt	modified-E	E Frame and a corner dot		A dot at the top right corner of the submodule's frame (modified).
+alt	modified-F	F Pencil past the frame	chosen	A pencil comes into the frame from the top right.
+alt	modified-G	G Circle and dot		A dot in a circle (close to VSCode's "modified" ●).
+alt	modified-H	H Frame and asterisk		A "*" in a frame (a mark for changes).
+group	cancelled	Cancelled
+alt	cancelled-A	A First draft		A square in a circle (stop).
+alt	cancelled-B	B Square		Just the stop square.
+alt	cancelled-C	C Circle with a slash	chosen	A circle with a slash (cancel). The same shape as CI cancelled.
+alt	cancelled-D	D Dotted circle and square		A square in a dotted circle (stopped partway).
+group	ci-running	CI running
+alt	ci-running-A	A First draft		A small circle in a circle: partway through.
+alt	ci-running-B	B Turning arc	chosen	Three quarters of a circle (going round).
+alt	ci-running-C	C Clock hands in a circle		Clock hands in a circle (waiting, moving on).
+alt	ci-running-D	D Dotted ring and dot		A dot in a dotted ring.
+group	ci-none	No CI
+alt	ci-none-A	A First draft		An empty circle.
+alt	ci-none-B	B Dotted circle	chosen	A dotted circle (not there yet).
+alt	ci-none-C	C Circle with a bar		A circle with a level bar (none).
+alt	ci-none-D	D Small dot		Just a small circle.
+group	ci-cancelled	CI cancelled
+alt	ci-cancelled-A	A First draft		A circle with a slash.
+alt	ci-cancelled-B	B Square in a circle		A square in a circle (stopped).
+alt	ci-cancelled-C	C − in a circle		A − in a circle.
+alt	ci-cancelled-D	D Dotted circle with a slash	chosen	A dotted circle with a slash.
+group	changed-pixels	Changed pixels
+alt	changed-pixels-A	A First draft		+, a slash and −: pixels added and removed.
+alt	changed-pixels-B	B Grid and one dot		A dot in the middle of a 3×3 grid (a pixel that differs).
+alt	changed-pixels-C	C Two frames off-center	chosen	Two frames overlapping off-center (where they differ).
+alt	changed-pixels-D	D ± in a frame		+ and − in a frame.
+group	zoom-fit	Zoom to fit
+alt	zoom-fit-A	A First draft		Facing corners in a magnifier.
+alt	zoom-fit-B	B Four corners	chosen	Four corners (fit to the frame). The same idea as corners pointing out.
+alt	zoom-fit-C	C Two-way arrow in a frame		An arrow stretching left and right in a frame.
+alt	zoom-fit-D	D Magnifier and frame		A square in a magnifier.
+group	checkerboard	Checkerboard
+alt	checkerboard-A	A First draft		A frame split in four, dots in two diagonal squares: the pattern under transparent areas.
+alt	checkerboard-B	B 3×3 dots		Dots in the corners and the middle of a 3×3 grid.
+alt	checkerboard-C	C Light and dark circle		A circle hatched on the right half (switching light and dark).
+alt	checkerboard-D	D Hatched squares	chosen	Four squares, two of them hatched.

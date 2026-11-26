@@ -1,0 +1,88 @@
+title	The other shapes — what each shape means
+legend	Rules (as in the toolbar: 16×16 grid, round ends and joins, the color set by the front end)
+key	circle	circle = a commit
+key	line	line = the remote
+key	arrow	arrow = which way it moves
+key	dot	dots = not there yet / before
+head	Sidebar sections	Draw what the section holds
+icon	working-copy	Working Copy	A pencil on a frame (the working tree): where you are editing. The same idea as the earlier macOS mark.
+icon	history	History	A clock: commits piled up are time.
+icon	reflog	Reflog	Rows of a log, each starting with a small arrow (a ref moving). Checkout, reset and the like each add a row.
+icon	remote	Remotes	A cloud: the remote drawn on its own (combined with other shapes it is the line on top).
+icon	tag	Tags	A price tag: a name tag on a commit. The hole is a dot.
+icon	stashes	Stashes	A chest of two drawers: Stash's and Pop's drawers side by side.
+icon	submodule	Submodules	Branch filling a rounded frame: there is another history inside.
+icon	subtree	Subtrees	Branch filling the lower part of a folder.
+icon	folder	Folder	A plain folder: a name prefix (feature/ and so on) and the path picker.
+head	Branch and worktree states	Reuse Branch's shape and the circle rule
+icon	current-branch	Current branch	Branch with a small check at the bottom right.
+icon	favorite	Favorite	A star: reads as "favorite" on every platform.
+icon	stacked	Stacked branch	An arrow that turns down and then right: a branch stacked on top of another.
+icon	upstream-gone	Upstream gone	A cloud struck through: the upstream that was on the remote is gone.
+icon	remote-conflict	Tag differs on the remote	A cloud with "!": the remote has a different tag of the same name.
+icon	main-worktree	Main worktree	A house of just a roof and a box: the original working tree. No door, so nothing smudges at 16.
+icon	edited-worktree	Worktree to write to	A pencil on a frame (the same as Working Copy in the sidebar): the worktree this window writes to.
+icon	clean	No changes	"=" in front of two stacked frames.
+icon	ahead-behind	Ahead / behind	Two arrows, up and down: ahead of the upstream (can push) and behind it (can pull).
+icon	new-branch-row	New branch row	A + in a circle: the "create from here" row when switching branches.
+icon	pull-request	Pull request	Under the line for a remote, an arrow from the commit on the right heads for the trunk: the request to merge is made on the remote (GitHub).
+head	View and tools	Familiar tools, redrawn with the same lines
+icon	filter	Filter	Three lines, shorter toward the bottom: narrowing something wide.
+icon	list	List	Three rows of a dot and a line: a flat list.
+icon	tree	Tree	Dots and lines stepped in: a nested tree.
+icon	range-diff	Range Diff	Arrows to the right and to the left: two ranges set against each other.
+icon	display-options	Display options	Three lines with knobs: fine adjustments to the view.
+icon	go-to-head	Go to HEAD	A crosshair: the dot in the middle is HEAD.
+icon	edit-mode	Edit mode	A pencil on rows: reorder and rewrite History's rows (commits).
+icon	settings	Settings	A gear of eight teeth with a scalloped outline. Less like a sun.
+icon	expand	Expand the details	Two diagonal arrows pointing out.
+icon	restore	Restore the details	Two diagonal arrows pointing in: the reverse of expanding.
+icon	expand-all	Expand all	Chevrons opening up and down, stacked.
+icon	collapse-all	Collapse all	Chevrons closing from above and below, stacked.
+icon	back	Back	A left arrow with a shaft.
+icon	preview	Preview	An eye: look at the file as it was then.
+icon	wrap-lines	Wrap lines	A line folds at a vertical line (the right edge) onto the next row.
+icon	whitespace	Whitespace	The space key's shape (a tray underneath): whitespace a diff ignores.
+head	Settings pages and the path picker	Show what the page holds
+icon	account	Accounts	A person in a rounded frame (an avatar's frame).
+icon	appearance	Appearance	A circle hatched on the right half: light or dark.
+icon	theme	Theme	Color swatch strips fanned out.
+icon	performance	Performance	A stopwatch: measuring speed.
+icon	unknown-file	Unknown kind	"?" on a sheet with a folded corner: a file of a kind we can't tell.
+head	Signatures	jagged circle = a signature, shield = trust in the key. Front ends also tell states apart by color
+icon	signed	Verified	A check on a jagged circle (a seal). A fully trusted key has the same shape and differs by color.
+icon	bad-signature	Bad signature	An × on the seal.
+icon	trust-unknown	Trust undecided	A check on a shield: the signature is good, but how far to trust the key isn't decided.
+icon	revoked-key	Revoked key	"!" on a shield.
+icon	signer-mismatch	Different signer	"?" by a person: the tagger and the signer differ.
+icon	expired-key	Expired key	"!" by a clock with its top right missing.
+icon	cannot-verify	Can't verify with this git	"!" in a circle.
+icon	missing-key	Missing key	"?" in a circle.
+head	How it was fetched, submodules	Say "not fetched" and "only part" with the shape
+icon	shallow	Shallow clone	The top two commits are solid and the trunk under them is dotted (not fetched).
+icon	partial	Partial clone	The top half of a sheet is solid and the bottom half dotted: only part of it is here.
+icon	sparse	Sparse checkout	Of a tree's three rows, only the middle one is dotted.
+icon	not-checked-out	Not checked out	The Submodules frame, dotted. Dots = not there yet. A different shape from No CI (a dotted circle).
+icon	modified	Modified	A pencil comes into the frame from the top right.
+head	States and CI	A mark in a circle says the state; the front end colors it by state
+icon	conflict	Conflict	"!" in a triangle: caution.
+icon	failed	Failed	An × on an octagon (stop): a failure in the status bar.
+icon	cancelled	Cancelled	A circle with a slash (cancel). The same shape as CI cancelled.
+icon	disconnected	Disconnected	A broken line with an upright stroke at each end (the plugs) and a slash between: the connection is cut.
+icon	ci-passed	CI passed	A check in a circle.
+icon	ci-failed	CI failed	An × in a circle.
+icon	ci-running	CI running	Three quarters of a circle (going round).
+icon	ci-none	No CI	A dotted circle (not there yet).
+icon	ci-cancelled	CI cancelled	A dotted circle with a slash.
+head	AI	The earlier mark's idea, kept
+icon	ai	AI explanation and suggestion	A big sparkle and a small +.
+icon	translate	AI translation	A speech bubble with two lines of text inside.
+head	Comparing images	Draw the way of comparing itself
+icon	side-by-side	Side by side	A frame split in two, left and right.
+icon	swipe	Swipe	A vertical line moving across a frame, with a small arrow to the right.
+icon	onion-skin	Onion skin	Two overlapping circles: two images laid over each other, see-through.
+icon	changed-pixels	Changed pixels	Two frames overlapping off-center (where they differ).
+icon	zoom-out	Zoom out	"−" in a magnifier.
+icon	zoom-in	Zoom in	"+" in a magnifier.
+icon	zoom-fit	Zoom to fit	Four corners (fit to the frame). The same idea as corners pointing out.
+icon	checkerboard	Checkerboard	Four squares, two of them hatched.

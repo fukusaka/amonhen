@@ -33,8 +33,15 @@
 2. それでも意味が伝わらない 5 つ（Merge はよくある図案、Rebase は動いたことしか言えない、Stash と Pop はダウンロードとアップロードに見える、Repositories はケーキやトレーに見える）に、3〜4 個ずつ別の案を描いた。
 3. 選んだ案: Merge は C（Branch の裏返しで、Branch と対になる）、Rebase は B（前の根元を点で残す）、Stash と Pop は B（引き出し）、Repositories は B（本棚）。
 4. アプリに入れると、各土台の標準のアイコンの中で浮いて見えた。撮った画面で測ると、太さ 1.5 の線は macOS の SF Symbols（1.7pt と 1.4pt）、Windows の Segoe Fluent Icons（1.9px と 1px）、VSCode の codicon（1.5 と 1）より太く、GTK4 の Adwaita（1.5px と 2px）より細かった。100% の画面では画素の間にかかってにじんでいた。直し方を 2 つ見本にした。FE ごとに土台の太さにするか、全 FE で 1 つの太さ（1.25）にするか。前者を選び、縦・横の線を画素に乗せた。
+5. 残りの 72 種（サイドバーの節、ブランチと worktree の状態、道具、設定の画面、署名、取得のしかた、CI、AI、画像の比べ）も同じように描いた。最初の形で読みにくい 31 種には 3 つ以上の別案を描き、それでも決まらないものはさらに足した（メインの worktree は 16 案）。Pull request の形は、あとで 4 案から選んだ。
 
 ![描いた案と選んだ案](../images/icons/alternatives.ja.png)
+
+残りの形の意味と、選んだもとの案:
+
+![残りの形の意味](../images/icons/intent-rest.ja.png)
+
+![残りの形の案と選んだ案](../images/icons/alternatives-rest.ja.png)
 
 ## 作り
 
@@ -53,6 +60,8 @@ FE は `Icon::strokes(size, pixel_scale, stroke)` を描く。描く大きさ・
 cd crates/icons/tools
 swift figures.swift intent intent.ja.tsv ../svg ../../../docs/images/icons/intent.ja.png
 swift figures.swift alternatives alternatives.ja.tsv alternatives ../../../docs/images/icons/alternatives.ja.png
+swift figures.swift intent intent-rest.ja.tsv ../svg ../../../docs/images/icons/intent-rest.ja.png
+swift figures.swift alternatives alternatives-rest.ja.tsv alternatives ../../../docs/images/icons/alternatives-rest.ja.png
 ```
 
 ## 端末の FE

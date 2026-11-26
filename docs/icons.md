@@ -33,8 +33,15 @@ Two directions were weighed: a shared, original set drawn by every front end, or
 2. Five shapes still didn't say what they mean: Merge (a common motif), Rebase (it only said that something moved), Stash and Pop (they looked like download and upload) and Repositories (it read as a cake or a tray). Each got three or four alternatives.
 3. The chosen ones: Merge C (Branch upside down, so the two pair up), Rebase B (dots where the branch used to start), Stash and Pop B (a drawer), Repositories B (a bookshelf).
 4. In the apps they looked out of place next to each platform's own icons. Measured on screenshots: the 1.5-unit strokes were heavier than SF Symbols on macOS (1.7pt against 1.4pt), Segoe Fluent Icons on Windows (1.9px against 1px) and codicons in VSCode (1.5 against 1), lighter than Adwaita in GTK4 (1.5px against 2px), and blurred at 100% because they fell between pixels. Two fixes were drawn as samples: each front end at its platform's weight, or one weight (1.25) everywhere. The first was chosen, with straight lines moved onto whole pixels.
+5. The other 72 shapes (sidebar sections, branch and worktree states, tools, settings pages, signatures, clone states, CI, AI, image comparison) were drawn the same way. Where the first draft didn't read well, 31 of them, three or more alternatives were drawn, and more when none of those worked (16 for the main worktree). The pull request's shape was chosen from four drafts later.
 
 ![The drafts and the choice](images/icons/alternatives.en.png)
+
+The other shapes, what each one means and the drafts they were chosen from:
+
+![What the other shapes mean](images/icons/intent-rest.en.png)
+
+![The other shapes' drafts and the choice](images/icons/alternatives-rest.en.png)
 
 ## Implementation
 
@@ -53,6 +60,8 @@ The figures on this page come from `crates/icons/tools/figures.swift` (on macOS)
 cd crates/icons/tools
 swift figures.swift intent intent.en.tsv ../svg ../../../docs/images/icons/intent.en.png
 swift figures.swift alternatives alternatives.en.tsv alternatives ../../../docs/images/icons/alternatives.en.png
+swift figures.swift intent intent-rest.en.tsv ../svg ../../../docs/images/icons/intent-rest.en.png
+swift figures.swift alternatives alternatives-rest.en.tsv alternatives ../../../docs/images/icons/alternatives-rest.en.png
 ```
 
 ## The terminal front end
