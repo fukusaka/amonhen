@@ -18,6 +18,14 @@ const HEADINGS: [f64; 6] = [26.0, 21.0, 17.0, 15.0, 14.0, 13.0];
 const STEP: f64 = 22.0;
 /// 本文の欄の幅（`view` の `max_width` から左右の余白を除いたもの）。図はこれより広く見せない。
 const TEXT_WIDTH: f32 = 852.0;
+/// 欄の最大の幅と、左右の余白（`view` の Border）。
+const MAX_WIDTH: f64 = 900.0;
+const SIDES: f64 = 48.0;
+
+/// 整形表示を出す所の幅 `area`（DIP）での本文の欄の幅（幅の割合の画像の基準。macOS 版と同じく窓に合わせて変わる）。
+pub fn column_width(area: f64) -> f64 {
+    (area.min(MAX_WIDTH) - SIDES).clamp(1.0, f64::from(TEXT_WIDTH))
+}
 
 /// Mermaid・DOT の図を絵にしたもの（PNG）と、見せる大きさ（DIP）。
 pub struct DiagramPicture {
@@ -260,12 +268,14 @@ struct Pictures<'a> {
     dark: bool,
     /// 次の `<details>` の番号（文書の中で出てくる順）。
     details: Cell<usize>,
+    /// 本文の欄の今の幅（幅の割合の画像の基準）。
+    column: f64,
 }
 
 /// 読めた画像を見せる大きさ: HTML の `width`・`height`（片方なら比を保つ）か、もとの大きさ（幅は 640 まで）。
-fn shown_size(image: &MdImage, run: &Run) -> (f64, f64) {
+fn shown_size(image: &MdImage, run: &Run, column: f64) -> (f64, f64) {
     let ratio = image.height / image.width.max(1.0);
-    let (w, h) = match (width(run), run.height) {
+    let (w, h) = match (width(run, column), run.height) {
         (Some(w), Some(h)) => (w, f64::from(h)),
         (Some(w), None) => (w, w * ratio),
         (None, Some(h)) => (f64::from(h) / ratio.max(0.0001), f64::from(h)),
@@ -278,17 +288,16 @@ fn shown_size(image: &MdImage, run: &Run) -> (f64, f64) {
     }
 }
 
-/// 画像の HTML の幅（DIP）。幅の割合（`width="50%"`）は本文の欄の幅に対して決める（図と同じく欄の幅は決まった値）。
-fn width(run: &Run) -> Option<f64> {
-    run.width.map(f64::from).or_else(|| {
-        run.width_percent
-            .map(|p| percent_width(p, f64::from(TEXT_WIDTH)))
-    })
+/// 画像の HTML の幅（DIP）。幅の割合（`width="50%"`）は本文の欄の今の幅 `column` に対して決める。
+fn width(run: &Run, column: f64) -> Option<f64> {
+    run.width
+        .map(f64::from)
+        .or_else(|| run.width_percent.map(|p| percent_width(p, column)))
 }
 
 /// 幅と高さを両方決めた画像は、GitHub（ブラウザ）と同じく比を保たずにその大きさへ伸ばす。
 fn fills(run: &Run) -> bool {
-    width(run).is_some() && run.height.is_some()
+    (run.width.is_some() || run.width_percent.is_some()) && run.height.is_some()
 }
 
 /// 文の中に置く画像の一時ファイル、見せる大きさ、伸ばすか、代わりの文、基線より下に出す分（文中の数式の深さ）。
@@ -509,43 +518,53 @@ pub fn resolve(link: &str, from: &str) -> Option<String> {
     (!parts.is_empty()).then(|| parts.join("/"))
 }
 
+/// `blocks` の中の、画像を置ける飾り（見出し・段落・`<details>` の見出し）を出てくる順に `f` へ渡す。
+fn each_run(blocks: &[Block], f: &mut impl FnMut(&Run)) {
+    for block in blocks {
+        match block {
+            Block::Heading { runs, .. } | Block::Paragraph { runs, .. } => {
+                runs.iter().for_each(&mut *f)
+            }
+            Block::Quote { blocks, .. } | Block::Footnote { blocks, .. } => each_run(blocks, f),
+            Block::Details {
+                summary, blocks, ..
+            } => {
+                summary.iter().for_each(&mut *f);
+                each_run(blocks, f);
+            }
+            Block::List { items, .. } => {
+                for item in items {
+                    each_run(&item.blocks, f);
+                }
+            }
+            _ => {}
+        }
+    }
+}
+
 /// `blocks` の中の画像の場所（重ならずに、出てくる順。GTK4 版の `image_sources`）。
 fn image_sources(blocks: &[Block]) -> Vec<String> {
-    fn runs(runs: &[Run], out: &mut Vec<String>) {
-        for run in runs {
-            for src in [&run.image, &run.image_dark, &run.image_light]
-                .into_iter()
-                .flatten()
-            {
-                if !out.contains(src) {
-                    out.push(src.clone());
-                }
-            }
-        }
-    }
-    fn walk(blocks: &[Block], out: &mut Vec<String>) {
-        for block in blocks {
-            match block {
-                Block::Heading { runs: r, .. } | Block::Paragraph { runs: r, .. } => runs(r, out),
-                Block::Quote { blocks, .. } | Block::Footnote { blocks, .. } => walk(blocks, out),
-                Block::Details {
-                    summary, blocks, ..
-                } => {
-                    runs(summary, out);
-                    walk(blocks, out);
-                }
-                Block::List { items, .. } => {
-                    for item in items {
-                        walk(&item.blocks, out);
-                    }
-                }
-                _ => {}
-            }
-        }
-    }
     let mut out = Vec::new();
-    walk(blocks, &mut out);
+    each_run(blocks, &mut |run| {
+        for src in [&run.image, &run.image_dark, &run.image_light]
+            .into_iter()
+            .flatten()
+        {
+            if !out.contains(src) {
+                out.push(src.clone());
+            }
+        }
+    });
     out
+}
+
+/// `blocks` に幅を割合で決めた画像があるか（あれば、欄の幅が変わるたびに描き直す）。
+pub fn has_percent_images(blocks: &[Block]) -> bool {
+    let mut any = false;
+    each_run(blocks, &mut |run| {
+        any |= run.width_percent.is_some() && run.width.is_none();
+    });
+    any
 }
 
 /// PNG・GIF・JPEG・BMP の、頭から読める大きさ（画素）。
@@ -665,11 +684,10 @@ impl Pictures<'_> {
     }
 
     /// 読めた画像の、HTML の `width`・`height`（片方なら比を保ち、両方なら比を保たずに伸ばす）か、もとの大きさ（幅は 640 まで）で見せる絵。
-    /// 幅の割合（`width="50%"`）は本文の欄の幅に対して決める（図と同じく欄の幅は決まった値）。リンクの中の画像は
-    /// 押せる。
+    /// 幅の割合（`width="50%"`）は本文の欄の今の幅に対して決める。リンクの中の画像は押せる。
     fn image(&self, run: &Run) -> Option<View> {
         let image = self.images.get(self.source(run)?)?;
-        let (w, h) = shown_size(image, run);
+        let (w, h) = shown_size(image, run, self.column);
         let stretch = if fills(run) {
             Stretch::Fill
         } else {
@@ -704,7 +722,7 @@ impl Pictures<'_> {
     /// 文の中に置く画像の鍵（読めた画像を一時ファイルに書き、`inline_image` が部品にする）。読めなければ None。
     fn inline_key(&self, run: &Run) -> Option<String> {
         let image = self.images.get(self.source(run)?)?;
-        let (w, h) = shown_size(image, run);
+        let (w, h) = shown_size(image, run, self.column);
         let bytes = image.data.as_bytes();
         let hash = {
             use std::hash::{Hash, Hasher};
@@ -1231,6 +1249,7 @@ pub fn view(
     parsed: Option<&[Block]>,
     diagrams: &[Option<DiagramPicture>],
     images: &MdImages,
+    column: f64,
 ) -> View {
     DETAILS.with(|d| {
         let mut d = d.borrow_mut();
@@ -1244,6 +1263,7 @@ pub fn view(
         next: Cell::new(0),
         images,
         dark: crate::palette::dark(),
+        column,
     };
     let content = match parsed {
         Some(list) => blocks(list, &pictures),
@@ -1256,9 +1276,9 @@ pub fn view(
     };
     ScrollViewer::new().content(
         Border::new()
-            .max_width(900.0)
+            .max_width(MAX_WIDTH)
             .horizontal_alignment(HorizontalAlignment::Left)
-            .padding(Thickness::new(24.0, 16.0, 24.0, 24.0))
+            .padding(Thickness::new(SIDES / 2.0, 16.0, SIDES / 2.0, 24.0))
             .content(content),
     )
 }
@@ -1275,5 +1295,15 @@ mod tests {
         // 範囲の外は 1〜100 に収める（コアも 100 で止める）
         assert_eq!(percent_width(250, 852.0), 852.0);
         assert_eq!(percent_width(0, 852.0), 9.0);
+    }
+
+    #[test]
+    fn the_column_follows_the_window_up_to_its_widest() {
+        // 広ければ欄の最大（900 から左右の余白を除いた 852）、狭ければ余白を除いた幅。
+        assert_eq!(column_width(1400.0), 852.0);
+        assert_eq!(column_width(900.0), 852.0);
+        assert_eq!(column_width(548.0), 500.0);
+        assert_eq!(percent_width(50, column_width(548.0)), 250.0);
+        assert_eq!(column_width(10.0), 1.0);
     }
 }
