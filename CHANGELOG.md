@@ -76,6 +76,8 @@ becomes the GitHub Release notes.
   does, so graphs with many cycles get the same ranks.
 - DOT diagrams: an edge label beside the edge is drawn next to the line, as in Graphviz, instead of in the middle of the
   room kept for wider app fonts.
+- DOT diagrams: edges leave and enter compass ports (`:e`, `:w`, ...) in the port's direction, and record or table fields
+  along the ranks, as in Graphviz.
 - Exporting chosen folders as an archive in a partial clone fetches only the contents it asked about, not every missing
   file of the commit (git 2.41 or later; older git fetches them all, and the question now counts them all).
 - Markdown previews put a list item's mark on the same line as a list nested at its start (`- 1. text`), as GitHub
