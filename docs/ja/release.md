@@ -17,7 +17,7 @@
   （`scripts/package-gtk4.sh`）。アプリは macOS で並べてコンパイルし（`scripts/compile-app.sh`）、最後に
   組み立てて署名する（`scripts/package-app.sh`）。手元では `scripts/build-app.sh` が同じことをまとめて行う。
 - VSCode 拡張は `vscode-v*` のタグで、エンジンを同梱した .vsix を載せる（下の「[VSCode 拡張](#vscode-拡張)」を参照）。
-- main の CI（`ci.yml`）が通るたびに、そのコミットで `snapshot` という pre-release を作り直す（アプリ・エンジン・拡張。
+- main の CI（`ci.yml`）が通るたびに、そのコミットがまだ main の先頭なら（先に進んでいたら先のコミットの CI に任せる）、そのコミットで `snapshot` という pre-release を作り直す（アプリ・エンジン・拡張。
   バージョンは `<次の patch>-snapshot.<コミット数>+<sha>`。版を上げてからタグを打つまでは `<版>-snapshot.…` で、snapshot は
   そのあとの正式版より必ず古くなる）。Windows のエンジンは macOS のビルドと並んで作り、最後の
   仕事で同梱して載せる。
@@ -30,7 +30,7 @@
 | チャンネル | 作られるタイミング | バージョン |
 | --- | --- | --- |
 | stable | `vscode-v*` タグの push（アプリ・エンジンの `v*` とは別） | `x.y.z` |
-| snapshot | main の CI が通るたび（アプリ・エンジンと同じ `snapshot` という pre-release に載せる） | `x.y.(z+1)-snapshot.<前回リリースからの apps/vscode のコミット数>+<sha>` |
+| snapshot | main の先頭の CI が通るたび（アプリ・エンジンと同じ `snapshot` という pre-release に載せる） | `x.y.(z+1)-snapshot.<前回リリースからの apps/vscode のコミット数>+<sha>` |
 
 snapshot は次の patch（版を上げてからタグを打つまでは、その版）の pre-release 扱いなので、正式版を入れると snapshot より新しいと判定される。
 

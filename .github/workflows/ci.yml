@@ -1,6 +1,7 @@
 name: CI
 
-# テストが通ったら、main への push では snapshot という pre-release を作り直す（テストが落ちたコミットは配らない）。
+# テストが通ったら、main への push では snapshot という pre-release を作り直す（テストが落ちたコミットは配らない。
+# main が先に進んでいたら、先のコミットの CI に任せる）。
 # snapshot は署名するが公証はしない。
 on:
   push:
@@ -308,11 +309,38 @@ jobs:
             npm run test:e2e
           fi
 
+  # snapshot は main の先頭のコミットだけ作る。snapshot-publish は先に進んだ main のものを載せないので、古いコミットの
+  # snapshot は作っても捨てるだけで、macOS のランナー（同時に 5 つまで）を 2 つ長く取る。取り消すと、そのコミットの
+  # CI が通らなかったことになる（scripts/require-ci.sh）ので、試験が通った時点で main が先に進んでいたら飛ばす。
+  snapshot-head:
+    name: Snapshot head
+    needs: [test, git-minimum, targets, gtk, licenses, vscode]
+    if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    permissions:
+      contents: read # main の先頭を読む
+    outputs:
+      latest: ${{ steps.head.outputs.latest }}
+    steps:
+      - id: head
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+        run: |
+          head=$(gh api "repos/$GH_REPO/commits/main" --jq .sha)
+          if [ "$head" = "$GITHUB_SHA" ]; then
+            echo "latest=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "main has moved on to $head; leaving the snapshot to its CI"
+            echo "latest=false" >> "$GITHUB_OUTPUT"
+          fi
+
   # 作るのは build.yml。署名の鍵は build.yml が環境 release から読む。
   snapshot-build:
     name: Snapshot build
-    needs: [test, git-minimum, targets, gtk, licenses, vscode]
-    if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+    needs: snapshot-head
+    if: needs.snapshot-head.outputs.latest == 'true'
     # actionlint がまだ $/ の書き方を読めないので、./ で呼ぶ。
     uses: ./.github/workflows/build.yml # zizmor: ignore[self-repository]
     permissions:
