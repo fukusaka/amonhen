@@ -46,12 +46,22 @@ function capLabels(row: HTMLElement): void {
   }
 }
 
-function column(c: DrawnColumn): HTMLElement {
+/** 描いた列。札を段に収める（layout）と、行の位置から線と点を描く（paint）を分けて呼べる */
+interface Column {
+  root: HTMLElement;
+  body?: HTMLElement;
+  /** 分かれたところの行（あれば） */
+  base?: HTMLElement;
+  layout(): void;
+  paint(): void;
+}
+
+function column(c: DrawnColumn): Column {
   const root = el('div', 'drawing-column');
   root.append(el('div', 'drawing-heading', c.heading));
   if (c.message !== undefined) {
     root.append(el('div', 'drawing-message', c.message));
-    return root;
+    return { root, layout: () => undefined, paint: () => undefined };
   }
   const all: DrawnItem[] = [...c.items, ...(c.base ? [c.base] : [])];
   const lanes = Math.max(1, ...all.map((r) => r.lane));
@@ -95,8 +105,10 @@ function column(c: DrawnColumn): HTMLElement {
   body.append(graph, ...rows);
 
   // 線と点は、並んだ行の位置から描く（幅が変わって折り返しが変われば描き直す）
-  const paint = () => {
+  const layout = () => {
     for (const row of rows) capLabels(row);
+  };
+  const paint = () => {
     const top = rows.map((row) => row.offsetTop);
     const center = (i: number) => top[i]! + ROW / 2;
     graph.replaceChildren();
@@ -151,17 +163,32 @@ function column(c: DrawnColumn): HTMLElement {
       graph.append(dot);
     });
   };
-  // 置かれて大きさが決まったとき（最初）と、幅が変わったときに描く
-  new ResizeObserver(paint).observe(body);
   root.append(body);
-  return root;
+  return { root, body, ...(baseAt !== undefined ? { base: rows[baseAt]! } : {}), layout, paint };
 }
 
 export function drawing(d: Drawing): HTMLElement {
   const root = el('div', 'rewrite-drawing');
-  d.columns.forEach((c, i) => {
+  const columns = d.columns.map(column);
+  columns.forEach((c, i) => {
     if (i > 0) root.append(el('div', 'drawing-arrow', '→'));
-    root.append(column(c));
+    root.append(c.root);
   });
+  // 置かれて大きさが決まったとき（最初）と、幅が変わったときに描く。Edit では、下の書き換えないコミットを左右で
+  // 同じ高さに（高い方の列に合わせて、低い方の列はその前を空ける。アプリと同じ）
+  const paint = () => {
+    for (const c of columns) c.layout();
+    if (d.alignBase) {
+      // 列の頭からの位置で比べる（狭くて縦に積んだときも、それぞれの列の中で同じ位置に）
+      const bases = columns.flatMap((c) => (c.base ? [{ row: c.base, column: c.root }] : []));
+      const at = ({ row, column }: (typeof bases)[number]) => row.getBoundingClientRect().top - column.getBoundingClientRect().top;
+      for (const b of bases) b.row.style.marginTop = '';
+      const lowest = Math.max(...bases.map(at));
+      for (const b of bases) b.row.style.marginTop = `${lowest - at(b)}px`;
+    }
+    for (const c of columns) c.paint();
+  };
+  const observer = new ResizeObserver(paint);
+  for (const c of columns) if (c.body) observer.observe(c.body);
   return root;
 }

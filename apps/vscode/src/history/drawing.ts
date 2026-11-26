@@ -47,6 +47,8 @@ export interface DrawnColumn {
 /** 前と後（または今だけ）の列 */
 export interface Drawing {
   columns: DrawnColumn[];
+  /** 分かれたところ（下の書き換えないコミット）を、高い方の列に合わせて左右で同じ高さに置く（Edit。アプリと同じ） */
+  alignBase?: boolean;
 }
 
 export interface DrawnRef {
@@ -230,7 +232,7 @@ export function editDrawing(p: RewritePreview): Drawing | undefined {
       base: d.base ? { subject: d.base.subject, lane: 0, dim: true, labels: labels(d.base.oid, true) } : undefined,
     };
   };
-  return { columns: [column(false), column(true)] };
+  return { columns: [column(false), column(true)], alignBase: true };
 }
 
 export interface MoveOptions {

@@ -200,5 +200,7 @@ test('editDrawing marks what each step does and puts the branch on top of both s
   assert.deepEqual(labels(after?.items[0]), ['*topic']);
   assert.equal((after?.items[0] as DrawnRow).note, '2 commits in one');
   assert.deepEqual(labels(after?.base), ['main']);
+  // 下の書き換えないコミットは、左右で同じ高さに置く（Edit だけ）
+  assert.equal(d!.alignBase, true);
   assert.equal(editDrawing({ moving: [], staying: [] }), undefined);
 });
