@@ -13,6 +13,7 @@ import {
   stashStamp,
 } from '../git/stamp.ts';
 import type { StatusEntry, StatusResult } from '../git/status.ts';
+import { withStopNotice } from './stopNotice.ts';
 import { UndoLog } from './undo.ts';
 
 /** `mailmap` は、人の名前の置き換え（`.mailmap`・`log.mailmap`）が変わったかもしれないとき */
@@ -91,10 +92,20 @@ export class Repository implements vscode.Disposable {
    */
   readonly onDidChangeContents = this._onDidChangeContents.event;
 
+  private readonly _onDidStop = new vscode.EventEmitter<void>();
+  /** 操作がコンフリクトや途中（break・edit）で止まった（アプリと同じく Working Copy で最初のコンフリクトを開く） */
+  readonly onDidStop = this._onDidStop.event;
+
   constructor(backend: RepositoryBackend, log: vscode.LogOutputChannel) {
-    this.backend = backend;
+    // 止まりうる書き込みは、どこから呼んでも止まったことをここで知る
+    this.backend = withStopNotice(backend, () => this.stopped());
     this.undo = new UndoLog(backend);
     this.log = log;
+  }
+
+  /** 操作が止まったことを知らせる（backend を通らない操作、subtree の Pull などから） */
+  stopped(): void {
+    this._onDidStop.fire();
   }
 
   get root(): string {
@@ -341,6 +352,7 @@ export class Repository implements vscode.Disposable {
   dispose(): Promise<void> {
     this._onDidChange.dispose();
     this._onDidChangeContents.dispose();
+    this._onDidStop.dispose();
     return this.backend.dispose();
   }
 }

@@ -145,7 +145,7 @@ GTK4 のアプリは macOS のアプリと同じふるまいをめざす。わ�
 | --- | :-: | :-: | :-: | :-: | :-: | :-: | --- |
 | 設定のページ（ページの一覧・git の行・行ごとの出どころ・↩︎・ⓘ） | ✓ | ✓ | ✓ | ✓ | n/a | n/a | VSCode: メインビューの Repository Settings（エンジンがあるとき）で、このリポジトリの設定だけ。<br>Windows: ページを左に並べる（一般・Git・表示・差分とマージ・パフォーマンス）。設定の行には設定元・↩︎・ⓘ（段ごとの値をツールチップで）。<br>TUI: 設定のページはない。アプリと `amonhen run` が変える。 |
 | Author and Signing（署名の選択・集めた鍵・mailmap） | ✓ | ✓ | ✓ | ✓ | △ | n/a | VSCode: 鍵は今の形式のものだけを集める。<br>CLI: `amonhen run`（`signingKeys`・`configSet`）から。 |
-| Commits: メッセージのテンプレート（なし・共有・独自・ファイル） | ✓ | ✓ | ✓ | △ | △ | n/a | VSCode: なし・このリポジトリ専用（その場で書く）・ファイル。共有のテンプレートはない。<br>CLI: `amonhen run` から。 |
+| Commits: メッセージのテンプレート（なし・共有・独自・ファイル） | ✓ | ✓ | ✓ | △ | △ | n/a | VSCode: なし・このリポジトリ専用（その場で書く）・ファイル（行の下に最初の数行を出す）。共有のテンプレートはない。<br>CLI: `amonhen run` から。 |
 | Branches: 既定のブランチを選ぶ | ✓ | ✓ | ✓ | ✓ | △ | n/a | CLI: `amonhen run` から。 |
 | Operations: pull・fetch.prune・autostash・updateRefs・コンフリクトの書き方・rerere | ✓ | ✓ | ✓ | ✓ | △ | n/a | CLI: `amonhen run` から。 |
 | rerere: 1 つの解決を忘れる（マージエディタ）・すべて忘れる（リポジトリの設定） | ✓ | ✓ | ✓ | ✓ | △ | n/a | VSCode: rerere が解決したコンフリクトの Working Copy の右クリックに Forget Resolution（マージエディタは VSCode のもの）、Repository Settings > Operations に Forget All…。<br>CLI: `amonhen run`（`forgetResolution`・`forgetAllResolutions`）から。 |
@@ -153,7 +153,7 @@ GTK4 のアプリは macOS のアプリと同じふるまいをめざす。わ�
 | Remotes: 表と、つながるか確かめるシート | ✓ | ✓ | ✓ | ✓ | △ | n/a | VSCode: 表と行ごとのボタン（Edit URL…・Push URL…・Check・Prune・Rename…・Remove…）と Add…。値はシートでなく入力欄で聞く。<br>CLI: `amonhen run` から。 |
 | Hooks: 表・Enabled・スクリプト・Create Hook… | ✓ | ✓ | ✓ | ✓ | △ | n/a | VSCode: Open で VSCode のエディターにスクリプトを開く。<br>CLI: `amonhen run` から。<br>Windows: Windows ではフックを止められない（git が実行の許可にかかわらず動かす）。Edit With はない |
 | LFS: 入っているか・パターン・Track Pattern…・ファイルの数 | ✓ | ✓ | ✓ | ✓ | △ | n/a | CLI: `amonhen run` から。 |
-| Keys and Values（git config の表、Basic / Customized / All、Combined / Levels） | ✓ | ✓ | ✓ | ✓ | △ | n/a | VSCode: Basic / Customized / All、Combined / Levels と検索。値は入力欄で変える。<br>CLI: `amonhen run`（`configList`・`configSet`）から。 |
+| Keys and Values（git config の表、Basic / Customized / All、Combined / Levels） | ✓ | ✓ | ✓ | ✓ | △ | n/a | VSCode: Basic / Customized / All、Combined / Levels と検索。section ごとの組、列での並べ替え、いくつもある値はすべて出す。値は入力欄で変える。<br>CLI: `amonhen run`（`configList`・`configSet`）から。 |
 | 要る git の版を添えて行を無効にする | ✓ | ✓ | ✓ | ✓ | n/a | n/a | Windows: 取得とフォルダの行（partial clone・sparse checkout・maintenance） |
 | git の行にリポジトリの形（shallow・partial・sparse・maintenance） | ✓ | ✓ | ✓ | ✓ | △ | n/a | CLI: `status` が shallow・partial・sparse を添える。 |
 | 取得とフォルダ: shallow clone の履歴を取り足す（数・日付まで・すべて） | ✓ | ✓ | ✓ | ✓ | △ | ✓ | CLI: `amonhen run`（`deepen`・`unshallow`）から。<br>TUI: History の `+`。 |
@@ -241,7 +241,7 @@ GTK4 のアプリは macOS のアプリと同じふるまいをめざす。わ�
 | 空白を無視する（その間は行ごとの stage・破棄はしない） | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | VSCode: エンジンがあれば。その間は選んだ側（Changes か Staged）の差分。<br>CLI: `diff -w`・`-b`・`--ignore-space-at-eol`（`--combined` とは使えない）。<br>TUI: 差分の `w` で順に替える。その間は片方の側だけ（`s` で替える）。 |
 | 行・hunk・ファイルを捨てる（Undo できる） | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | CLI: `discard --rows`。<br>Windows: Working Copy の差分で行を押して選び（Shift で範囲、Ctrl で足す・外す、hunk の見出しでその hunk）、右クリックの Discard Lines。選んでいない行・hunk の見出しを右クリックすれば、そこだけ。 |
 | Add to .gitignore | ✓ | ✓ | ✓ | ✓ | n/a | ✓ | VSCode: エンジンがあれば。<br>TUI: untracked のファイルで `i`、続けて `p` でそのパス、`e` で拡張子。 |
-| コンフリクトのファイルからマージエディターを開く | ✓ | ✓ | ✓ | ✓ | n/a | n/a | macOS, GTK4: UTF-8 でないファイルは開かない。片側を選ぶ。<br>VSCode: VSCode のマージエディターを開く。<br>TUI: ファイルの差分にマーカーを出し、`o` `t` `b` `a` で選んでいる行のコンフリクトを解く。 |
+| コンフリクトのファイルからマージエディターを開く | ✓ | ✓ | ✓ | ✓ | n/a | n/a | macOS, GTK4: UTF-8 でないファイルは開かない。片側を選ぶ。<br>VSCode: VSCode のマージエディターを開く。操作がコンフリクトで止まると、メインビューを Working Copy に切り替えて最初のファイルを開く。<br>TUI: ファイルの差分にマーカーを出し、`o` `t` `b` `a` で選んでいる行のコンフリクトを解く。 |
 | 一部のフォルダだけを取り出しているとき、一覧の上に知らせる | ✓ | ✓ | ✓ | ✓ | △ | ✓ | CLI: `status` が sparse checkout を添える。 |
 
 ## History
@@ -281,7 +281,7 @@ GTK4 のアプリは macOS のアプリと同じふるまいをめざす。わ�
 | 画像を比べる（並べる・スワイプ・オニオンスキン・違うピクセル） | ✓ | ✓ | ✓ | ✓ | n/a | — | VSCode: 20 MB を超える画像は比べない。拡大縮小（−・倍率・+・合わせる・⌘ スクロール）と違うピクセルの割合はアプリと同じ。SVG は絵で出し、Show as Text で文字に。 |
 | 透けた絵の下の市松模様を明るく・暗く（既定は絵の色から） | ✓ | ✓ | ✓ | ✓ | n/a | — | |
 | すべてのファイル: その時点の木と、コミットの行に印を付けたファイルの中身 | ✓ | ✓ | ✓ | ✓ | n/a | ✓ | VSCode: エンジンがあれば。リストか木（帯の List・Tree）、変えたフォルダは最初から開く、消したファイルは前の版を出す、パスの後に @ とコミット、Show This Change でその差分へ、Markdown の相対リンクでそのファイルを開く。<br>TUI: History の `a`。画面に重ねる。プレビューはない（中身は文字で出す）。 |
-| すべてのファイルのプレビュー: 拡大縮小できる画像・SVG の絵とモバイル向けの確認・整形した Markdown・バイナリの Quick Look | ✓ | ✓ | ✓ | △ | n/a | — | VSCode: どのファイルも Quick Look の代わりに VSCode のエディタで開ける。モバイル向けの確認は部品を切り替え（覚える）、SVG・Markdown・VectorDrawable の見方も覚える。Mermaid・DOT の図と数式は、エンジンと一緒に同梱した絵の手伝い（`amonhen-render`。エンジンそのものは描かない）が描く。図はテーマの構文の色で描く（図の中で指定したテーマが先。図の配色の設定はない）。gantt の日付はシステムの時間帯で数える。<br>GTK4: Quick Look の代わりに GNOME のプレビュー（か既定のアプリ）。SVG の絵は librsvg で描く。<br>Windows: 拡大縮小できる画像・SVG の絵とモバイル向けの確認・整形した Markdown とその中の Mermaid・DOT の図（Direct2D の SVG は文字を描かないので resvg で描く）。部品の切り替えはパスの帯にある。数式はほかのアプリと同じく描く（文中の式は基線にそろえる）。バイナリはその時点の中身を既定のアプリで開く（Windows には Quick Look がない）。コミットの中の画像・`<picture>`・`align`・画像の大きさ（幅の割合は、窓の幅に合わせて変わる本文の欄の幅に対して決める）・`<details>` を描き、DOT の画像ノードも絵を出す。文の途中の画像は行の中に置き、`<kbd>` はキーの札、`<sub>`・`<sup>` は下付き・上付き。 |
+| すべてのファイルのプレビュー: 拡大縮小できる画像・SVG の絵とモバイル向けの確認・整形した Markdown・バイナリの Quick Look | ✓ | ✓ | ✓ | △ | n/a | — | VSCode: どのファイルも Quick Look の代わりに VSCode のエディタで開ける。モバイル向けの確認は部品を切り替え（覚える）、SVG・Markdown・VectorDrawable の見方も覚える。Mermaid・DOT の図と数式は、エンジンと一緒に同梱した絵の手伝い（`amonhen-render`。エンジンそのものは描かない）が描く。図は既定で Mermaid の色で描き（図の中で指定したテーマが先）、アプリと同じ配色の選択・数式の大きさ・数式の時間の上限・gantt の時間帯を VSCode の設定（`amonhen.diagrams.*`・`amonhen.math.*`）に持つ。取り込む Mermaid のテーマは一覧ではなく、設定で指す 1 つのファイル。モバイル向けの確認はアプリと同じ絵・注意・比べ方を出す。<br>GTK4: Quick Look の代わりに GNOME のプレビュー（か既定のアプリ）。SVG の絵は librsvg で描く。<br>Windows: 拡大縮小できる画像・SVG の絵とモバイル向けの確認・整形した Markdown とその中の Mermaid・DOT の図（Direct2D の SVG は文字を描かないので resvg で描く）。部品の切り替えはパスの帯にある。数式はほかのアプリと同じく描く（文中の式は基線にそろえる）。バイナリはその時点の中身を既定のアプリで開く（Windows には Quick Look がない）。コミットの中の画像・`<picture>`・`align`・画像の大きさ（幅の割合は、窓の幅に合わせて変わる本文の欄の幅に対して決める）・`<details>` を描き、DOT の画像ノードも絵を出す。文の途中の画像は行の中に置き、`<kbd>` はキーの札、`<sub>`・`<sup>` は下付き・上付き。 |
 | 整形した Markdown の中を探す（キーの札・表のマスも） | ✓ | ✓ | ✓ | ✓ | n/a | — | 絵と閉じた `<details>` の中は探さない。<br>VSCode: Markdown を押して入ってから ⌘F（Ctrl+F）。ビューのほかの所の ⌘F は VSCode の検索。 |
 | すべてのファイル: Android の VectorDrawable の絵（色はコミットの `res` から、animated-vector は動く前の絵） | ✓ | ✓ | ✓ | ✓ | n/a | — | |
 | ファイルの見出しのメニュー（Blame・File History・パスのコピー・開く） | ✓ | ✓ | ✓ | ✓ | n/a | ✓ | VSCode: 先頭に Expand・Collapse、Open File at This Commit、Show Whole File の後は Show Changes Only。いくつも選んだときの見出しにも File History・Copy Path。 右クリックと ⋯ の Show Whole File・Blame・File History・この版／前の版に戻す・Copy Path（Copy Path 以外はエンジンがあれば）と、VSCode の差分のエディターで開く。この時点のファイルを開くはない。<br>TUI: 見ているファイルの `B`・`L`・`Y`（パスのコピー）・`e`（git のエディタで開く）。 |
@@ -368,7 +368,7 @@ GTK4 のアプリは macOS のアプリと同じふるまいをめざす。わ�
 
 | 機能 | macOS | GTK4 | Windows | VSCode | CLI | TUI | Notes |
 | --- | :-: | :-: | :-: | :-: | :-: | :-: | --- |
-| 進行中の操作と Continue / Skip / Abort | ✓ | ✓ | ✓ | ✓ | n/a | ✓ | VSCode: サイドバーの行。エンジンがあれば、アプリの帯と同じく何をどこへしている途中か（何手目か）と、なぜ止まったか（コミット・コンフリクト・exec・編集で止まった）と次にすることを言う。revert には Skip を出さない（アプリと同じ）。<br>TUI: 一番下の行に出し、`C` `K` `A`。 |
+| 進行中の操作と Continue / Skip / Abort | ✓ | ✓ | ✓ | ✓ | n/a | ✓ | VSCode: サイドバーの行。エンジンがあれば、アプリの帯と同じく何をどこへしている途中か（何手目か）と、なぜ止まったか（コミット・コンフリクト・exec・編集で止まった）と次にすることを言う。revert には Skip を出さない（アプリと同じ）。マーカーの残っていないコンフリクトがあれば、その数を添え、まとめて解決済みにするボタンを出す。<br>TUI: 一番下の行に出し、`C` `K` `A`。 |
 | 失敗とその原因・Details | ✓ | ✓ | ✓ | ✓ | n/a | ✓ | VSCode: 見分けられる失敗（認証・ホスト鍵・つながらない・断られた・分かれた・作業中の変更・ロック・上流なし・worktree）は知らせを分かる言葉にし、アプリと同じ次の一手（Pull…・Open Working Copy・Set Upstream…・Open Worktree・Open in Terminal・Try Again）を添える。そうでなければ git の fatal:・error: の行。Details で助言と全文と git の命令を出力パネルに出す。<br>TUI: 原因は一番下の行に。`!` で git のコマンドと答えの全部を出す。 |
 | 切れたつながりと Reconnect | ✓ | ✓ | ✓ | n/a | n/a | ✓ | TUI: 一番下の行に出し、`R` で同じ場所を開き直す。 |
 | 終わった操作が何をしたか、数秒 | ✓ | ✓ | ✓ | ✓ | n/a | ✓ | VSCode: ステータスバーの文か、Undo 付きの知らせ。<br>TUI: 一番下の行に。 |

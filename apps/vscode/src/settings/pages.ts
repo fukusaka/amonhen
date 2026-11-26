@@ -210,13 +210,3 @@ export const PAGES: SettingPage[] = [
   },
 ];
 
-/** ページの行が聞くキー（Keys and Values の Basic に出す） */
-export function pageKeys(): string[] {
-  const keys = new Set<string>(['pull.rebase', 'pull.ff', 'amonhen.defaultBranch']);
-  for (const page of PAGES) {
-    for (const section of page.sections) {
-      for (const row of section.rows) if ('key' in row) keys.add(row.key);
-    }
-  }
-  return [...keys].sort();
-}

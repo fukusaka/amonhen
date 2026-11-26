@@ -1,4 +1,6 @@
 import type { EditRow } from '../history/editPlan.ts';
+import { readFile } from 'node:fs/promises';
+import { homedir } from 'node:os';
 import { basename } from 'node:path';
 import * as vscode from 'vscode';
 import { daemonLanguage, type DaemonClient } from '../daemon/client.ts';
@@ -62,6 +64,7 @@ import { gitUri } from './uri.ts';
 import { repositorySlug } from '../git/github.ts';
 import { isVectorDrawable } from '../history/vectorDrawable.ts';
 import { drawMarkdownPictures } from '../history/markdownPictures.ts';
+import { pictureSettings, type PictureSettings } from '../history/pictureSettings.ts';
 import { onDidChangeSignatureConfig } from './signatureConfig.ts';
 import { showError } from './stageCommands.ts';
 
@@ -166,6 +169,11 @@ function normalizePath(path: string): string | undefined {
 const MAX_IMAGE_BYTES = 20 * 1024 * 1024;
 
 /** 画像の拡張子の MIME の型 */
+/** Markdown のブロックに描いた図（描けなかったものも）があるか */
+function hasDiagrams(blocks: readonly unknown[]): boolean {
+  return JSON.stringify(blocks).includes('"kind":"diagram"');
+}
+
 function imageType(path: string): string {
   const ext = path.slice(path.lastIndexOf('.') + 1).toLowerCase();
   const types: Record<string, string> = { jpg: 'image/jpeg', jpeg: 'image/jpeg', svg: 'image/svg+xml', ico: 'image/x-icon' };
@@ -394,7 +402,7 @@ export class HistoryController implements vscode.Disposable {
         await this.sendTreeEntries(message.oid, message.path).catch(showError);
         break;
       case 'treeFile':
-        await this.sendTreeFile(message.oid, message.path, message.colors, message.utcOffset).catch((err: unknown) =>
+        await this.sendTreeFile(message.oid, message.path, message.colors, message.timeZone).catch((err: unknown) =>
           this.post({ type: 'treeFile', oid: message.oid, path: message.path, view: { kind: 'error', message: errorMessage(err) } }),
         );
         break;
@@ -882,9 +890,10 @@ export class HistoryController implements vscode.Disposable {
    * コミットのファイルの中身を送る（「すべてのファイル」。エンジンだけ）。このコミットで変えたファイルは、ファイル
    * 全体の差分から、足した行・変えた行・消したところに印を付ける。画像は絵、Markdown は整形のブロック、SVG は絵と
    * モバイルの確認も。Markdown の図・数式、Android の VectorDrawable、SVG のモバイルの確認は、絵の手伝い
-   * （`amonhen-render`）が `colors`（Webview の画面の色）で作る（手伝いがない・失敗したときは、コードとテキストのまま）
+   * （`amonhen-render`）が `colors`（Webview の画面の色）で作る（手伝いがない・失敗したときは、コードとテキストのまま）。
+   * 図の配色・gantt の時間帯・数式の大きさと時間の上限は設定から（時間帯が「OS の時間帯」なら Webview の `timeZone`）
    */
-  private async sendTreeFile(oid: string, path: string, colors?: PictureColors, utcOffset?: number): Promise<void> {
+  private async sendTreeFile(oid: string, path: string, colors?: PictureColors, timeZone?: string): Promise<void> {
     const repo = this.repo;
     const client = this.daemon?.client;
     if (!repo || !client) return;
@@ -898,11 +907,36 @@ export class HistoryController implements vscode.Disposable {
       return session.request(op, fields);
     };
     try {
-      await this.sendTreeFileWith(oid, path, render, colors, utcOffset);
+      const settings = await this.pictureSettings(repo.root, timeZone);
+      await this.sendTreeFileWith(oid, path, render, colors, settings);
     } finally {
       void helper?.then((session) => session?.close());
     }
   }
+
+  /** 図と数式の設定（アプリの Settings > Theme の Diagrams・Math と同じ） */
+  private async pictureSettings(root: string, localZone: string | undefined): Promise<PictureSettings> {
+    const config = vscode.workspace.getConfiguration('amonhen');
+    return pictureSettings(
+      {
+        colors: config.get('diagrams.colors'),
+        mermaidTheme: config.get('diagrams.mermaidTheme'),
+        timeZone: config.get('diagrams.timeZone'),
+        formulaSize: config.get('math.formulaSize'),
+        timeLimit: config.get('math.timeLimit'),
+      },
+      { root, home: homedir(), read: (file) => readFile(file, 'utf8'), ...(localZone ? { localZone } : {}) },
+    );
+  }
+
+  /** 読み込んだ Mermaid のテーマが使えないわけを知らせる（同じわけは 1 度だけ） */
+  private warnTheme(error: string): void {
+    if (this.themeWarned === error) return;
+    this.themeWarned = error;
+    void vscode.window.showWarningMessage(`${error}. Diagrams use the syntax colors.`);
+  }
+
+  private themeWarned: string | undefined;
 
   /** 絵の手伝いを起動する。同じコミット `oid` のファイル・フォルダの求めには、git とエンジンで読んで答える */
   private async startRender(client: DaemonClient, repo: Repository, oid: string): Promise<RenderSession | undefined> {
@@ -929,8 +963,8 @@ export class HistoryController implements vscode.Disposable {
     oid: string,
     path: string,
     render: (op: string, fields: Record<string, unknown>) => Promise<Record<string, unknown>>,
-    colors?: PictureColors,
-    utcOffset?: number,
+    colors: PictureColors | undefined,
+    settings: PictureSettings,
   ): Promise<void> {
     const repo = this.repo;
     const client = this.daemon?.client;
@@ -971,8 +1005,13 @@ export class HistoryController implements vscode.Disposable {
       const blocks = (reply.json['info'] as { blocks?: unknown[] } | undefined)?.blocks;
       if (blocks) {
         // 図と数式は絵の手伝いで描く（描けなかったものはコードのまま、構文の色を付ける）
-        if (colors) await drawMarkdownPictures(blocks, path, colors, utcOffset, render);
+        if (colors) {
+          const drawn = await drawMarkdownPictures(blocks, path, colors, settings.options, render);
+          const themeError = settings.themeError ?? drawn.themeError;
+          if (themeError && hasDiagrams(blocks)) this.warnTheme(themeError);
+        }
         view.markdown = await this.colorCode(client, await this.inlineImages(repo, at, path, blocks));
+        view.mathScale = settings.mathScale;
       }
     }
     // Android の VectorDrawable は絵にする（引けない色は画面の文字の色で。描けなければテキストだけ。アプリと同じ）
@@ -992,7 +1031,7 @@ export class HistoryController implements vscode.Disposable {
       const reply = await render('svgCheck', { data: data.toString('base64') }).catch(() => undefined);
       const check: SvgCheckView | undefined =
         reply && Array.isArray(reply['issues'])
-          ? { issues: reply['issues'] as SvgCheckView['issues'], approximations: (reply['approximations'] ?? {}) as SvgCheckView['approximations'] }
+          ? { issues: reply['issues'] as SvgCheckView['issues'], previews: (reply['previews'] ?? {}) as SvgCheckView['previews'] }
           : undefined;
       view.svg = { image: { url: `data:image/svg+xml;base64,${data.toString('base64')}`, bytes: data.length }, ...(check ? { check } : {}) };
     }

@@ -20,7 +20,7 @@ VSCode 上で快適に Git を操作するための自分用の拡張。Marketpl
 | Working Copy | 変更の数。選ぶとメインビューに Working Copy を出す。worktree が 2 つ以上あれば、その下に並べる |
 | History | 現在のブランチ。選ぶとメインビューに History を出す |
 | Conflicts | コンフリクトがある間だけ、数を添えて出す。選ぶと最初のファイルをマージエディタで開く |
-| merge / rebase の途中 | 「Rebase in progress (2/5)」のような行。Continue / Skip / Abort |
+| merge / rebase の途中 | 「Rebase in progress (2/5)」のような行。Continue / Skip / Abort。マーカーの残っていないコンフリクトがあれば、その数とまとめて解決済みにするボタンを出す |
 | Branches | `feature/x` はフォルダにまとめる。現在のブランチに ✓、upstream との差（↑↓）、upstream が消えていれば gone |
 | Remotes / Tags / Stashes / Submodules / Subtrees | 開いたときに取得する。Stashes は stash がある間だけ、Subtrees はエンジンがあり git に `git subtree` があるとき |
 | Range Diff | Range Diff を開いている間だけ。選ぶとメインビューに出す |
@@ -32,7 +32,7 @@ VSCode 上で快適に Git を操作するための自分用の拡張。Marketpl
 - ブランチ・タグの右クリックで Checkout…（リモートブランチは Checkout as Local Branch…。追跡するローカルブランチを作って切り替える）、チェックアウトしていないローカルブランチなら Fast-Forward to Upstream（upstream より後ろにだけあるとき。最後の Fetch の時点。ほかの worktree でチェックアウト中のものは除く）か Push to Upstream…（先にだけあるとき）、upstream の無いローカルブランチなら Publish…（送り先のリモートがあるとき）、Merge into Current Branch…（取り込み方を選ぶ: git の設定のとおり・fast-forward だけ・いつも merge コミット・1 つのコミットにまとめる）、Rebase Current Branch onto This…（タグにはない）、Rename…、Delete…、New Branch（そこから作って切り替える）、New Tag（ローカルブランチだけ。メッセージを入れれば annotated tag）。アプリと同じ項目。作成と削除は Undo で戻せる。
 - エンジンがあるとき、New Orphan Branch…（コマンドパレット、Branches のグループの右クリック）で履歴のないブランチに切り替える。Start Empty（`git switch --orphan`）か、今のファイルを最初のコミットのために stage して残す Keep the Files（`git checkout --orphan`）。
 - ローカルブランチの右クリックの Compare with Previous Version で、最後の rebase・amend の前の版（reflog から）と比べ、`git range-diff` と同じ形でメインビューのページに出す。開いている間、サイドバーに Range Diff の行が残る。パレットの「Amon Hen: Range Diff」は今のブランチの前の版との比較から始まり、ページの上の範囲を直せば好きな 2 つの範囲を比べられる。
-- エンジンがあるとき、Repository Settings（サイドバーの下）にこのリポジトリの git の設定がアプリと同じページで出る。行には効いている値、このリポジトリが上書きしている間の ↩︎、設定元、ⓘ（キー・ファイル・上書きしなければ効く値）があり、git の行にリポジトリを動かす git と形（shallow・partial・sparse・maintenance）が出る。Author and Signing に名前・メール・署名（OpenPGP・SSH・X.509。見つかった鍵から選ぶ）・mailmap、Commits にメッセージのテンプレート（なし・このリポジトリ専用（その場で書く）・ファイル）、Operations に Pull の取り込み方・fetch.prune・rebase.autoStash・rebase.updateRefs（git 2.38）・コンフリクトの書き方・rerere、Branches にほかのブランチを測る既定のブランチ、Working Copy に改行・実行ビット・`.git/info/exclude`、Fetching and Folders に shallow clone の取り足し・partial clone の全取得、一部のフォルダだけを取り出す（HEAD の木から選ぶ。sparse checkout、git 2.25）・すべてに戻す、git maintenance の切り替え（git 2.31）、Remotes にリモートの一覧（URL と指す先）と、URL の変更・fetch と別の push の URL・prune・つながるかの確かめ・名前の変更・削除・追加、Hooks and LFS にフックの一覧（いつ動くか・有効か。エディターで開く・雛形から作る）と Git LFS のパターン・ファイルの数、Keys and Values に git の設定の表（ページの行が聞くキー・このリポジトリで決めているキー・git が読むキーすべて。検索できる）と、効いている値・設定元、このリポジトリでのキーの変更・削除・追加がある。
+- エンジンがあるとき、Repository Settings（サイドバーの下）にこのリポジトリの git の設定がアプリと同じページで出る。行には効いている値、このリポジトリが上書きしている間の ↩︎、設定元、ⓘ（キー・ファイル・上書きしなければ効く値）があり、git の行にリポジトリを動かす git と形（shallow・partial・sparse・maintenance）が出る。Author and Signing に名前・メール・署名（OpenPGP・SSH・X.509。見つかった鍵から選ぶ）・mailmap、Commits にメッセージのテンプレート（なし・このリポジトリ専用（その場で書く）・ファイル（中身の初めの行を出す））、Operations に Pull の取り込み方・fetch.prune・rebase.autoStash・rebase.updateRefs（git 2.38）・コンフリクトの書き方・rerere、Branches にほかのブランチを測る既定のブランチ、Working Copy に改行・実行ビット・`.git/info/exclude`、Fetching and Folders に shallow clone の取り足し・partial clone の全取得、一部のフォルダだけを取り出す（HEAD の木から選ぶ。sparse checkout、git 2.25）・すべてに戻す、git maintenance の切り替え（git 2.31）、Remotes にリモートの一覧（URL と指す先）と、URL の変更・fetch と別の push の URL・prune・つながるかの確かめ・名前の変更・削除・追加、Hooks and LFS にフックの一覧（いつ動くか・有効か。エディターで開く・雛形から作る）と Git LFS のパターン・ファイルの数、Keys and Values に git の設定の表（ページ群が尋ねるキー・このリポジトリで決めているキー・git が読むキーすべて。検索できる。section・subsection ごとに開閉でき、どの列でも並べ替えられる）と、効いている値（いくつも値を持つキーはすべて）・設定元、このリポジトリでのキーの変更・削除・追加がある。
 - エンジンがあるとき、shallow clone の History には Shallow の札が付き、履歴が止まるコミットに ⋯ の印、最後に Fetch More…（100・1,000・10,000 コミット、ほかの数、日付まで）・Fetch All の帯が出る。partial clone には Partial の札が付き、押すと確かめてから取らずにおいた中身をすべて取る（git 2.36 から）。同じものはコマンドパレットにもある。
 - エンジンがあるとき、History の署名したコミットに署名の印が付き（アプリと同じく、Verified は緑、鍵の信用度が決まっていない・署名者がコミッターと違うときは黄、不正な署名・失効した鍵は赤）、詳細に署名（説明・署名した人・鍵）と子のコミットが出る。History の上の HEAD のボタンと、コミットのメニューの Go to Parent・Go to Child で、そのコミットに移る。
 - エンジンがあるとき、Branches はアプリと同じ並びになる。お気に入り（★。Move Up・Move Down in Favorites で決めた順）、今のブランチ（その積み重ねの根元ごと）と既定のブランチ、ほかは新しい順（`/` の名前はフォルダー、既定のブランチに取り込み済みなら「merged」）、畳んだ Inactive（90 日コミットがない）と Archived。ほかのブランチの上に積んだブランチは、その下に入れ子で出る。Add to Favorites・Archive はブランチのメニューにあり、git の設定に書くのでアプリと共有する。サイドバーの上の絞り込みのボタンで言葉を入れると、名前にどれも含むブランチ・リモートブランチ・タグだけを出す（Clear Filter で戻る）。ブランチ・タグをいくつも選ぶ（⇧・⌘ を押してクリック）と、名前をコピーする、今のブランチに 1 つのコミットで merge する、まとめて消す、まとめてお気に入り・アーカイブにする、ができる。ブランチ・タグの右クリックに Copy Branch Name・Copy Tag Name がある（リモートブランチはリモートの名前を付けたまま）。
@@ -45,7 +45,7 @@ VSCode 上で快適に Git を操作するための自分用の拡張。Marketpl
 - Stashes の節は stash があるときだけ出る。その見出しの `+` で、作業中の変更を stash する（untracked のファイルを含めるかを選べる）。stash を選ぶと中身を複数ファイル diff で開き、右クリックで Apply / Pop / Drop（Undo で戻せる）。Apply と Pop は stage していた状態も戻す。エンジンがあるとき、stash の行には untracked のファイルを含むかが付き、ツールチップに作ったときのブランチと、土台から HEAD がどれだけ動いたかが出る。Branch… はその土台にブランチを作って stash を当て、見出しの Pop Latest Stash… は確かめてから最新の stash を pop する。
 - エンジンがあるとき、Stash には Stash Only the Staged Changes（git 2.35 から）と Stash, Keeping the Staged Changes（`--keep-index`）も並び、Working Copy のファイルの右クリックにそのファイルだけの Stash… がある。
 - Reflog は HEAD の reflog を新しい順に並べ、右に選んだ行のコミットを出す。どのブランチからも辿れなくなったコミット（reset・rebase・amend で外れたもの）には「not on any branch」と付く。一覧の上の New Branch…・Checkout と、右クリック（New Tag・Reset Current Branch to Here…・Show in History・Copy Commit ID・Copy Name）で取り戻せる。
-- サイドバーの ⋯ の Show Daemon は、アプリの Activity の Daemon と同じく共有の daemon の様子を出す。動いているかと Start・Stop、daemon が開いているリポジトリ、この窓の daemon とのつながり。
+- サイドバーの ⋯ の Show Daemon は、アプリの Activity の Daemon と同じく共有の daemon の様子を出す。動いているかと Start・Stop、daemon が開いているリポジトリ、この窓の daemon とのつながり（それぞれの送受信量つき）。
 - History のコミットの右クリックにも Checkout (Detached)… と、エンジンがあれば Reset Current Branch to Here… がある。`git reset` と同じに Mixed・Soft・Hard を選ぶ。Hard は先に作業中の変更を stash に残し、Undo でブランチを戻せる。
 - Submodules は右クリックで Update（初期化して記録されているコミットに合わせる）と、別のウィンドウで開く。エンジンがあれば、行にアプリと同じ印（取り出していない・違うコミット・中の変更・コンフリクト）と URL・追うブランチが出て、メニューに Update…（中の submodule も・追うブランチの最新）・Edit URL…・Branch to Follow…・Remove… も並ぶ。グループには Update All・Update Submodules…・Sync URLs・Add Submodule…。
 - エンジンがあるとき、Clean Up Branches…（コマンドパレット、Branches の見出しの右クリック）は、既定のブランチに取り込んだもの、GitHub のプルリクエストでマージしたもの（`gh` があれば読む）、上流が消えたものを理由ごとの見出しの下に並べ、チェックしたままのものを消す。上流が消えたものは最初はチェックしない。Undo 1 回で設定ごと全部戻る。
@@ -78,7 +78,7 @@ VSCode 上で快適に Git を操作するための自分用の拡張。Marketpl
 - hunk ごとの Stage Hunk、Stage File、一覧の `+` / `−`、Stage All でもできる。一覧では上下キーで選び、Space か Enter で stage / unstage する。
 - Changes のファイルは、一覧の ↺、Discard File、Discard Hunk、Discard N Lines で変更を破棄できる。untracked のファイルは消す（Delete File…）。ファイルごとのときは確かめてから、選んだ行・hunk はすぐに破棄する。破棄した内容は Undo で戻せる。
 - コミット欄は Summary と Description（複数行）。どちらかだけでもコミットできる。Amend にすると直前のコミットのメッセージが入る。`⌘Enter` / `Ctrl+Enter` でもコミットできる。Recent… で最近のコミットのメッセージを（Summary では ⌥↑ / ⌥↓）、Insert… で Conventional Commits の種類・Co-authored-by・Signed-off-by を入れる。Commit の隣の ▾ に Commit and Push（`⌘⇧Enter`）、Fixup Commit For…、Squash Commit For… がある。
-- コンフリクトしたファイルでは、Open in Merge Editor（標準の 3-way マージエディタ）、Take Current File、Take Incoming File、Mark as Resolved を選べる。片側で削除されたファイルも片側のファイルを取って解決できる。解決済みにするとき、マーカーが残っていれば確認する。マーカーの残っていないファイル（git の rerere が前の解決を当てた、ほかのエディタで直した）は ✓ と「マーカーなし」か「rerere」を出して Mark as Resolved を先に勧め、Conflicts の見出しからまとめて解決済みにできる。そうしたファイルで片側を取るときと、エディタに保存していない変更があるときは、置き換える前に確認する。
+- コンフリクトしたファイルでは、Open in Merge Editor（標準の 3-way マージエディタ）、Take Current File、Take Incoming File、Mark as Resolved を選べる。片側で削除されたファイルも片側のファイルを取って解決できる。解決済みにするとき、エディタ（マージエディタの Result も）に保存していない変更があれば先に保存し、マーカーが残っていれば確認する。マーカーの残っていないファイル（git の rerere が前の解決を当てた、ほかのエディタで直した）は ✓ と「マーカーなし」か「rerere」を出して Mark as Resolved を先に勧め、Conflicts の見出しからまとめて解決済みにできる。そうしたファイルで片側を取るときと、エディタに保存していない変更があるときは、置き換える前に確認する。
 - エンジンがあるとき、rerere が解決したコンフリクトのファイルの右クリックに Forget Resolution があり、コンフリクトのマーカーに戻す（Undo でファイルは戻る）。Repository Settings > Operations の Forget All… で、覚えた解決をすべて忘れる。
 
 ### History
@@ -118,7 +118,7 @@ Apply Patch…、またはエクスプローラーで .patch・.diff・.mbox・.
 
 ### 途中で止まった merge / rebase
 
-コンフリクトや Edit・Split で止まると、ナビに「Rebase in progress (2/5)」のような行が出る。解決して stage したら Continue で続ける。rebase では Skip で今のコミットを飛ばせる。Abort で始める前の状態に戻る。
+コンフリクトや Edit・Split で止まると、ナビに「Rebase in progress (2/5)」のような行が出て、メインビューは Working Copy に切り替わり、最初のコンフリクトのファイルを選んでマージエディタで開く。解決して stage したら Continue で続ける。rebase では Skip で今のコミットを飛ばせる。Abort で始める前の状態に戻る。
 
 ### Undo
 
@@ -157,6 +157,11 @@ History・検索の索引・Undo の記録を分け合う。Remote-SSH では、
 | `amonhen.daemon.path` | `""` | 同梱のものの代わりに使うエンジン（`amonhen`）の場所 |
 | `amonhen.writeCommitGraph` | `false` | リポジトリを開いたときと fetch・pull の後に commit-graph を書く（`git maintenance` に任せたリポジトリでは書かない） |
 | `amonhen.fsmonitor` | `true` | git の fsmonitor で status を速くする（macOS と Windows は `git fsmonitor--daemon`、Linux と BSD はエンジンを通して Watchman を。git 2.26 以降） |
+| `amonhen.diagrams.colors` | `"mermaid"` | すべてのファイルの Markdown の図の配色: 外観に合わせた Mermaid のテーマ・名前つきの Mermaid のテーマ・構文の色・Obsidian 風・読み込んだ Mermaid のテーマ（アプリと同じ） |
+| `amonhen.diagrams.mermaidTheme` | `""` | 配色が読み込んだ Mermaid のテーマのときの、mermaid-cli の設定ファイル |
+| `amonhen.diagrams.timeZone` | `""` | gantt の日付の時間帯: 空は窓の時間帯、`UTC`、`Asia/Tokyo` などの IANA の名前 |
+| `amonhen.math.formulaSize` | `1.21` | 本文の字に対する数式の大きさ（100〜150%。121% は KaTeX と同じ） |
+| `amonhen.math.timeLimit` | `2` | 1 つの Markdown のファイルで式を描く時間の上限の秒（0 は上限なし）。超えた式は TeX のまま |
 
 ## インストール・更新
 

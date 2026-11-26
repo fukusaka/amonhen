@@ -1,6 +1,6 @@
 import { readFile } from 'node:fs/promises';
 import { homedir } from 'node:os';
-import { join, resolve } from 'node:path';
+import { join } from 'node:path';
 import * as vscode from 'vscode';
 import { parseCommitObject } from '../git/commitObject.ts';
 import { groupChanges, type Change, type ChangeGroup } from '../state/changes.ts';
@@ -11,6 +11,7 @@ import { applySyntax, changedRows, readWorkingDiff, selectedRows, type DaemonDif
 import { applyDiffSelection, computeDiff, type ComputedDiff } from '../diff/fileDiff.ts';
 import { discardFiles, discardLines } from '../state/discard.ts';
 import { failureCause } from '../failure/cause.ts';
+import { templateFilePath } from '../settings/templateFile.ts';
 import { COMMIT_TYPES, fixupSubjects, templateMessage, type MessageParts } from '../workingCopy/commitMessage.ts';
 import type { DiffWhitespace } from '../history/protocol.ts';
 import type { FileStat, WorkingCopyHostMessage, WorkingCopyWebviewMessage } from '../workingCopy/protocol.ts';
@@ -215,6 +216,12 @@ export class WorkingCopyController implements vscode.Disposable {
         void vscode.window.showWarningMessage('Set user.name and user.email to sign off.');
       }
     }
+  }
+
+  /** ファイルを選ぶ（操作がコンフリクトで止まったとき、最初のコンフリクトのファイルを）。差分を送ると一覧でも選ばれる */
+  select(change: Change): void {
+    this.selected = { group: change.group, path: change.path };
+    this.schedule();
   }
 
   /** 差分で行を比べるときに無視する空白（エンジンがあるときだけ。覚えない） */
@@ -581,7 +588,7 @@ export class WorkingCopyController implements vscode.Disposable {
 async function commitTemplate(repo: Repository): Promise<MessageParts | undefined> {
   const path = await repo.backend.config('commit.template');
   if (!path) return undefined;
-  const file = path === '~' || path.startsWith('~/') ? join(homedir(), path.slice(1)) : resolve(repo.root, path);
+  const file = templateFilePath(path, repo.root, homedir());
   try {
     return templateMessage(await readFile(file, 'utf8'));
   } catch {

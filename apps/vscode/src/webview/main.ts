@@ -9,6 +9,7 @@ import { createBlameView } from './blame.ts';
 import { createDaemonView } from './daemon.ts';
 import { setDetailsLayout, showWholeFile, fileAction, setDetailsStyle, detailsViewAction } from './details.ts';
 import { setWrapLines } from './diffView.ts';
+import { redrawPictures } from './allFiles.ts';
 import { createFileHistoryView } from './fileHistory.ts';
 import { createHistoryView } from './history.ts';
 import { createRangeDiffView } from './rangeDiff.ts';
@@ -69,6 +70,10 @@ window.addEventListener('message', (event: MessageEvent<HostMessage>) => {
   }
   if (message.type === 'wrapLines') {
     setWrapLines(message.wrap);
+    return;
+  }
+  if (message.type === 'pictureSettings') {
+    redrawPictures();
     return;
   }
   if (message.type === 'messageFont') {

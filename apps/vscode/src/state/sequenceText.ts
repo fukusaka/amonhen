@@ -32,14 +32,14 @@ export function sequenceTitle(s: SequenceInfo): string {
   return s.current !== undefined && s.total !== undefined ? `${title} · step ${s.current} of ${s.total}` : title;
 }
 
-export function sequenceDetail(s: SequenceInfo, conflicts: number): string {
+/** withoutMarkers は、コンフリクトのうちマーカーの残っていないファイルの数（アプリの帯と同じく数を添える） */
+export function sequenceDetail(s: SequenceInfo, conflicts: number, withoutMarkers = 0): string {
   const subject = s.step?.subject ? `“${s.step.subject}”` : undefined;
   const files = (n: number) => `${n} ${n === 1 ? 'file has' : 'files have'} conflicts`;
   if (s.step?.action === 'exec' && conflicts === 0) return `The command ${subject ?? ''} failed. Fix the problem, then Continue.`;
   if (conflicts > 0) {
-    return subject
-      ? `${files(conflicts)} at ${subject}. Resolve them in Working Copy, then Continue.`
-      : `${files(conflicts)}. Resolve them in Working Copy, then Continue.`;
+    const where = `${files(conflicts)}${subject ? ` at ${subject}` : ''}${withoutMarkersNote(withoutMarkers)}`;
+    return `${where}. Resolve them in Working Copy, then Continue.`;
   }
   if (s.editing) return `Stopped to edit ${subject ?? 'the commit'}. Change files or amend the commit, then Continue.`;
   if (s.kind === 'am' && !s.retried) {
@@ -50,4 +50,9 @@ export function sequenceDetail(s: SequenceInfo, conflicts: number): string {
       : `${patch} doesn’t apply. Retry it with a 3-way merge to resolve conflicts, apply it by hand and Continue, or Skip it.`;
   }
   return 'Conflicts resolved. Continue to finish, or Abort to go back to where you started.';
+}
+
+/** マーカーの残っていないコンフリクトの数の注記（なければ空） */
+export function withoutMarkersNote(withoutMarkers: number): string {
+  return withoutMarkers > 0 ? ` (${withoutMarkers} without markers)` : '';
 }
