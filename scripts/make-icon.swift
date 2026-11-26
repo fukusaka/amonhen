@@ -1,12 +1,19 @@
 // アプリのアイコンを描いて .icns にする。図柄はコードで持つ（色や形はここを直して作り直す）。
 //   swift scripts/make-icon.swift [出力先のフォルダ]
-// 出力: AppIcon.icns（正式版）・AppIcon-Snapshot.icns（snapshot 版。右下にオレンジの帯）・AppIcon.png（1024 px の見本）
+//   swift scripts/make-icon.swift --windows [出力先のフォルダ]
+// 出力: AppIcon.icns（正式版）・AppIcon-Snapshot.icns（snapshot 版。右下にオレンジの帯）・AppIcon.png（1024 px の見本）。
+// --windows では Windows のアプリの AppIcon.ico（apps/windows/res）。
 //
 // 図柄: Amon Hen（見張りの座）にちなみ、夜の丘の稜線を git のレーン（分かれて合流する 2 本）で描き、
 // 頂上の座に光る点（見る目）を置く。空には淡い北斗七星とカシオペヤ座、その間に光る星（北極星の役）。macOS のアイコンの枠（1024 の中の 824 の角の丸い四角）に合わせる。
+// Windows では枠を広げ（Windows のアイコンは枠いっぱいに描き、影は付けない）、角の丸みを小さくし、小さい大きさ
+// （32 px まで）では淡い星を描かない（点がにじむだけで、形が読みにくくなる）。
 import AppKit
 
-let outDir = URL(fileURLWithPath: CommandLine.arguments.count > 1 ? CommandLine.arguments[1] : "apps/macos/Icons")
+var arguments = Array(CommandLine.arguments.dropFirst())
+let windows = arguments.first == "--windows"
+if windows { arguments.removeFirst() }
+let outDir = URL(fileURLWithPath: arguments.first ?? (windows ? "apps/windows/res" : "apps/macos/Icons"))
 
 func color(_ hex: UInt32, _ alpha: CGFloat = 1) -> CGColor {
     CGColor(
@@ -14,16 +21,25 @@ func color(_ hex: UInt32, _ alpha: CGFloat = 1) -> CGColor {
         blue: CGFloat(hex & 0xff) / 255, alpha: alpha)
 }
 
-/// 1024 の座標（左上が原点）で描く。
-func draw(_ ctx: CGContext, snapshot: Bool) {
+/// 1024 の座標（左上が原点）で描く。`stars` が false なら淡い星を描かない。
+func draw(_ ctx: CGContext, snapshot: Bool, stars: Bool = true) {
     ctx.translateBy(x: 0, y: 1024)
     ctx.scaleBy(x: 1, y: -1)
     let body = CGRect(x: 100, y: 100, width: 824, height: 824)
-    let shape = CGPath(roundedRect: body, cornerWidth: 185, cornerHeight: 185, transform: nil)
+    if windows {
+        // 枠（100〜924）を 1024 の中の 16〜1008 に広げる。
+        let scale: CGFloat = 992 / 824
+        ctx.translateBy(x: 16 - 100 * scale, y: 16 - 100 * scale)
+        ctx.scaleBy(x: scale, y: scale)
+    }
+    let radius: CGFloat = windows ? 130 : 185
+    let shape = CGPath(roundedRect: body, cornerWidth: radius, cornerHeight: radius, transform: nil)
 
-    // 影（アイコンの枠の外に薄く）。
+    // 影（アイコンの枠の外に薄く）。Windows では付けない。
     ctx.saveGState()
-    ctx.setShadow(offset: CGSize(width: 0, height: -10), blur: 20, color: color(0x000000, 0.22))
+    if !windows {
+        ctx.setShadow(offset: CGSize(width: 0, height: -10), blur: 20, color: color(0x000000, 0.22))
+    }
     ctx.addPath(shape)
     ctx.setFillColor(color(0x0B1022))
     ctx.fillPath()
@@ -70,7 +86,7 @@ func draw(_ ctx: CGContext, snapshot: Bool) {
         ctx.setFillColor(color(0xFFFFFF, 0.5 - mag * 0.08))
         ctx.fillEllipse(in: CGRect(x: at.x - r, y: at.y - r, width: r * 2, height: r * 2))
     }
-    for star in dipper + cassiopeia {
+    for star in dipper + cassiopeia where stars {
         let p = project(star.ra, star.dec)
         let dx = (p.x - pole.x) * scale, dy = (p.y - pole.y) * scale
         let at = CGPoint(
@@ -80,7 +96,7 @@ func draw(_ ctx: CGContext, snapshot: Bool) {
     }
     // まわりの星: 空の上半分に散らす。頂上の星の近くと、枠の角の外は避ける。
     var placed = 0
-    while placed < 14 {
+    while stars, placed < 14 {
         let at = CGPoint(x: 140 + random() * 744, y: 130 + random() * 380)
         if hypot(at.x - polaris.x, at.y - polaris.y) < 130 { continue }
         let corner = CGPoint(x: at.x < 512 ? 285 : 739, y: 285)
@@ -203,12 +219,33 @@ func png(size: Int, snapshot: Bool) -> Data {
         data: nil, width: size, height: size, bitsPerComponent: 8, bytesPerRow: 0,
         space: CGColorSpace(name: CGColorSpace.sRGB)!, bitmapInfo: CGImageAlphaInfo.premultipliedLast.rawValue)!
     ctx.scaleBy(x: CGFloat(size) / 1024, y: CGFloat(size) / 1024)
-    draw(ctx, snapshot: snapshot)
+    draw(ctx, snapshot: snapshot, stars: !windows || size > 32)
     let rep = NSBitmapImageRep(cgImage: ctx.makeImage()!)
     return rep.representation(using: .png, properties: [:])!
 }
 
 try FileManager.default.createDirectory(at: outDir, withIntermediateDirectories: true)
+if windows {
+    // .ico: 大きさごとの PNG を並べる（Windows Vista から、どの大きさも PNG で入れられる）。タスクバー・Alt+Tab・
+    // エクスプローラーの表示の大きさと、その 125〜200% の倍率の分。
+    let sizes = [16, 20, 24, 32, 40, 48, 64, 96, 256]
+    let images = sizes.map { png(size: $0, snapshot: false) }
+    var ico = Data()
+    func u16(_ v: Int) { ico.append(contentsOf: [UInt8(v & 0xff), UInt8(v >> 8 & 0xff)]) }
+    func u32(_ v: Int) { u16(v & 0xffff); u16(v >> 16) }
+    u16(0); u16(1); u16(sizes.count)
+    var offset = 6 + 16 * sizes.count
+    for (size, image) in zip(sizes, images) {
+        // 256 は 0 と書く。
+        ico.append(contentsOf: [UInt8(size & 0xff), UInt8(size & 0xff), 0, 0])
+        u16(1); u16(32); u32(image.count); u32(offset)
+        offset += image.count
+    }
+    for image in images { ico.append(image) }
+    try ico.write(to: outDir.appendingPathComponent("AppIcon.ico"))
+    print("出力: \(outDir.path)")
+    exit(0)
+}
 for (name, snapshot) in [("AppIcon", false), ("AppIcon-Snapshot", true)] {
     let iconset = FileManager.default.temporaryDirectory.appendingPathComponent("\(name).iconset")
     try? FileManager.default.removeItem(at: iconset)

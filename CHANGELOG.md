@@ -13,6 +13,7 @@ becomes the GitHub Release notes.
 
 - Settings > Theme > Math sets the formula size and the time limit for drawing one file's formulas, or no limit
   (macOS, GTK4).
+- The Windows app has the app icon, in Windows' frame, on its executable, taskbar button and Alt+Tab.
 
 #### Changed
 

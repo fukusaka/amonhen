@@ -22,5 +22,5 @@ pub use reference::{
     FocusError, ImageSourceError, IntegrationError, ReferenceControl, SwapChainPanelError,
     SwapChainPanelEvent, WebView2Error, WindowRef,
 };
-pub use native::{native_window, native_window_for, set_check_mixed, set_tooltip_text, tree_node_key_by_identity};
+pub use native::{native_window, native_window_for, on_window_opened, set_check_mixed, set_tooltip_text, tree_node_key_by_identity};
 pub use windows_time::{DateTime, TimeSpan};

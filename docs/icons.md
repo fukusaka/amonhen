@@ -69,4 +69,5 @@ swift figures.swift alternatives alternatives.en.tsv alternatives ../../../docs/
   - Windows: the file list's buttons, diff options, edit mode, All Files and the image diff (drawn with Direct2D). The sidebar puts the shared icon in front of every row (the current branch and the open worktree in the accent color) and uses the shared shapes for the marks at a row's end.
 - [x] VSCode: the sidebar's title buttons and branch rows
 - [x] A pull request's shape (the sidebar's pull request rows in macOS, GTK4 and Windows), chosen from four drafts: D, B's arrow under the line for a remote, as the request is made on GitHub
-- Not decided: whether the app icon is redrawn too, the VSCode format, and whether the terminal front end gets anything (it shows text).
+- [x] The Windows app's icon: the macOS app icon's picture in Windows' frame (`scripts/make-icon.swift --windows`: it fills the canvas, without a shadow and with smaller corners, and leaves out the faint stars at 32 px and below), in the executable and set on each window
+- Not decided: whether the app icon is redrawn (GTK4 and the VSCode Marketplace use the macOS-framed picture as it is, and VSCode's activity bar has its own mark), the VSCode format, and whether the terminal front end gets anything (it shows text).
