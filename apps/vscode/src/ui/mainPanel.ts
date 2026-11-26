@@ -129,6 +129,8 @@ export class MainPanel implements vscode.Disposable {
       manager.onDidChangeCurrent((r) => this.watch(r)),
       vscode.workspace.onDidChangeConfiguration((e) => {
         if (e.affectsConfiguration('amonhen.wrapLongLines')) this.post({ type: 'wrapLines', wrap: wrapLongLines() });
+        // 図・数式の設定を変えたら、「すべてのファイル」の絵を描き直す（テーマを変えたときと同じ）
+        if (e.affectsConfiguration('amonhen.diagrams') || e.affectsConfiguration('amonhen.math')) this.post({ type: 'pictureSettings' });
       }),
     );
     this.watch(manager.current);

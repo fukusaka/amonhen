@@ -45,7 +45,9 @@ test('the helper draws a Markdown file’s diagrams and formulas, reading DOT im
     { kind: 'paragraph', runs: [{ text: '$y$', code: true, math_tex: 'y' }] },
   ];
   try {
-    await drawMarkdownPictures(blocks, 'docs/a.md', colors, 540, (op, fields) => session.request(op, fields));
+    await drawMarkdownPictures(blocks, 'docs/a.md', colors, { scheme: 'syntax', timeZone: 'UTC', timeLimit: 2 }, (op, fields) =>
+      session.request(op, fields),
+    );
   } finally {
     session.close();
   }
@@ -72,9 +74,13 @@ test('the helper draws a VectorDrawable with colors from the commit’s resource
     assert.ok(source.asked.includes('read res/values/colors.xml'), source.asked.join(', '));
     // 失敗はその求めだけ
     await assert.rejects(session.request('svgCheck', { data: '*' }));
-    const check = await session.request('svgCheck', { data: Buffer.from('<svg xmlns="http://www.w3.org/2000/svg"><circle r="5"/></svg>').toString('base64') });
+    const check = await session.request('svgCheck', { data: Buffer.from('<svg xmlns="http://www.w3.org/2000/svg" width="10" height="10" viewBox="0 0 10 10"><circle cx="5" cy="5" r="5"/></svg>').toString('base64') });
     assert.ok(Array.isArray(check['issues']));
-    assert.match(String((check['approximations'] as Record<string, string>)['android']), /<svg/);
+    const previews = check['previews'] as Record<string, { svg?: string; title: string; caption: string; exact: boolean }>;
+    assert.match(String(previews['android']?.svg), /<svg/);
+    assert.equal(previews['android']?.exact, true);
+    assert.equal(previews['ios']?.exact, false);
+    assert.ok(previews['flutter']?.title && previews['flutter'].caption);
   } finally {
     session.close();
   }

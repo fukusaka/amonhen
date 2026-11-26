@@ -48,6 +48,101 @@
           "default": false,
           "markdownDescription": "Wrap lines wider than the diff instead of scrolling sideways, in every diff and file of the main view (History, Working Copy). **Wrap Long Lines** (Alt+Z in the main view) and the ↩︎ button above the diff switch it."
         },
+        "amonhen.diagrams.colors": {
+          "type": "string",
+          "default": "mermaid",
+          "enum": [
+            "syntax",
+            "pele",
+            "mermaid",
+            "mermaid-default",
+            "mermaid-neutral",
+            "mermaid-dark",
+            "mermaid-forest",
+            "mermaid-base",
+            "imported"
+          ],
+          "enumItemLabels": [
+            "Syntax colors",
+            "Obsidian style",
+            "Mermaid (follows the appearance)",
+            "Mermaid default",
+            "Mermaid neutral",
+            "Mermaid dark",
+            "Mermaid forest",
+            "Mermaid base",
+            "Imported Mermaid theme"
+          ],
+          "markdownEnumDescriptions": [
+            "The colors of the syntax theme.",
+            "pele’s own colors, as in Obsidian.",
+            "Mermaid’s default theme in a light appearance and its dark theme in a dark one, with the theme’s background.",
+            "Mermaid’s default theme, with its background, whatever the appearance.",
+            "Mermaid’s neutral theme, with its background, whatever the appearance.",
+            "Mermaid’s dark theme, with its background, whatever the appearance.",
+            "Mermaid’s forest theme, with its background, whatever the appearance.",
+            "Mermaid’s base theme, with its background, whatever the appearance.",
+            "The mermaid-cli config file set in `#amonhen.diagrams.mermaidTheme#`."
+          ],
+          "markdownDescription": "The colors of Mermaid and Graphviz DOT diagrams in formatted Markdown (History’s All Files, with the engine), as in the standalone app’s Settings > Theme > Diagrams. A diagram’s own `%%{init}%%` or front matter `theme`/`themeVariables` comes first."
+        },
+        "amonhen.diagrams.mermaidTheme": {
+          "type": "string",
+          "default": "",
+          "markdownDescription": "A mermaid-cli config file (`{\"theme\": …, \"themeVariables\": {…}}`, or just the variables) whose colors diagrams take when `#amonhen.diagrams.colors#` is Imported Mermaid theme. A relative path is from the repository’s root; `~` is the home folder."
+        },
+        "amonhen.diagrams.timeZone": {
+          "type": "string",
+          "default": "",
+          "examples": [
+            "",
+            "UTC",
+            "Asia/Tokyo",
+            "America/New_York",
+            "Europe/London"
+          ],
+          "markdownDescription": "The time zone Mermaid gantt charts count their dates in: empty for the time zone of the computer VSCode’s window runs on, `UTC`, or an IANA name such as `Asia/Tokyo` (daylight saving time is followed). A name that can’t be read means the time zone of the machine the repository is on."
+        },
+        "amonhen.math.formulaSize": {
+          "type": "number",
+          "default": 1.21,
+          "enum": [
+            1,
+            1.1,
+            1.21,
+            1.3,
+            1.4,
+            1.5
+          ],
+          "enumItemLabels": [
+            "100%",
+            "110%",
+            "121% (KaTeX)",
+            "130%",
+            "140%",
+            "150%"
+          ],
+          "markdownDescription": "The size of math in formatted Markdown (History’s All Files, with the engine), against the text, as in the standalone app’s Settings > Theme > Math."
+        },
+        "amonhen.math.timeLimit": {
+          "type": "number",
+          "default": 2,
+          "enum": [
+            1,
+            2,
+            5,
+            10,
+            0
+          ],
+          "enumItemLabels": [
+            "1 s",
+            "2 s",
+            "5 s",
+            "10 s",
+            "No limit"
+          ],
+          "markdownDescription": "How long one Markdown file’s formulas may take to draw. Formulas past the limit show their TeX."
+        },
         "amonhen.daemon.enabled": {
           "type": "boolean",
           "default": true,

@@ -1478,6 +1478,10 @@ First release.
   the merge editor, as in the app.
 - The in-progress row says how many conflicted files have no markers left, with a button that marks them all resolved.
 - Mark as Resolved saves unsaved changes in the editor or merge editor first, instead of warning that markers are left.
+- Diagrams in All Files take Mermaid's colors by default, as in the app, with the app's color choices, formula size,
+  math time limit and gantt time zone (now following daylight saving) as settings (with the engine).
+- The SVG mobile check shows Android's and flutter_svg's real conversions with their notes, and always compares the
+  original with the renderer's picture in the image comparison, even when nothing breaks (with the engine).
 
 #### Fixed
 

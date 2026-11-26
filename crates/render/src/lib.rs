@@ -14,7 +14,7 @@ use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::{Arc, Mutex, mpsc};
 
 use amonhen_core::diagram::{self, Drawn, ImageSource, MermaidConfig, Scheme, ThemeColors};
-use amonhen_core::{math, svglint, svgsim, vectordrawable};
+use amonhen_core::{math, svglint, svgmobile, vectordrawable};
 use serde::Deserialize;
 use serde_json::{Value, json};
 
@@ -29,8 +29,12 @@ pub const VERSION: &str = match option_env!("AMONHEN_VERSION") {
 #[serde(tag = "op", rename_all = "camelCase", rename_all_fields = "camelCase")]
 enum Request {
     /// Markdown のフェンスの図（`language` は ` ```mermaid ` などのフェンスの言葉）。`from` は Markdown のファイルの
-    /// パス（DOT の図の画像を、そのフォルダからの相対パスで読む）。`utcOffset` は gantt の日付を数える時差（分、
-    /// 地方時 − UTC。なければ UTC）。
+    /// パス（DOT の図の画像を、そのフォルダからの相対パスで読む）。`scheme` は図の配色（アプリの設定「図の配色」の
+    /// 鍵: `syntax`・`pele`・`mermaid`・`mermaid-forest`・`mermaid-import:名前` など。なければアプリと同じ既定の
+    /// `mermaid`）、`importedTheme` は `scheme` が読み込んだテーマのときの、mermaid-cli の設定ファイルの中身。
+    /// `timeZone` は gantt の日付を数える時間帯（空は手伝いの OS の時間帯、`UTC`、IANA の名前。読めない名前は OS の
+    /// 時間帯。アプリと同じ）。`utcOffset` は前の取り決めの決まった時差（分、地方時 − UTC）で、`timeZone` が先。
+    /// どちらもなければ UTC。
     Diagram {
         language: String,
         text: String,
@@ -38,12 +42,21 @@ enum Request {
         from: Option<String>,
         colors: Colors,
         #[serde(default)]
+        scheme: Option<String>,
+        #[serde(default)]
+        imported_theme: Option<String>,
+        #[serde(default)]
+        time_zone: Option<String>,
+        #[serde(default)]
         utc_offset: Option<i32>,
     },
-    /// 1 つのファイルの数式（出てくる順。ファイルごとの上限はアプリと同じ）。`color` は文字の色。
+    /// 1 つのファイルの数式（出てくる順。ファイルごとの上限はアプリと同じ）。`color` は文字の色。`timeLimit` は
+    /// 1 つのファイルで式を描く時間の上限（秒。0 は上限なし。なければコアの既定の 2 秒）。
     Math {
         formulas: Vec<Formula>,
         color: String,
+        #[serde(default)]
+        time_limit: Option<u64>,
     },
     /// VectorDrawable のファイル `path`（中身 `data` は base64）。引けない色は `fallback` で描く。`dark` なら暗い外観
     /// の資源（`values-night` など）を先に引く。
@@ -55,7 +68,8 @@ enum Request {
         #[serde(default)]
         dark: bool,
     },
-    /// SVG（`data` は base64）の、モバイル向けの描画部品で崩れる機能と、部品ごとの崩れ方の近似。
+    /// SVG（`data` は base64）の、モバイル向けの描画部品で崩れる機能と、部品ごとの見え方（Android と flutter_svg は
+    /// 本物の取り込みを移したもの、iOS と react-native-svg は近似。アプリと同じ）。
     SvgCheck { data: String },
 }
 
@@ -77,12 +91,34 @@ struct Formula {
     display: bool,
 }
 
-/// 地方時との差が決まった時間帯（拡張が渡す時差。gantt の日付）。
+/// 地方時との差が決まった時間帯（前の取り決めの、拡張が渡す時差。gantt の日付）。
 struct FixedZone(f64);
 
 impl diagram::TimeZone for FixedZone {
     fn offset_ms(&self, _utc_ms: f64) -> f64 {
         self.0
+    }
+}
+
+/// IANA の時間帯（夏時間も数える。gantt の日付）。
+struct NamedZone(jiff::tz::TimeZone);
+
+impl diagram::TimeZone for NamedZone {
+    fn offset_ms(&self, utc_ms: f64) -> f64 {
+        if !utc_ms.is_finite() {
+            return 0.0;
+        }
+        jiff::Timestamp::from_millisecond(utc_ms.floor() as i64)
+            .map_or(0.0, |at| f64::from(self.0.to_offset(at).seconds()) * 1000.0)
+    }
+}
+
+/// 設定の時間帯の名前（空・`system` は手伝いの OS の時間帯、読めない名前も OS の時間帯。アプリと同じ）。
+fn named_zone(name: &str) -> jiff::tz::TimeZone {
+    match name.trim() {
+        "" | "system" => jiff::tz::TimeZone::system(),
+        "UTC" => jiff::tz::TimeZone::UTC,
+        name => jiff::tz::TimeZone::get(name).unwrap_or_else(|_| jiff::tz::TimeZone::system()),
     }
 }
 
@@ -232,6 +268,9 @@ fn handle(
             text,
             from,
             colors,
+            scheme,
+            imported_theme,
+            time_zone,
             utc_offset,
         } => {
             // 画像を読む回数・バイト数の上限は、Markdown のファイルごと
@@ -251,22 +290,55 @@ fn handle(
                     })
                     .clone()
             });
-            let zone = utc_offset.map(|minutes| {
-                Arc::new(FixedZone(f64::from(minutes) * 60_000.0)) as Arc<dyn diagram::TimeZone>
-            });
-            Ok(
-                match diagram::draw_with(&language, &text, zone, images.as_ref()) {
-                    // 図の言葉でない・pele が読まない種類（拡張はコードとして見せる）
-                    None => json!({}),
-                    Some(Drawn::Svg(svg, config)) => colored(&svg, config.as_ref(), &colors)
-                        .map_or_else(|| json!({}), |svg| json!({ "svg": svg })),
-                    Some(Drawn::Noted(svg, note)) => colored(&svg, None, &colors)
-                        .map_or_else(|| json!({}), |svg| json!({ "svg": svg, "note": note })),
-                    Some(Drawn::Error(error)) => json!({ "error": error }),
+            let zone = match (time_zone, utc_offset) {
+                (Some(name), _) => {
+                    Some(Arc::new(NamedZone(named_zone(&name))) as Arc<dyn diagram::TimeZone>)
+                }
+                (None, Some(minutes)) => Some(Arc::new(FixedZone(f64::from(minutes) * 60_000.0))
+                    as Arc<dyn diagram::TimeZone>),
+                (None, None) => None,
+            };
+            let scheme = Scheme::from_key(scheme.as_deref().unwrap_or(diagram::DEFAULT_KEY));
+            // 読み込んだテーマが読めなければ、そのわけを添える（図は構文の色で描く。コアと同じ）
+            let (imported, theme_error) = match (scheme, imported_theme) {
+                (Scheme::Imported, Some(text)) => match MermaidConfig::parse(&text) {
+                    Ok(config) => (Some(config), None),
+                    Err(error) => (None, Some(error)),
                 },
-            )
+                _ => (None, None),
+            };
+            let paint = Paint {
+                scheme,
+                imported: imported.as_ref(),
+                colors: &colors,
+            };
+            let mut reply = match diagram::draw_with(&language, &text, zone, images.as_ref()) {
+                // 図の言葉でない・pele が読まない種類（拡張はコードとして見せる）
+                None => json!({}),
+                Some(Drawn::Svg(svg, config)) => paint
+                    .colored(&svg, config.as_ref())
+                    .map_or_else(|| json!({}), |svg| json!({ "svg": svg })),
+                Some(Drawn::Noted(svg, note)) => paint
+                    .colored(&svg, None)
+                    .map_or_else(|| json!({}), |svg| json!({ "svg": svg, "note": note })),
+                Some(Drawn::Error(error)) => json!({ "error": error }),
+            };
+            if let Some(error) = theme_error {
+                reply["themeError"] = error.into();
+            }
+            Ok(reply)
         }
-        Request::Math { formulas, color } => {
+        Request::Math {
+            formulas,
+            color,
+            time_limit,
+        } => {
+            // 手伝いはファイルごとに起動するので、そのファイルの上限としてコアに渡す（アプリの設定と同じ）
+            if let Some(seconds) = time_limit {
+                math::set_file_time_limit(
+                    (seconds > 0).then(|| std::time::Duration::from_secs(seconds)),
+                );
+            }
             let jobs = formulas.into_iter().map(|f| (f.tex, f.display)).collect();
             let drawn: Vec<Value> = math::render_formulas(jobs)
                 .into_iter()
@@ -313,19 +385,30 @@ fn handle(
     }
 }
 
-/// 図の SVG に画面の色を当てる（構文の色の配色。図の中で指定した Mermaid のテーマがあればそれが先）。
-fn colored(svg: &str, own: Option<&MermaidConfig>, colors: &Colors) -> Option<String> {
-    let theme = ThemeColors {
-        text: colors.text.clone(),
-        background: colors.background.clone(),
-        kinds: colors.kinds.clone(),
-    };
-    let (vars, backdrop) = diagram::colors_for(own, Scheme::Syntax, None, colors.dark, &theme);
-    diagram::colorize(svg, &vars, backdrop)
+/// 図に当てる配色（設定の配色と、読み込んだテーマの中身）と画面の色。
+struct Paint<'a> {
+    scheme: Scheme,
+    imported: Option<&'a MermaidConfig>,
+    colors: &'a Colors,
 }
 
-/// SVG のモバイル向けの確認（`issues`: targets・feature・message・count、`approximations`: android・ios・flutter・
-/// reactNative の SVG の文字列）。
+impl Paint<'_> {
+    /// 図の SVG に配色を当てる（図の中で指定した Mermaid のテーマがあればそれが先。Mermaid のテーマは地も塗る）。
+    fn colored(&self, svg: &str, own: Option<&MermaidConfig>) -> Option<String> {
+        let theme = ThemeColors {
+            text: self.colors.text.clone(),
+            background: self.colors.background.clone(),
+            kinds: self.colors.kinds.clone(),
+        };
+        let (vars, backdrop) =
+            diagram::colors_for(own, self.scheme, self.imported, self.colors.dark, &theme);
+        diagram::colorize(svg, &vars, backdrop)
+    }
+}
+
+/// SVG のモバイル向けの確認（`issues`: targets・feature・message・count、`previews`: android・ios・flutter・
+/// reactNative ごとの見え方 — `svg`（描ける SVG の文字列。部品が読めなければなし）・`title`・`caption`・
+/// `messages`・`error`・`exact`）。
 fn svg_check(data: &[u8]) -> Value {
     use svglint::Target;
     let issues: Vec<Value> = svglint::lint(data)
@@ -339,7 +422,7 @@ fn svg_check(data: &[u8]) -> Value {
             })
         })
         .collect();
-    let approximations: serde_json::Map<String, Value> = [
+    let previews: serde_json::Map<String, Value> = [
         Target::Android,
         Target::Ios,
         Target::Flutter,
@@ -347,14 +430,23 @@ fn svg_check(data: &[u8]) -> Value {
     ]
     .into_iter()
     .map(|t| {
-        let svg = svgsim::approximate(data, t);
-        (
-            t.key().to_owned(),
-            String::from_utf8_lossy(&svg).into_owned().into(),
-        )
+        let preview = svgmobile::preview(data, t);
+        let mut value = json!({
+            "title": preview.title,
+            "caption": preview.caption,
+            "messages": preview.messages,
+            "exact": preview.exact,
+        });
+        if let Some(svg) = preview.svg {
+            value["svg"] = String::from_utf8_lossy(&svg).into_owned().into();
+        }
+        if let Some(error) = preview.error {
+            value["error"] = error.into();
+        }
+        (t.key().to_owned(), value)
     })
     .collect();
-    json!({ "issues": issues, "approximations": approximations })
+    json!({ "issues": issues, "previews": previews })
 }
 
 /// base64（標準の文字、`=` の詰め物はあってもなくても）を読む。読めなければ None。
@@ -491,7 +583,7 @@ mod tests {
     fn draws_a_diagram_in_the_given_colors() {
         let (replies, asks) = exchange(
             &[
-                json!({ "id": 1, "op": "diagram", "language": "mermaid", "text": "flowchart LR\n  A --> B", "colors": colors() }),
+                json!({ "id": 1, "op": "diagram", "language": "mermaid", "text": "flowchart LR\n  A --> B", "colors": colors(), "scheme": "syntax" }),
                 json!({ "id": 2, "op": "diagram", "language": "mermaid", "text": "flowchart LR\n  A -->", "colors": colors() }),
                 json!({ "id": 3, "op": "diagram", "language": "rust", "text": "fn main() {}", "colors": colors() }),
             ],
@@ -584,15 +676,140 @@ mod tests {
         );
         assert!(!replies[0]["issues"].as_array().unwrap().is_empty());
         for target in ["android", "ios", "flutter", "reactNative"] {
+            let preview = &replies[0]["previews"][target];
+            // 描ける SVG か、部品が読めなかったわけ
             assert!(
-                replies[0]["approximations"][target]
-                    .as_str()
-                    .unwrap()
-                    .contains("<svg"),
+                preview["svg"].as_str().is_some_and(|s| s.contains("<svg"))
+                    || preview["error"].is_string(),
                 "{}",
                 replies[0]
             );
+            assert!(!preview["title"].as_str().unwrap().is_empty(), "{preview}");
+            assert!(
+                !preview["caption"].as_str().unwrap().is_empty(),
+                "{preview}"
+            );
+            assert!(preview["messages"].is_array(), "{preview}");
         }
+        // Android と flutter_svg は本物の取り込み、iOS と react-native-svg は近似（アプリと同じ）
+        assert_eq!(replies[0]["previews"]["android"]["exact"], true);
+        assert_eq!(replies[0]["previews"]["flutter"]["exact"], true);
+        assert_eq!(replies[0]["previews"]["ios"]["exact"], false);
+        assert_eq!(replies[0]["previews"]["reactNative"]["exact"], false);
+    }
+
+    #[test]
+    fn a_mobile_renderer_that_cant_read_the_svg_gives_its_reason() {
+        let (replies, _) = exchange(
+            &[json!({ "id": 1, "op": "svgCheck", "data": encode_base64(b"<svg") })],
+            &[],
+        );
+        let android = &replies[0]["previews"]["android"];
+        assert!(android["error"].is_string(), "{android}");
+        assert!(android.get("svg").is_none(), "{android}");
+    }
+
+    #[test]
+    fn a_diagram_takes_the_colors_of_the_chosen_scheme() {
+        let flow = "flowchart LR\n  A --> B";
+        let draw = |fields: Value| {
+            let mut request = json!({ "id": 1, "op": "diagram", "language": "mermaid", "text": flow, "colors": colors() });
+            for (k, v) in fields.as_object().unwrap() {
+                request[k] = v.clone();
+            }
+            let (replies, _) = exchange(&[request], &[]);
+            replies.into_iter().next().unwrap()
+        };
+        // 構文の色: 画面の文字の色
+        let syntax = draw(json!({ "scheme": "syntax" }));
+        assert!(
+            syntax["svg"].as_str().unwrap().contains("#abcdef"),
+            "{syntax}"
+        );
+        // 既定はアプリと同じ、外観に合わせた Mermaid のテーマ（画面の色は使わない）
+        let mermaid = draw(json!({}));
+        let svg = mermaid["svg"].as_str().unwrap();
+        assert!(!svg.contains("#abcdef"), "{svg}");
+        assert_eq!(draw(json!({ "scheme": "mermaid" }))["svg"], mermaid["svg"]);
+        // 名前つきのテーマは、外観に関係なくそのテーマ
+        let forest = draw(json!({ "scheme": "mermaid-forest" }));
+        assert_ne!(forest["svg"], mermaid["svg"]);
+        // 読み込んだテーマ
+        let imported = draw(json!({
+            "scheme": "mermaid-import:mine",
+            "importedTheme": r##"{"theme": "base", "themeVariables": {"primaryColor": "#123456"}}"##,
+        }));
+        assert!(
+            imported["svg"].as_str().unwrap().contains("#123456"),
+            "{imported}"
+        );
+        assert!(imported.get("themeError").is_none(), "{imported}");
+        // 読めないテーマは、そのわけを添えて構文の色で
+        let broken = draw(json!({ "scheme": "mermaid-import:mine", "importedTheme": "not json" }));
+        assert!(broken["themeError"].is_string(), "{broken}");
+        assert!(
+            broken["svg"].as_str().unwrap().contains("#abcdef"),
+            "{broken}"
+        );
+    }
+
+    #[test]
+    fn a_named_time_zone_follows_daylight_saving() {
+        use diagram::TimeZone as _;
+        let zone = NamedZone(named_zone("America/New_York"));
+        // 2024-01-15 と 2024-07-15 の UTC の正午
+        assert_eq!(zone.offset_ms(1_705_320_000_000.0), -5.0 * 3_600_000.0);
+        assert_eq!(zone.offset_ms(1_721_044_800_000.0), -4.0 * 3_600_000.0);
+        assert_eq!(
+            NamedZone(named_zone("UTC")).offset_ms(1_721_044_800_000.0),
+            0.0
+        );
+        assert_eq!(zone.offset_ms(f64::NAN), 0.0);
+        // 読めない名前は OS の時間帯（アプリと同じ）
+        let system = NamedZone(jiff::tz::TimeZone::system());
+        assert_eq!(
+            NamedZone(named_zone("Nowhere/Nothing")).offset_ms(1_721_044_800_000.0),
+            system.offset_ms(1_721_044_800_000.0)
+        );
+    }
+
+    #[test]
+    fn a_gantt_counts_its_dates_in_the_given_time_zone() {
+        let gantt = "gantt\n  dateFormat X\n  axisFormat %H:%M\n  section S\n  T : 0, 3600";
+        let draw = |zone: Value| {
+            let mut request = json!({ "id": 1, "op": "diagram", "language": "mermaid", "text": gantt, "colors": colors() });
+            if !zone.is_null() {
+                request["timeZone"] = zone;
+            }
+            let (replies, _) = exchange(&[request], &[]);
+            replies.into_iter().next().unwrap()["svg"]
+                .as_str()
+                .unwrap_or_default()
+                .to_owned()
+        };
+        let utc = draw(json!("UTC"));
+        assert!(utc.contains("00:00"), "{utc}");
+        assert_eq!(draw(Value::Null), utc);
+        let tokyo = draw(json!("Asia/Tokyo"));
+        assert!(tokyo.contains("09:00"), "{tokyo}");
+    }
+
+    #[test]
+    fn the_math_time_limit_is_taken_from_the_request() {
+        let (replies, _) = exchange(
+            &[json!({
+                "id": 1, "op": "math", "color": "#abcdef", "timeLimit": 0,
+                "formulas": [{ "tex": "x^2" }],
+            })],
+            &[],
+        );
+        assert!(
+            replies[0]["formulas"][0]["svg"].is_string(),
+            "{}",
+            replies[0]
+        );
+        // 上限は 1 つのファイルの間だけでなく、手伝いの起動ごと（拡張はファイルごとに起動する）
+        math::set_file_time_limit(Some(std::time::Duration::from_secs(2)));
     }
 
     #[test]

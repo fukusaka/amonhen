@@ -90,10 +90,10 @@ History と差分は番号（`history`・`diff`）で持つ。FE がスクロー
 
 | `op` | 中身 | 答え |
 |---|---|---|
-| `diagram` | language（フェンスの言葉: `mermaid`・`dot`・`graphviz`・`gv`）・text・from?（Markdown のファイルのリポジトリの根からのパス。DOT の図の画像はそのフォルダから読む）・colors（dark・text・background・kinds: 画面の `#rrggbb` の色。kinds は `keyword` などの構文の種類）・utcOffset?（分、地方時 − UTC。gantt の日付。なければ UTC） | svg（テーマの構文の色か、図の中で指定した Mermaid のテーマで色を当てたもの）と note?（近いもので描いた）、か error（描けないわけ）、かどちらもない（描く図でない: コードとして見せる） |
-| `math` | formulas（tex・display?: 1 つの Markdown のファイルの式を出てくる順に。ファイルごとの上限はアプリと同じ）・color（`#rrggbb`） | formulas: それぞれ svg・width・height・depth（本文の字の大きさ × 1.21 を 1 とする em）か error、かどちらもない（TeX を見せる） |
+| `diagram` | language（フェンスの言葉: `mermaid`・`dot`・`graphviz`・`gv`）・text・from?（Markdown のファイルのリポジトリの根からのパス。DOT の図の画像はそのフォルダから読む）・colors（dark・text・background・kinds: 画面の `#rrggbb` の色。kinds は `keyword` などの構文の種類）・scheme?（アプリの「図の配色」の鍵: `syntax`・`pele`・`mermaid`・`mermaid-default` などの名前つきのテーマ・`mermaid-import:名前`。なければ `mermaid`）・importedTheme?（`mermaid-import:` のときの mermaid-cli の設定ファイルの中身）・timeZone?（gantt の日付を数える時間帯: `""` は手伝いの OS の時間帯、`UTC`、IANA の名前。夏時間も数える。読めない名前は OS の時間帯）・utcOffset?（前の取り決めの決まった時差。分、地方時 − UTC。timeZone がないときだけ。どちらもなければ UTC） | svg（配色と画面の色か、図の中で指定した Mermaid のテーマで色を当てたもの）と note?（近いもので描いた）、か error（描けないわけ）、かどちらもない（描く図でない: コードとして見せる）。themeError?（読み込んだテーマが読めない。構文の色で描く） |
+| `math` | formulas（tex・display?: 1 つの Markdown のファイルの式を出てくる順に。ファイルごとの上限はアプリと同じ）・color（`#rrggbb`）・timeLimit?（1 つのファイルで式を描く時間の上限の秒。0 は上限なし。なければ 2） | formulas: それぞれ svg・width・height・depth（本文の字の大きさ × 数式の大きさ（既定 1.21）を 1 とする em）か error、かどちらもない（TeX を見せる） |
 | `vectorDrawable` | path（リポジトリの根から）・data（XML の base64）・fallback?（引けない色を描く色）・dark?（暗い外観の資源（`values-night` など）を先に引く） | svg（大きさは dp）・notes |
-| `svgCheck` | data（SVG の base64） | issues（targets・feature・message・count）・approximations（android・ios・flutter・reactNative の SVG の文字列） |
+| `svgCheck` | data（SVG の base64） | issues（targets・feature・message・count）・previews（android・ios・flutter・reactNative ごとに svg?（SVG の文字列。部品が読めなければない）・title・caption・messages・error?・exact。アプリと同じく Android と flutter_svg は本物の取り込みを移したもの、iOS と react-native-svg は近似） |
 
 答えは `{"id": …, "ok": true, …}`（上の中身つき）か、求めそのものが失敗したときの `{"id": …, "ok": false, "message": …}`（JSON でない行には `"id": null`）。
 

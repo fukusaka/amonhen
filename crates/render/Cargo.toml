@@ -16,5 +16,7 @@ path = "src/main.rs"
 [dependencies]
 amonhen-core = { workspace = true, features = ["diagrams", "math"] }
 amonhen-model.workspace = true
+# gantt の時間帯（IANA の名前と夏時間）。gix-date が既に使っているもの
+jiff = "0.2.38"
 serde = { version = "1.0.229", features = ["derive"] }
 serde_json = "1.0.154"

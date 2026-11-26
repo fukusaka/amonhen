@@ -14,20 +14,39 @@ const DIAGRAM_FENCES = new Set(['mermaid', 'dot', 'graphviz', 'gv']);
 
 type Obj = Record<string, unknown>;
 
+/**
+ * 図と数式の描き方（設定）。`scheme` は図の配色の鍵（アプリの「図の配色」と同じ: `syntax`・`pele`・`mermaid`・
+ * `mermaid-forest`・`mermaid-import:名前` など）、`importedTheme` は読み込んだテーマのときの mermaid-cli の設定ファイルの
+ * 中身、`timeZone` は gantt の日付を数える時間帯（空は手伝いの OS の時間帯、`UTC`、IANA の名前）、`timeLimit` は 1 つの
+ * ファイルで式を描く時間の上限（秒。0 は上限なし）。ないものは手伝いの既定
+ */
+export interface PictureOptions {
+  scheme?: string;
+  importedTheme?: string;
+  timeZone?: string;
+  timeLimit?: number;
+}
+
+/** 描いた結果。`themeError` は読み込んだ Mermaid のテーマが読めなかったわけ（図は構文の色で描く） */
+export interface PicturesDrawn {
+  themeError?: string;
+}
+
 /** 絵の大きさ（em）と SVG */
 const PICTURE_KEYS = ['svg', 'width', 'height', 'depth'] as const;
 
 /**
  * `blocks`（`markdownBlocks` の答え。その場で書き換える）の図と数式を描く。`from` は Markdown のファイルのパス（DOT
- * の図の画像を、そのフォルダから読む）、`utcOffset` は gantt の日付を数える時差（分）
+ * の図の画像を、そのフォルダから読む）、`options` は図の配色・gantt の時間帯・数式の時間の上限
  */
 export async function drawMarkdownPictures(
   blocks: unknown[],
   from: string,
   colors: PictureColors,
-  utcOffset: number | undefined,
+  options: PictureOptions,
   render: Render,
-): Promise<void> {
+): Promise<PicturesDrawn> {
+  const drawnWith: PicturesDrawn = {};
   const diagrams: Obj[] = [];
   const formulas: { node: Obj; tex: string; display: boolean; block: boolean }[] = [];
   const visit = (value: unknown): void => {
@@ -67,8 +86,11 @@ export async function drawMarkdownPictures(
       text: block['text'],
       from,
       colors,
-      ...(utcOffset !== undefined ? { utcOffset } : {}),
+      ...(options.scheme !== undefined ? { scheme: options.scheme } : {}),
+      ...(options.importedTheme !== undefined ? { importedTheme: options.importedTheme } : {}),
+      ...(options.timeZone !== undefined ? { timeZone: options.timeZone } : {}),
     }).catch(() => undefined);
+    if (typeof drawn?.['themeError'] === 'string') drawnWith.themeError = drawn['themeError'];
     if (typeof drawn?.['svg'] === 'string') {
       block['kind'] = 'diagram';
       block['svg'] = drawn['svg'];
@@ -80,7 +102,11 @@ export async function drawMarkdownPictures(
   });
   if (formulas.length) {
     jobs.push(
-      render('math', { color: colors.text, formulas: formulas.map((f) => ({ tex: f.tex, display: f.display })) })
+      render('math', {
+        color: colors.text,
+        formulas: formulas.map((f) => ({ tex: f.tex, display: f.display })),
+        ...(options.timeLimit !== undefined ? { timeLimit: options.timeLimit } : {}),
+      })
         .then((reply) => {
           const drawn = Array.isArray(reply['formulas']) ? (reply['formulas'] as Obj[]) : [];
           formulas.forEach((f, i) => {
@@ -100,4 +126,5 @@ export async function drawMarkdownPictures(
     );
   }
   await Promise.all(jobs);
+  return drawnWith;
 }

@@ -157,6 +157,11 @@ History・検索の索引・Undo の記録を分け合う。Remote-SSH では、
 | `amonhen.daemon.path` | `""` | 同梱のものの代わりに使うエンジン（`amonhen`）の場所 |
 | `amonhen.writeCommitGraph` | `false` | リポジトリを開いたときと fetch・pull の後に commit-graph を書く（`git maintenance` に任せたリポジトリでは書かない） |
 | `amonhen.fsmonitor` | `true` | git の fsmonitor で status を速くする（macOS と Windows は `git fsmonitor--daemon`、Linux と BSD はエンジンを通して Watchman を。git 2.26 以降） |
+| `amonhen.diagrams.colors` | `"mermaid"` | すべてのファイルの Markdown の図の配色: 外観に合わせた Mermaid のテーマ・名前つきの Mermaid のテーマ・構文の色・Obsidian 風・読み込んだ Mermaid のテーマ（アプリと同じ） |
+| `amonhen.diagrams.mermaidTheme` | `""` | 配色が読み込んだ Mermaid のテーマのときの、mermaid-cli の設定ファイル |
+| `amonhen.diagrams.timeZone` | `""` | gantt の日付の時間帯: 空は窓の時間帯、`UTC`、`Asia/Tokyo` などの IANA の名前 |
+| `amonhen.math.formulaSize` | `1.21` | 本文の字に対する数式の大きさ（100〜150%。121% は KaTeX と同じ） |
+| `amonhen.math.timeLimit` | `2` | 1 つの Markdown のファイルで式を描く時間の上限の秒（0 は上限なし）。超えた式は TeX のまま |
 
 ## インストール・更新
 
