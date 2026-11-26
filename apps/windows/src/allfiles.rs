@@ -363,6 +363,7 @@ pub fn path_bar(
     show_change: Callback<()>,
     markdown: Option<(bool, Callback<bool>, Callback<bool>)>,
     svg: View,
+    preview: Callback<()>,
 ) -> View {
     let Some(path) = &browser.open else {
         return View::empty();
@@ -395,6 +396,7 @@ pub fn path_bar(
         .columns([
             GridLength::Auto,
             GridLength::Star(1.0),
+            GridLength::Auto,
             GridLength::Auto,
             GridLength::Auto,
         ])
@@ -453,5 +455,12 @@ pub fn path_bar(
             } else {
                 View::empty()
             },
+            // アプリの外で見る（macOS 版の Quick Look、GTK4 版のプレビューのボタン。消したファイルは前の中身）。
+            Button::new()
+                .grid_column(4)
+                .style(ButtonStyle::Subtle)
+                .on_click(preview)
+                .content(crate::icons::icon("preview", 16.0))
+                .tooltip(tr!("Open this file at the commit in a preview")),
         ))
 }

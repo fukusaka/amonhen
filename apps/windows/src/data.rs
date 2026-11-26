@@ -559,7 +559,7 @@ impl FileShown {
 
 /// コミット `commit` の時点の `path` の中身（このコミットで変えたなら `change` の blob、変えていなければ木から
 /// 引く。GTK4 版の `blob_id`・`tree_blob`）。
-fn blob_at(
+pub fn blob_at(
     repo: &Repository,
     commit: &amonhen_model::Oid,
     change: Option<&amonhen_model::FileChange>,
