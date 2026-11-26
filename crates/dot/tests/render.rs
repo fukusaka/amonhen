@@ -1321,3 +1321,16 @@ fn landscape_rotates_the_drawing() {
         assert!(svg.contains("rotate(-90)"), "{svg}");
     }
 }
+
+/// shape=plain は幅と高さの属性を読まず（fixedsize なら大きさ 0）、塗らない（Graphviz の絵と同じ）。
+#[test]
+fn plain_nodes_ignore_size_and_fill() {
+    let svg = render(
+        "digraph { node [shape=rectangle, fixedsize=true, width=2.5, style=filled, fillcolor=red]; a -> e -> b; e [shape=plain, label=\"\"]; t [shape=plain, fixedsize=false, label=\"text\"] }",
+    )
+    .unwrap()
+    .svg;
+    let e = part(&svg, "e");
+    assert!(!e.contains("<rect") && !e.contains("#ff0000"), "{svg}");
+    assert!(!part(&svg, "t").contains("#ff0000"), "{svg}");
+}

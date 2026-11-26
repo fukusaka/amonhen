@@ -68,6 +68,8 @@ becomes the GitHub Release notes.
 - DOT diagrams: ellipses, polygons, stars and cylinders are sized as Graphviz sizes them, so triangles, diamonds and
   houses are no longer much larger, and a short label no longer widens an ellipse past its default height.
 - DOT diagrams: `rotate=90` and `orientation=landscape` turn the drawing a quarter turn, as Graphviz does.
+- DOT diagrams: `shape=plain` nodes ignore `width`, `height` and fill, as in Graphviz, so empty spacer nodes no longer
+  show as filled boxes.
 - Exporting chosen folders as an archive in a partial clone fetches only the contents it asked about, not every missing
   file of the commit (git 2.41 or later; older git fetches them all, and the question now counts them all).
 - Markdown previews put a list item's mark on the same line as a list nested at its start (`- 1. text`), as GitHub

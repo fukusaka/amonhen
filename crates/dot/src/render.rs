@@ -499,12 +499,19 @@ pub fn render(
             lw = lw.max(iw);
             lh = lh.max(ih);
         }
-        let min_w = a
-            .num("width")
-            .map_or(0.75 * INCH, |v| v.clamp(0.0, 100.0) * INCH);
-        let min_h = a
-            .num("height")
-            .map_or(0.5 * INCH, |v| v.clamp(0.0, 100.0) * INCH);
+        // plain は幅と高さが 0（属性は読まない。fixedsize なら大きさも 0。Graphviz の絵と同じ）
+        let min_w = if spec.no_margin {
+            0.0
+        } else {
+            a.num("width")
+                .map_or(0.75 * INCH, |v| v.clamp(0.0, 100.0) * INCH)
+        };
+        let min_h = if spec.no_margin {
+            0.0
+        } else {
+            a.num("height")
+                .map_or(0.5 * INCH, |v| v.clamp(0.0, 100.0) * INCH)
+        };
         let fixed = a
             .get("fixedsize")
             .is_some_and(|v| v.eq_ignore_ascii_case("true") || v.eq_ignore_ascii_case("shape"));
@@ -554,8 +561,12 @@ pub fn render(
         let line_color = color_text
             .as_deref()
             .and_then(|c| ctx.first_color(c, scheme.as_deref()));
-        let filled =
-            has(&st, "filled") || has(&st, "radial") || has(&st, "striped") || has(&st, "wedged");
+        // plain は塗らない（Graphviz の絵と同じ）
+        let filled = !spec.no_margin
+            && (has(&st, "filled")
+                || has(&st, "radial")
+                || has(&st, "striped")
+                || has(&st, "wedged"));
         let fill_text = a
             .get("fillcolor")
             .or(color_text.as_deref())
