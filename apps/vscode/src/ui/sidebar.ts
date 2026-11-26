@@ -88,6 +88,7 @@ const LAZY: ReadonlySet<RefSection> = new Set<LazySection>(['tags', 'stashes', '
 export class SidebarProvider implements vscode.TreeDataProvider<Node>, vscode.Disposable {
   private readonly manager: RepositoryManager;
   private repoListener: vscode.Disposable | undefined;
+  private refreshListener: vscode.Disposable | undefined;
   private readonly disposables: vscode.Disposable[] = [];
   /** 共有の daemon のエンジンを使えるか（Reflog、タグの印とメニューはエンジンだけ） */
   private engine = false;
@@ -196,6 +197,9 @@ export class SidebarProvider implements vscode.TreeDataProvider<Node>, vscode.Di
     if (repository) void this.checkSparse(repository);
     if (repository) void this.loadSequence(repository);
     if (repository) void this.countWithoutMarkers(repository);
+    // 取り直すたびに数え直す。status が UU のままでも、ほかのエディタや rerere がマーカーを消していれば変わる（アプリと同じ）
+    this.refreshListener?.dispose();
+    this.refreshListener = repository?.onDidRefresh(() => void this.countWithoutMarkers(repository));
     this.repoListener = repository?.onDidChange((changed) => {
       if (changed.has('workingCopy')) void this.loadSequence(repository);
       if (changed.has('workingCopy')) void this.countWithoutMarkers(repository);
@@ -839,6 +843,7 @@ export class SidebarProvider implements vscode.TreeDataProvider<Node>, vscode.Di
   }
 
   dispose(): void {
+    this.refreshListener?.dispose();
     this.repoListener?.dispose();
     vscode.Disposable.from(...this.disposables).dispose();
     this._onDidChangeTreeData.dispose();
