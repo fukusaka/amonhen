@@ -5,14 +5,15 @@
 import { basename } from 'node:path';
 import * as vscode from 'vscode';
 import type { FormatPatchOptions, RebaseResult } from '../git/backend.ts';
-import { parsePatch, patchPaths, type PatchSummary } from '../git/patch.ts';
+import { parseCommitObject } from '../git/commitObject.ts';
+import { parsePatch, patchFileLine, patchFileName, patchPaths, type PatchSummary } from '../git/patch.ts';
 import type { RepositoryManager } from '../state/manager.ts';
 import { pickDrawing, type PickPreview } from '../history/drawing.ts';
 import { shortName } from '../state/operations.ts';
 import type { Repository } from '../state/repository.ts';
 import { MainPanel } from './mainPanel.ts';
 import { showError } from './stageCommands.ts';
-import { patchFormat, setPatchFormat } from './preferences.ts';
+import { patchFolder, patchFormat, setPatchFolder, setPatchFormat } from './preferences.ts';
 
 /** Webview の右クリックメニューから渡される情報（data-vscode-context） */
 interface CommitContext {
@@ -25,6 +26,12 @@ export function registerPatchCommands(manager: RepositoryManager): vscode.Dispos
   const save = (all: boolean) => async (ctx?: CommitContext) => {
     const repo = MainPanel.active?.history?.repository;
     if (!repo || !ctx?.oid) return;
+    // merge はパッチにできない（メニューには出さない。アプリは理由を添えて押せなくする）
+    const commit = all ? undefined : await commitOf(repo, ctx.oid);
+    if ((commit?.parents.length ?? 0) > 1) {
+      void vscode.window.showWarningMessage('A merge can’t be saved as a patch.');
+      return;
+    }
     const oids = all ? await repo.backend.firstParentsToHead(ctx.oid) : [ctx.oid];
     if (!oids) {
       void vscode.window.showWarningMessage('This commit isn’t on HEAD’s first-parent line');
@@ -50,6 +57,12 @@ export function registerPatchCommands(manager: RepositoryManager): vscode.Dispos
     vscode.commands.registerCommand('amonhen.applyPatch', async (uri?: vscode.Uri, uris?: vscode.Uri[]) => {
       const repo = manager.current;
       if (!repo) return;
+      // ほかの操作（merge・rebase・am など）の途中は当てない（アプリはメニューで押せなくする）
+      const sequence = await repo.backend.sequenceInProgress();
+      if (sequence) {
+        void vscode.window.showWarningMessage(`A ${sequence} is in progress. Continue or Abort it, then try again.`);
+        return;
+      }
       const chosen = uris?.length ? uris : uri instanceof vscode.Uri ? [uri] : await pickPatches();
       if (chosen?.length) await applyPatches(repo, chosen);
     }),
@@ -97,26 +110,32 @@ async function savePatches(repo: Repository, oids: string[]): Promise<void> {
   if (version === undefined) return;
   const reroll = Number(version.trim() || '1');
   const root = vscode.Uri.file(repo.root);
+  // 前に書き出した場所から選び始める（アプリのパネルが前の場所を覚えているのと同じ）。初めてなら今までどおり
+  const folder = patchFolder();
   const out: { dir?: string; file?: string } = {};
   if (choice.single) {
+    // 名前は最初のコミットの件名から（git format-patch と同じ考え。アプリと同じ）
+    const subject = (await commitOf(repo, oids[0]!))?.message.split('\n')[0];
     const uri = await vscode.window.showSaveDialog({
-      defaultUri: vscode.Uri.joinPath(root, '..', 'patches.mbox'),
+      defaultUri: vscode.Uri.joinPath(folder ? vscode.Uri.file(folder) : vscode.Uri.joinPath(root, '..'), `${patchFileName(subject ?? 'patches')}.mbox`),
       filters: { mbox: ['mbox'] },
     });
     if (!uri) return;
     out.file = uri.fsPath;
+    await setPatchFolder(vscode.Uri.joinPath(uri, '..').fsPath);
   } else {
     const [uri] =
       (await vscode.window.showOpenDialog({
         canSelectFiles: false,
         canSelectFolders: true,
         canSelectMany: false,
-        defaultUri: root,
+        defaultUri: folder ? vscode.Uri.file(folder) : root,
         openLabel: 'Save Here',
         title: 'Folder for the patches (files with the same names are replaced)',
       })) ?? [];
     if (!uri) return;
     out.dir = uri.fsPath;
+    await setPatchFolder(uri.fsPath);
   }
   const options: FormatPatchOptions = { coverLetter: choice.cover, ...(reroll > 1 ? { reroll } : {}) };
   try {
@@ -131,6 +150,12 @@ async function savePatches(repo: Repository, oids: string[]): Promise<void> {
   } catch (err) {
     showError(err);
   }
+}
+
+/** コミットの中身（親と件名）。読めなければ undefined */
+async function commitOf(repo: Repository, oid: string): Promise<ReturnType<typeof parseCommitObject> | undefined> {
+  const object = await repo.backend.object(oid).catch(() => undefined);
+  return object ? parseCommitObject(object.data.toString('utf8')) : undefined;
 }
 
 async function pickPatches(): Promise<vscode.Uri[] | undefined> {
@@ -163,7 +188,7 @@ async function applyPatches(repo: Repository, uris: readonly vscode.Uri[]): Prom
   const branch = (await repo.backend.head()).branch?.replace(/^refs\/heads\//, '') ?? 'HEAD';
   const list = summary.patches
     .map((p) => {
-      const files = p.files.map((f) => `  ${f.oldPath ? `${f.oldPath} → ` : ''}${f.path}  ${f.binary ? 'bin' : `+${f.added} −${f.removed}`}`);
+      const files = p.files.map(patchFileLine);
       return [p.subject ? `${p.subject}${p.author ? `  (${p.author})` : ''}` : undefined, ...files].filter(Boolean).join('\n');
     })
     .join('\n');

@@ -104,10 +104,12 @@ export function registerFileToolCommands(
     vscode.commands.registerCommand('amonhen.commitFile.changesOnly', (ctx?: FileContext) => {
       if (ctx?.oid && ctx.path) MainPanel.active?.post({ type: 'fileAction', oid: ctx.oid, path: ctx.path, action: 'changesOnly' });
     }),
-    // このコミットの時点のファイルをエディタで開く（アプリの Open File at This Commit）
-    vscode.commands.registerCommand('amonhen.commitFile.openAtCommit', async (ctx?: FileContext) => {
+    // このコミットの時点のファイルを開く（アプリの Open File at This Commit）。見出しと差分の行の右クリック。History の
+    // 詳細に「すべてのファイル」があればそこで（行があればその行へ）、なければエディタで開く
+    vscode.commands.registerCommand('amonhen.commitFile.openAtCommit', (ctx?: FileContext & { commitLine?: number }) => {
       const panel = MainPanel.active;
-      if (ctx?.oid && ctx.path && panel) await panel.history.handle({ type: 'openTreeFile', oid: ctx.oid, path: ctx.path });
+      if (!ctx?.oid || !ctx.path || !panel) return;
+      panel.post({ type: 'openAtCommit', oid: ctx.oid, path: ctx.path, ...(ctx.commitLine ? { line: ctx.commitLine } : {}) });
     }),
     vscode.commands.registerCommand('amonhen.fileHistory.copyPath', async (ctx?: FileContext) => {
       if (!ctx?.path) return;

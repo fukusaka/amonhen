@@ -977,11 +977,19 @@ async function fileHistoryFlow(): Promise<void> {
     );
     assert.equal(shown.merges, false);
 
-    // 行を選ぶと、そのコミットの詳細（History と同じ）が届く
+    // 開くと先頭の行を選び、右にそのコミットでのこのファイルの差分だけを出す（Webview が詳細を受けて差分を求める）
+    const newest = shown.entries[0]!;
+    await waitPosted('commitDiff', mark, (m) => m.oid === newest.oid && m.path === 'fh-b.txt');
+
+    // 行を選ぶと、そのコミットの変更（History と同じ）が届き、そのときのパスの差分を求められる
     const oldest = shown.entries[2]!;
     mark = posted.length;
     await panel.history.handle({ type: 'select', oid: oldest.oid });
     assert.deepEqual((await waitPosted('details', mark, (m) => m.details.oid === oldest.oid)).details.files.map((f) => f.path), ['fh-a.txt']);
+    mark = posted.length;
+    await panel.history.handle({ type: 'commitDiff', oid: oldest.oid, path: 'fh-a.txt' });
+    const added = (await waitPosted('commitDiff', mark, (m) => m.oid === oldest.oid && m.path === 'fh-a.txt')).diff;
+    assert.deepEqual(added.hunks.flatMap((h) => h.lines.map((l) => `${l.kind}${l.text}`)), ['+one']);
 
     // マージも出すに切り替えると読み直す
     mark = posted.length;
@@ -2385,14 +2393,27 @@ async function tagRowsFlow(): Promise<void> {
   }
 }
 
-/** ファイルの見出しのメニュー: Open File at This Commit はその時点の中身を開く */
+/**
+ * ファイルの見出しと差分の行のメニュー: Open File at This Commit は、詳細の「すべてのファイル」で（行があればその行へ）
+ * 開くよう Webview に頼む。「すべてのファイル」がなければ、Webview はエディタでその行を開くよう頼み返す
+ */
 async function fileHeaderMenuFlow(): Promise<void> {
-  await showView('amonhen.showHistory');
+  const panel = await showView('amonhen.showHistory');
   const oid = git('rev-parse', 'HEAD').trim();
   const path = git('diff-tree', '--no-commit-id', '--name-only', '-r', '--root', oid).trim().split('\n')[0]!;
   if (!path) return;
+  let mark = posted.length;
   await vscode.commands.executeCommand('amonhen.commitFile.openAtCommit', { webviewSection: 'commitFile', oid, path });
-  await until('その時点のファイルが開く', () => vscode.window.activeTextEditor?.document.uri.path.endsWith(path) ? true : undefined);
+  await waitPosted('openAtCommit', mark, (m) => m.oid === oid && m.path === path && m.line === undefined);
+  mark = posted.length;
+  await vscode.commands.executeCommand('amonhen.commitFile.openAtCommit', { webviewSection: 'commitLine', oid, path, commitLine: 1 });
+  await waitPosted('openAtCommit', mark, (m) => m.oid === oid && m.path === path && m.line === 1);
+  // 「すべてのファイル」がないとき（エンジンなし）: その行を選んでエディタで開く
+  await panel.history.handle({ type: 'openTreeFile', oid, path, line: 1 });
+  const editor = await until('その時点のファイルが開く', () =>
+    vscode.window.activeTextEditor?.document.uri.path.endsWith(path) ? vscode.window.activeTextEditor : undefined,
+  );
+  assert.equal(editor.selection.active.line, 0);
   await vscode.commands.executeCommand('workbench.action.closeActiveEditor');
 }
 

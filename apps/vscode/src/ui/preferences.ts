@@ -96,6 +96,15 @@ export async function setPatchFormat(format: { single: boolean; cover: boolean }
 }
 
 /** コミットのメッセージを等幅で出すか（既定はアプリと同じく出さない） */
+/** パッチを前に書き出したフォルダ（次に書き出すときに選び始める場所） */
+export function patchFolder(): string | undefined {
+  return store?.get<string>('patches.folder');
+}
+
+export async function setPatchFolder(folder: string): Promise<void> {
+  await store?.update('patches.folder', folder);
+}
+
 export function monospacedMessage(): boolean {
   return store?.get<boolean>('details.monospace') ?? false;
 }

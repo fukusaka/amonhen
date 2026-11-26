@@ -359,6 +359,8 @@ export function createHistoryView(): View {
             ...(row.refs.some((r) => r.kind === 'branch' || r.kind === 'remote' || r.kind === 'tag') ? { commitHasRefs: true } : {}),
             ...(row.hidden ? { commitFolded: true } : {}),
             ...(row.expanded ? { commitExpanded: true } : {}),
+            // merge はパッチにできない（Save as Patch を出さない。アプリは理由を添えて押せなくする）
+            ...(row.merge ? { commitIsMerge: true } : {}),
             preventDefaultContextMenuItems: true,
           },
     );

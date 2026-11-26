@@ -247,6 +247,8 @@ export type HistoryHostMessage =
   | { type: 'wholeFile'; oid: string; path: string }
   /** ファイルの見出しのメニュー: 開く・畳む（toggle）、ファイル全体をやめて変えたところだけに戻す（changesOnly） */
   | { type: 'fileAction'; oid: string; path: string; action: 'toggle' | 'changesOnly' }
+  /** Open File at This Commit（見出し・差分の行の右クリック）。`line` は後の側の行番号 */
+  | { type: 'openAtCommit'; oid: string; path: string; line?: number }
   /** コミットの中の 1 ファイルの差分（最初の親との差分） */
   | { type: 'commitDiff'; oid: string; path: string; diff: FileDiff }
   /** `last` はまとめる範囲のいちばん新しいコミット（combine のとき。`oid` がいちばん古い） */
@@ -362,7 +364,7 @@ export type HistoryWebviewMessage =
    */
   | { type: 'treeFile'; oid: string; path: string; colors?: PictureColors; timeZone?: string }
   /** そのコミットのファイルをエディタで開く（「すべてのファイル」のバイナリ） */
-  | { type: 'openTreeFile'; oid: string; path: string }
+  | { type: 'openTreeFile'; oid: string; path: string; line?: number }
   /** コミットの中の画像の前と後を求める（画像の差分） */
   | { type: 'commitImage'; oid: string; path: string }
   /** そのファイルの差分を、前後 `context` 行（all ならファイル全体）で求め直す（エンジンだけ） */

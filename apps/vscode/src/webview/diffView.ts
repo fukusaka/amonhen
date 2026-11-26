@@ -1,10 +1,18 @@
 /** 差分の描画。Working Copy と History で共通に使う */
 import type { DiffHunk, DiffLine, FileDiff } from '../diff/fileDiff.ts';
 import type { DiffWhitespace } from '../history/protocol.ts';
+import { wordHighlighter, type WordRange } from '../diff/words.ts';
 import { el, post } from './api.ts';
 
-/** これより多い行は描かない（重くなるので） */
-const MAX_LINES = 5000;
+/**
+ * 長い差分もすべて描く（アプリと同じ。VSCode の検索もすべての行を探せる）。重くならないよう、初めの行だけ描いてから
+ * 返し、残りは行の塊ごとに少しずつ足す。塊は画面の外にある間は配置と描画を省く（content-visibility）
+ */
+const FIRST_LINES = 2000;
+/** 1 つの塊の行の数 */
+const BLOCK_LINES = 500;
+/** 後から足すとき、1 回に使う時間（ms）。それを超えたら画面に返す */
+const SLICE_MS = 12;
 
 export interface DiffOptions {
   /** 選んでいる行（lineKey）。行を選べるときだけ渡す */
@@ -18,6 +26,11 @@ export interface DiffOptions {
   check?: (lines: DiffLine[], stage: boolean) => void;
   /** あれば hunk の見出しの左に印を置き、押すとファイルの前後の行を広げる */
   widen?: () => void;
+  /**
+   * 行の右クリックメニュー（package.json の webview/context）に渡す情報。右クリックしたときに、その行の分だけ作る
+   * （行ごとに持たせると長い差分で重い）
+   */
+  lineContext?: (line: DiffLine) => Record<string, unknown>;
 }
 
 /** hunk の変更の行がどれだけ入っているか: all・some・none */
@@ -49,11 +62,12 @@ const SYNTAX_CLASSES = [
 ];
 
 /**
- * コードの 1 行。syntax（[始め, 終わり, 種類]）で色を付け、word（変わった部分）を強調する。どちらもなければ文字だけ
+ * コードの 1 行。syntax（[始め, 終わり, 種類]）で色を付け、words（変わった部分。いくつあってもよい）を強調する。
+ * どちらもなければ文字だけ
  */
-export function renderCode(text: string, syntax?: readonly (readonly [number, number, number])[], word?: readonly [number, number]): HTMLElement {
+export function renderCode(text: string, syntax?: readonly (readonly [number, number, number])[], words?: readonly WordRange[]): HTMLElement {
   const code = el('span', 'code');
-  if (!syntax?.length && !word) {
+  if (!syntax?.length && !words?.length) {
     code.textContent = text;
     return code;
   }
@@ -63,9 +77,9 @@ export function renderCode(text: string, syntax?: readonly (readonly [number, nu
     cuts.add(Math.max(0, Math.min(text.length, s)));
     cuts.add(Math.max(0, Math.min(text.length, e)));
   }
-  if (word) {
-    cuts.add(word[0]);
-    cuts.add(word[1]);
+  for (const [s, e] of words ?? []) {
+    cuts.add(Math.max(0, Math.min(text.length, s)));
+    cuts.add(Math.max(0, Math.min(text.length, e)));
   }
   const points = [...cuts].sort((a, b) => a - b);
   for (let i = 0; i + 1 < points.length; i++) {
@@ -74,7 +88,8 @@ export function renderCode(text: string, syntax?: readonly (readonly [number, nu
     // 重なっていれば内側（後に来るもの）
     let span: readonly [number, number, number] | undefined;
     for (const candidate of syntax ?? []) if (candidate[0] <= from && to <= candidate[1]) span = candidate;
-    const classes = [span ? `syn-${SYNTAX_CLASSES[span[2]] ?? ''}` : '', word && word[0] <= from && to <= word[1] ? 'word' : '']
+    const changed = words?.some(([s, e]) => s <= from && to <= e) === true;
+    const classes = [span ? `syn-${SYNTAX_CLASSES[span[2]] ?? ''}` : '', changed ? 'word' : '']
       .filter(Boolean)
       .join(' ');
     code.append(classes ? el('span', classes, text.slice(from, to)) : text.slice(from, to));
@@ -87,25 +102,52 @@ export function lineKey(line: DiffLine): string {
   return line.kind === '-' ? `old:${line.old}` : `new:${line.new}`;
 }
 
-/** 差分の本体（hunk の並び、またはバイナリなどの説明） */
+/** 差分の本体（hunk の並び、またはバイナリなどの説明）。初めの行だけ描いて返し、残りは後から足す */
 export function renderDiffBody(diff: FileDiff, opts: DiffOptions = {}): HTMLElement[] {
   if (diff.binary) return [el('div', 'empty', 'Binary file')];
   if (diff.tooLarge) return [el('div', 'empty', 'The file is too large to show its diff')];
   if (diff.hunks.length === 0) return [el('div', 'empty', 'No changes')];
-  const parts: HTMLElement[] = [];
-  let budget = MAX_LINES;
-  for (const hunk of diff.hunks) {
-    if (budget <= 0) {
-      parts.push(el('div', 'empty', 'The rest of the diff is left out. Open it in the editor to see it all.'));
-      break;
-    }
-    parts.push(renderHunk(hunk, opts, budget));
-    budget -= hunk.lines.length;
-  }
+  const later: Later = { budget: FIRST_LINES, queue: [] };
+  const parts = diff.hunks.map((hunk) => renderHunk(hunk, opts, later));
+  if (later.queue.length > 0) fillLater(later.queue);
   return parts;
 }
 
-function renderHunk(hunk: DiffHunk, opts: DiffOptions, budget: number): HTMLElement {
+/** 後から描く行の塊と、すぐ描ける残りの行の数 */
+interface Later {
+  budget: number;
+  queue: { block: HTMLElement; fill: () => void }[];
+}
+
+/**
+ * 後に回した塊を、少しずつ描く（1 回 SLICE_MS まで）。置かれる前に始まったら置かれるのを待ち、外されたら
+ * （描き直した・別の差分を出した）やめる
+ */
+function fillLater(queue: Later['queue']): void {
+  let next = 0;
+  let placed = false;
+  let waits = 0;
+  const step = () => {
+    const first = queue[next];
+    if (!first) return;
+    if (!first.block.isConnected) {
+      if (placed || ++waits > 100) return;
+      setTimeout(step, 16);
+      return;
+    }
+    placed = true;
+    const until = performance.now() + SLICE_MS;
+    while (next < queue.length && performance.now() < until) {
+      const { block, fill } = queue[next++]!;
+      if (!block.isConnected) return;
+      fill();
+    }
+    if (next < queue.length) setTimeout(step, 0);
+  };
+  setTimeout(step, 0);
+}
+
+function renderHunk(hunk: DiffHunk, opts: DiffOptions, later: Later): HTMLElement {
   const box = el('div', 'hunk');
   const head = el('div', 'hunk-head');
   const check = opts.check;
@@ -145,8 +187,8 @@ function renderHunk(hunk: DiffHunk, opts: DiffOptions, budget: number): HTMLElem
   box.append(head);
 
   const table = el('div', 'lines');
-  const words = wordRanges(hunk.lines);
-  hunk.lines.slice(0, budget).forEach((line, i) => {
+  const words = wordHighlighter(hunk.lines);
+  const renderLine = (line: DiffLine, i: number): HTMLElement => {
     const row = el('div', `line ${line.kind === '+' ? 'add' : line.kind === '-' ? 'del' : 'ctx'}`);
     if (opts.picked && line.kind !== ' ') {
       const k = lineKey(line);
@@ -170,47 +212,44 @@ function renderHunk(hunk: DiffHunk, opts: DiffOptions, budget: number): HTMLElem
     }
     row.append(el('span', 'no', line.old ? String(line.old) : ''), el('span', 'no', line.new ? String(line.new) : ''));
     row.append(el('span', 'sign', line.kind === ' ' ? '' : line.kind));
-    row.append(renderCode(line.text, line.syntax, words.get(i)));
-    table.append(row);
-  });
+    row.append(renderCode(line.text, line.syntax, words(i)));
+    return row;
+  };
+  // 行の塊。すぐ描ける分は描き、残りは高さだけ取っておいて後から描く
+  for (let start = 0; start < hunk.lines.length; start += BLOCK_LINES) {
+    const end = Math.min(hunk.lines.length, start + BLOCK_LINES);
+    const block = el('div', 'line-block');
+    // 画面の外にある間の高さ（折り返さなければ行の高さ × 行数）。一度描けばその高さを覚える
+    block.style.containIntrinsicBlockSize = `auto ${(end - start) * 1.5}em`;
+    const fill = () => {
+      const rows: HTMLElement[] = [];
+      for (let i = start; i < end; i++) rows.push(renderLine(hunk.lines[i]!, i));
+      block.style.minHeight = '';
+      block.append(...rows);
+    };
+    if (later.budget > 0) {
+      fill();
+      later.budget -= end - start;
+    } else {
+      block.style.minHeight = `${(end - start) * 1.5}em`;
+      later.queue.push({ block, fill });
+    }
+    table.append(block);
+  }
+  const lineContext = opts.lineContext;
+  if (lineContext) {
+    // 右クリックした行の情報を、VSCode がメニューを出す前に（window で受ける前に）その行に置く
+    table.addEventListener('contextmenu', (e) => {
+      const row = (e.target as HTMLElement).closest<HTMLElement>('.line');
+      const block = row?.parentElement;
+      if (!row || !block) return;
+      const index = [...table.children].indexOf(block) * BLOCK_LINES + [...block.children].indexOf(row);
+      const line = hunk.lines[index];
+      if (line) row.dataset.vscodeContext = JSON.stringify(lineContext(line));
+    });
+  }
   box.append(table);
   return box;
-}
-
-/**
- * 削除行の並びと追加行の並びが同じ数で続くところでは、対応する行どうしで変わった部分を強調する。
- * 行の位置 → [変わった部分の始まり, 終わり]
- */
-function wordRanges(lines: readonly DiffLine[]): Map<number, [number, number]> {
-  const result = new Map<number, [number, number]>();
-  let i = 0;
-  while (i < lines.length) {
-    if (lines[i]!.kind !== '-') {
-      i++;
-      continue;
-    }
-    let d = i;
-    while (d < lines.length && lines[d]!.kind === '-') d++;
-    let a = d;
-    while (a < lines.length && lines[a]!.kind === '+') a++;
-    if (a - d === d - i) {
-      for (let k = 0; k < d - i; k++) {
-        const x = lines[i + k]!.text;
-        const y = lines[d + k]!.text;
-        let p = 0;
-        while (p < x.length && p < y.length && x[p] === y[p]) p++;
-        let s = 0;
-        while (s < x.length - p && s < y.length - p && x[x.length - 1 - s] === y[y.length - 1 - s]) s++;
-        // ほとんど全部が変わっている行は強調しない
-        if (p + s > 0) {
-          result.set(i + k, [p, x.length - s]);
-          result.set(d + k, [p, y.length - s]);
-        }
-      }
-    }
-    i = a;
-  }
-  return result;
 }
 
 /** 長い行を折り返しているか（設定。ボタンの見た目に使う） */

@@ -31,6 +31,27 @@ export interface PatchSummary {
   patches: Patch[];
 }
 
+/**
+ * 1 つの mbox に書き出すときの名前（拡張子の前）。最初のコミットの件名から、git format-patch と同じ考えで作る（英数字と
+ * . _ のほかは - にまとめ、前後の - . を除いて 52 文字まで。アプリと同じ）。何も残らなければ patches
+ */
+export function patchFileName(subject: string): string {
+  let out = '';
+  for (const c of subject) {
+    if (/^[A-Za-z0-9._]$/.test(c)) out += c;
+    else if (!out.endsWith('-')) out += '-';
+  }
+  const trimmed = out.replace(/^[-.]+|[-.]+$/g, '');
+  return trimmed ? trimmed.slice(0, 52) : 'patches';
+}
+
+/** 当てる前の確認の一覧の 1 行: 種類の印（A・D・R・C・M）とパス、増減（アプリと同じ） */
+export function patchFileLine(file: PatchFileChange): string {
+  const mark = { added: 'A', deleted: 'D', renamed: 'R', copied: 'C', modified: 'M' }[file.status];
+  const name = file.oldPath ? `${file.oldPath} → ${file.path}` : file.path;
+  return `  ${mark} ${name}  ${file.binary ? 'bin' : `+${file.added} −${file.removed}`}`;
+}
+
 /** パッチが触るファイルのパス（当てる前と後の両方。重なりは除く） */
 export function patchPaths(summary: PatchSummary): string[] {
   const out = new Set<string>();
