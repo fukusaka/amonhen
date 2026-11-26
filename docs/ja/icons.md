@@ -55,6 +55,112 @@ swift figures.swift intent intent.ja.tsv ../svg ../../../docs/images/icons/inten
 swift figures.swift alternatives alternatives.ja.tsv alternatives ../../../docs/images/icons/alternatives.ja.png
 ```
 
+## 端末の FE
+
+端末の FE は線を引けないので、共通の名前ごとに 1 文字を出す。下の表は決めたが、まだコードには入れていない（端末の FE は今も自分の文字を使っている）。
+
+- Unicode の東アジアの幅が N か Na の文字だけにし、どの言語の設定でも 1 マスに収める。● ↑ ★ ▸ のような曖昧幅の文字は、日本語の設定の GNOME 端末では 2 マスで描かれるが、`unicode-width` は 1 マスと数える。
+- 絵文字の性質を持つ文字は使わない。Windows Terminal はフォントにない字を色つきの絵文字で描くことがある（✔ と ⏲ がそうだった）。
+- 3 つの端末の既定のフォントで確かめた。GNOME 端末（Ubuntu Sans Mono、日本語の設定）、macOS の Terminal（SF Mono）、Windows Terminal（Cascadia Mono）。ほとんどの文字はこれらのフォントになく、ほかのフォントで補われる。macOS の Terminal は字形をマスに縮め、GNOME 端末は隣のマスへはみ出させ、Windows Terminal は Segoe UI Symbol から取る。どれかではみ出した文字は替えたので、丸い形（円の矢印・歯車・丸で囲んだ星）はほとんど使えない。
+- できるところは共通の形に合わせる。リモートは上の横線（`⊤`、食い違うときは `⍡`）、元に戻すは点線の矢印（点線は前の位置）、確かめられないは丸に「!」と同じ `!`。
+- 同じ意味の名前は同じ文字にする（失敗と CI 失敗は `✗`、取り消しと CI 取り消しは `⊘`、2 つの新しいブランチは `⁺`、変更のある worktree と Working Copy は `✎`）。署名が不正も `✗` を使う（署名の中にしか出ない）。意味が違えば文字も分ける。変更なし `=`・署名あり `ʃ`・CI 成功 `✓`、確かめられない `!` と未追跡のファイル `?`（`git status` の `??` と同じ）。
+- CI 実行中の `⣾` は点字の回る印の 1 こまなので、⣾⣽⣻⢿⡿⣟⣯⣷ を順に出せる。更新の `⤸` は macOS の Terminal では小さく描かれる。読みやすい円の矢印は GNOME 端末ではみ出す。
+
+| 名前 | 意味 | 文字 | 符号位置 |
+| --- | --- | --- | --- |
+| `account` | アカウント | `@` | U+0040 |
+| `activity` | Activity（裏の動き） | `≋` | U+224B |
+| `ahead-behind` | 先行・遅れ | `↨` | U+21A8 |
+| `ai` | AI | `✦` | U+2726 |
+| `appearance` | 外観（明暗） | `☾` | U+263E |
+| `back` | 戻る | `‹` | U+2039 |
+| `bad-signature` | 署名が不正 | `✗` | U+2717 |
+| `branch` | ブランチ | `⑂` | U+2442 |
+| `cancelled` | 取り消し | `⊘` | U+2298 |
+| `cannot-verify` | 確かめられない | `!` | U+0021 |
+| `changed-pixels` | 変わった画素 | `⊹` | U+22B9 |
+| `checkerboard` | 市松（透明） | `▚` | U+259A |
+| `ci-cancelled` | CI 取り消し | `⊘` | U+2298 |
+| `ci-failed` | CI 失敗 | `✗` | U+2717 |
+| `ci-none` | CI なし | `◌` | U+25CC |
+| `ci-passed` | CI 成功 | `✓` | U+2713 |
+| `ci-running` | CI 実行中 | `⣾` | U+28FE |
+| `clean` | 変更なし | `=` | U+003D |
+| `collapse-all` | すべてたたむ | `⊟` | U+229F |
+| `conflict` | コンフリクト | `‼` | U+203C |
+| `current-branch` | 今のブランチ | `▹` | U+25B9 |
+| `disconnected` | つながらない | `⌁` | U+2301 |
+| `display-options` | 表示の設定 | `⁑` | U+2051 |
+| `edit-mode` | 編集モード | `✐` | U+2710 |
+| `edited-worktree` | 変更のある worktree | `✎` | U+270E |
+| `editor` | エディター | `⟨` | U+27E8 |
+| `expand` | 開く（▸） | `›` | U+203A |
+| `expand-all` | すべて開く | `⊞` | U+229E |
+| `expired-key` | 期限切れの鍵 | `⧖` | U+29D6 |
+| `failed` | 失敗 | `✗` | U+2717 |
+| `favorite` | お気に入り | `✭` | U+272D |
+| `fetch` | Fetch | `⇣` | U+21E3 |
+| `files` | ファイル | `▯` | U+25AF |
+| `filter` | 絞り込み | `⋎` | U+22CE |
+| `folder` | フォルダー | `▭` | U+25AD |
+| `go-to-head` | HEAD へ | `⇥` | U+21E5 |
+| `history` | History | `↺` | U+21BA |
+| `list` | 一覧 | `≣` | U+2263 |
+| `main-worktree` | 本体の worktree | `⌂` | U+2302 |
+| `merge` | Merge | `⑃` | U+2443 |
+| `missing-key` | 鍵がない | `⚷` | U+26B7 |
+| `modified` | 変更あり | `⁎` | U+204E |
+| `new-branch` | New Branch | `⁺` | U+207A |
+| `new-branch-row` | 新しいブランチ（行） | `⁺` | U+207A |
+| `not-checked-out` | 取り出していない | `∘` | U+2218 |
+| `onion-skin` | 重ね合わせ | `⊓` | U+2293 |
+| `partial` | 一部 | `⊏` | U+228F |
+| `performance` | 性能 | `ϟ` | U+03DF |
+| `pop` | Pop | `⤉` | U+2909 |
+| `preview` | プレビュー | `⌾` | U+233E |
+| `publish` | Publish | `⇡` | U+21E1 |
+| `pull` | Pull | `⤓` | U+2913 |
+| `pull-request` | Pull request | `⥂` | U+2942 |
+| `push` | Push | `⤒` | U+2912 |
+| `range-diff` | Range Diff | `≍` | U+224D |
+| `rebase` | Rebase | `↱` | U+21B1 |
+| `reflog` | Reflog | `↜` | U+219C |
+| `refresh` | 更新 | `⤸` | U+2938 |
+| `remote` | リモート | `⊤` | U+22A4 |
+| `remote-conflict` | リモートと食い違う | `⍡` | U+2361 |
+| `repositories` | Repositories | `⦙` | U+2999 |
+| `restore` | 元に戻す（破棄） | `⇠` | U+21E0 |
+| `revoked-key` | 取り消された鍵 | `⌀` | U+2300 |
+| `search` | 検索 | `⌕` | U+2315 |
+| `settings` | 設定 | `⋮` | U+22EE |
+| `shallow` | shallow clone | `⋯` | U+22EF |
+| `side-by-side` | 左右に並べる | `⫴` | U+2AF4 |
+| `sidebar` | サイドバー | `⎸` | U+23B8 |
+| `signed` | 署名あり | `ʃ` | U+0283 |
+| `signer-mismatch` | 署名者が違う | `≁` | U+2241 |
+| `sparse` | sparse checkout | `⁘` | U+2058 |
+| `stacked` | stacked | `⫶` | U+2AF6 |
+| `stash` | Stash | `⤈` | U+2908 |
+| `stashes` | Stashes（節） | `⊔` | U+2294 |
+| `submodule` | submodule | `⊡` | U+22A1 |
+| `subtree` | subtree | `⤷` | U+2937 |
+| `swipe` | スワイプ | `⇹` | U+21F9 |
+| `tag` | タグ | `⬦` | U+2B26 |
+| `terminal` | 端末 | `≻` | U+227B |
+| `theme` | テーマ | `◬` | U+25EC |
+| `translate` | 翻訳 | `⥊` | U+294A |
+| `tree` | 木 | `⊢` | U+22A2 |
+| `trust-unknown` | 信頼が不明 | `⸮` | U+2E2E |
+| `undo` | Undo | `↩` | U+21A9 |
+| `unknown-file` | 未追跡のファイル | `?` | U+003F |
+| `upstream-gone` | upstream がない | `⍊` | U+234A |
+| `whitespace` | 空白 | `␣` | U+2423 |
+| `working-copy` | Working Copy | `✎` | U+270E |
+| `wrap-lines` | 折り返し | `↵` | U+21B5 |
+| `zoom-fit` | 大きさを合わせる | `⤢` | U+2922 |
+| `zoom-in` | 拡大 | `+` | U+002B |
+| `zoom-out` | 縮小 | `-` | U+002D |
+
 ## 進み具合
 
 - [x] 決まりと、ツールバーの 19 種
@@ -73,4 +179,5 @@ swift figures.swift alternatives alternatives.ja.tsv alternatives ../../../docs/
 - [x] VSCode のアクティビティバーの印（1 色で、VSCode が色を付ける）: 二重の山はそのままに、太さ 1.5 の線で描き直し、頂上を座の輪にして外の山は輪の手前で止める。アプリのアイコンの稜線・レーン・座・星を線にした案から選んだ（2 本の線の間の輪は人の形に読め、4 方向の光の星は AI の印）
 - [x] GTK4 のアプリのアイコン: 同じ絵を GNOME の形で（`scripts/make-icon.swift --gnome`。128 の格子で幅 104・角の丸み 8 の角丸の四角、下に厚みの 4 px の暗い縁、影なし、32 px までは淡い星を描かない）。16〜512 の大きさごとに `hicolor` に置く。円（丘と星が切れる）と縁なしの四角から選んだ
 - [x] VSCode 拡張のアイコン（`package.json` の `icon`。VSCode の拡張機能ビューに出る。拡張は Marketplace には出していない）: Windows のアイコンの絵を 256 px で（`scripts/make-icon.swift --vscode`）。VSCode は切り抜かずにそのまま描くので
-- 未決: VSCode の形式、端末の FE に何かするか（文字で表している）。
+- [x] 端末の FE の文字: 共通の名前ごとに 1 文字、GNOME 端末・macOS の Terminal・Windows Terminal で確かめた（上の表）。端末の FE ではまだ使っていない
+- 未決: VSCode の形式。
