@@ -2,9 +2,12 @@
 //   swift scripts/make-icon.swift [出力先のフォルダ]
 //   swift scripts/make-icon.swift --windows [出力先のフォルダ]
 //   swift scripts/make-icon.swift --gnome [出力先のフォルダ]
+//   swift scripts/make-icon.swift --vscode [出力先のフォルダ]
 // 出力: AppIcon.icns（正式版）・AppIcon-Snapshot.icns（snapshot 版。右下にオレンジの帯）・AppIcon.png（1024 px の見本）。
 // --windows では Windows のアプリの AppIcon.ico（apps/windows/res）。--gnome では GTK4 のアプリの hicolor の
-// アイコン（apps/gtk4/data/icons の <大きさ>x<大きさ>/apps/io.github.fukusaka.amonhen.png）。
+// アイコン（apps/gtk4/data/icons の <大きさ>x<大きさ>/apps/io.github.fukusaka.amonhen.png）。--vscode では VSCode 拡張の
+// アイコン（apps/vscode/media/icon.png、256 px。拡張機能ビューに出る。絵は Windows と同じ枠で、VSCode は切り抜かずに
+// そのまま描くので、枠いっぱいに影なしで描く）。
 //
 // 図柄: Amon Hen（見張りの座）にちなみ、夜の丘の稜線を git のレーン（分かれて合流する 2 本）で描き、
 // 頂上の座に光る点（見る目）を置く。空には淡い北斗七星とカシオペヤ座、その間に光る星（北極星の役）。macOS のアイコンの枠（1024 の中の 824 の角の丸い四角）に合わせる。
@@ -16,8 +19,13 @@ import AppKit
 var arguments = Array(CommandLine.arguments.dropFirst())
 let windows = arguments.first == "--windows"
 let gnome = arguments.first == "--gnome"
-if windows || gnome { arguments.removeFirst() }
-let outDir = URL(fileURLWithPath: arguments.first ?? (windows ? "apps/windows/res" : gnome ? "apps/gtk4/data/icons" : "apps/macos/Icons"))
+let vscode = arguments.first == "--vscode"
+if windows || gnome || vscode { arguments.removeFirst() }
+let outDir = URL(
+    fileURLWithPath: arguments.first
+        ?? (windows ? "apps/windows/res" : gnome ? "apps/gtk4/data/icons" : vscode ? "apps/vscode/media" : "apps/macos/Icons"))
+/// 枠いっぱいに影なしで描く（Windows と VSCode）。
+let fullBleed = windows || vscode
 
 func color(_ hex: UInt32, _ alpha: CGFloat = 1) -> CGColor {
     CGColor(
@@ -34,18 +42,18 @@ func draw(_ ctx: CGContext, snapshot: Bool, stars: Bool = true) {
         return
     }
     let body = CGRect(x: 100, y: 100, width: 824, height: 824)
-    if windows {
+    if fullBleed {
         // 枠（100〜924）を 1024 の中の 16〜1008 に広げる。
         let scale: CGFloat = 992 / 824
         ctx.translateBy(x: 16 - 100 * scale, y: 16 - 100 * scale)
         ctx.scaleBy(x: scale, y: scale)
     }
-    let radius: CGFloat = windows ? 130 : 185
+    let radius: CGFloat = fullBleed ? 130 : 185
     let shape = CGPath(roundedRect: body, cornerWidth: radius, cornerHeight: radius, transform: nil)
 
-    // 影（アイコンの枠の外に薄く）。Windows では付けない。
+    // 影（アイコンの枠の外に薄く）。Windows と VSCode では付けない。
     ctx.saveGState()
-    if !windows {
+    if !fullBleed {
         ctx.setShadow(offset: CGSize(width: 0, height: -10), blur: 20, color: color(0x000000, 0.22))
     }
     ctx.addPath(shape)
@@ -265,6 +273,11 @@ if gnome {
         try FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
         try png(size: size, snapshot: false).write(to: dir.appendingPathComponent("io.github.fukusaka.amonhen.png"))
     }
+    print("出力: \(outDir.path)")
+    exit(0)
+}
+if vscode {
+    try png(size: 256, snapshot: false).write(to: outDir.appendingPathComponent("icon.png"))
     print("出力: \(outDir.path)")
     exit(0)
 }
