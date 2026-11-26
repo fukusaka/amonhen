@@ -286,9 +286,37 @@ fn inside_unit(kind: &Kind, x: f64, y: f64) -> bool {
 }
 
 /// ラベルの箱 (w, h) を収める形の大きさ。
-pub fn fit(kind: &Kind, w: f64, h: f64) -> (f64, f64) {
+/// ラベルの箱（`w`×`h`）を入れる形の大きさ。`min_h` は形の高さの下限（なければ 0）。
+///
+/// 楕円と凸の多角形は Graphviz の絵で測った大きさ: ラベルの箱を囲む楕円（箱の √2 倍）にし、高さの下限が
+/// その楕円より高ければ、下限の高さの楕円に箱が入る幅（`w / √(1 - (h / min_h)²)`）で高さは箱のまま。多角形は
+/// さらに辺の数 n で `cos(π / n)` で割る（三角は 2.83 倍、四角は 2 倍、五角は 1.75 倍）。ラベルが角にはみ出す
+/// こともあるが、Graphviz と同じ。星と円柱も測った形。ほかのへこんだ多角形は、箱の角がみな中に入る大きさ。
+pub fn fit(kind: &Kind, w: f64, h: f64, min_h: f64) -> (f64, f64) {
+    let ellipse = |w: f64, h: f64| -> (f64, f64) {
+        let hh = h * std::f64::consts::SQRT_2;
+        if min_h > hh && h > 0.0 {
+            (w / (1.0 - (h / min_h).powi(2)).sqrt(), h)
+        } else {
+            (w * std::f64::consts::SQRT_2, hh)
+        }
+    };
     match kind {
-        Kind::Ellipse => (w * std::f64::consts::SQRT_2, h * std::f64::consts::SQRT_2),
+        Kind::Ellipse => ellipse(w, h),
+        Kind::Polygon(pts) if !is_box(pts) && convex(pts) => {
+            let (ew, eh) = ellipse(w, h);
+            let c = (PI / pts.len().max(3) as f64).cos();
+            (ew / c, eh / c)
+        }
+        // 星（10 点のへこんだ形）は正しい星のまま: 幅は w の φ² 倍か h / sin 36° の φ² 倍の大きいほう、高さは
+        // 幅の cos 18° 倍（Graphviz の絵で測った）
+        Kind::Polygon(pts) if pts.len() == 10 && !convex(pts) => {
+            let phi2 = (3.0 + 5f64.sqrt()) / 2.0;
+            let width = w.max(h / (PI / 5.0).sin()) * phi2;
+            (width, width * (PI / 10.0).cos())
+        }
+        // 円柱は上下のふたの分だけ高い（Graphviz の絵で測った、高さの 1.375 倍）
+        Kind::Special("cylinder") => (w, h * 1.375),
         Kind::Polygon(pts) if !is_box(pts) => {
             if w <= 0.0 || h <= 0.0 {
                 return (w, h);
@@ -323,6 +351,25 @@ pub fn fit(kind: &Kind, w: f64, h: f64) -> (f64, f64) {
         }
         _ => (w, h),
     }
+}
+
+/// 凸の多角形か（辺の向きの回りがみな同じ）。
+fn convex(pts: &[(f64, f64)]) -> bool {
+    let n = pts.len();
+    let mut sign = 0.0;
+    for i in 0..n {
+        let (a, b, c) = (pts[i], pts[(i + 1) % n], pts[(i + 2) % n]);
+        let cross = (b.0 - a.0) * (c.1 - b.1) - (b.1 - a.1) * (c.0 - b.0);
+        if cross.abs() < 1e-12 {
+            continue;
+        }
+        if sign == 0.0 {
+            sign = cross.signum();
+        } else if cross.signum() != sign {
+            return false;
+        }
+    }
+    true
 }
 
 fn is_box(pts: &[(f64, f64)]) -> bool {
@@ -884,13 +931,13 @@ mod tests {
 
     #[test]
     fn fits_labels_inside() {
-        let (w, h) = fit(&Kind::Ellipse, 10.0, 10.0);
+        let (w, h) = fit(&Kind::Ellipse, 10.0, 10.0, 0.0);
         assert!((w - 14.142).abs() < 0.01 && (h - w).abs() < 1e-9);
         let diamond = Kind::Polygon(polygon(4, 45.0, 0.0, 0.0));
-        let (w, h) = fit(&diamond, 10.0, 4.0);
+        let (w, h) = fit(&diamond, 10.0, 4.0, 0.0);
         assert!((w - 20.0).abs() < 0.01 && (h - 8.0).abs() < 0.01, "{w} {h}");
         let star = Kind::Polygon(star());
-        let (w, _) = fit(&star, 10.0, 10.0);
+        let (w, _) = fit(&star, 10.0, 10.0, 0.0);
         assert!(w > 20.0);
     }
 

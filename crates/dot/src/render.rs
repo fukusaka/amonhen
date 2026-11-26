@@ -499,12 +499,19 @@ pub fn render(
             lw = lw.max(iw);
             lh = lh.max(ih);
         }
-        let min_w = a
-            .num("width")
-            .map_or(0.75 * INCH, |v| v.clamp(0.0, 100.0) * INCH);
-        let min_h = a
-            .num("height")
-            .map_or(0.5 * INCH, |v| v.clamp(0.0, 100.0) * INCH);
+        // plain は幅と高さが 0（属性は読まない。fixedsize なら大きさも 0。Graphviz の絵と同じ）
+        let min_w = if spec.no_margin {
+            0.0
+        } else {
+            a.num("width")
+                .map_or(0.75 * INCH, |v| v.clamp(0.0, 100.0) * INCH)
+        };
+        let min_h = if spec.no_margin {
+            0.0
+        } else {
+            a.num("height")
+                .map_or(0.5 * INCH, |v| v.clamp(0.0, 100.0) * INCH)
+        };
         let fixed = a
             .get("fixedsize")
             .is_some_and(|v| v.eq_ignore_ascii_case("true") || v.eq_ignore_ascii_case("shape"));
@@ -523,14 +530,17 @@ pub fn render(
             w = min_w;
             h = min_h;
         } else {
-            let (fw, fh) = shapes::fit(&spec.kind, lw, lh);
             let plain = spec.no_margin;
-            w = if plain { fw } else { fw.max(min_w) };
-            h = if plain { fh } else { fh.max(min_h) };
+            let (fw, fh) = shapes::fit(&spec.kind, lw, lh, if plain { 0.0 } else { min_h });
             if spec.regular {
-                let m = w.max(h);
+                // 同じ幅と高さ: 下限は幅と高さの下限の小さいほう（Graphviz の絵と同じ）
+                let floor = if plain { 0.0 } else { min_w.min(min_h) };
+                let m = fw.max(fh).max(floor);
                 w = m;
                 h = m;
+            } else {
+                w = if plain { fw } else { fw.max(min_w) };
+                h = if plain { fh } else { fh.max(min_h) };
             }
         }
         if !w.is_finite() || !h.is_finite() {
@@ -551,8 +561,12 @@ pub fn render(
         let line_color = color_text
             .as_deref()
             .and_then(|c| ctx.first_color(c, scheme.as_deref()));
-        let filled =
-            has(&st, "filled") || has(&st, "radial") || has(&st, "striped") || has(&st, "wedged");
+        // plain は塗らない（Graphviz の絵と同じ）
+        let filled = !spec.no_margin
+            && (has(&st, "filled")
+                || has(&st, "radial")
+                || has(&st, "striped")
+                || has(&st, "wedged"));
         let fill_text = a
             .get("fillcolor")
             .or(color_text.as_deref())
@@ -621,7 +635,7 @@ pub fn render(
             .map(|c| c.to_ascii_lowercase())
         {
             Some(side @ ('t' | 'b')) if rec.is_none() && !point => {
-                let (_, ky) = shapes::fit(&spec.kind, 1.0, 1.0);
+                let (_, ky) = shapes::fit(&spec.kind, 1.0, 1.0, 0.0);
                 let room = (h / ky.max(1e-9) - lh).max(0.0) / 2.0;
                 if side == 't' { -room } else { room }
             }
@@ -828,9 +842,16 @@ pub fn render(
             }
         })
         .collect();
+    let cluster_rank = !g.flag("newrank").unwrap_or(false)
+        && !g
+            .get("clusterrank")
+            .is_some_and(|s| matches!(s.trim().to_ascii_lowercase().as_str(), "global" | "none"));
+    // クラスタごとにランクを決めるとき、クラスタの部分グラフそのものの `rank` は読まない（Graphviz の絵と同じ。
+    // 中の普通の部分グラフの `rank` は効く）
     let sets: Vec<(crate::graph::RankKind, Vec<usize>)> = model
         .rank_sets
         .iter()
+        .filter(|s| !(cluster_rank && s.on_cluster))
         .map(|s| (s.kind, s.nodes.clone()))
         .collect();
     let lopt = layout::Options {
@@ -843,10 +864,7 @@ pub fn render(
         rank_iter: budget.rank_iter,
         x_iter: budget.x_iter,
         sweeps: budget.sweeps,
-        cluster_rank: !g.flag("newrank").unwrap_or(false)
-            && !g.get("clusterrank").is_some_and(|s| {
-                matches!(s.trim().to_ascii_lowercase().as_str(), "global" | "none")
-            }),
+        cluster_rank,
     };
     let lay = if free {
         let placed = place_free(engine, model, &lnodes, &lclusters, &mut ctx);
@@ -2239,6 +2257,17 @@ pub fn render(
     let _ = ctx.model;
     if crate::take_cut_short() {
         ctx.notes.insert(Note::WorkLimit);
+    }
+    // rotate=90・orientation=landscape: 絵を左に 90° 回す（Graphviz の絵と同じ。上が左、右が上になる）
+    let landscape = g.num("rotate").is_some_and(|r| r == 90.0)
+        || g.get("orientation")
+            .is_some_and(|o| o.trim().starts_with(['l', 'L']));
+    if landscape {
+        let content = format!(
+            "<g transform=\"translate(0,{}) rotate(-90)\">{content}</g>",
+            num(width)
+        );
+        return svg_document("dot", height, width, FONT_SIZE, &options, &acc, &content);
     }
     svg_document("dot", width, height, FONT_SIZE, &options, &acc, &content)
 }

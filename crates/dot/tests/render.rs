@@ -1254,3 +1254,101 @@ fn dot_follows_written_edges_before_turned_ones() {
     let cy = |id: &str| attr_num(part(&svg, id), "cy");
     assert!(cy("d") < cy("e") && cy("e") < cy("r"), "{svg}");
 }
+
+/// 形の大きさは Graphviz の絵で測った大きさ（ラベルの箱 w×h を余白なしで入れたとき）。
+#[test]
+fn node_shapes_size_like_graphviz() {
+    let size = |shape: &str, w: u32, h: u32| {
+        let src = format!(
+            "digraph {{ pad=0; n [shape={shape} margin=0 penwidth=0 label=<<table fixedsize=\"true\" width=\"{w}\" height=\"{h}\" border=\"0\" cellpadding=\"0\" cellspacing=\"0\"><tr><td></td></tr></table>>] }}"
+        );
+        let svg = render(&src).unwrap().svg;
+        let v: Vec<f64> = svg
+            .split("viewBox=\"")
+            .nth(1)
+            .unwrap()
+            .split('"')
+            .next()
+            .unwrap()
+            .split(' ')
+            .map(|n| n.parse().unwrap())
+            .collect();
+        (v[2].round(), v[3].round())
+    };
+    let near = |got: (f64, f64), want: (f64, f64)| {
+        (got.0 - want.0).abs() <= 1.0 && (got.1 - want.1).abs() <= 1.0
+    };
+    for (shape, w, h, want) in [
+        ("ellipse", 40, 40, (57.0, 57.0)),
+        ("ellipse", 100, 10, (104.0, 36.0)),
+        ("triangle", 100, 20, (241.0, 40.0)),
+        ("diamond", 40, 40, (80.0, 80.0)),
+        ("house", 100, 10, (129.0, 36.0)),
+        ("hexagon", 200, 5, (233.0, 36.0)),
+        ("Msquare", 40, 40, (40.0, 40.0)),
+        ("cylinder", 40, 40, (54.0, 55.0)),
+        ("star", 100, 20, (262.0, 249.0)),
+    ] {
+        let got = size(shape, w, h);
+        assert!(near(got, want), "{shape} {w}x{h}: {got:?}, want {want:?}");
+    }
+}
+
+/// rotate=90・orientation=landscape は絵を左に 90° 回す（幅と高さが入れ替わる）。
+#[test]
+fn landscape_rotates_the_drawing() {
+    let view = |src: &str| {
+        let svg = render(src).unwrap().svg;
+        let v: Vec<f64> = svg
+            .split("viewBox=\"")
+            .nth(1)
+            .unwrap()
+            .split('"')
+            .next()
+            .unwrap()
+            .split(' ')
+            .map(|n| n.parse().unwrap())
+            .collect();
+        (v[2], v[3], svg)
+    };
+    let (w, h, _) = view("digraph { a -> b -> c }");
+    for src in [
+        "digraph { rotate=90; a -> b -> c }",
+        "digraph { orientation=landscape; a -> b -> c }",
+    ] {
+        let (rw, rh, svg) = view(src);
+        assert_eq!((rw, rh), (h, w), "{svg}");
+        assert!(svg.contains("rotate(-90)"), "{svg}");
+    }
+}
+
+/// shape=plain は幅と高さの属性を読まず（fixedsize なら大きさ 0）、塗らない（Graphviz の絵と同じ）。
+#[test]
+fn plain_nodes_ignore_size_and_fill() {
+    let svg = render(
+        "digraph { node [shape=rectangle, fixedsize=true, width=2.5, style=filled, fillcolor=red]; a -> e -> b; e [shape=plain, label=\"\"]; t [shape=plain, fixedsize=false, label=\"text\"] }",
+    )
+    .unwrap()
+    .svg;
+    let e = part(&svg, "e");
+    assert!(!e.contains("<rect") && !e.contains("#ff0000"), "{svg}");
+    assert!(!part(&svg, "t").contains("#ff0000"), "{svg}");
+}
+
+/// クラスタの部分グラフそのものに書いた rank は、クラスタごとにランクを決めるとき読まない（Graphviz の絵と同じ）。
+/// 中の普通の部分グラフの rank と、newrank=true のときは効く。
+#[test]
+fn rank_on_a_cluster_subgraph_needs_newrank() {
+    let cy = |svg: &str, id: &str| attr_num(part(svg, id), "cy");
+    let svg = render("digraph { x -> a; subgraph cluster_c { rank=same; a; b } a -> b }")
+        .unwrap()
+        .svg;
+    assert!(cy(&svg, "a") < cy(&svg, "b"), "{svg}");
+    for src in [
+        "digraph { newrank=true; x -> a; subgraph cluster_c { rank=same; a; b } a -> b }",
+        "digraph { x -> a; subgraph cluster_c { subgraph { rank=same; a; b } } a -> b }",
+    ] {
+        let svg = render(src).unwrap().svg;
+        assert!((cy(&svg, "a") - cy(&svg, "b")).abs() < 0.5, "{svg}");
+    }
+}
