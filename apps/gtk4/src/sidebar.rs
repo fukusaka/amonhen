@@ -3494,7 +3494,7 @@ fn pull_request_rows(list: &[PullRequest], refs: Option<&Refs>) -> gio::ListStor
         let data = Data {
             title: format!("#{} {}", pr.number, pr.title),
             key: format!("pr/{}", pr.number),
-            icon: icon::Kind::Rebase,
+            icon: icon::Kind::PullRequest,
             badge: badge.join(" "),
             tooltip: Some(pr.tooltip()),
             // CI の印は押せる（History の行の印と同じ吹き出し）。
