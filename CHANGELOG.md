@@ -87,6 +87,8 @@ becomes the GitHub Release notes.
   instead of laying the clusters side by side on one rank.
 - DOT diagrams: in a cycle through clusters, edges between nodes outside the clusters keep their direction, as in
   Graphviz.
+- DOT diagrams: dot edges are fitted as long smooth curves through their corridor instead of short curves joined at
+  every bend, as Graphviz draws them.
 - Exporting chosen folders as an archive in a partial clone fetches only the contents it asked about, not every missing
   file of the commit (git 2.41 or later; older git fetches them all, and the question now counts them all).
 - Markdown previews put a list item's mark on the same line as a list nested at its start (`- 1. text`), as GitHub

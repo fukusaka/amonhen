@@ -1393,6 +1393,28 @@ pub fn render(
     // 辺
     let compound = g.flag("compound").unwrap_or(false);
     let vertical_flow = !dir.sideways();
+    // 辺の少ない図では、線を大きく曲げた形も試す（ノード・ラベル・先に引いた線に新しくかからないときだけ使う。
+    // Gansner ほか 1993 §5 の「使える場所はすべて使い、先に引いた線には近づきすぎない」）。配置の座標
+    let roomy = !(free || ortho) && model.edges.len() <= ROOMY_EDGES;
+    let mut node_boxes: Vec<[f64; 4]> = Vec::new();
+    let mut label_boxes: Vec<[f64; 4]> = Vec::new();
+    if roomy {
+        for (p, n) in lay.nodes.iter().zip(&lnodes) {
+            node_boxes.push([
+                p.0 - n.w / 2.0 - 2.0,
+                p.1 - n.h / 2.0 - 2.0,
+                p.0 + n.w / 2.0 + 2.0,
+                p.1 + n.h / 2.0 + 2.0,
+            ]);
+        }
+        for (r, le) in lay.routes.iter().zip(&ledges) {
+            if let (Route::Path { label: Some(l), .. }, Some((w, h))) = (r, le.label) {
+                label_boxes.push([l.0 - w / 2.0, l.1 - h / 2.0, l.0 + w / 2.0, l.1 + h / 2.0]);
+            }
+        }
+    }
+    // 引いた線（折れ線と外接の箱）
+    let mut drawn: Vec<(Vec<P>, [f64; 4])> = Vec::new();
     for (ei, e) in model.edges.iter().enumerate() {
         let a = &e.attrs;
         let scheme = a.get("colorscheme").map(str::to_owned);
@@ -1534,6 +1556,57 @@ pub fn render(
                 } else {
                     curve::through(&lp, straight || polyline, true)
                 };
+                if fitted && roomy {
+                    let bbox = |poly: &[P]| -> [f64; 4] {
+                        let mut b = [
+                            f64::INFINITY,
+                            f64::INFINITY,
+                            f64::NEG_INFINITY,
+                            f64::NEG_INFINITY,
+                        ];
+                        for p in poly {
+                            b = [b[0].min(p.0), b[1].min(p.1), b[2].max(p.0), b[3].max(p.1)];
+                        }
+                        b
+                    };
+                    // かかるノード（両端を除く）の数、ラベルの数、先に引いた線との交差の数
+                    let cost = |poly: &[P]| -> [usize; 3] {
+                        let bb = bbox(poly);
+                        let over = |b: &[f64; 4]| {
+                            b[0] <= bb[2] && b[2] >= bb[0] && b[1] <= bb[3] && b[3] >= bb[1]
+                        };
+                        let nodes = node_boxes
+                            .iter()
+                            .enumerate()
+                            .filter(|&(v, b)| {
+                                v != e.tail && v != e.head && over(b) && spline::hits_box(poly, b)
+                            })
+                            .count();
+                        let labels = label_boxes
+                            .iter()
+                            .filter(|b| over(b) && spline::hits_box(poly, b))
+                            .count();
+                        let cross = drawn
+                            .iter()
+                            .filter(|(_, b)| over(b))
+                            .map(|(q, _)| spline::crossings(poly, q))
+                            .sum();
+                        [nodes, labels, cross]
+                    };
+                    let mut poly = spline::sample(&path);
+                    let cand = spline::fit_roomy(&lp, gates);
+                    if cand != path {
+                        let base = cost(&poly);
+                        let q = spline::sample(&cand);
+                        let c = cost(&q);
+                        if c.iter().zip(&base).all(|(a, b)| a <= b) {
+                            path = cand;
+                            poly = q;
+                        }
+                    }
+                    let b = bbox(&poly);
+                    drawn.push((poly, b));
+                }
                 path = path.iter().map(|c| c.map(to_final)).collect();
                 // 向きのあるポート（e など）の端は、その向きに出入りする（Graphviz の絵と同じ。e から出る線はいったん
                 // 右へ出てから曲がる。向きのない欄はランクの向き）。端の切れ端の制御点を、その向きに弦の 1/3（4〜36）
@@ -2962,6 +3035,9 @@ fn ratio_scale(
     // 図が大きくなりすぎないように
     (fx.clamp(1.0, MAX_STRETCH), fy.clamp(1.0, MAX_STRETCH))
 }
+
+/// 線を大きく曲げた形を試す図の、辺の数の上限（線ごとにほかの線との交わりを調べるので）。
+const ROOMY_EDGES: usize = 120;
 
 /// `ratio` で伸ばす倍率の上限。
 const MAX_STRETCH: f64 = 20.0;
