@@ -1382,7 +1382,7 @@ fn dot_edges_leave_compass_ports_along_their_direction() {
         .unwrap()
         .to_owned();
     let nums: Vec<f64> = d
-        .split(|c: char| c == 'C' || c == ',' || c == ' ')
+        .split(['C', ',', ' '])
         .filter(|s| !s.is_empty())
         .map(|s| s.parse().unwrap())
         .collect();
