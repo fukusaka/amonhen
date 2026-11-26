@@ -39,6 +39,8 @@ pub enum Kind {
     Merge,
     /// arrow.triangle.pull
     Rebase,
+    /// サイドバーの Pull request の行
+    PullRequest,
     /// tray.and.arrow.down
     StashPush,
     /// tray.and.arrow.up
@@ -338,6 +340,7 @@ fn shared(kind: Kind) -> Option<&'static str> {
         Kind::Publish => "publish",
         Kind::Merge => "merge",
         Kind::Rebase => "rebase",
+        Kind::PullRequest => "pull-request",
         Kind::StashPush => "stash",
         Kind::StashPop => "pop",
         Kind::Activity => "activity",

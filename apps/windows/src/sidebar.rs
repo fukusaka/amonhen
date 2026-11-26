@@ -133,7 +133,7 @@ pub fn row_xaml(row: &Row) -> String {
             r#"<Border Background="Transparent" Padding="2,0,2,0" VerticalAlignment="Center"{tag}{tip}>{inner}</Border>"#
         ));
     }
-    // 見出し（アイコンのない行）は前を空けない。PR の行のように形のないものは、名前の位置をそろえるため空ける。
+    // 見出し（アイコンのない行）は前を空けない。
     let lead = match row.icon {
         Some(name) => format!(
             r#"<Border Width="{ICON_SIZE}" Height="{ICON_SIZE}" Margin="0,0,8,0" VerticalAlignment="Center">{}</Border>"#,
@@ -534,10 +534,9 @@ pub fn nodes(
                     tip: ci.label().to_owned(),
                 });
             }
-            // プルリクエストの共通の形はない（macOS 版も SF Symbols のまま）。名前の位置だけそろえる。
             row_node(
                 key,
-                Some(""),
+                Some("pull-request"),
                 false,
                 format!("#{} {}", pr.number, pr.title),
                 marks,

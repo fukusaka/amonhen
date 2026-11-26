@@ -6,8 +6,9 @@ import SwiftUI
 /// 色はツールバーや行が付ける（SF Symbols と同じ）。
 enum AppIcons {
     /// SF Symbols の名前（と、SF Symbols にない形の `amonhen.` の名前）から、同じ意味の共通のアイコンへ。ここにない
-    /// 記号（標準の部品の ▾・×・＋ など）は SF Symbols のまま。Pull request（arrow.triangle.pull）も GitHub の印のまま。
+    /// 記号（標準の部品の ▾・×・＋ など）は SF Symbols のまま。
     static let bySymbol: [String: String] = [
+        "arrow.triangle.pull": "pull-request",
         "arrow.triangle.branch": "branch",
         "square.and.pencil": "working-copy",
         "clock": "history",
