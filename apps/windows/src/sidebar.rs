@@ -21,6 +21,9 @@ thread_local! {
     static TIPS: std::cell::RefCell<HashMap<String, String>> = std::cell::RefCell::new(HashMap::new());
     /// 行の中身（鍵 → アイコン・名前・印）。`row`。
     static ROWS: std::cell::RefCell<HashMap<String, Row>> = std::cell::RefCell::new(HashMap::new());
+    /// 木を作った回数と時（`generation`・`built_at`）。
+    static BUILT: std::cell::Cell<(u64, Option<std::time::Instant>)> =
+        const { std::cell::Cell::new((0, None)) };
     /// 取り込み済みのブランチ（名前 → 印のツールチップ）。`branch_rows` が作る間だけ。
     static MERGED: std::cell::RefCell<HashMap<String, String>> = std::cell::RefCell::new(HashMap::new());
 }
@@ -148,6 +151,16 @@ pub fn row_xaml(row: &Row) -> String {
 /// `row_xaml` で作ったものに差し替える（TreeView の項目は文字だけを持つ）。
 pub fn row(key: &str) -> Option<Row> {
     ROWS.with(|m| m.borrow().get(key).cloned())
+}
+
+/// 木を作った回数（作るたびに行の中身が変わりうる）。
+pub fn generation() -> u64 {
+    BUILT.with(|b| b.get().0)
+}
+
+/// 最後に木を作った時。
+pub fn built_at() -> Option<std::time::Instant> {
+    BUILT.with(|b| b.get().1)
 }
 
 /// アイコンと印のある行（`text` は差し替える前の行の文字にもなる）。
@@ -359,6 +372,7 @@ pub fn nodes(
     } = marks;
     TIPS.with(|t| t.borrow_mut().clear());
     ROWS.with(|m| m.borrow_mut().clear());
+    BUILT.with(|b| b.set((b.get().0 + 1, Some(std::time::Instant::now()))));
     let mut history_tips = Vec::new();
     if form.shallow {
         history_tips.push(tr!("Shallow clone: older history isn’t fetched"));

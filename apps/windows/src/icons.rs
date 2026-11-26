@@ -21,6 +21,11 @@ pub fn set_display_scale(scale: f32) {
     }
 }
 
+/// 窓の画面の倍率（`set_display_scale`）。
+pub fn display_scale() -> f32 {
+    DISPLAY_SCALE.get()
+}
+
 /// 共通のアイコン `name` を一辺 `size` で。ないアイコンなら何も出さない。
 pub fn icon(name: &str, size: f32) -> View {
     let Some(icon) = amonhen_icons::get(name) else {
