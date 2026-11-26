@@ -14,6 +14,9 @@ const TANGENT: f64 = 1.0 / 3.0;
 /// 切れ端の曲線が弦からふくらんでよい幅（片方の端の分）。ランクの間でははみ出しを見ないので、大きいと曲線が隣の
 /// 線やラベルへふくらむ（16 ではラベルの多い図の交差が 3 割増え、4 では曲がりが折れ点に集まって角ばる）。
 const BOW: f64 = 8.0;
+/// 大きく曲げた版の、折れ線から離れてよい距離と、切れ端のふくらみの上限。
+const ROOMY_ERROR: f64 = 24.0;
+const ROOMY_BOW: f64 = 24.0;
 
 /// `start` から `end` へ、関 `gates`（y の順）をすべて通る最短の折れ線（両端を含む）。
 pub fn shortest(start: P, end: P, gates: &[Portal]) -> Vec<P> {
@@ -174,27 +177,53 @@ fn fits(c: &Cubic, gates: &[Portal]) -> bool {
 /// ずれのいちばん大きい所に近い折れ点で分けて（そこでの向きは前後の点を結ぶ向き）それぞれやり直す（Dobkin ほか
 /// 1997 の当てはめ）。隣どうしの点まで分けてもだめなら、接線を縮め、さらにだめなら直線。
 pub fn fit(points: &[P], gates: &[Portal]) -> Vec<Cubic> {
+    fit_shaped(points, gates, (FIT_ERROR, BOW))
+}
+
+/// `fit` の大きく曲げた版: 折れ線から `ROOMY_ERROR` まで離れ、切れ端は `ROOMY_BOW` までふくらむ。通り道には収めるが、
+/// ランクの間のほかの線・ノード・ラベルは見ないので、使う側が重なりを確かめる。
+pub fn fit_roomy(points: &[P], gates: &[Portal]) -> Vec<Cubic> {
+    fit_shaped(points, gates, (ROOMY_ERROR, ROOMY_BOW))
+}
+
+/// 折れ線から離れてよい距離と、切れ端のふくらみの上限 `shape` を決めて当てはめる。
+fn fit_shaped(points: &[P], gates: &[Portal], shape: (f64, f64)) -> Vec<Cubic> {
     let n = points.len();
     if n < 2 {
         return Vec::new();
     }
-    let tangent = |i: usize| -> P {
-        let (a, b) = if i == 0 {
-            (points[0], points[1])
-        } else if i == n - 1 {
-            (points[n - 2], points[n - 1])
+    // つなぎ目の向き: 前後の区間の向き（単位の向き）の二等分。前の点から次の点への向きにすると、長い区間と短い
+    // 区間が隣り合うとき長い区間の向きにそろい、長い区間が直線になって、曲がりが短い区間だけに集まる
+    let joint = |i: usize| -> P {
+        let u = unit((points[i].0 - points[i - 1].0, points[i].1 - points[i - 1].1));
+        let v = unit((points[i + 1].0 - points[i].0, points[i + 1].1 - points[i].1));
+        let t = unit((u.0 + v.0, u.1 + v.1));
+        if t != (0.0, 0.0) {
+            t
         } else {
-            // 前後の区間の向き（単位の向き）の二等分。前の点から次の点への向きにすると、長い区間と短い区間が
-            // 隣り合うとき長い区間の向きにそろい、長い区間が直線になって、曲がりが短い区間だけに集まる
-            let u = unit((points[i].0 - points[i - 1].0, points[i].1 - points[i - 1].1));
-            let v = unit((points[i + 1].0 - points[i].0, points[i + 1].1 - points[i].1));
-            let t = unit((u.0 + v.0, u.1 + v.1));
-            if t != (0.0, 0.0) {
-                return t;
-            }
-            (points[i - 1], points[i + 1])
-        };
-        unit((b.0 - a.0, b.1 - a.1))
+            unit((
+                points[i + 1].0 - points[i - 1].0,
+                points[i + 1].1 - points[i - 1].1,
+            ))
+        }
+    };
+    // 両端の向き: 隣のつなぎ目の向きを、端の区間の弦をはさんで鏡写しにしたもの。端の区間が左右対称の弧になり、
+    // ノードから出るところから曲がり始める（隣の点への向きにすると、端の制御点が弦の上に乗って、端の側だけ直線になる）
+    let mirror = |t: P, a: P, b: P| -> P {
+        let c = unit((b.0 - a.0, b.1 - a.1));
+        let d = t.0 * c.0 + t.1 * c.1;
+        unit((2.0 * d * c.0 - t.0, 2.0 * d * c.1 - t.1))
+    };
+    let tangent = |i: usize| -> P {
+        if n == 2 {
+            unit((points[1].0 - points[0].0, points[1].1 - points[0].1))
+        } else if i == 0 {
+            mirror(joint(1), points[0], points[1])
+        } else if i == n - 1 {
+            mirror(joint(n - 2), points[n - 2], points[n - 1])
+        } else {
+            joint(i)
+        }
     };
     let mut out = Vec::with_capacity(n - 1);
     span(
@@ -205,9 +234,75 @@ pub fn fit(points: &[P], gates: &[Portal]) -> Vec<Cubic> {
         tangent(n - 1),
         &tangent,
         gates,
+        shape,
         &mut out,
     );
     out
+}
+
+/// 曲線の列を折れ線にする（1 本あたり `PER` 区間）。
+pub fn sample(path: &[Cubic]) -> Vec<P> {
+    const PER: usize = 8;
+    let mut out = Vec::with_capacity(path.len() * PER + 1);
+    for (k, c) in path.iter().enumerate() {
+        if k == 0 {
+            out.push(c.0);
+        }
+        for i in 1..=PER {
+            out.push(c.at(i as f64 / PER as f64));
+        }
+    }
+    out
+}
+
+/// 折れ線が箱（x0, y0, x1, y1）にかかるか。
+pub fn hits_box(poly: &[P], b: &[f64; 4]) -> bool {
+    poly.windows(2).any(|w| {
+        let (p, q) = (w[0], w[1]);
+        // 区間を箱で切る（Liang–Barsky）
+        let (dx, dy) = (q.0 - p.0, q.1 - p.1);
+        let (mut t0, mut t1) = (0.0f64, 1.0f64);
+        for (d, lo, hi, o) in [(dx, b[0], b[2], p.0), (dy, b[1], b[3], p.1)] {
+            if d.abs() < 1e-12 {
+                if o < lo || o > hi {
+                    return false;
+                }
+            } else {
+                let (a, c) = ((lo - o) / d, (hi - o) / d);
+                t0 = t0.max(a.min(c));
+                t1 = t1.min(a.max(c));
+                if t0 > t1 {
+                    return false;
+                }
+            }
+        }
+        true
+    })
+}
+
+/// 2 本の折れ線の交わる回数。
+pub fn crossings(a: &[P], b: &[P]) -> usize {
+    let side = |p: P, q: P, r: P| (q.0 - p.0) * (r.1 - p.1) - (q.1 - p.1) * (r.0 - p.0);
+    let mut n = 0;
+    for u in a.windows(2) {
+        let (ux0, ux1) = (u[0].0.min(u[1].0), u[0].0.max(u[1].0));
+        let (uy0, uy1) = (u[0].1.min(u[1].1), u[0].1.max(u[1].1));
+        for v in b.windows(2) {
+            if v[0].0.max(v[1].0) < ux0
+                || v[0].0.min(v[1].0) > ux1
+                || v[0].1.max(v[1].1) < uy0
+                || v[0].1.min(v[1].1) > uy1
+            {
+                continue;
+            }
+            let (d1, d2) = (side(v[0], v[1], u[0]), side(v[0], v[1], u[1]));
+            let (d3, d4) = (side(u[0], u[1], v[0]), side(u[0], u[1], v[1]));
+            if d1 * d2 < 0.0 && d3 * d4 < 0.0 {
+                n += 1;
+            }
+        }
+    }
+    n
 }
 
 /// 近似の曲線が折れ線から離れてよい距離。
@@ -351,23 +446,25 @@ fn span(
     tq: P,
     tangent: &dyn Fn(usize) -> P,
     gates: &[Portal],
+    shape: (f64, f64),
     out: &mut Vec<Cubic>,
 ) {
+    let (tolerance, bow) = shape;
     if j - i == 1 {
-        piece(points[i], points[j], tp, tq, gates, 3, out);
+        piece(points[i], points[j], tp, tq, gates, bow, 3, out);
         return;
     }
     // 折れ点が多すぎれば、近似を試さずに真ん中で分ける（込んだ長い線は 1 本に収まらず、試すだけ遅い）
     if j - i > SPAN_POINTS {
         let m = (i + j) / 2;
         let tm = tangent(m);
-        span(points, i, m, tp, tm, tangent, gates, out);
-        span(points, m, j, tm, tq, tangent, gates, out);
+        span(points, i, m, tp, tm, tangent, gates, shape, out);
+        span(points, m, j, tm, tq, tangent, gates, shape, out);
         return;
     }
     let d = samples(&points[i..=j], 16.0);
     let (c, e, at) = least_squares(&d, tp, tq);
-    if e <= FIT_ERROR && fits(&c, gates) {
+    if e <= tolerance && fits(&c, gates) {
         out.push(c);
         return;
     }
@@ -382,18 +479,18 @@ fn span(
         })
         .unwrap_or((i + j) / 2);
     let tm = tangent(m);
-    span(points, i, m, tp, tm, tangent, gates, out);
-    span(points, m, j, tm, tq, tangent, gates, out);
+    span(points, i, m, tp, tm, tangent, gates, shape, out);
+    span(points, m, j, tm, tq, tangent, gates, shape, out);
 }
 
 /// p から q への切れ端（接線 tp・tq）。はみ出せば接線を縮め、それでもだめなら直線の真ん中で 2 つに分けて（向きは
 /// 直線の向き）やり直す。`depth` が尽きたら直線。
-fn piece(p: P, q: P, tp: P, tq: P, gates: &[Portal], depth: u32, out: &mut Vec<Cubic>) {
+#[allow(clippy::too_many_arguments)]
+fn piece(p: P, q: P, tp: P, tq: P, gates: &[Portal], bow: f64, depth: u32, out: &mut Vec<Cubic>) {
     let len = (q.0 - p.0).hypot(q.1 - p.1);
     let mut scale = len * TANGENT;
     // 制御点が弦から離れる分を抑えて、曲線のふくらみを `BOW` までにする（片方の制御点が弦から h 離れると、曲線は
     // 4h/9 までふくらむ）
-    let bow = BOW;
     let chord = if len > 1e-9 {
         ((q.0 - p.0) / len, (q.1 - p.1) / len)
     } else {
@@ -427,8 +524,8 @@ fn piece(p: P, q: P, tp: P, tq: P, gates: &[Portal], depth: u32, out: &mut Vec<C
     }
     let m = ((p.0 + q.0) / 2.0, (p.1 + q.1) / 2.0);
     let dir = ((q.0 - p.0) / len, (q.1 - p.1) / len);
-    piece(p, m, tp, dir, gates, depth - 1, out);
-    piece(m, q, dir, tq, gates, depth - 1, out);
+    piece(p, m, tp, dir, gates, bow, depth - 1, out);
+    piece(m, q, dir, tq, gates, bow, depth - 1, out);
 }
 
 #[cfg(test)]
@@ -483,6 +580,37 @@ mod tests {
             .flat_map(|q| (0..=32).map(move |i| q.at(i as f64 / 32.0).1.abs()))
             .fold(0.0, f64::max);
         assert!(far > 0.5 && far <= BOW + 1e-6, "{far} {c:?}");
+    }
+
+    #[test]
+    fn end_pieces_are_symmetric_arcs() {
+        // 1 か所で折れる線: 端の向きはつなぎ目の向きの鏡写しなので、端の制御点も弦から同じだけ外れる
+        let points = [(0.0, 0.0), (60.0, 40.0), (0.0, 80.0)];
+        let c = fit(&points, &[]);
+        let first = c[0];
+        let off = |p: P, a: P, b: P| {
+            let l = (b.0 - a.0).hypot(b.1 - a.1);
+            ((b.0 - a.0) * (p.1 - a.1) - (b.1 - a.1) * (p.0 - a.0)) / l
+        };
+        let (h1, h2) = (
+            off(first.1, first.0, first.3),
+            off(first.2, first.0, first.3),
+        );
+        assert!(h1.abs() > 1.0, "{c:?}");
+        assert!((h1 - h2).abs() < 1e-6, "{h1} {h2}");
+        // 大きく曲げた版は、同じ向きでもっとふくらむ
+        let r = fit_roomy(&points, &[]);
+        assert!(off(r[0].1, r[0].0, r[0].3).abs() >= h1.abs(), "{r:?}");
+    }
+
+    #[test]
+    fn counts_hits_and_crossings_of_polylines() {
+        let a = [(0.0, 0.0), (10.0, 10.0)];
+        assert!(hits_box(&a, &[4.0, 4.0, 6.0, 6.0]));
+        assert!(!hits_box(&a, &[6.0, 0.0, 9.0, 3.0]));
+        assert_eq!(crossings(&a, &[(0.0, 10.0), (10.0, 0.0)]), 1);
+        assert_eq!(crossings(&a, &[(20.0, 0.0), (30.0, 10.0)]), 0);
+        assert_eq!(sample(&[Cubic::line((0.0, 0.0), (8.0, 0.0))]).len(), 9);
     }
 
     #[test]
