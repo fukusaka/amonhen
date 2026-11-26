@@ -70,4 +70,5 @@ swift figures.swift alternatives alternatives.ja.tsv alternatives ../../../docs/
 - [x] VSCode: サイドバーの見出しのボタンとブランチの行
 - [x] Pull request の形（macOS・GTK4・Windows のサイドバーの Pull request の行）。4 案から D（B の矢印に、リモートの上の横線を足す。GitHub の上の申し出）を選んだ
 - [x] Windows のアプリのアイコン: macOS のアプリのアイコンの絵を Windows の枠で（`scripts/make-icon.swift --windows`。枠いっぱいに、影なし、角の丸みは小さく、32 px までは淡い星を描かない）。exe に入れ、窓ごとにも付ける
-- 未決: アプリのアイコンを描き直すか（GTK4 と VSCode の Marketplace は macOS の枠の絵をそのまま使い、VSCode のアクティビティバーには別の印がある）、VSCode の形式、端末の FE に何かするか（文字で表している）。
+- [x] VSCode のアクティビティバーの印（1 色で、VSCode が色を付ける）: 二重の山はそのままに、太さ 1.5 の線で描き直し、頂上を座の輪にして外の山は輪の手前で止める。アプリのアイコンの稜線・レーン・座・星を線にした案から選んだ（2 本の線の間の輪は人の形に読め、4 方向の光の星は AI の印）
+- 未決: アプリのアイコンを描き直すか（GTK4 と VSCode の Marketplace は macOS の枠の絵をそのまま使う）、VSCode の形式、端末の FE に何かするか（文字で表している）。
