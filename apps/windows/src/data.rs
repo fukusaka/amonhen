@@ -1131,7 +1131,8 @@ pub type Labels = HashMap<u32, Vec<RefLabel>>;
 enum Event {
     /// 開いている Markdown の図を、色を当て直して描いたもの（開いたファイルの鍵と、図の絵）。
     Diagrams(u64, Vec<Option<crate::markdownview::DiagramPicture>>),
-    History(Arc<Repository>, Arc<HistorySnapshot>),
+    /// 公開した History（永続キャッシュから出した前回のものなら `true`）。
+    History(Arc<Repository>, Arc<HistorySnapshot>, bool),
     Refs(u64, Arc<RefsSnapshot>, Labels),
     Commit(u64, Box<CommitShown>),
     Syntax(u64, u32, u32, HashMap<u32, Vec<(u32, u32, u8)>>),
@@ -1146,7 +1147,8 @@ enum Event {
     Filtered(u64, Arc<HistorySnapshot>, Labels, Vec<u32>),
     /// 署名の検証の結果（History の世代）。
     Signatures(u64, Vec<(amonhen_model::Oid, Signature)>),
-    Chunk(u64, u32, Chunk),
+    /// History の行のチャンク（History の世代、チャンクの番号、読めた行か読めない理由）。
+    Chunk(u64, u32, Result<Chunk, String>),
     Failed(String),
 }
 
@@ -1227,6 +1229,8 @@ pub struct Data {
     pub chunks: HashMap<u32, Rc<Chunk>>,
     repo: Option<Arc<Repository>>,
     loading: HashSet<u32>,
+    /// 永続キャッシュから出した前回の History の世代（最新の History が届くまで）。
+    cached: Option<u64>,
     tx: Sender<Event>,
     rx: Receiver<Event>,
     wake: Wake,
@@ -1419,13 +1423,13 @@ impl Data {
                 }
             };
             if let Some(cached) = repo.load_cached_history() {
-                send(Event::History(repo.clone(), shape(cached)));
+                send(Event::History(repo.clone(), shape(cached), true));
             }
             let history = match repo.load_history() {
                 Ok(history) => shape(history),
                 Err(e) => return send(Event::Failed(format!("History を読めない: {e}"))),
             };
-            send(Event::History(repo.clone(), history.clone()));
+            send(Event::History(repo.clone(), history.clone(), false));
             let refs = |history: &HistorySnapshot| match repo.load_refs() {
                 Ok(refs) => {
                     // 行の索引（`row_of`）もここで作っておく（150 万コミットで 80 ms ほど）。
@@ -1525,7 +1529,7 @@ impl Data {
                     match repo.rebuild_history() {
                         Ok(h) => {
                             history = shape(h);
-                            send(Event::History(repo.clone(), history.clone()));
+                            send(Event::History(repo.clone(), history.clone(), false));
                         }
                         Err(e) => eprintln!("History を作り直せない: {e}"),
                     }
@@ -1533,7 +1537,7 @@ impl Data {
                     match timed("Reload History", || repo.load_history()) {
                         Ok(h) => {
                             history = shape(h);
-                            send(Event::History(repo.clone(), history.clone()));
+                            send(Event::History(repo.clone(), history.clone(), false));
                         }
                         Err(e) => eprintln!("History を読み直せない: {e}"),
                     }
@@ -1600,6 +1604,7 @@ impl Data {
             chunks: HashMap::new(),
             repo: None,
             loading: HashSet::new(),
+            cached: None,
             tx,
             rx,
             wake,
@@ -1985,7 +1990,8 @@ impl Data {
         let mut changed = false;
         while let Ok(event) = self.rx.try_recv() {
             match event {
-                Event::History(repo, history) => {
+                Event::History(repo, history, cached) => {
+                    self.cached = cached.then_some(history.generation);
                     if self
                         .history
                         .as_ref()
@@ -2000,11 +2006,8 @@ impl Data {
                     changed = true;
                 }
                 Event::Chunk(generation, index, chunk) => {
-                    if self
-                        .history
-                        .as_ref()
-                        .is_some_and(|h| h.generation == generation)
-                    {
+                    let current = self.history.as_ref().map(|h| h.generation);
+                    if let Some(chunk) = current_chunk(current, self.cached, generation, chunk)? {
                         self.loading.remove(&index);
                         self.chunks.insert(index, Rc::new(chunk));
                         changed = true;
@@ -3069,14 +3072,11 @@ impl Data {
             let (tx, wake) = (self.tx.clone(), self.wake.clone());
             let (repo, history) = (repo.clone(), history.clone());
             std::thread::spawn(move || {
-                match repo.history_chunk(&history, index * CHUNK_ROWS, CHUNK_ROWS, &PROFILE) {
-                    Ok(chunk) => {
-                        let _ = tx.send(Event::Chunk(history.generation, index, Chunk(chunk)));
-                    }
-                    Err(e) => {
-                        let _ = tx.send(Event::Failed(format!("件名を読めない: {e}")));
-                    }
-                }
+                let chunk = repo
+                    .history_chunk(&history, index * CHUNK_ROWS, CHUNK_ROWS, &PROFILE)
+                    .map(Chunk)
+                    .map_err(|e| e.to_string());
+                let _ = tx.send(Event::Chunk(history.generation, index, chunk));
                 wake();
             });
         }
@@ -3135,9 +3135,47 @@ fn labels(history: &HistorySnapshot, refs: &Refs) -> Labels {
     labels
 }
 
+/// 届いたチャンクのうち、今の History（世代 `current`）のもの。前の History のものは読めても読めなくても捨てる。
+/// 永続キャッシュから出した前回の History（世代 `cached`）の行が読めないのも失敗にしない: 同じパスに作り直した
+/// リポジトリでは、前回のコミットがもうない。すぐ後に届く最新の History で読み直す（GTK4 版・macOS 版と同じく
+/// 読めない行は捨てる）。
+fn current_chunk<T>(
+    current: Option<u64>,
+    cached: Option<u64>,
+    generation: u64,
+    chunk: Result<T, String>,
+) -> Result<Option<T>, String> {
+    if current != Some(generation) {
+        return Ok(None);
+    }
+    match chunk {
+        Ok(chunk) => Ok(Some(chunk)),
+        Err(_) if cached == Some(generation) => Ok(None),
+        Err(e) => Err(format!("件名を読めない: {e}")),
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn rows_the_cached_history_cant_read_are_dropped() {
+        // キャッシュから出した前回の History（世代 1）の行は、同じパスに作り直したリポジトリでは読めない。
+        let gone = || Err::<u32, _>("commit not found".to_owned());
+        assert_eq!(current_chunk(Some(1), Some(1), 1, gone()), Ok(None));
+        // 最新の History（世代 2）に替わった後に届いたものは、読めても読めなくても捨てる。
+        assert_eq!(current_chunk(Some(2), None, 1, gone()), Ok(None));
+        assert_eq!(current_chunk(Some(2), None, 1, Ok(7)), Ok(None));
+        assert_eq!(current_chunk(None, None, 1, gone()), Ok(None));
+        // 最新の History の行が読めなければ、これまでどおり失敗。
+        assert_eq!(
+            current_chunk(Some(2), None, 2, gone()),
+            Err("件名を読めない: commit not found".to_owned())
+        );
+        assert_eq!(current_chunk(Some(2), None, 2, Ok(7)), Ok(Some(7)));
+        assert_eq!(current_chunk(Some(1), Some(1), 1, Ok(7)), Ok(Some(7)));
+    }
 
     #[test]
     fn wrap_breaks_at_spaces_and_counts_wide_characters() {
