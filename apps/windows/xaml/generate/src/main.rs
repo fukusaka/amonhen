@@ -23,7 +23,11 @@ const FILTER: &[&str] = &[
     "Microsoft.UI.Xaml.Media.VisualTreeHelper",
     "Microsoft.UI.Xaml.Media.IVisualTreeHelperStatics::{GetParent,GetChild,GetChildrenCount}",
     "Microsoft.UI.Xaml.IFrameworkElement::{DataContext,Tag,ActualWidth,ActualHeight,put_HorizontalAlignment,put_VerticalAlignment,put_Margin,put_Width,put_Height,put_MaxWidth,put_MaxHeight,\
-     Resources,RequestedTheme,put_RequestedTheme}",
+     Resources,RequestedTheme,put_RequestedTheme,SizeChanged,remove_SizeChanged}",
+    // マージエディタの帯: 幅が変わったら、入りきらないボタンを後回しのものから隠す（macOS 版と同じ）。
+    "Microsoft.UI.Xaml.SizeChangedEventHandler",
+    "Microsoft.UI.Xaml.SizeChangedEventArgs",
+    "Windows.Foundation.Size",
     // Repositories の一覧で選んだ行（複数）。
     "Microsoft.UI.Xaml.Controls.ListViewBase",
     "Microsoft.UI.Xaml.Controls.IListViewBase::{SelectedItems,DragItemsStarting,remove_DragItemsStarting,DragItemsCompleted,remove_DragItemsCompleted}",
@@ -129,7 +133,7 @@ const FILTER: &[&str] = &[
     "Microsoft.UI.Xaml.Controls.IContentDialogStatics::{}",
     // マージエディタの Result の欄（TextBox）を、選んだコンフリクトの行へスクロールする（中の ScrollViewer を動かす）。
     "Microsoft.UI.Xaml.Controls.ScrollViewer",
-    "Microsoft.UI.Xaml.Controls.IScrollViewer::{ExtentHeight,ViewportHeight,ScrollToVerticalOffset}",
+    "Microsoft.UI.Xaml.Controls.IScrollViewer::{ExtentHeight,ViewportHeight,ViewportWidth,ScrollToVerticalOffset}",
     "Microsoft.UI.Xaml.Controls.IScrollViewerStatics::{}",
     // ハンドラーの型は丸ごと（`new` が要る）。
     "Microsoft.UI.Xaml.Input.KeyEventHandler",
@@ -154,7 +158,7 @@ const FILTER: &[&str] = &[
      PointerMoved,remove_PointerMoved,PointerReleased,remove_PointerReleased,PointerWheelChanged,\
      remove_PointerWheelChanged,DoubleTapped,remove_DoubleTapped,ContextRequested,remove_ContextRequested,\
      IsTabStop,put_IsTabStop,Focus,CapturePointer,ReleasePointerCapture,ContextFlyout,put_ContextFlyout,PreviewKeyDown,remove_PreviewKeyDown,\
-     StartBringIntoView,StartBringIntoViewWithOptions,put_IsHitTestVisible,put_Visibility,DragOver,remove_DragOver,Drop,remove_Drop,put_AllowDrop,XamlRoot}",
+     StartBringIntoView,StartBringIntoViewWithOptions,put_IsHitTestVisible,Visibility,put_Visibility,Measure,DesiredSize,DragOver,remove_DragOver,Drop,remove_Drop,put_AllowDrop,XamlRoot}",
     // 部品がどの窓のものか（窓の HWND。前に出ている窓の前のタブが、窓の入力の部品を持つ）。
     "Microsoft.UI.Xaml.XamlRoot",
     "Microsoft.UI.Xaml.IXamlRoot2::{ContentIslandEnvironment}",

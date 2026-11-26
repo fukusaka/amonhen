@@ -134,6 +134,20 @@ impl Status {
         }
     }
 
+    /// 状態の共通のアイコン（GTK4 版の `Status::icon`）。
+    pub fn icon(self) -> &'static str {
+        match self {
+            Self::Verified(_) | Self::Pending => "signed",
+            Self::Untrusted => "trust-unknown",
+            Self::SignerMismatch => "signer-mismatch",
+            Self::Expired => "expired-key",
+            Self::Revoked => "revoked-key",
+            Self::Bad => "bad-signature",
+            Self::NoKey => "missing-key",
+            Self::Unsupported => "cannot-verify",
+        }
+    }
+
     /// 状態の色（History の行の印と同じ。色のないものは None）。
     pub fn color(self) -> Option<Color> {
         match self {

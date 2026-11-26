@@ -35,6 +35,7 @@ mod palette;
 mod patch_files;
 mod pathpicker;
 mod prefs;
+mod preview;
 mod programs;
 mod rangediff;
 mod reflog;

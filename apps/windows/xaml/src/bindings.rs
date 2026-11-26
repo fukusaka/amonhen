@@ -333,6 +333,45 @@ impl Border {
             .ok()
         }
     }
+    pub fn SizeChanged<F>(&self, handler: F) -> windows_core::Result<windows_core::EventRevoker>
+    where
+        F: Fn(
+                windows_core::Ref<windows_core::IInspectable>,
+                windows_core::Ref<SizeChangedEventArgs>,
+            ) + Send
+            + 'static,
+    {
+        let this = &windows_core::Interface::cast::<IFrameworkElement>(self)?;
+        let handler = <SizeChangedEventHandler>::new(move |a0, a1| {
+            handler(a0, a1);
+            Ok(())
+        });
+        unsafe {
+            let mut result__ = core::mem::zeroed();
+            let token__ = (windows_core::Interface::vtable(this).SizeChanged)(
+                windows_core::Interface::as_raw(this),
+                windows_core::Interface::as_raw(&handler),
+                &mut result__,
+            )
+            .map(|| result__)?;
+            Ok(windows_core::EventRevoker::new(
+                this.clone(),
+                token__,
+                windows_core::Interface::vtable(this).RemoveSizeChanged,
+            ))
+        }
+    }
+    pub fn DesiredSize(&self) -> windows_core::Result<Size> {
+        let this = &windows_core::Interface::cast::<IUIElement>(self)?;
+        unsafe {
+            let mut result__ = core::mem::zeroed();
+            (windows_core::Interface::vtable(this).DesiredSize)(
+                windows_core::Interface::as_raw(this),
+                &mut result__,
+            )
+            .map(|| result__)
+        }
+    }
     pub fn SetAllowDrop(&self, value: bool) -> windows_core::Result<()> {
         let this = &windows_core::Interface::cast::<IUIElement>(self)?;
         unsafe {
@@ -351,6 +390,17 @@ impl Border {
                 value,
             )
             .ok()
+        }
+    }
+    pub fn Visibility(&self) -> windows_core::Result<Visibility> {
+        let this = &windows_core::Interface::cast::<IUIElement>(self)?;
+        unsafe {
+            let mut result__ = core::mem::zeroed();
+            (windows_core::Interface::vtable(this).Visibility)(
+                windows_core::Interface::as_raw(this),
+                &mut result__,
+            )
+            .map(|| result__)
         }
     }
     pub fn SetVisibility(&self, value: Visibility) -> windows_core::Result<()> {
@@ -707,6 +757,16 @@ impl Border {
                 token__,
                 windows_core::Interface::vtable(this).RemovePreviewKeyDown,
             ))
+        }
+    }
+    pub fn Measure(&self, availablesize: Size) -> windows_core::Result<()> {
+        let this = &windows_core::Interface::cast::<IUIElement>(self)?;
+        unsafe {
+            (windows_core::Interface::vtable(this).Measure)(
+                windows_core::Interface::as_raw(this),
+                availablesize,
+            )
+            .ok()
         }
     }
     pub fn CapturePointer<P0>(&self, value: P0) -> windows_core::Result<bool>
@@ -1180,6 +1240,45 @@ impl Button {
             .ok()
         }
     }
+    pub fn SizeChanged<F>(&self, handler: F) -> windows_core::Result<windows_core::EventRevoker>
+    where
+        F: Fn(
+                windows_core::Ref<windows_core::IInspectable>,
+                windows_core::Ref<SizeChangedEventArgs>,
+            ) + Send
+            + 'static,
+    {
+        let this = &windows_core::Interface::cast::<IFrameworkElement>(self)?;
+        let handler = <SizeChangedEventHandler>::new(move |a0, a1| {
+            handler(a0, a1);
+            Ok(())
+        });
+        unsafe {
+            let mut result__ = core::mem::zeroed();
+            let token__ = (windows_core::Interface::vtable(this).SizeChanged)(
+                windows_core::Interface::as_raw(this),
+                windows_core::Interface::as_raw(&handler),
+                &mut result__,
+            )
+            .map(|| result__)?;
+            Ok(windows_core::EventRevoker::new(
+                this.clone(),
+                token__,
+                windows_core::Interface::vtable(this).RemoveSizeChanged,
+            ))
+        }
+    }
+    pub fn DesiredSize(&self) -> windows_core::Result<Size> {
+        let this = &windows_core::Interface::cast::<IUIElement>(self)?;
+        unsafe {
+            let mut result__ = core::mem::zeroed();
+            (windows_core::Interface::vtable(this).DesiredSize)(
+                windows_core::Interface::as_raw(this),
+                &mut result__,
+            )
+            .map(|| result__)
+        }
+    }
     pub fn SetAllowDrop(&self, value: bool) -> windows_core::Result<()> {
         let this = &windows_core::Interface::cast::<IUIElement>(self)?;
         unsafe {
@@ -1198,6 +1297,17 @@ impl Button {
                 value,
             )
             .ok()
+        }
+    }
+    pub fn Visibility(&self) -> windows_core::Result<Visibility> {
+        let this = &windows_core::Interface::cast::<IUIElement>(self)?;
+        unsafe {
+            let mut result__ = core::mem::zeroed();
+            (windows_core::Interface::vtable(this).Visibility)(
+                windows_core::Interface::as_raw(this),
+                &mut result__,
+            )
+            .map(|| result__)
         }
     }
     pub fn SetVisibility(&self, value: Visibility) -> windows_core::Result<()> {
@@ -1554,6 +1664,16 @@ impl Button {
                 token__,
                 windows_core::Interface::vtable(this).RemovePreviewKeyDown,
             ))
+        }
+    }
+    pub fn Measure(&self, availablesize: Size) -> windows_core::Result<()> {
+        let this = &windows_core::Interface::cast::<IUIElement>(self)?;
+        unsafe {
+            (windows_core::Interface::vtable(this).Measure)(
+                windows_core::Interface::as_raw(this),
+                availablesize,
+            )
+            .ok()
         }
     }
     pub fn CapturePointer<P0>(&self, value: P0) -> windows_core::Result<bool>
@@ -1924,6 +2044,45 @@ impl ButtonBase {
             .ok()
         }
     }
+    pub fn SizeChanged<F>(&self, handler: F) -> windows_core::Result<windows_core::EventRevoker>
+    where
+        F: Fn(
+                windows_core::Ref<windows_core::IInspectable>,
+                windows_core::Ref<SizeChangedEventArgs>,
+            ) + Send
+            + 'static,
+    {
+        let this = &windows_core::Interface::cast::<IFrameworkElement>(self)?;
+        let handler = <SizeChangedEventHandler>::new(move |a0, a1| {
+            handler(a0, a1);
+            Ok(())
+        });
+        unsafe {
+            let mut result__ = core::mem::zeroed();
+            let token__ = (windows_core::Interface::vtable(this).SizeChanged)(
+                windows_core::Interface::as_raw(this),
+                windows_core::Interface::as_raw(&handler),
+                &mut result__,
+            )
+            .map(|| result__)?;
+            Ok(windows_core::EventRevoker::new(
+                this.clone(),
+                token__,
+                windows_core::Interface::vtable(this).RemoveSizeChanged,
+            ))
+        }
+    }
+    pub fn DesiredSize(&self) -> windows_core::Result<Size> {
+        let this = &windows_core::Interface::cast::<IUIElement>(self)?;
+        unsafe {
+            let mut result__ = core::mem::zeroed();
+            (windows_core::Interface::vtable(this).DesiredSize)(
+                windows_core::Interface::as_raw(this),
+                &mut result__,
+            )
+            .map(|| result__)
+        }
+    }
     pub fn SetAllowDrop(&self, value: bool) -> windows_core::Result<()> {
         let this = &windows_core::Interface::cast::<IUIElement>(self)?;
         unsafe {
@@ -1942,6 +2101,17 @@ impl ButtonBase {
                 value,
             )
             .ok()
+        }
+    }
+    pub fn Visibility(&self) -> windows_core::Result<Visibility> {
+        let this = &windows_core::Interface::cast::<IUIElement>(self)?;
+        unsafe {
+            let mut result__ = core::mem::zeroed();
+            (windows_core::Interface::vtable(this).Visibility)(
+                windows_core::Interface::as_raw(this),
+                &mut result__,
+            )
+            .map(|| result__)
         }
     }
     pub fn SetVisibility(&self, value: Visibility) -> windows_core::Result<()> {
@@ -2298,6 +2468,16 @@ impl ButtonBase {
                 token__,
                 windows_core::Interface::vtable(this).RemovePreviewKeyDown,
             ))
+        }
+    }
+    pub fn Measure(&self, availablesize: Size) -> windows_core::Result<()> {
+        let this = &windows_core::Interface::cast::<IUIElement>(self)?;
+        unsafe {
+            (windows_core::Interface::vtable(this).Measure)(
+                windows_core::Interface::as_raw(this),
+                availablesize,
+            )
+            .ok()
         }
     }
     pub fn CapturePointer<P0>(&self, value: P0) -> windows_core::Result<bool>
@@ -2738,6 +2918,45 @@ impl ContentControl {
             .ok()
         }
     }
+    pub fn SizeChanged<F>(&self, handler: F) -> windows_core::Result<windows_core::EventRevoker>
+    where
+        F: Fn(
+                windows_core::Ref<windows_core::IInspectable>,
+                windows_core::Ref<SizeChangedEventArgs>,
+            ) + Send
+            + 'static,
+    {
+        let this = &windows_core::Interface::cast::<IFrameworkElement>(self)?;
+        let handler = <SizeChangedEventHandler>::new(move |a0, a1| {
+            handler(a0, a1);
+            Ok(())
+        });
+        unsafe {
+            let mut result__ = core::mem::zeroed();
+            let token__ = (windows_core::Interface::vtable(this).SizeChanged)(
+                windows_core::Interface::as_raw(this),
+                windows_core::Interface::as_raw(&handler),
+                &mut result__,
+            )
+            .map(|| result__)?;
+            Ok(windows_core::EventRevoker::new(
+                this.clone(),
+                token__,
+                windows_core::Interface::vtable(this).RemoveSizeChanged,
+            ))
+        }
+    }
+    pub fn DesiredSize(&self) -> windows_core::Result<Size> {
+        let this = &windows_core::Interface::cast::<IUIElement>(self)?;
+        unsafe {
+            let mut result__ = core::mem::zeroed();
+            (windows_core::Interface::vtable(this).DesiredSize)(
+                windows_core::Interface::as_raw(this),
+                &mut result__,
+            )
+            .map(|| result__)
+        }
+    }
     pub fn SetAllowDrop(&self, value: bool) -> windows_core::Result<()> {
         let this = &windows_core::Interface::cast::<IUIElement>(self)?;
         unsafe {
@@ -2756,6 +2975,17 @@ impl ContentControl {
                 value,
             )
             .ok()
+        }
+    }
+    pub fn Visibility(&self) -> windows_core::Result<Visibility> {
+        let this = &windows_core::Interface::cast::<IUIElement>(self)?;
+        unsafe {
+            let mut result__ = core::mem::zeroed();
+            (windows_core::Interface::vtable(this).Visibility)(
+                windows_core::Interface::as_raw(this),
+                &mut result__,
+            )
+            .map(|| result__)
         }
     }
     pub fn SetVisibility(&self, value: Visibility) -> windows_core::Result<()> {
@@ -3112,6 +3342,16 @@ impl ContentControl {
                 token__,
                 windows_core::Interface::vtable(this).RemovePreviewKeyDown,
             ))
+        }
+    }
+    pub fn Measure(&self, availablesize: Size) -> windows_core::Result<()> {
+        let this = &windows_core::Interface::cast::<IUIElement>(self)?;
+        unsafe {
+            (windows_core::Interface::vtable(this).Measure)(
+                windows_core::Interface::as_raw(this),
+                availablesize,
+            )
+            .ok()
         }
     }
     pub fn CapturePointer<P0>(&self, value: P0) -> windows_core::Result<bool>
@@ -3491,6 +3731,45 @@ impl ContentDialog {
             .ok()
         }
     }
+    pub fn SizeChanged<F>(&self, handler: F) -> windows_core::Result<windows_core::EventRevoker>
+    where
+        F: Fn(
+                windows_core::Ref<windows_core::IInspectable>,
+                windows_core::Ref<SizeChangedEventArgs>,
+            ) + Send
+            + 'static,
+    {
+        let this = &windows_core::Interface::cast::<IFrameworkElement>(self)?;
+        let handler = <SizeChangedEventHandler>::new(move |a0, a1| {
+            handler(a0, a1);
+            Ok(())
+        });
+        unsafe {
+            let mut result__ = core::mem::zeroed();
+            let token__ = (windows_core::Interface::vtable(this).SizeChanged)(
+                windows_core::Interface::as_raw(this),
+                windows_core::Interface::as_raw(&handler),
+                &mut result__,
+            )
+            .map(|| result__)?;
+            Ok(windows_core::EventRevoker::new(
+                this.clone(),
+                token__,
+                windows_core::Interface::vtable(this).RemoveSizeChanged,
+            ))
+        }
+    }
+    pub fn DesiredSize(&self) -> windows_core::Result<Size> {
+        let this = &windows_core::Interface::cast::<IUIElement>(self)?;
+        unsafe {
+            let mut result__ = core::mem::zeroed();
+            (windows_core::Interface::vtable(this).DesiredSize)(
+                windows_core::Interface::as_raw(this),
+                &mut result__,
+            )
+            .map(|| result__)
+        }
+    }
     pub fn SetAllowDrop(&self, value: bool) -> windows_core::Result<()> {
         let this = &windows_core::Interface::cast::<IUIElement>(self)?;
         unsafe {
@@ -3509,6 +3788,17 @@ impl ContentDialog {
                 value,
             )
             .ok()
+        }
+    }
+    pub fn Visibility(&self) -> windows_core::Result<Visibility> {
+        let this = &windows_core::Interface::cast::<IUIElement>(self)?;
+        unsafe {
+            let mut result__ = core::mem::zeroed();
+            (windows_core::Interface::vtable(this).Visibility)(
+                windows_core::Interface::as_raw(this),
+                &mut result__,
+            )
+            .map(|| result__)
         }
     }
     pub fn SetVisibility(&self, value: Visibility) -> windows_core::Result<()> {
@@ -3865,6 +4155,16 @@ impl ContentDialog {
                 token__,
                 windows_core::Interface::vtable(this).RemovePreviewKeyDown,
             ))
+        }
+    }
+    pub fn Measure(&self, availablesize: Size) -> windows_core::Result<()> {
+        let this = &windows_core::Interface::cast::<IUIElement>(self)?;
+        unsafe {
+            (windows_core::Interface::vtable(this).Measure)(
+                windows_core::Interface::as_raw(this),
+                availablesize,
+            )
+            .ok()
         }
     }
     pub fn CapturePointer<P0>(&self, value: P0) -> windows_core::Result<bool>
@@ -4330,6 +4630,45 @@ impl Control {
             .ok()
         }
     }
+    pub fn SizeChanged<F>(&self, handler: F) -> windows_core::Result<windows_core::EventRevoker>
+    where
+        F: Fn(
+                windows_core::Ref<windows_core::IInspectable>,
+                windows_core::Ref<SizeChangedEventArgs>,
+            ) + Send
+            + 'static,
+    {
+        let this = &windows_core::Interface::cast::<IFrameworkElement>(self)?;
+        let handler = <SizeChangedEventHandler>::new(move |a0, a1| {
+            handler(a0, a1);
+            Ok(())
+        });
+        unsafe {
+            let mut result__ = core::mem::zeroed();
+            let token__ = (windows_core::Interface::vtable(this).SizeChanged)(
+                windows_core::Interface::as_raw(this),
+                windows_core::Interface::as_raw(&handler),
+                &mut result__,
+            )
+            .map(|| result__)?;
+            Ok(windows_core::EventRevoker::new(
+                this.clone(),
+                token__,
+                windows_core::Interface::vtable(this).RemoveSizeChanged,
+            ))
+        }
+    }
+    pub fn DesiredSize(&self) -> windows_core::Result<Size> {
+        let this = &windows_core::Interface::cast::<IUIElement>(self)?;
+        unsafe {
+            let mut result__ = core::mem::zeroed();
+            (windows_core::Interface::vtable(this).DesiredSize)(
+                windows_core::Interface::as_raw(this),
+                &mut result__,
+            )
+            .map(|| result__)
+        }
+    }
     pub fn SetAllowDrop(&self, value: bool) -> windows_core::Result<()> {
         let this = &windows_core::Interface::cast::<IUIElement>(self)?;
         unsafe {
@@ -4348,6 +4687,17 @@ impl Control {
                 value,
             )
             .ok()
+        }
+    }
+    pub fn Visibility(&self) -> windows_core::Result<Visibility> {
+        let this = &windows_core::Interface::cast::<IUIElement>(self)?;
+        unsafe {
+            let mut result__ = core::mem::zeroed();
+            (windows_core::Interface::vtable(this).Visibility)(
+                windows_core::Interface::as_raw(this),
+                &mut result__,
+            )
+            .map(|| result__)
         }
     }
     pub fn SetVisibility(&self, value: Visibility) -> windows_core::Result<()> {
@@ -4704,6 +5054,16 @@ impl Control {
                 token__,
                 windows_core::Interface::vtable(this).RemovePreviewKeyDown,
             ))
+        }
+    }
+    pub fn Measure(&self, availablesize: Size) -> windows_core::Result<()> {
+        let this = &windows_core::Interface::cast::<IUIElement>(self)?;
+        unsafe {
+            (windows_core::Interface::vtable(this).Measure)(
+                windows_core::Interface::as_raw(this),
+                availablesize,
+            )
+            .ok()
         }
     }
     pub fn CapturePointer<P0>(&self, value: P0) -> windows_core::Result<bool>
@@ -6203,6 +6563,44 @@ impl FrameworkElement {
             .ok()
         }
     }
+    pub fn SizeChanged<F>(&self, handler: F) -> windows_core::Result<windows_core::EventRevoker>
+    where
+        F: Fn(
+                windows_core::Ref<windows_core::IInspectable>,
+                windows_core::Ref<SizeChangedEventArgs>,
+            ) + Send
+            + 'static,
+    {
+        let handler = <SizeChangedEventHandler>::new(move |a0, a1| {
+            handler(a0, a1);
+            Ok(())
+        });
+        unsafe {
+            let mut result__ = core::mem::zeroed();
+            let token__ = (windows_core::Interface::vtable(self).SizeChanged)(
+                windows_core::Interface::as_raw(self),
+                windows_core::Interface::as_raw(&handler),
+                &mut result__,
+            )
+            .map(|| result__)?;
+            Ok(windows_core::EventRevoker::new(
+                self.clone(),
+                token__,
+                windows_core::Interface::vtable(self).RemoveSizeChanged,
+            ))
+        }
+    }
+    pub fn DesiredSize(&self) -> windows_core::Result<Size> {
+        let this = &windows_core::Interface::cast::<IUIElement>(self)?;
+        unsafe {
+            let mut result__ = core::mem::zeroed();
+            (windows_core::Interface::vtable(this).DesiredSize)(
+                windows_core::Interface::as_raw(this),
+                &mut result__,
+            )
+            .map(|| result__)
+        }
+    }
     pub fn SetAllowDrop(&self, value: bool) -> windows_core::Result<()> {
         let this = &windows_core::Interface::cast::<IUIElement>(self)?;
         unsafe {
@@ -6221,6 +6619,17 @@ impl FrameworkElement {
                 value,
             )
             .ok()
+        }
+    }
+    pub fn Visibility(&self) -> windows_core::Result<Visibility> {
+        let this = &windows_core::Interface::cast::<IUIElement>(self)?;
+        unsafe {
+            let mut result__ = core::mem::zeroed();
+            (windows_core::Interface::vtable(this).Visibility)(
+                windows_core::Interface::as_raw(this),
+                &mut result__,
+            )
+            .map(|| result__)
         }
     }
     pub fn SetVisibility(&self, value: Visibility) -> windows_core::Result<()> {
@@ -6577,6 +6986,16 @@ impl FrameworkElement {
                 token__,
                 windows_core::Interface::vtable(this).RemovePreviewKeyDown,
             ))
+        }
+    }
+    pub fn Measure(&self, availablesize: Size) -> windows_core::Result<()> {
+        let this = &windows_core::Interface::cast::<IUIElement>(self)?;
+        unsafe {
+            (windows_core::Interface::vtable(this).Measure)(
+                windows_core::Interface::as_raw(this),
+                availablesize,
+            )
+            .ok()
         }
     }
     pub fn CapturePointer<P0>(&self, value: P0) -> windows_core::Result<bool>
@@ -8012,6 +8431,21 @@ pub struct IFrameworkElement_Vtbl {
     ) -> windows_core::HRESULT,
     pub SetRequestedTheme:
         unsafe extern "system" fn(*mut core::ffi::c_void, ElementTheme) -> windows_core::HRESULT,
+    IsLoaded: usize,
+    ActualTheme: usize,
+    Loaded: usize,
+    RemoveLoaded: usize,
+    Unloaded: usize,
+    RemoveUnloaded: usize,
+    DataContextChanged: usize,
+    RemoveDataContextChanged: usize,
+    pub SizeChanged: unsafe extern "system" fn(
+        *mut core::ffi::c_void,
+        *mut core::ffi::c_void,
+        *mut i64,
+    ) -> windows_core::HRESULT,
+    pub RemoveSizeChanged:
+        unsafe extern "system" fn(*mut core::ffi::c_void, i64) -> windows_core::HRESULT,
 }
 windows_core::imp::define_interface!(
     IFrameworkElementFactory,
@@ -8898,7 +9332,8 @@ pub struct IScrollViewer_Vtbl {
     ZoomSnapPointsType: usize,
     SetZoomSnapPointsType: usize,
     HorizontalOffset: usize,
-    ViewportWidth: usize,
+    pub ViewportWidth:
+        unsafe extern "system" fn(*mut core::ffi::c_void, *mut f64) -> windows_core::HRESULT,
     ScrollableWidth: usize,
     ComputedHorizontalScrollBarVisibility: usize,
     ExtentWidth: usize,
@@ -9053,6 +9488,21 @@ impl windows_core::RuntimeType for ISelectorStatics {
 }
 #[repr(C)]
 pub struct ISelectorStatics_Vtbl {
+    pub base__: windows_core::IInspectable_Vtbl,
+}
+windows_core::imp::define_interface!(
+    ISizeChangedEventArgs,
+    ISizeChangedEventArgs_Vtbl,
+    0xfe76324e_6dfb_58b1_9dcd_886ca8f9a2ea
+);
+impl windows_core::RuntimeType for ISizeChangedEventArgs {
+    const SIGNATURE: windows_core::imp::ConstBuffer =
+        windows_core::imp::ConstBuffer::for_interface::<Self>();
+    const NAME: windows_core::imp::ConstBuffer =
+        windows_core::imp::ConstBuffer::from_slice(b"Microsoft.UI.Xaml.ISizeChangedEventArgs");
+}
+#[repr(C)]
+pub struct ISizeChangedEventArgs_Vtbl {
     pub base__: windows_core::IInspectable_Vtbl,
 }
 windows_core::imp::define_interface!(
@@ -10311,7 +10761,8 @@ impl windows_core::RuntimeType for IUIElement {
 #[repr(C)]
 pub struct IUIElement_Vtbl {
     pub base__: windows_core::IInspectable_Vtbl,
-    DesiredSize: usize,
+    pub DesiredSize:
+        unsafe extern "system" fn(*mut core::ffi::c_void, *mut Size) -> windows_core::HRESULT,
     AllowDrop: usize,
     pub SetAllowDrop:
         unsafe extern "system" fn(*mut core::ffi::c_void, bool) -> windows_core::HRESULT,
@@ -10330,7 +10781,8 @@ pub struct IUIElement_Vtbl {
     IsHitTestVisible: usize,
     pub SetIsHitTestVisible:
         unsafe extern "system" fn(*mut core::ffi::c_void, bool) -> windows_core::HRESULT,
-    Visibility: usize,
+    pub Visibility:
+        unsafe extern "system" fn(*mut core::ffi::c_void, *mut Visibility) -> windows_core::HRESULT,
     pub SetVisibility:
         unsafe extern "system" fn(*mut core::ffi::c_void, Visibility) -> windows_core::HRESULT,
     RenderSize: usize,
@@ -10581,7 +11033,7 @@ pub struct IUIElement_Vtbl {
     RemovePreviewKeyUp: usize,
     BringIntoViewRequested: usize,
     RemoveBringIntoViewRequested: usize,
-    Measure: usize,
+    pub Measure: unsafe extern "system" fn(*mut core::ffi::c_void, Size) -> windows_core::HRESULT,
     Arrange: usize,
     pub CapturePointer: unsafe extern "system" fn(
         *mut core::ffi::c_void,
@@ -11321,6 +11773,45 @@ impl ItemsControl {
             .ok()
         }
     }
+    pub fn SizeChanged<F>(&self, handler: F) -> windows_core::Result<windows_core::EventRevoker>
+    where
+        F: Fn(
+                windows_core::Ref<windows_core::IInspectable>,
+                windows_core::Ref<SizeChangedEventArgs>,
+            ) + Send
+            + 'static,
+    {
+        let this = &windows_core::Interface::cast::<IFrameworkElement>(self)?;
+        let handler = <SizeChangedEventHandler>::new(move |a0, a1| {
+            handler(a0, a1);
+            Ok(())
+        });
+        unsafe {
+            let mut result__ = core::mem::zeroed();
+            let token__ = (windows_core::Interface::vtable(this).SizeChanged)(
+                windows_core::Interface::as_raw(this),
+                windows_core::Interface::as_raw(&handler),
+                &mut result__,
+            )
+            .map(|| result__)?;
+            Ok(windows_core::EventRevoker::new(
+                this.clone(),
+                token__,
+                windows_core::Interface::vtable(this).RemoveSizeChanged,
+            ))
+        }
+    }
+    pub fn DesiredSize(&self) -> windows_core::Result<Size> {
+        let this = &windows_core::Interface::cast::<IUIElement>(self)?;
+        unsafe {
+            let mut result__ = core::mem::zeroed();
+            (windows_core::Interface::vtable(this).DesiredSize)(
+                windows_core::Interface::as_raw(this),
+                &mut result__,
+            )
+            .map(|| result__)
+        }
+    }
     pub fn SetAllowDrop(&self, value: bool) -> windows_core::Result<()> {
         let this = &windows_core::Interface::cast::<IUIElement>(self)?;
         unsafe {
@@ -11339,6 +11830,17 @@ impl ItemsControl {
                 value,
             )
             .ok()
+        }
+    }
+    pub fn Visibility(&self) -> windows_core::Result<Visibility> {
+        let this = &windows_core::Interface::cast::<IUIElement>(self)?;
+        unsafe {
+            let mut result__ = core::mem::zeroed();
+            (windows_core::Interface::vtable(this).Visibility)(
+                windows_core::Interface::as_raw(this),
+                &mut result__,
+            )
+            .map(|| result__)
         }
     }
     pub fn SetVisibility(&self, value: Visibility) -> windows_core::Result<()> {
@@ -11695,6 +12197,16 @@ impl ItemsControl {
                 token__,
                 windows_core::Interface::vtable(this).RemovePreviewKeyDown,
             ))
+        }
+    }
+    pub fn Measure(&self, availablesize: Size) -> windows_core::Result<()> {
+        let this = &windows_core::Interface::cast::<IUIElement>(self)?;
+        unsafe {
+            (windows_core::Interface::vtable(this).Measure)(
+                windows_core::Interface::as_raw(this),
+                availablesize,
+            )
+            .ok()
         }
     }
     pub fn CapturePointer<P0>(&self, value: P0) -> windows_core::Result<bool>
@@ -12244,6 +12756,34 @@ impl ListViewBase {
             .ok()
         }
     }
+    pub fn SizeChanged<F>(&self, handler: F) -> windows_core::Result<windows_core::EventRevoker>
+    where
+        F: Fn(
+                windows_core::Ref<windows_core::IInspectable>,
+                windows_core::Ref<SizeChangedEventArgs>,
+            ) + Send
+            + 'static,
+    {
+        let this = &windows_core::Interface::cast::<IFrameworkElement>(self)?;
+        let handler = <SizeChangedEventHandler>::new(move |a0, a1| {
+            handler(a0, a1);
+            Ok(())
+        });
+        unsafe {
+            let mut result__ = core::mem::zeroed();
+            let token__ = (windows_core::Interface::vtable(this).SizeChanged)(
+                windows_core::Interface::as_raw(this),
+                windows_core::Interface::as_raw(&handler),
+                &mut result__,
+            )
+            .map(|| result__)?;
+            Ok(windows_core::EventRevoker::new(
+                this.clone(),
+                token__,
+                windows_core::Interface::vtable(this).RemoveSizeChanged,
+            ))
+        }
+    }
     pub fn SelectedItems(
         &self,
     ) -> windows_core::Result<windows_collections::IVector<windows_core::IInspectable>> {
@@ -12314,6 +12854,17 @@ impl ListViewBase {
             ))
         }
     }
+    pub fn DesiredSize(&self) -> windows_core::Result<Size> {
+        let this = &windows_core::Interface::cast::<IUIElement>(self)?;
+        unsafe {
+            let mut result__ = core::mem::zeroed();
+            (windows_core::Interface::vtable(this).DesiredSize)(
+                windows_core::Interface::as_raw(this),
+                &mut result__,
+            )
+            .map(|| result__)
+        }
+    }
     pub fn SetAllowDrop(&self, value: bool) -> windows_core::Result<()> {
         let this = &windows_core::Interface::cast::<IUIElement>(self)?;
         unsafe {
@@ -12332,6 +12883,17 @@ impl ListViewBase {
                 value,
             )
             .ok()
+        }
+    }
+    pub fn Visibility(&self) -> windows_core::Result<Visibility> {
+        let this = &windows_core::Interface::cast::<IUIElement>(self)?;
+        unsafe {
+            let mut result__ = core::mem::zeroed();
+            (windows_core::Interface::vtable(this).Visibility)(
+                windows_core::Interface::as_raw(this),
+                &mut result__,
+            )
+            .map(|| result__)
         }
     }
     pub fn SetVisibility(&self, value: Visibility) -> windows_core::Result<()> {
@@ -12688,6 +13250,16 @@ impl ListViewBase {
                 token__,
                 windows_core::Interface::vtable(this).RemovePreviewKeyDown,
             ))
+        }
+    }
+    pub fn Measure(&self, availablesize: Size) -> windows_core::Result<()> {
+        let this = &windows_core::Interface::cast::<IUIElement>(self)?;
+        unsafe {
+            (windows_core::Interface::vtable(this).Measure)(
+                windows_core::Interface::as_raw(this),
+                availablesize,
+            )
+            .ok()
         }
     }
     pub fn CapturePointer<P0>(&self, value: P0) -> windows_core::Result<bool>
@@ -13059,6 +13631,45 @@ impl ListViewItem {
             .ok()
         }
     }
+    pub fn SizeChanged<F>(&self, handler: F) -> windows_core::Result<windows_core::EventRevoker>
+    where
+        F: Fn(
+                windows_core::Ref<windows_core::IInspectable>,
+                windows_core::Ref<SizeChangedEventArgs>,
+            ) + Send
+            + 'static,
+    {
+        let this = &windows_core::Interface::cast::<IFrameworkElement>(self)?;
+        let handler = <SizeChangedEventHandler>::new(move |a0, a1| {
+            handler(a0, a1);
+            Ok(())
+        });
+        unsafe {
+            let mut result__ = core::mem::zeroed();
+            let token__ = (windows_core::Interface::vtable(this).SizeChanged)(
+                windows_core::Interface::as_raw(this),
+                windows_core::Interface::as_raw(&handler),
+                &mut result__,
+            )
+            .map(|| result__)?;
+            Ok(windows_core::EventRevoker::new(
+                this.clone(),
+                token__,
+                windows_core::Interface::vtable(this).RemoveSizeChanged,
+            ))
+        }
+    }
+    pub fn DesiredSize(&self) -> windows_core::Result<Size> {
+        let this = &windows_core::Interface::cast::<IUIElement>(self)?;
+        unsafe {
+            let mut result__ = core::mem::zeroed();
+            (windows_core::Interface::vtable(this).DesiredSize)(
+                windows_core::Interface::as_raw(this),
+                &mut result__,
+            )
+            .map(|| result__)
+        }
+    }
     pub fn SetAllowDrop(&self, value: bool) -> windows_core::Result<()> {
         let this = &windows_core::Interface::cast::<IUIElement>(self)?;
         unsafe {
@@ -13077,6 +13688,17 @@ impl ListViewItem {
                 value,
             )
             .ok()
+        }
+    }
+    pub fn Visibility(&self) -> windows_core::Result<Visibility> {
+        let this = &windows_core::Interface::cast::<IUIElement>(self)?;
+        unsafe {
+            let mut result__ = core::mem::zeroed();
+            (windows_core::Interface::vtable(this).Visibility)(
+                windows_core::Interface::as_raw(this),
+                &mut result__,
+            )
+            .map(|| result__)
         }
     }
     pub fn SetVisibility(&self, value: Visibility) -> windows_core::Result<()> {
@@ -13433,6 +14055,16 @@ impl ListViewItem {
                 token__,
                 windows_core::Interface::vtable(this).RemovePreviewKeyDown,
             ))
+        }
+    }
+    pub fn Measure(&self, availablesize: Size) -> windows_core::Result<()> {
+        let this = &windows_core::Interface::cast::<IUIElement>(self)?;
+        unsafe {
+            (windows_core::Interface::vtable(this).Measure)(
+                windows_core::Interface::as_raw(this),
+                availablesize,
+            )
+            .ok()
         }
     }
     pub fn CapturePointer<P0>(&self, value: P0) -> windows_core::Result<bool>
@@ -14232,6 +14864,34 @@ impl RichTextBlock {
             .ok()
         }
     }
+    pub fn SizeChanged<F>(&self, handler: F) -> windows_core::Result<windows_core::EventRevoker>
+    where
+        F: Fn(
+                windows_core::Ref<windows_core::IInspectable>,
+                windows_core::Ref<SizeChangedEventArgs>,
+            ) + Send
+            + 'static,
+    {
+        let this = &windows_core::Interface::cast::<IFrameworkElement>(self)?;
+        let handler = <SizeChangedEventHandler>::new(move |a0, a1| {
+            handler(a0, a1);
+            Ok(())
+        });
+        unsafe {
+            let mut result__ = core::mem::zeroed();
+            let token__ = (windows_core::Interface::vtable(this).SizeChanged)(
+                windows_core::Interface::as_raw(this),
+                windows_core::Interface::as_raw(&handler),
+                &mut result__,
+            )
+            .map(|| result__)?;
+            Ok(windows_core::EventRevoker::new(
+                this.clone(),
+                token__,
+                windows_core::Interface::vtable(this).RemoveSizeChanged,
+            ))
+        }
+    }
     pub fn Blocks(&self) -> windows_core::Result<BlockCollection> {
         unsafe {
             let mut result__ = core::mem::zeroed();
@@ -14254,6 +14914,17 @@ impl RichTextBlock {
             .and_then(|| windows_core::imp::Type::from_abi(result__))
         }
     }
+    pub fn DesiredSize(&self) -> windows_core::Result<Size> {
+        let this = &windows_core::Interface::cast::<IUIElement>(self)?;
+        unsafe {
+            let mut result__ = core::mem::zeroed();
+            (windows_core::Interface::vtable(this).DesiredSize)(
+                windows_core::Interface::as_raw(this),
+                &mut result__,
+            )
+            .map(|| result__)
+        }
+    }
     pub fn SetAllowDrop(&self, value: bool) -> windows_core::Result<()> {
         let this = &windows_core::Interface::cast::<IUIElement>(self)?;
         unsafe {
@@ -14272,6 +14943,17 @@ impl RichTextBlock {
                 value,
             )
             .ok()
+        }
+    }
+    pub fn Visibility(&self) -> windows_core::Result<Visibility> {
+        let this = &windows_core::Interface::cast::<IUIElement>(self)?;
+        unsafe {
+            let mut result__ = core::mem::zeroed();
+            (windows_core::Interface::vtable(this).Visibility)(
+                windows_core::Interface::as_raw(this),
+                &mut result__,
+            )
+            .map(|| result__)
         }
     }
     pub fn SetVisibility(&self, value: Visibility) -> windows_core::Result<()> {
@@ -14628,6 +15310,16 @@ impl RichTextBlock {
                 token__,
                 windows_core::Interface::vtable(this).RemovePreviewKeyDown,
             ))
+        }
+    }
+    pub fn Measure(&self, availablesize: Size) -> windows_core::Result<()> {
+        let this = &windows_core::Interface::cast::<IUIElement>(self)?;
+        unsafe {
+            (windows_core::Interface::vtable(this).Measure)(
+                windows_core::Interface::as_raw(this),
+                availablesize,
+            )
+            .ok()
         }
     }
     pub fn CapturePointer<P0>(&self, value: P0) -> windows_core::Result<bool>
@@ -15119,6 +15811,44 @@ impl ScrollViewer {
             .ok()
         }
     }
+    pub fn SizeChanged<F>(&self, handler: F) -> windows_core::Result<windows_core::EventRevoker>
+    where
+        F: Fn(
+                windows_core::Ref<windows_core::IInspectable>,
+                windows_core::Ref<SizeChangedEventArgs>,
+            ) + Send
+            + 'static,
+    {
+        let this = &windows_core::Interface::cast::<IFrameworkElement>(self)?;
+        let handler = <SizeChangedEventHandler>::new(move |a0, a1| {
+            handler(a0, a1);
+            Ok(())
+        });
+        unsafe {
+            let mut result__ = core::mem::zeroed();
+            let token__ = (windows_core::Interface::vtable(this).SizeChanged)(
+                windows_core::Interface::as_raw(this),
+                windows_core::Interface::as_raw(&handler),
+                &mut result__,
+            )
+            .map(|| result__)?;
+            Ok(windows_core::EventRevoker::new(
+                this.clone(),
+                token__,
+                windows_core::Interface::vtable(this).RemoveSizeChanged,
+            ))
+        }
+    }
+    pub fn ViewportWidth(&self) -> windows_core::Result<f64> {
+        unsafe {
+            let mut result__ = core::mem::zeroed();
+            (windows_core::Interface::vtable(self).ViewportWidth)(
+                windows_core::Interface::as_raw(self),
+                &mut result__,
+            )
+            .map(|| result__)
+        }
+    }
     pub fn ViewportHeight(&self) -> windows_core::Result<f64> {
         unsafe {
             let mut result__ = core::mem::zeroed();
@@ -15148,6 +15878,17 @@ impl ScrollViewer {
             .ok()
         }
     }
+    pub fn DesiredSize(&self) -> windows_core::Result<Size> {
+        let this = &windows_core::Interface::cast::<IUIElement>(self)?;
+        unsafe {
+            let mut result__ = core::mem::zeroed();
+            (windows_core::Interface::vtable(this).DesiredSize)(
+                windows_core::Interface::as_raw(this),
+                &mut result__,
+            )
+            .map(|| result__)
+        }
+    }
     pub fn SetAllowDrop(&self, value: bool) -> windows_core::Result<()> {
         let this = &windows_core::Interface::cast::<IUIElement>(self)?;
         unsafe {
@@ -15166,6 +15907,17 @@ impl ScrollViewer {
                 value,
             )
             .ok()
+        }
+    }
+    pub fn Visibility(&self) -> windows_core::Result<Visibility> {
+        let this = &windows_core::Interface::cast::<IUIElement>(self)?;
+        unsafe {
+            let mut result__ = core::mem::zeroed();
+            (windows_core::Interface::vtable(this).Visibility)(
+                windows_core::Interface::as_raw(this),
+                &mut result__,
+            )
+            .map(|| result__)
         }
     }
     pub fn SetVisibility(&self, value: Visibility) -> windows_core::Result<()> {
@@ -15522,6 +16274,16 @@ impl ScrollViewer {
                 token__,
                 windows_core::Interface::vtable(this).RemovePreviewKeyDown,
             ))
+        }
+    }
+    pub fn Measure(&self, availablesize: Size) -> windows_core::Result<()> {
+        let this = &windows_core::Interface::cast::<IUIElement>(self)?;
+        unsafe {
+            (windows_core::Interface::vtable(this).Measure)(
+                windows_core::Interface::as_raw(this),
+                availablesize,
+            )
+            .ok()
         }
     }
     pub fn CapturePointer<P0>(&self, value: P0) -> windows_core::Result<bool>
@@ -15848,6 +16610,45 @@ impl Selector {
             .ok()
         }
     }
+    pub fn SizeChanged<F>(&self, handler: F) -> windows_core::Result<windows_core::EventRevoker>
+    where
+        F: Fn(
+                windows_core::Ref<windows_core::IInspectable>,
+                windows_core::Ref<SizeChangedEventArgs>,
+            ) + Send
+            + 'static,
+    {
+        let this = &windows_core::Interface::cast::<IFrameworkElement>(self)?;
+        let handler = <SizeChangedEventHandler>::new(move |a0, a1| {
+            handler(a0, a1);
+            Ok(())
+        });
+        unsafe {
+            let mut result__ = core::mem::zeroed();
+            let token__ = (windows_core::Interface::vtable(this).SizeChanged)(
+                windows_core::Interface::as_raw(this),
+                windows_core::Interface::as_raw(&handler),
+                &mut result__,
+            )
+            .map(|| result__)?;
+            Ok(windows_core::EventRevoker::new(
+                this.clone(),
+                token__,
+                windows_core::Interface::vtable(this).RemoveSizeChanged,
+            ))
+        }
+    }
+    pub fn DesiredSize(&self) -> windows_core::Result<Size> {
+        let this = &windows_core::Interface::cast::<IUIElement>(self)?;
+        unsafe {
+            let mut result__ = core::mem::zeroed();
+            (windows_core::Interface::vtable(this).DesiredSize)(
+                windows_core::Interface::as_raw(this),
+                &mut result__,
+            )
+            .map(|| result__)
+        }
+    }
     pub fn SetAllowDrop(&self, value: bool) -> windows_core::Result<()> {
         let this = &windows_core::Interface::cast::<IUIElement>(self)?;
         unsafe {
@@ -15866,6 +16667,17 @@ impl Selector {
                 value,
             )
             .ok()
+        }
+    }
+    pub fn Visibility(&self) -> windows_core::Result<Visibility> {
+        let this = &windows_core::Interface::cast::<IUIElement>(self)?;
+        unsafe {
+            let mut result__ = core::mem::zeroed();
+            (windows_core::Interface::vtable(this).Visibility)(
+                windows_core::Interface::as_raw(this),
+                &mut result__,
+            )
+            .map(|| result__)
         }
     }
     pub fn SetVisibility(&self, value: Visibility) -> windows_core::Result<()> {
@@ -16222,6 +17034,16 @@ impl Selector {
                 token__,
                 windows_core::Interface::vtable(this).RemovePreviewKeyDown,
             ))
+        }
+    }
+    pub fn Measure(&self, availablesize: Size) -> windows_core::Result<()> {
+        let this = &windows_core::Interface::cast::<IUIElement>(self)?;
+        unsafe {
+            (windows_core::Interface::vtable(this).Measure)(
+                windows_core::Interface::as_raw(this),
+                availablesize,
+            )
+            .ok()
         }
     }
     pub fn CapturePointer<P0>(&self, value: P0) -> windows_core::Result<bool>
@@ -16585,6 +17407,45 @@ impl SelectorItem {
             .ok()
         }
     }
+    pub fn SizeChanged<F>(&self, handler: F) -> windows_core::Result<windows_core::EventRevoker>
+    where
+        F: Fn(
+                windows_core::Ref<windows_core::IInspectable>,
+                windows_core::Ref<SizeChangedEventArgs>,
+            ) + Send
+            + 'static,
+    {
+        let this = &windows_core::Interface::cast::<IFrameworkElement>(self)?;
+        let handler = <SizeChangedEventHandler>::new(move |a0, a1| {
+            handler(a0, a1);
+            Ok(())
+        });
+        unsafe {
+            let mut result__ = core::mem::zeroed();
+            let token__ = (windows_core::Interface::vtable(this).SizeChanged)(
+                windows_core::Interface::as_raw(this),
+                windows_core::Interface::as_raw(&handler),
+                &mut result__,
+            )
+            .map(|| result__)?;
+            Ok(windows_core::EventRevoker::new(
+                this.clone(),
+                token__,
+                windows_core::Interface::vtable(this).RemoveSizeChanged,
+            ))
+        }
+    }
+    pub fn DesiredSize(&self) -> windows_core::Result<Size> {
+        let this = &windows_core::Interface::cast::<IUIElement>(self)?;
+        unsafe {
+            let mut result__ = core::mem::zeroed();
+            (windows_core::Interface::vtable(this).DesiredSize)(
+                windows_core::Interface::as_raw(this),
+                &mut result__,
+            )
+            .map(|| result__)
+        }
+    }
     pub fn SetAllowDrop(&self, value: bool) -> windows_core::Result<()> {
         let this = &windows_core::Interface::cast::<IUIElement>(self)?;
         unsafe {
@@ -16603,6 +17464,17 @@ impl SelectorItem {
                 value,
             )
             .ok()
+        }
+    }
+    pub fn Visibility(&self) -> windows_core::Result<Visibility> {
+        let this = &windows_core::Interface::cast::<IUIElement>(self)?;
+        unsafe {
+            let mut result__ = core::mem::zeroed();
+            (windows_core::Interface::vtable(this).Visibility)(
+                windows_core::Interface::as_raw(this),
+                &mut result__,
+            )
+            .map(|| result__)
         }
     }
     pub fn SetVisibility(&self, value: Visibility) -> windows_core::Result<()> {
@@ -16961,6 +17833,16 @@ impl SelectorItem {
             ))
         }
     }
+    pub fn Measure(&self, availablesize: Size) -> windows_core::Result<()> {
+        let this = &windows_core::Interface::cast::<IUIElement>(self)?;
+        unsafe {
+            (windows_core::Interface::vtable(this).Measure)(
+                windows_core::Interface::as_raw(this),
+                availablesize,
+            )
+            .ok()
+        }
+    }
     pub fn CapturePointer<P0>(&self, value: P0) -> windows_core::Result<bool>
     where
         P0: windows_core::Param<Pointer>,
@@ -17064,6 +17946,148 @@ impl windows_core::RuntimeName for SelectorItem {
 }
 unsafe impl Send for SelectorItem {}
 unsafe impl Sync for SelectorItem {}
+#[repr(C)]
+#[derive(Clone, Copy, Debug, Default, PartialEq)]
+pub struct Size {
+    pub Width: f32,
+    pub Height: f32,
+}
+impl windows_core::imp::TypeKind for Size {
+    type TypeKind = windows_core::imp::CopyType;
+}
+impl windows_core::RuntimeType for Size {
+    const SIGNATURE: windows_core::imp::ConstBuffer =
+        windows_core::imp::ConstBuffer::from_slice(b"struct(Windows.Foundation.Size;f4;f4)");
+    const NAME: windows_core::imp::ConstBuffer =
+        windows_core::imp::ConstBuffer::from_slice(b"Windows.Foundation.Size");
+}
+#[repr(transparent)]
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct SizeChangedEventArgs(windows_core::IUnknown);
+windows_core::imp::interface_hierarchy!(
+    SizeChangedEventArgs,
+    windows_core::IUnknown,
+    windows_core::IInspectable
+);
+windows_core::imp::required_hierarchy!(SizeChangedEventArgs, RoutedEventArgs);
+impl SizeChangedEventArgs {
+    pub fn OriginalSource(&self) -> windows_core::Result<windows_core::IInspectable> {
+        let this = &windows_core::Interface::cast::<IRoutedEventArgs>(self)?;
+        unsafe {
+            let mut result__ = core::mem::zeroed();
+            (windows_core::Interface::vtable(this).OriginalSource)(
+                windows_core::Interface::as_raw(this),
+                &mut result__,
+            )
+            .and_then(|| windows_core::imp::Type::from_abi(result__))
+        }
+    }
+}
+impl windows_core::RuntimeType for SizeChangedEventArgs {
+    const SIGNATURE: windows_core::imp::ConstBuffer =
+        windows_core::imp::ConstBuffer::for_class::<Self, ISizeChangedEventArgs>();
+}
+unsafe impl windows_core::Interface for SizeChangedEventArgs {
+    type Vtable = <ISizeChangedEventArgs as windows_core::Interface>::Vtable;
+    const IID: windows_core::GUID = <ISizeChangedEventArgs as windows_core::Interface>::IID;
+}
+impl windows_core::RuntimeName for SizeChangedEventArgs {
+    const NAME: &'static str = "Microsoft.UI.Xaml.SizeChangedEventArgs";
+}
+unsafe impl Send for SizeChangedEventArgs {}
+unsafe impl Sync for SizeChangedEventArgs {}
+windows_core::imp::define_interface!(
+    SizeChangedEventHandler,
+    SizeChangedEventHandler_Vtbl,
+    0x8d7b1a58_14c6_51c9_892c_9fcce368e77d
+);
+impl windows_core::RuntimeType for SizeChangedEventHandler {
+    const SIGNATURE: windows_core::imp::ConstBuffer =
+        windows_core::imp::ConstBuffer::for_interface::<Self>();
+}
+impl SizeChangedEventHandler {
+    pub fn new<
+        F: Fn(
+                windows_core::Ref<windows_core::IInspectable>,
+                windows_core::Ref<SizeChangedEventArgs>,
+            ) -> windows_core::Result<()>
+            + Send
+            + 'static,
+    >(
+        invoke: F,
+    ) -> Self {
+        let com = windows_core::imp::DelegateBox::<Self, F>::new(
+            &SizeChangedEventHandlerBox::<F>::VTABLE,
+            invoke,
+        );
+        unsafe { core::mem::transmute(windows_core::imp::box_new(com)) }
+    }
+    pub fn Invoke<P0, P1>(&self, sender: P0, e: P1) -> windows_core::Result<()>
+    where
+        P0: windows_core::Param<windows_core::IInspectable>,
+        P1: windows_core::Param<SizeChangedEventArgs>,
+    {
+        unsafe {
+            (windows_core::Interface::vtable(self).Invoke)(
+                windows_core::Interface::as_raw(self),
+                sender.param().abi(),
+                e.param().abi(),
+            )
+            .ok()
+        }
+    }
+}
+#[repr(C)]
+pub struct SizeChangedEventHandler_Vtbl {
+    base__: windows_core::IUnknown_Vtbl,
+    Invoke: unsafe extern "system" fn(
+        this: *mut core::ffi::c_void,
+        sender: *mut core::ffi::c_void,
+        e: *mut core::ffi::c_void,
+    ) -> windows_core::HRESULT,
+}
+struct SizeChangedEventHandlerBox<
+    F: Fn(
+            windows_core::Ref<windows_core::IInspectable>,
+            windows_core::Ref<SizeChangedEventArgs>,
+        ) -> windows_core::Result<()>
+        + Send
+        + 'static,
+>(core::marker::PhantomData<(fn() -> F,)>);
+impl<
+    F: Fn(
+            windows_core::Ref<windows_core::IInspectable>,
+            windows_core::Ref<SizeChangedEventArgs>,
+        ) -> windows_core::Result<()>
+        + Send
+        + 'static,
+> SizeChangedEventHandlerBox<F>
+{
+    const VTABLE: SizeChangedEventHandler_Vtbl = SizeChangedEventHandler_Vtbl {
+        base__: windows_core::IUnknown_Vtbl {
+            QueryInterface:
+                windows_core::imp::DelegateBox::<SizeChangedEventHandler, F>::QueryInterface,
+            AddRef: windows_core::imp::DelegateBox::<SizeChangedEventHandler, F>::AddRef,
+            Release: windows_core::imp::DelegateBox::<SizeChangedEventHandler, F>::Release,
+        },
+        Invoke: Self::Invoke,
+    };
+    unsafe extern "system" fn Invoke(
+        this: *mut core::ffi::c_void,
+        sender: *mut core::ffi::c_void,
+        e: *mut core::ffi::c_void,
+    ) -> windows_core::HRESULT {
+        unsafe {
+            let this = &mut *(this as *mut *mut core::ffi::c_void
+                as *mut windows_core::imp::DelegateBox<SizeChangedEventHandler, F>);
+            (this.invoke)(
+                core::mem::transmute_copy(&sender),
+                core::mem::transmute_copy(&e),
+            )
+            .into()
+        }
+    }
+}
 #[repr(transparent)]
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct SolidColorBrush(windows_core::IUnknown);
@@ -17516,6 +18540,34 @@ impl TabView {
             .ok()
         }
     }
+    pub fn SizeChanged<F>(&self, handler: F) -> windows_core::Result<windows_core::EventRevoker>
+    where
+        F: Fn(
+                windows_core::Ref<windows_core::IInspectable>,
+                windows_core::Ref<SizeChangedEventArgs>,
+            ) + Send
+            + 'static,
+    {
+        let this = &windows_core::Interface::cast::<IFrameworkElement>(self)?;
+        let handler = <SizeChangedEventHandler>::new(move |a0, a1| {
+            handler(a0, a1);
+            Ok(())
+        });
+        unsafe {
+            let mut result__ = core::mem::zeroed();
+            let token__ = (windows_core::Interface::vtable(this).SizeChanged)(
+                windows_core::Interface::as_raw(this),
+                windows_core::Interface::as_raw(&handler),
+                &mut result__,
+            )
+            .map(|| result__)?;
+            Ok(windows_core::EventRevoker::new(
+                this.clone(),
+                token__,
+                windows_core::Interface::vtable(this).RemoveSizeChanged,
+            ))
+        }
+    }
     pub fn TabDroppedOutside<F>(
         &self,
         handler: F,
@@ -17671,6 +18723,17 @@ impl TabView {
             ))
         }
     }
+    pub fn DesiredSize(&self) -> windows_core::Result<Size> {
+        let this = &windows_core::Interface::cast::<IUIElement>(self)?;
+        unsafe {
+            let mut result__ = core::mem::zeroed();
+            (windows_core::Interface::vtable(this).DesiredSize)(
+                windows_core::Interface::as_raw(this),
+                &mut result__,
+            )
+            .map(|| result__)
+        }
+    }
     pub fn SetAllowDrop(&self, value: bool) -> windows_core::Result<()> {
         let this = &windows_core::Interface::cast::<IUIElement>(self)?;
         unsafe {
@@ -17689,6 +18752,17 @@ impl TabView {
                 value,
             )
             .ok()
+        }
+    }
+    pub fn Visibility(&self) -> windows_core::Result<Visibility> {
+        let this = &windows_core::Interface::cast::<IUIElement>(self)?;
+        unsafe {
+            let mut result__ = core::mem::zeroed();
+            (windows_core::Interface::vtable(this).Visibility)(
+                windows_core::Interface::as_raw(this),
+                &mut result__,
+            )
+            .map(|| result__)
         }
     }
     pub fn SetVisibility(&self, value: Visibility) -> windows_core::Result<()> {
@@ -18045,6 +19119,16 @@ impl TabView {
                 token__,
                 windows_core::Interface::vtable(this).RemovePreviewKeyDown,
             ))
+        }
+    }
+    pub fn Measure(&self, availablesize: Size) -> windows_core::Result<()> {
+        let this = &windows_core::Interface::cast::<IUIElement>(self)?;
+        unsafe {
+            (windows_core::Interface::vtable(this).Measure)(
+                windows_core::Interface::as_raw(this),
+                availablesize,
+            )
+            .ok()
         }
     }
     pub fn CapturePointer<P0>(&self, value: P0) -> windows_core::Result<bool>
@@ -18424,6 +19508,45 @@ impl TabViewItem {
             .ok()
         }
     }
+    pub fn SizeChanged<F>(&self, handler: F) -> windows_core::Result<windows_core::EventRevoker>
+    where
+        F: Fn(
+                windows_core::Ref<windows_core::IInspectable>,
+                windows_core::Ref<SizeChangedEventArgs>,
+            ) + Send
+            + 'static,
+    {
+        let this = &windows_core::Interface::cast::<IFrameworkElement>(self)?;
+        let handler = <SizeChangedEventHandler>::new(move |a0, a1| {
+            handler(a0, a1);
+            Ok(())
+        });
+        unsafe {
+            let mut result__ = core::mem::zeroed();
+            let token__ = (windows_core::Interface::vtable(this).SizeChanged)(
+                windows_core::Interface::as_raw(this),
+                windows_core::Interface::as_raw(&handler),
+                &mut result__,
+            )
+            .map(|| result__)?;
+            Ok(windows_core::EventRevoker::new(
+                this.clone(),
+                token__,
+                windows_core::Interface::vtable(this).RemoveSizeChanged,
+            ))
+        }
+    }
+    pub fn DesiredSize(&self) -> windows_core::Result<Size> {
+        let this = &windows_core::Interface::cast::<IUIElement>(self)?;
+        unsafe {
+            let mut result__ = core::mem::zeroed();
+            (windows_core::Interface::vtable(this).DesiredSize)(
+                windows_core::Interface::as_raw(this),
+                &mut result__,
+            )
+            .map(|| result__)
+        }
+    }
     pub fn SetAllowDrop(&self, value: bool) -> windows_core::Result<()> {
         let this = &windows_core::Interface::cast::<IUIElement>(self)?;
         unsafe {
@@ -18442,6 +19565,17 @@ impl TabViewItem {
                 value,
             )
             .ok()
+        }
+    }
+    pub fn Visibility(&self) -> windows_core::Result<Visibility> {
+        let this = &windows_core::Interface::cast::<IUIElement>(self)?;
+        unsafe {
+            let mut result__ = core::mem::zeroed();
+            (windows_core::Interface::vtable(this).Visibility)(
+                windows_core::Interface::as_raw(this),
+                &mut result__,
+            )
+            .map(|| result__)
         }
     }
     pub fn SetVisibility(&self, value: Visibility) -> windows_core::Result<()> {
@@ -18798,6 +19932,16 @@ impl TabViewItem {
                 token__,
                 windows_core::Interface::vtable(this).RemovePreviewKeyDown,
             ))
+        }
+    }
+    pub fn Measure(&self, availablesize: Size) -> windows_core::Result<()> {
+        let this = &windows_core::Interface::cast::<IUIElement>(self)?;
+        unsafe {
+            (windows_core::Interface::vtable(this).Measure)(
+                windows_core::Interface::as_raw(this),
+                availablesize,
+            )
+            .ok()
         }
     }
     pub fn CapturePointer<P0>(&self, value: P0) -> windows_core::Result<bool>
@@ -19203,6 +20347,34 @@ impl TextBlock {
             .ok()
         }
     }
+    pub fn SizeChanged<F>(&self, handler: F) -> windows_core::Result<windows_core::EventRevoker>
+    where
+        F: Fn(
+                windows_core::Ref<windows_core::IInspectable>,
+                windows_core::Ref<SizeChangedEventArgs>,
+            ) + Send
+            + 'static,
+    {
+        let this = &windows_core::Interface::cast::<IFrameworkElement>(self)?;
+        let handler = <SizeChangedEventHandler>::new(move |a0, a1| {
+            handler(a0, a1);
+            Ok(())
+        });
+        unsafe {
+            let mut result__ = core::mem::zeroed();
+            let token__ = (windows_core::Interface::vtable(this).SizeChanged)(
+                windows_core::Interface::as_raw(this),
+                windows_core::Interface::as_raw(&handler),
+                &mut result__,
+            )
+            .map(|| result__)?;
+            Ok(windows_core::EventRevoker::new(
+                this.clone(),
+                token__,
+                windows_core::Interface::vtable(this).RemoveSizeChanged,
+            ))
+        }
+    }
     pub fn SetFontSize(&self, value: f64) -> windows_core::Result<()> {
         unsafe {
             (windows_core::Interface::vtable(self).SetFontSize)(
@@ -19275,6 +20447,17 @@ impl TextBlock {
             .and_then(|| windows_core::imp::Type::from_abi(result__))
         }
     }
+    pub fn DesiredSize(&self) -> windows_core::Result<Size> {
+        let this = &windows_core::Interface::cast::<IUIElement>(self)?;
+        unsafe {
+            let mut result__ = core::mem::zeroed();
+            (windows_core::Interface::vtable(this).DesiredSize)(
+                windows_core::Interface::as_raw(this),
+                &mut result__,
+            )
+            .map(|| result__)
+        }
+    }
     pub fn SetAllowDrop(&self, value: bool) -> windows_core::Result<()> {
         let this = &windows_core::Interface::cast::<IUIElement>(self)?;
         unsafe {
@@ -19293,6 +20476,17 @@ impl TextBlock {
                 value,
             )
             .ok()
+        }
+    }
+    pub fn Visibility(&self) -> windows_core::Result<Visibility> {
+        let this = &windows_core::Interface::cast::<IUIElement>(self)?;
+        unsafe {
+            let mut result__ = core::mem::zeroed();
+            (windows_core::Interface::vtable(this).Visibility)(
+                windows_core::Interface::as_raw(this),
+                &mut result__,
+            )
+            .map(|| result__)
         }
     }
     pub fn SetVisibility(&self, value: Visibility) -> windows_core::Result<()> {
@@ -19649,6 +20843,16 @@ impl TextBlock {
                 token__,
                 windows_core::Interface::vtable(this).RemovePreviewKeyDown,
             ))
+        }
+    }
+    pub fn Measure(&self, availablesize: Size) -> windows_core::Result<()> {
+        let this = &windows_core::Interface::cast::<IUIElement>(self)?;
+        unsafe {
+            (windows_core::Interface::vtable(this).Measure)(
+                windows_core::Interface::as_raw(this),
+                availablesize,
+            )
+            .ok()
         }
     }
     pub fn CapturePointer<P0>(&self, value: P0) -> windows_core::Result<bool>
@@ -19974,6 +21178,34 @@ impl TextBox {
             .ok()
         }
     }
+    pub fn SizeChanged<F>(&self, handler: F) -> windows_core::Result<windows_core::EventRevoker>
+    where
+        F: Fn(
+                windows_core::Ref<windows_core::IInspectable>,
+                windows_core::Ref<SizeChangedEventArgs>,
+            ) + Send
+            + 'static,
+    {
+        let this = &windows_core::Interface::cast::<IFrameworkElement>(self)?;
+        let handler = <SizeChangedEventHandler>::new(move |a0, a1| {
+            handler(a0, a1);
+            Ok(())
+        });
+        unsafe {
+            let mut result__ = core::mem::zeroed();
+            let token__ = (windows_core::Interface::vtable(this).SizeChanged)(
+                windows_core::Interface::as_raw(this),
+                windows_core::Interface::as_raw(&handler),
+                &mut result__,
+            )
+            .map(|| result__)?;
+            Ok(windows_core::EventRevoker::new(
+                this.clone(),
+                token__,
+                windows_core::Interface::vtable(this).RemoveSizeChanged,
+            ))
+        }
+    }
     pub fn GetRectFromCharacterIndex(
         &self,
         charindex: i32,
@@ -19985,6 +21217,17 @@ impl TextBox {
                 windows_core::Interface::as_raw(self),
                 charindex,
                 trailingedge,
+                &mut result__,
+            )
+            .map(|| result__)
+        }
+    }
+    pub fn DesiredSize(&self) -> windows_core::Result<Size> {
+        let this = &windows_core::Interface::cast::<IUIElement>(self)?;
+        unsafe {
+            let mut result__ = core::mem::zeroed();
+            (windows_core::Interface::vtable(this).DesiredSize)(
+                windows_core::Interface::as_raw(this),
                 &mut result__,
             )
             .map(|| result__)
@@ -20008,6 +21251,17 @@ impl TextBox {
                 value,
             )
             .ok()
+        }
+    }
+    pub fn Visibility(&self) -> windows_core::Result<Visibility> {
+        let this = &windows_core::Interface::cast::<IUIElement>(self)?;
+        unsafe {
+            let mut result__ = core::mem::zeroed();
+            (windows_core::Interface::vtable(this).Visibility)(
+                windows_core::Interface::as_raw(this),
+                &mut result__,
+            )
+            .map(|| result__)
         }
     }
     pub fn SetVisibility(&self, value: Visibility) -> windows_core::Result<()> {
@@ -20364,6 +21618,16 @@ impl TextBox {
                 token__,
                 windows_core::Interface::vtable(this).RemovePreviewKeyDown,
             ))
+        }
+    }
+    pub fn Measure(&self, availablesize: Size) -> windows_core::Result<()> {
+        let this = &windows_core::Interface::cast::<IUIElement>(self)?;
+        unsafe {
+            (windows_core::Interface::vtable(this).Measure)(
+                windows_core::Interface::as_raw(this),
+                availablesize,
+            )
+            .ok()
         }
     }
     pub fn CapturePointer<P0>(&self, value: P0) -> windows_core::Result<bool>
@@ -20926,6 +22190,34 @@ impl TreeView {
             .ok()
         }
     }
+    pub fn SizeChanged<F>(&self, handler: F) -> windows_core::Result<windows_core::EventRevoker>
+    where
+        F: Fn(
+                windows_core::Ref<windows_core::IInspectable>,
+                windows_core::Ref<SizeChangedEventArgs>,
+            ) + Send
+            + 'static,
+    {
+        let this = &windows_core::Interface::cast::<IFrameworkElement>(self)?;
+        let handler = <SizeChangedEventHandler>::new(move |a0, a1| {
+            handler(a0, a1);
+            Ok(())
+        });
+        unsafe {
+            let mut result__ = core::mem::zeroed();
+            let token__ = (windows_core::Interface::vtable(this).SizeChanged)(
+                windows_core::Interface::as_raw(this),
+                windows_core::Interface::as_raw(&handler),
+                &mut result__,
+            )
+            .map(|| result__)?;
+            Ok(windows_core::EventRevoker::new(
+                this.clone(),
+                token__,
+                windows_core::Interface::vtable(this).RemoveSizeChanged,
+            ))
+        }
+    }
     pub fn DragItemsStarting<F>(
         &self,
         handler: F,
@@ -20986,6 +22278,17 @@ impl TreeView {
             ))
         }
     }
+    pub fn DesiredSize(&self) -> windows_core::Result<Size> {
+        let this = &windows_core::Interface::cast::<IUIElement>(self)?;
+        unsafe {
+            let mut result__ = core::mem::zeroed();
+            (windows_core::Interface::vtable(this).DesiredSize)(
+                windows_core::Interface::as_raw(this),
+                &mut result__,
+            )
+            .map(|| result__)
+        }
+    }
     pub fn SetAllowDrop(&self, value: bool) -> windows_core::Result<()> {
         let this = &windows_core::Interface::cast::<IUIElement>(self)?;
         unsafe {
@@ -21004,6 +22307,17 @@ impl TreeView {
                 value,
             )
             .ok()
+        }
+    }
+    pub fn Visibility(&self) -> windows_core::Result<Visibility> {
+        let this = &windows_core::Interface::cast::<IUIElement>(self)?;
+        unsafe {
+            let mut result__ = core::mem::zeroed();
+            (windows_core::Interface::vtable(this).Visibility)(
+                windows_core::Interface::as_raw(this),
+                &mut result__,
+            )
+            .map(|| result__)
         }
     }
     pub fn SetVisibility(&self, value: Visibility) -> windows_core::Result<()> {
@@ -21360,6 +22674,16 @@ impl TreeView {
                 token__,
                 windows_core::Interface::vtable(this).RemovePreviewKeyDown,
             ))
+        }
+    }
+    pub fn Measure(&self, availablesize: Size) -> windows_core::Result<()> {
+        let this = &windows_core::Interface::cast::<IUIElement>(self)?;
+        unsafe {
+            (windows_core::Interface::vtable(this).Measure)(
+                windows_core::Interface::as_raw(this),
+                availablesize,
+            )
+            .ok()
         }
     }
     pub fn CapturePointer<P0>(&self, value: P0) -> windows_core::Result<bool>
@@ -21786,6 +23110,16 @@ windows_core::imp::interface_hierarchy!(
 );
 windows_core::imp::required_hierarchy!(UIElement, DependencyObject);
 impl UIElement {
+    pub fn DesiredSize(&self) -> windows_core::Result<Size> {
+        unsafe {
+            let mut result__ = core::mem::zeroed();
+            (windows_core::Interface::vtable(self).DesiredSize)(
+                windows_core::Interface::as_raw(self),
+                &mut result__,
+            )
+            .map(|| result__)
+        }
+    }
     pub fn SetAllowDrop(&self, value: bool) -> windows_core::Result<()> {
         unsafe {
             (windows_core::Interface::vtable(self).SetAllowDrop)(
@@ -21802,6 +23136,16 @@ impl UIElement {
                 value,
             )
             .ok()
+        }
+    }
+    pub fn Visibility(&self) -> windows_core::Result<Visibility> {
+        unsafe {
+            let mut result__ = core::mem::zeroed();
+            (windows_core::Interface::vtable(self).Visibility)(
+                windows_core::Interface::as_raw(self),
+                &mut result__,
+            )
+            .map(|| result__)
         }
     }
     pub fn SetVisibility(&self, value: Visibility) -> windows_core::Result<()> {
@@ -22140,6 +23484,15 @@ impl UIElement {
                 token__,
                 windows_core::Interface::vtable(self).RemovePreviewKeyDown,
             ))
+        }
+    }
+    pub fn Measure(&self, availablesize: Size) -> windows_core::Result<()> {
+        unsafe {
+            (windows_core::Interface::vtable(self).Measure)(
+                windows_core::Interface::as_raw(self),
+                availablesize,
+            )
+            .ok()
         }
     }
     pub fn CapturePointer<P0>(&self, value: P0) -> windows_core::Result<bool>

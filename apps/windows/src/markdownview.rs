@@ -324,9 +324,37 @@ pub fn inline_image(key: &str) -> Option<windows_core_reactor::IInspectable> {
     amonhen_win_xaml::XamlReader::Load(&windows_core_reactor::HSTRING::from(xaml)).ok()
 }
 
-/// 数式の 1 em の大きさ（DIP）: 本文の字 × 設定の倍率（macOS 版・GTK4 版と同じ。既定は `math::FONT_SCALE`）。
+/// 数式の大きさを覚える鍵（本文の字に対する倍率。macOS 版・GTK4 版と同じ鍵）。
+pub const MATH_SCALE: &str = "mathScale";
+/// 1 つの Markdown のファイルで数式を描く時間の上限（秒。0 は上限なし。macOS 版・GTK4 版と同じ鍵）。
+pub const MATH_TIME_LIMIT: &str = "mathTimeLimit";
+
+/// 今の数式の大きさ（本文の字に対する倍率。読めなければ既定の `math::FONT_SCALE`）。
+pub fn math_scale() -> f64 {
+    crate::prefs::string(MATH_SCALE)
+        .and_then(|s| s.parse::<f64>().ok())
+        .filter(|s| s.is_finite() && *s > 0.0)
+        .unwrap_or(amonhen_core::math::FONT_SCALE)
+}
+
+/// 今の、1 つのファイルで数式を描く時間の上限（秒。0 は上限なし。既定は 2 秒）。
+pub fn math_time_limit() -> u64 {
+    crate::prefs::string(MATH_TIME_LIMIT)
+        .and_then(|s| s.parse::<u64>().ok())
+        .unwrap_or(2)
+}
+
+/// 設定の時間の上限をコアに渡す（起動したときと、設定を変えたとき）。
+pub fn apply_math_time_limit() {
+    let seconds = math_time_limit();
+    amonhen_core::math::set_file_time_limit(
+        (seconds > 0).then(|| std::time::Duration::from_secs(seconds)),
+    );
+}
+
+/// 数式の 1 em の大きさ（DIP）: 本文の字 × 設定の倍率（macOS 版・GTK4 版と同じ）。
 fn math_em(size: f64) -> f64 {
-    size * amonhen_core::math::FONT_SCALE
+    size * math_scale()
 }
 
 /// 数式の絵（コアの SVG に本文の字の色を当て、resvg で 2 倍の細かさの PNG に）と、見せる大きさ（DIP）。色・大きさ
