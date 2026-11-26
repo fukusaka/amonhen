@@ -61,24 +61,36 @@ jobs:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
+      # main への push で、macOS の枠が空いた時点で main が先に進んでいたら、残りのステップを飛ばす
+      # （scripts/ci-main-moved.sh）。macOS のランナーは同時に 5 つまでしかない。
+      - if: runner.os == 'macOS' && github.event_name == 'push'
+        run: scripts/ci-main-moved.sh
+        env:
+          GH_TOKEN: ${{ github.token }}
       # runner の rustup で、その時点の stable を入れる。
-      - run: rustup toolchain install stable --profile minimal --component clippy,rustfmt && rustup default stable
+      - if: env.MAIN_MOVED_ON != 'true'
+        run: rustup toolchain install stable --profile minimal --component clippy,rustfmt && rustup default stable
       # macOS では Swift の試験のために release のコアも作るので、キャッシュを別の名前にする。同じ名前のキャッシュが
       # あると置き直さないので、debug だけのキャッシュが残り、release を毎回作り直してしまう。
-      - uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0 # v2.9.3
+      - if: env.MAIN_MOVED_ON != 'true'
+        uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0 # v2.9.3
         with:
           key: ${{ runner.os == 'macOS' && 'swift' || '' }}
-      - run: cargo fmt --all --check
-      - run: cargo clippy --workspace --all-targets -- -D warnings
+      - if: env.MAIN_MOVED_ON != 'true'
+        run: cargo fmt --all --check
+      - if: env.MAIN_MOVED_ON != 'true'
+        run: cargo clippy --workspace --all-targets -- -D warnings
       # 1 つの crate で落ちても、ほかの crate の試験は最後まで流す。
-      - run: cargo test --workspace --no-fail-fast
+      - if: env.MAIN_MOVED_ON != 'true'
+        run: cargo test --workspace --no-fail-fast
       # build.rs が生成する C のヘッダーがコミット済みのものと一致するか。
-      - run: git diff --exit-code crates/ffi-c/include
+      - if: env.MAIN_MOVED_ON != 'true'
+        run: git diff --exit-code crates/ffi-c/include
       # macOS のアプリ（apps/macos）の試験。macOS のランナーは数が少なく待ちが長いので、別のジョブにせずここで流す。
       # Rust の試験が落ちても流す。
-      - if: ${{ runner.os == 'macOS' && !cancelled() }}
+      - if: ${{ runner.os == 'macOS' && !cancelled() && env.MAIN_MOVED_ON != 'true' }}
         run: scripts/build-core.sh
-      - if: ${{ runner.os == 'macOS' && !cancelled() }}
+      - if: ${{ runner.os == 'macOS' && !cancelled() && env.MAIN_MOVED_ON != 'true' }}
         run: swift test
         working-directory: apps/macos
 
@@ -275,33 +287,46 @@ jobs:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
+      # main への push で、macOS の枠が空いた時点で main が先に進んでいたら、残りのステップを飛ばす
+      # （scripts/ci-main-moved.sh）。macOS のランナーは同時に 5 つまでしかない。
+      - if: runner.os == 'macOS' && github.event_name == 'push'
+        run: scripts/ci-main-moved.sh
+        env:
+          GH_TOKEN: ${{ github.token }}
       # runner の rustup で、その時点の stable を入れる。
-      - run: rustup toolchain install stable --profile minimal && rustup default stable
-      - uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0 # v2.9.3
+      - if: env.MAIN_MOVED_ON != 'true'
+        run: rustup toolchain install stable --profile minimal && rustup default stable
+      - if: env.MAIN_MOVED_ON != 'true'
+        uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0 # v2.9.3
       # 絵の手伝いは別に作る（一緒に作るとフィーチャーがエンジンに混ざる）。
-      - run: cargo build -p amonhen-cli && cargo build -p amonhen-render
-      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
+      - if: env.MAIN_MOVED_ON != 'true'
+        run: cargo build -p amonhen-cli && cargo build -p amonhen-render
+      - if: env.MAIN_MOVED_ON != 'true'
+        uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
         with:
           node-version: 24
           cache: npm
           cache-dependency-path: apps/vscode/package-lock.json
-      - working-directory: apps/vscode
+      - if: env.MAIN_MOVED_ON != 'true'
+        working-directory: apps/vscode
         run: |
           npm ci
           npm run typecheck
           npm test
       # VSCode を起動する結合テスト（e2e/）。ダウンロードした VSCode はキャッシュする。Linux は画面がないので xvfb で
-      - uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+      - if: env.MAIN_MOVED_ON != 'true'
+        uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
         with:
           path: apps/vscode/.vscode-test
           key: vscode-test-${{ runner.os }}-${{ runner.arch }}-${{ hashFiles('apps/vscode/.vscode-test.mjs') }}
       # Windows の runner は、起動して数分のうちに Windows Update（wuauserv・UsoSvc）とそれに続く Storage Service
       # （StorSvc）が 1 コア以上を数十秒使う。重なると e2e の git が 10 倍ほど遅れ、拡張ホストが止まって時間切れになる
       # ので、e2e の前に止める（使い捨ての VM なので戻さない）
-      - if: runner.os == 'Windows'
+      - if: runner.os == 'Windows' && env.MAIN_MOVED_ON != 'true'
         shell: pwsh
         run: scripts/ci-quiet-windows.ps1
-      - working-directory: apps/vscode
+      - if: env.MAIN_MOVED_ON != 'true'
+        working-directory: apps/vscode
         run: |
           if [ "$RUNNER_OS" = Linux ]; then
             xvfb-run -a npm run test:e2e
