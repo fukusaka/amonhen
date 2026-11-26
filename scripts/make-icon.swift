@@ -1,19 +1,23 @@
 // アプリのアイコンを描いて .icns にする。図柄はコードで持つ（色や形はここを直して作り直す）。
 //   swift scripts/make-icon.swift [出力先のフォルダ]
 //   swift scripts/make-icon.swift --windows [出力先のフォルダ]
+//   swift scripts/make-icon.swift --gnome [出力先のフォルダ]
 // 出力: AppIcon.icns（正式版）・AppIcon-Snapshot.icns（snapshot 版。右下にオレンジの帯）・AppIcon.png（1024 px の見本）。
-// --windows では Windows のアプリの AppIcon.ico（apps/windows/res）。
+// --windows では Windows のアプリの AppIcon.ico（apps/windows/res）。--gnome では GTK4 のアプリの hicolor の
+// アイコン（apps/gtk4/data/icons の <大きさ>x<大きさ>/apps/io.github.fukusaka.amonhen.png）。
 //
 // 図柄: Amon Hen（見張りの座）にちなみ、夜の丘の稜線を git のレーン（分かれて合流する 2 本）で描き、
 // 頂上の座に光る点（見る目）を置く。空には淡い北斗七星とカシオペヤ座、その間に光る星（北極星の役）。macOS のアイコンの枠（1024 の中の 824 の角の丸い四角）に合わせる。
 // Windows では枠を広げ（Windows のアイコンは枠いっぱいに描き、影は付けない）、角の丸みを小さくし、小さい大きさ
-// （32 px まで）では淡い星を描かない（点がにじむだけで、形が読みにくくなる）。
+// （32 px まで）では淡い星を描かない（点がにじむだけで、形が読みにくくなる）。GNOME では GNOME の作法の形
+// （128 の格子の角丸の四角と、底の厚み）に収め、小さい大きさの星は Windows と同じ。
 import AppKit
 
 var arguments = Array(CommandLine.arguments.dropFirst())
 let windows = arguments.first == "--windows"
-if windows { arguments.removeFirst() }
-let outDir = URL(fileURLWithPath: arguments.first ?? (windows ? "apps/windows/res" : "apps/macos/Icons"))
+let gnome = arguments.first == "--gnome"
+if windows || gnome { arguments.removeFirst() }
+let outDir = URL(fileURLWithPath: arguments.first ?? (windows ? "apps/windows/res" : gnome ? "apps/gtk4/data/icons" : "apps/macos/Icons"))
 
 func color(_ hex: UInt32, _ alpha: CGFloat = 1) -> CGColor {
     CGColor(
@@ -25,6 +29,10 @@ func color(_ hex: UInt32, _ alpha: CGFloat = 1) -> CGColor {
 func draw(_ ctx: CGContext, snapshot: Bool, stars: Bool = true) {
     ctx.translateBy(x: 0, y: 1024)
     ctx.scaleBy(x: 1, y: -1)
+    if gnome {
+        drawGnome(ctx, stars: stars)
+        return
+    }
     let body = CGRect(x: 100, y: 100, width: 824, height: 824)
     if windows {
         // 枠（100〜924）を 1024 の中の 16〜1008 に広げる。
@@ -48,6 +56,31 @@ func draw(_ ctx: CGContext, snapshot: Bool, stars: Bool = true) {
     ctx.saveGState()
     ctx.addPath(shape)
     ctx.clip()
+    scene(ctx, stars: stars)
+
+    // snapshot 版: 右下の角にオレンジの帯。
+    if snapshot {
+        ctx.saveGState()
+        ctx.translateBy(x: 760, y: 760)
+        ctx.rotate(by: -.pi / 4)
+        ctx.setFillColor(color(0xFF8A3D))
+        ctx.fill(CGRect(x: -330, y: -46, width: 660, height: 92))
+        let text = NSAttributedString(string: "SNAPSHOT", attributes: [
+            .font: NSFont.systemFont(ofSize: 50, weight: .heavy), .foregroundColor: NSColor.white,
+        ])
+        let line = CTLineCreateWithAttributedString(text)
+        let width = CTLineGetTypographicBounds(line, nil, nil, nil)
+        // 文字は上下を戻して描く（座標を上下反転しているため）。
+        ctx.scaleBy(x: 1, y: -1)
+        ctx.textPosition = CGPoint(x: -width / 2, y: -17)
+        CTLineDraw(line, ctx)
+        ctx.restoreGState()
+    }
+    ctx.restoreGState()
+}
+
+/// 夜空・丘・レーン・座を、macOS の枠（100〜924）の座標で描く。切り抜きは呼ぶ側で。
+func scene(_ ctx: CGContext, stars: Bool) {
     let space = CGColorSpace(name: CGColorSpace.sRGB)!
 
     // 夜空: 上が藍、下が濃紺。
@@ -192,25 +225,25 @@ func draw(_ ctx: CGContext, snapshot: Bool, stars: Bool = true) {
     ctx.addPath(star)
     ctx.setFillColor(color(0xFFE9A8))
     ctx.fillPath()
+}
 
-    // snapshot 版: 右下の角にオレンジの帯。
-    if snapshot {
-        ctx.saveGState()
-        ctx.translateBy(x: 760, y: 760)
-        ctx.rotate(by: -.pi / 4)
-        ctx.setFillColor(color(0xFF8A3D))
-        ctx.fill(CGRect(x: -330, y: -46, width: 660, height: 92))
-        let text = NSAttributedString(string: "SNAPSHOT", attributes: [
-            .font: NSFont.systemFont(ofSize: 50, weight: .heavy), .foregroundColor: NSColor.white,
-        ])
-        let line = CTLineCreateWithAttributedString(text)
-        let width = CTLineGetTypographicBounds(line, nil, nil, nil)
-        // 文字は上下を戻して描く（座標を上下反転しているため）。
-        ctx.scaleBy(x: 1, y: -1)
-        ctx.textPosition = CGPoint(x: -width / 2, y: -17)
-        CTLineDraw(line, ctx)
-        ctx.restoreGState()
-    }
+/// GNOME（GTK4）のアイコン: 128 の格子（1024 では 8 倍）の角丸の四角（104、角の丸み 8）。影は付けず、面の下に
+/// 厚み（4 の縁、面の色を暗くした色）を見せる（GNOME のアイコンの作法）。
+func drawGnome(_ ctx: CGContext, stars: Bool) {
+    let lip: CGFloat = 32
+    let face = CGRect(x: 96, y: 96 - lip / 2, width: 832, height: 832)
+    func shape(_ rect: CGRect) -> CGPath { CGPath(roundedRect: rect, cornerWidth: 64, cornerHeight: 64, transform: nil) }
+    ctx.addPath(shape(face.offsetBy(dx: 0, dy: lip)))
+    ctx.setFillColor(color(0x05081A))
+    ctx.fillPath()
+    // 絵は macOS の枠（100〜924）を面の大きさに縮めて描き、面の形で切り抜く。
+    ctx.saveGState()
+    ctx.addPath(shape(face))
+    ctx.clip()
+    let scale = face.width / 824
+    ctx.translateBy(x: face.minX - 100 * scale, y: face.minY - 100 * scale)
+    ctx.scaleBy(x: scale, y: scale)
+    scene(ctx, stars: stars)
     ctx.restoreGState()
 }
 
@@ -219,12 +252,22 @@ func png(size: Int, snapshot: Bool) -> Data {
         data: nil, width: size, height: size, bitsPerComponent: 8, bytesPerRow: 0,
         space: CGColorSpace(name: CGColorSpace.sRGB)!, bitmapInfo: CGImageAlphaInfo.premultipliedLast.rawValue)!
     ctx.scaleBy(x: CGFloat(size) / 1024, y: CGFloat(size) / 1024)
-    draw(ctx, snapshot: snapshot, stars: !windows || size > 32)
+    draw(ctx, snapshot: snapshot, stars: !(windows || gnome) || size > 32)
     let rep = NSBitmapImageRep(cgImage: ctx.makeImage()!)
     return rep.representation(using: .png, properties: [:])!
 }
 
 try FileManager.default.createDirectory(at: outDir, withIntermediateDirectories: true)
+if gnome {
+    // hicolor のテーマの形（<大きさ>x<大きさ>/apps/<アプリ ID>.png）。install.sh がそのまま写す。
+    for size in [16, 24, 32, 48, 64, 128, 256, 512] {
+        let dir = outDir.appendingPathComponent("\(size)x\(size)/apps")
+        try FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
+        try png(size: size, snapshot: false).write(to: dir.appendingPathComponent("io.github.fukusaka.amonhen.png"))
+    }
+    print("出力: \(outDir.path)")
+    exit(0)
+}
 if windows {
     // .ico: 大きさごとの PNG を並べる（Windows Vista から、どの大きさも PNG で入れられる）。タスクバー・Alt+Tab・
     // エクスプローラーの表示の大きさと、その 125〜200% の倍率の分。
