@@ -12,6 +12,9 @@
   （見出しのすぐ下に短い要約の段落を書く。要約が、CHANGELOG 全体へのリンクと一緒に Release の説明になる）。
   確かめが通ると、作って署名する前に、環境 `release-approval` の承認を待つ（承認者がワークフローの実行の画面で
   承認する）。`vscode-v*` のタグも同じ。snapshot は待たない。
+- main では、macOS のランナーが空いた時点で main がもう先に進んでいたコミットの macOS の試験を飛ばす（CI は通る。
+  先のコミットの CI が試す）。数の少ない macOS のランナーを空けるため。タグは main の先頭か、macOS のジョブが
+  実際に走ったコミットに打つ。
 - 作るのは `.github/workflows/build.yml`: エンジンは OS と CPU ごとにそのマシンで作り、配る前にその場で一度動かして
   確かめる（`scripts/check-engine.sh`）。GTK4 のアプリは Linux の CPU ごとに Ubuntu 24.04 で作り、SSH 先に送る Linux のエンジンを入れる
   （`scripts/package-gtk4.sh`）。アプリは macOS で並べてコンパイルし（`scripts/compile-app.sh`）、最後に

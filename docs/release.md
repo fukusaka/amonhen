@@ -14,6 +14,9 @@ How releases are made, and signing, notarization and build provenance attestatio
   notes, with a link to the whole CHANGELOG). Once those checks pass, the release waits for approval in the
   `release-approval` environment (its required reviewer approves on the workflow run's page) before anything is
   built or signed; the same goes for `vscode-v*` tags. Snapshots don't wait.
+- On main, CI skips the macOS tests of a commit that main has already moved past by the time a macOS runner
+  picks it up (the run still passes; the newer commit's CI tests it), to keep the few macOS runners free. So tag
+  main's tip, or a commit whose macOS jobs actually ran.
 - Everything is built by `.github/workflows/build.yml`: each engine on a machine of its own OS and CPU, run there once
   (`scripts/check-engine.sh`) before it is shipped; the GTK4 app on Ubuntu 24.04 for each Linux CPU with the Linux engines put in
   for SSH (`scripts/package-gtk4.sh`); the app compiled on macOS in parallel (`scripts/compile-app.sh`); then assembled and signed (`scripts/package-app.sh`). Locally, `scripts/build-app.sh`
