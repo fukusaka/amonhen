@@ -400,7 +400,13 @@ export class HistoryController implements vscode.Disposable {
         break;
       case 'openTreeFile':
         if (this.repo) {
-          await vscode.commands.executeCommand('vscode.open', gitUri(this.repo.root, message.path, 'rev', message.oid)).then(undefined, showError);
+          // 行があればその行を選んで開く（差分の行の右クリック。「すべてのファイル」がないとき）
+          const line = message.line ? Math.max(0, message.line - 1) : undefined;
+          const options: vscode.TextDocumentShowOptions | undefined =
+            line === undefined ? undefined : { selection: new vscode.Range(line, 0, line, 0) };
+          await vscode.commands
+            .executeCommand('vscode.open', gitUri(this.repo.root, message.path, 'rev', message.oid), options)
+            .then(undefined, showError);
         }
         break;
       case 'commitImage':

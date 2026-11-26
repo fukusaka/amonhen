@@ -2490,7 +2490,7 @@
         },
         {
           "command": "amonhen.history.savePatch",
-          "when": "webviewId == 'amonhen.main' && webviewSection == 'commit'",
+          "when": "webviewId == 'amonhen.main' && webviewSection == 'commit' && !commitIsMerge",
           "group": "6_patch@1"
         },
         {
@@ -2541,6 +2541,11 @@
         {
           "command": "amonhen.commitFile.openAtCommit",
           "when": "webviewId == 'amonhen.main' && webviewSection == 'commitFile' && !commitFileDeleted",
+          "group": "1_file@0"
+        },
+        {
+          "command": "amonhen.commitFile.openAtCommit",
+          "when": "webviewId == 'amonhen.main' && webviewSection == 'commitLine' && !commitFileDeleted",
           "group": "1_file@0"
         },
         {

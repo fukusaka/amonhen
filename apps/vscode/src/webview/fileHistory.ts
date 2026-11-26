@@ -1,11 +1,12 @@
 /**
- * メインビューの File History 画面。ファイルを変えたコミット（新しい順）を左に、選んだコミットの詳細（そのファイルの
- * 差分の位置）を右に出す。名前が変わっていれば、名前ごとにその時点のパスの見出しを挟む（アプリと同じ）
+ * メインビューの File History 画面。ファイルを変えたコミット（新しい順）を左に、選んだコミットでのそのファイルの
+ * 差分だけを右に出す。名前が変わっていれば、名前ごとにその時点のパスの見出しを挟む（アプリと同じ）
  */
 import type { FileHistoryEntry } from '../fileHistory/protocol.ts';
 import type { HostMessage } from '../view/protocol.ts';
 import { el, formatDate, getState, post, updateState, type View } from './api.ts';
-import { attachSplitter, createDetailsPane } from './details.ts';
+import { attachSplitter } from './details.ts';
+import { renderDiffBody } from './diffView.ts';
 
 type Row = { kind: 'path'; path: string; index: number } | { kind: 'entry'; index: number };
 
@@ -31,10 +32,19 @@ export function createFileHistoryView(): View {
   list.append(spacer);
   const splitter = el('div', 'splitter');
   splitter.setAttribute('role', 'separator');
-  const details = createDetailsPane();
-  body.append(list, splitter, details.root);
+  // 右: 選んだコミットでのこのファイルの差分（アプリと同じく、コミットの詳細は出さない）
+  const pane = el('aside', 'details');
+  const diffBox = el('div', 'details-body file-history-diff');
+  pane.append(diffBox);
+  body.append(list, splitter, pane);
   root.append(toolbar, body);
-  attachSplitter(body, splitter, details.root, () => undefined);
+  attachSplitter(body, splitter, pane, () => undefined);
+  /** 右に出しているコミット（差分を待っている間も） */
+  let shownOid: string | undefined;
+
+  function showNote(text: string): void {
+    diffBox.replaceChildren(el('div', 'empty', text));
+  }
 
   let path = '';
   let entries: FileHistoryEntry[] = [];
@@ -105,8 +115,10 @@ export function createFileHistoryView(): View {
     if (index < 0 || index >= entries.length) return;
     selected = index;
     const entry = entries[index]!;
-    if (entry.oid !== details.shownOid) {
+    if (entry.oid !== shownOid) {
+      shownOid = entry.oid;
       clearTimeout(selectTimer);
+      // コミットの変更を読んでもらい（details）、届いたらこのファイルの差分を求める
       selectTimer = window.setTimeout(() => post({ type: 'select', oid: entry.oid }), 60);
     }
     if (reveal) {
@@ -163,7 +175,10 @@ export function createFileHistoryView(): View {
     let index = oid ? entries.findIndex((e) => e.oid === oid) : -1;
     if (index < 0) {
       index = entries.length > 0 ? 0 : -1;
-      details.clear();
+      shownOid = undefined;
+      if (message.error) showNote(message.error);
+      else if (entries.length === 0 && message.complete) showNote('No commits changed this file.');
+      else diffBox.replaceChildren();
     }
     selected = -1;
     if (index >= 0) select(index, false);
@@ -176,18 +191,27 @@ export function createFileHistoryView(): View {
         onFileHistory(message);
         break;
       case 'details': {
+        // そのコミットの変更から、そのときのパスのファイルを探して差分を求める（アプリと同じ）
         const entry = entries[selected];
-        if (root.classList.contains('active') && message.details.oid === entry?.oid) {
-          details.show(message.details, entry.path);
+        if (!root.classList.contains('active') || message.details.oid !== entry?.oid) break;
+        if (message.details.files.some((f) => f.path === entry.path)) {
+          post({ type: 'commitDiff', oid: entry.oid, path: entry.path });
+        } else {
+          showNote('Can’t read the diff');
         }
         break;
       }
-      case 'commitDiff':
-        details.showDiff(message.oid, message.path, message.diff);
+      case 'commitDiff': {
+        const entry = entries[selected];
+        if (message.oid !== entry?.oid || message.path !== entry.path) break;
+        const top = diffBox.scrollTop;
+        const same = diffBox.dataset.shown === `${message.oid}:${message.path}`;
+        diffBox.dataset.shown = `${message.oid}:${message.path}`;
+        diffBox.replaceChildren(...renderDiffBody(message.diff));
+        // 構文の色が届いて送り直されたときは、見ていた位置を保つ
+        if (same) diffBox.scrollTop = top;
         break;
-      case 'detailsExtras':
-        details.showExtras(message.extras);
-        break;
+      }
     }
   }
 
@@ -196,8 +220,8 @@ export function createFileHistoryView(): View {
     root,
     onMessage,
     onShow() {
-      // 見えていない間に届いた詳細は出していないので、選んでいる行の詳細を求め直す
-      details.forget();
+      // 見えていない間に届いた詳細は出していないので、選んでいる行の差分を求め直す
+      shownOid = undefined;
       post({ type: 'fileHistoryLoad', merges: mergesBox.checked });
       list.focus();
     },

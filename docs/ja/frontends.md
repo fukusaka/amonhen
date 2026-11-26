@@ -284,11 +284,11 @@ GTK4 のアプリは macOS のアプリと同じふるまいをめざす。わ�
 | すべてのファイルのプレビュー: 拡大縮小できる画像・SVG の絵とモバイル向けの確認・整形した Markdown・バイナリの Quick Look | ✓ | ✓ | ✓ | △ | n/a | — | VSCode: どのファイルも Quick Look の代わりに VSCode のエディタで開ける。モバイル向けの確認は部品を切り替え（覚える）、SVG・Markdown・VectorDrawable の見方も覚える。Mermaid・DOT の図と数式は、エンジンと一緒に同梱した絵の手伝い（`amonhen-render`。エンジンそのものは描かない）が描く。図はテーマの構文の色で描く（図の中で指定したテーマが先。図の配色の設定はない）。gantt の日付はシステムの時間帯で数える。<br>GTK4: Quick Look の代わりに GNOME のプレビュー（か既定のアプリ）。SVG の絵は librsvg で描く。<br>Windows: 拡大縮小できる画像・SVG の絵とモバイル向けの確認・整形した Markdown とその中の Mermaid・DOT の図（Direct2D の SVG は文字を描かないので resvg で描く）。部品の切り替えはパスの帯にある。数式はほかのアプリと同じく描く（文中の式は基線にそろえる）。バイナリはその時点の中身を既定のアプリで開く（Windows には Quick Look がない）。コミットの中の画像・`<picture>`・`align`・画像の大きさ（幅の割合は、窓の幅に合わせて変わる本文の欄の幅に対して決める）・`<details>` を描き、DOT の画像ノードも絵を出す。文の途中の画像は行の中に置き、`<kbd>` はキーの札、`<sub>`・`<sup>` は下付き・上付き。 |
 | 整形した Markdown の中を探す（キーの札・表のマスも） | ✓ | ✓ | ✓ | ✓ | n/a | — | 絵と閉じた `<details>` の中は探さない。<br>VSCode: Markdown を押して入ってから ⌘F（Ctrl+F）。ビューのほかの所の ⌘F は VSCode の検索。 |
 | すべてのファイル: Android の VectorDrawable の絵（色はコミットの `res` から、animated-vector は動く前の絵） | ✓ | ✓ | ✓ | ✓ | n/a | — | |
-| ファイルの見出しのメニュー（Blame・File History・パスのコピー・開く） | ✓ | ✓ | ✓ | ✓ | n/a | ✓ | VSCode: 先頭に Expand・Collapse、Open File at This Commit、Show Whole File の後は Show Changes Only。いくつも選んだときの見出しにも File History・Copy Path。 右クリックと ⋯ の Show Whole File・Blame・File History・この版／前の版に戻す・Copy Path（Copy Path 以外はエンジンがあれば）と、VSCode の差分のエディターで開く。この時点のファイルを開くはない。<br>TUI: 見ているファイルの `B`・`L`・`Y`（パスのコピー）・`e`（git のエディタで開く）。 |
+| ファイルの見出しのメニュー（Blame・File History・パスのコピー・開く） | ✓ | ✓ | ✓ | ✓ | n/a | ✓ | VSCode: 先頭に Expand・Collapse、Open File at This Commit（差分の行でもその行で開く。エンジンがあればすべてのファイルで）、Show Whole File の後は Show Changes Only。いくつも選んだときの見出しにも File History・Copy Path。 右クリックと ⋯ の Show Whole File・Blame・File History・この版／前の版に戻す・Copy Path（Copy Path 以外はエンジンがあれば）と、VSCode の差分のエディターで開く。この時点のファイルを開くはない。<br>TUI: 見ているファイルの `B`・`L`・`Y`（パスのコピー）・`e`（git のエディタで開く）。 |
 | 選んだものの差分（範囲をまとめる・A..B / A...B・飛び飛び） | ✓ | ✓ | ✓ | ✓ | △ | ✓ | VSCode: エンジンがあるとき。<br>CLI: `diff <rev> <rev>`。<br>TUI: `m` と Shift-↑↓（か Ctrl・Alt を押しながらクリック）で選ぶ。`x` で向きを入れ替え、`.` で merge-base から。 |
 | 選んだものの操作（cherry-pick・revert・squash・ID のコピー） | ✓ | ✓ | ✓ | ✓ | △ | ✓ | VSCode: Copy Short IDs も。merge を選んでいれば Save Patches は出さず、Merge は HEAD 以外が 2 つ以上のとき。 エンジンがあるとき。<br>CLI: `amonhen run` から。<br>TUI: 印をつけたコミットに `y` `v`、`E` でまとめた形の編集モード、`Y` で ID のコピー、Save as Patch で保存。 |
 | 署名のポップオーバー | ✓ | ✓ | ✓ | ✓ | n/a | ✓ | VSCode: 詳細の Signature の行（様子・説明・署名した人・形式・鍵。指紋はツールチップ）と、タガー・件名・署名を添えた Tag・Merged Tag の行（エンジンがあれば）。ポップオーバーはない。<br>TUI: 確かめた結果を詳細に出す。ポップオーバーはない。 |
-| 単語の強調と構文の色 | ✓ | ✓ | ✓ | ✓ | n/a | ✓ | VSCode: 構文の色はエンジンがあれば、差分を出した後に付く。 |
+| 単語の強調と構文の色 | ✓ | ✓ | ✓ | ✓ | n/a | ✓ | VSCode: 構文の色はエンジンがあれば、差分を出した後に付く。長い差分もすべて描く。 |
 
 ## Blame・File History
 
@@ -296,7 +296,7 @@ GTK4 のアプリは macOS のアプリと同じふるまいをめざす。わ�
 | --- | :-: | :-: | :-: | :-: | :-: | :-: | --- |
 | Blame | ✓ | ✓ | ✓ | ✓ | △ | ✓ | VSCode: メインビューのページ。<br>CLI: `amonhen run`（`blame`）から。<br>Windows: 行のメニューからそのコミットを History に出す。<br>TUI: Working Copy のファイルかコミットの詳細で `B`。`H` で行のコミットを History で選ぶ。 |
 | ファイルをコミットの版に戻す（この版・その前の版。選べば stage も） | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | VSCode: エンジンがあるとき、詳細（History・Reflog・File History）のファイルの右クリックと、File History の今の名前の行の Restore This Version… から。Restore and Stage は 2 つめのボタン。<br>CLI: `restore --source <rev> [--staged]`。<br>TUI: File History の `V`。`y` この版、`b` その前の版、`s`・`B` で stage も。 |
-| File History | ✓ | ✓ | ✓ | ✓ | △ | ✓ | VSCode: メインビューのページ。エクスプローラー・エディターのタブ・コマンドパレット・メインビューのファイルから開く。行の右クリックにアプリと同じ項目（Copy Short ID も）。Merge Commits はメニューではなく帯のチェックボックス。<br>CLI: `amonhen run`（`fileHistory`）から。<br>Windows: Working Copy のファイルから。<br>TUI: 同じく `L`。変更のないファイルは `O` でパスを聞く。 |
+| File History | ✓ | ✓ | ✓ | ✓ | △ | ✓ | VSCode: メインビューのページ。エクスプローラー・エディターのタブ・コマンドパレット・メインビューのファイルから開く。行の右クリックにアプリと同じ項目（Copy Short ID も）。Merge Commits はメニューではなく帯のチェックボックス。右にはそのコミットでのそのファイルの差分を出す。<br>CLI: `amonhen run`（`fileHistory`）から。<br>Windows: Working Copy のファイルから。<br>TUI: 同じく `L`。変更のないファイルは `O` でパスを聞く。 |
 | リポジトリのタブの隣のタブに、リポジトリのツールバー付きで開く | ✓ | ✓ | ✓ | n/a | n/a | n/a | GTK4: リポジトリのタブがほかの窓で前に出ているときは、ツールバーのない題だけの帯になる。<br>TUI: メインの画面の代わりに開き、Esc で戻る。 |
 | 行の履歴 | — | — | — | — | — | — |  |
 
@@ -304,7 +304,7 @@ GTK4 のアプリは macOS のアプリと同じふるまいをめざす。わ�
 
 | 機能 | macOS | GTK4 | Windows | VSCode | CLI | TUI | Notes |
 | --- | :-: | :-: | :-: | :-: | :-: | :-: | --- |
-| Save as Patch（コミットごとか mbox・カバーレター・-v） | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | VSCode: 形とカバーレターを組み合わせられ、前に選んだものが先頭。<br>CLI: `format-patch`。<br>TUI: 命令の一覧から、選んでいるコミットか、印をつけたコミットを古い順に。`.mbox` で終わる名前なら 1 つのファイル、`c` でカバーレター、`v` で版を聞く。 |
+| Save as Patch（コミットごとか mbox・カバーレター・-v） | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | VSCode: 形とカバーレターを組み合わせられ、前に選んだものが先頭。merge には出さない（VSCode は無効の項目に理由を出せない）。<br>CLI: `format-patch`。<br>TUI: 命令の一覧から、選んでいるコミットか、印をつけたコミットを古い順に。`.mbox` で終わる名前なら 1 つのファイル、`c` でカバーレター、`v` で版を聞く。 |
 | Apply Patch（am / apply・下見・3-way・--index） | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | CLI: `am`・`apply`（`--check`）。<br>TUI: 命令の一覧から。下見は確かめる文の件名かファイル、当たらなければ 3-way を勧め、`i` で index にも。 |
 | パッチのファイルを窓に落とす | ✓ | ✓ | ✓ | ✓ | n/a | n/a | VSCode: エクスプローラーのメニューから。<br>TUI: Apply Patch がファイルのパスを聞く。 |
 | Export Archive（zip・tar.gz・tar、先頭のフォルダ、1 つのフォルダ） | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | VSCode: エンジンがあれば。ブランチ・タグの右クリック、History のコミットの右クリック、HEAD はコマンドパレットから。<br>CLI: `archive`。<br>TUI: 命令の一覧から、選んでいるコミット。形は拡張子で決まり、`y` で先頭のフォルダ、`t` でなし、`o` で 1 つのフォルダ（パスを書く）。 |

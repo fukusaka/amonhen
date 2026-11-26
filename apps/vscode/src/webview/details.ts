@@ -3,7 +3,7 @@
  * 同じく、差分の見出しが変わったファイルの一覧を兼ね、最初はすべて畳む）。差分は開いて画面に入ったものから順に
  * 拡張ホストに求める。間の仕切りはドラッグでき、メッセージの欄は中身に合わせ（列の半分まで）、⤢ で列いっぱいに広げる
  */
-import type { FileDiff } from '../diff/fileDiff.ts';
+import type { DiffLine, FileDiff } from '../diff/fileDiff.ts';
 import type {
   CommitDetails,
   DetailsExtras,
@@ -143,6 +143,18 @@ export function fileAction(oid: string, path: string, action: 'toggle' | 'change
   for (const act of fileActions) act(oid, path, action);
 }
 
+/** Open File at This Commit（見出しと差分の行の右クリック）。見えている欄が「すべてのファイル」で開けば true */
+const atCommits = new Set<(oid: string, path: string, line?: number) => boolean>();
+
+/**
+ * その時点のファイルを開く。出している欄に「すべてのファイル」があればそこで（行があればその行へ。アプリと同じ）、
+ * なければ（エンジンがない・History でない）エディタで開く
+ */
+export function openAtCommit(oid: string, path: string, line?: number): void {
+  for (const open of atCommits) if (open(oid, path, line)) return;
+  post({ type: 'openTreeFile', oid, path, ...(line ? { line } : {}) });
+}
+
 
 /** 詳細に並べた 1 ファイル（差分の見出しが、変わったファイルの一覧を兼ねる） */
 interface FileSection {
@@ -240,6 +252,12 @@ export function createDetailsPane(onParent?: (oid: string) => void, images = fal
     const file = sections.get(path);
     if (oid !== shownOid || !file || !choices) return;
     widen(file, 'all');
+  });
+  atCommits.add((oid, path, line) => {
+    if (oid !== shownOid || !root.closest('.view.active') || !canAll()) return false;
+    setPage('all');
+    allFiles?.open(path, line);
+    return true;
   });
   fileActions.add((oid, path, action) => {
     const file = sections.get(path);
@@ -754,9 +772,13 @@ export function createDetailsPane(onParent?: (oid: string) => void, images = fal
   }
 
   /** 今のページを欄に出す（すべてのファイルは、初めて開くときに作る） */
+  /** 「すべてのファイル」を出せるか（1 つのコミットで、エンジンがあるとき） */
+  function canAll(): boolean {
+    return imagesFor && choices !== undefined && shownOid !== undefined;
+  }
+
   function showPage(): void {
-    const canAll = imagesFor && choices !== undefined && shownOid !== undefined;
-    if (page === 'all' && canAll) {
+    if (page === 'all' && canAll()) {
       allFiles ??= createAllFiles(shownOid!, changedFiles, {
         tree: layout.tree,
         // Show This Change: 変更に戻り、そのファイルの差分を開いて見せる（アプリと同じ）
@@ -885,7 +907,18 @@ export function createDetailsPane(onParent?: (oid: string) => void, images = fal
       return;
     }
     const all = contexts.get(path) === 'all';
-    const body = renderDiffBody(diff, choices && !all ? { widen: () => widen(file) } : {});
+    // 1 つのコミットなら、行の右クリックに Open File at This Commit（その行で開く。アプリと同じ）
+    const lineContext = imagesFor
+      ? (line: DiffLine) => ({
+          webviewSection: 'commitLine',
+          oid,
+          path,
+          ...(line.new ? { commitLine: line.new } : {}),
+          commitFileDeleted: changedFiles.some((c) => c.path === path && c.status === 'D'),
+          preventDefaultContextMenuItems: true,
+        })
+      : undefined;
+    const body = renderDiffBody(diff, { ...(choices && !all ? { widen: () => widen(file) } : {}), ...(lineContext ? { lineContext } : {}) });
     // 画像は前と後を比べる（1 つのコミットだけ）。画像は別に求める。SVG は絵を出し、「Show as Text」で文字の差分に
     // 替える（アプリと同じ）
     if (imagesFor && isImagePath(path) && !file.svgText) {

@@ -24,6 +24,8 @@ export interface AllFiles {
   showFile(path: string, view: FileView & FileViewNote): void;
   /** リストか木か（詳細の帯の List・Tree） */
   setTree(tree: boolean): void;
+  /** `path` の中身を出し、`line` があればその行へ（差分の行の右クリックの Open File at This Commit。アプリと同じ） */
+  open(path: string, line?: number): void;
 }
 
 /** すべてのファイルの持ち主から */
@@ -57,6 +59,8 @@ export function createAllFiles(oid: string, changes: readonly ChangedFile[], opt
   const folders = new Map<string, HTMLElement>();
   let selected: string | undefined;
   let selectedRow: HTMLElement | undefined;
+  /** 中身が届いたら移る行（open で頼まれた。1 始まり） */
+  let pendingLine: { path: string; line: number } | undefined;
   /** 開いているファイルの絵（図・数式・VectorDrawable）が、画面の色で描いたものか（テーマが変わったら求め直す） */
   let themed = false;
   // テーマが変わったら、画面の色で描いた絵を描き直す（アプリと同じ）
@@ -121,6 +125,7 @@ export function createAllFiles(oid: string, changes: readonly ChangedFile[], opt
 
   /** ファイルを開く（行を選んだ印にして、中身を拡張ホストに求める） */
   function openFile(full: string, row?: HTMLElement): void {
+    if (pendingLine?.path !== full) pendingLine = undefined;
     selectedRow?.classList.remove('active');
     row?.classList.add('active');
     selectedRow = row;
@@ -280,8 +285,30 @@ export function createAllFiles(oid: string, changes: readonly ChangedFile[], opt
         } else {
           body.append(modes[0]![2]());
         }
+        revealLine(path, body);
       }
     }
+  }
+
+  /** open で頼まれた行へ移る（中身をテキストで出しているときだけ。アプリと同じく、上から 3 分の 1 に置いて選ぶ） */
+  function revealLine(path: string, body: HTMLElement): void {
+    const wanted = pendingLine?.path === path ? pendingLine.line : undefined;
+    pendingLine = undefined;
+    const row = wanted === undefined ? undefined : body.querySelector('.file-lines')?.children[wanted - 1];
+    if (!(row instanceof HTMLElement) || !row.classList.contains('line')) return;
+    row.classList.add('target');
+    requestAnimationFrame(() => {
+      const scroller = scrollParent(row);
+      if (!scroller) return;
+      const top = row.getBoundingClientRect().top - scroller.getBoundingClientRect().top + scroller.scrollTop;
+      scroller.scrollTop = Math.max(0, top - scroller.clientHeight / 3);
+    });
+  }
+
+  function open(path: string, line?: number): void {
+    pendingLine = line ? { path, line } : undefined;
+    const row = [...tree.querySelectorAll<HTMLElement>('.tree-row.file')].find((r) => r.title === path);
+    openFile(path, row);
   }
 
   function setTree(next: boolean): void {
@@ -290,7 +317,16 @@ export function createAllFiles(oid: string, changes: readonly ChangedFile[], opt
     rebuild();
   }
 
-  return { root, showEntries, showFile, setTree };
+  return { root, showEntries, showFile, setTree, open };
+}
+
+/** 縦に送れるいちばん近い祖先 */
+function scrollParent(node: HTMLElement): HTMLElement | undefined {
+  for (let at = node.parentElement; at; at = at.parentElement) {
+    const overflow = getComputedStyle(at).overflowY;
+    if ((overflow === 'auto' || overflow === 'scroll') && at.scrollHeight > at.clientHeight) return at;
+  }
+  return undefined;
 }
 
 function sizeText(bytes: number): string {

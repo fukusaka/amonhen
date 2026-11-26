@@ -7,7 +7,7 @@ import type { HostMessage, ViewName } from '../view/protocol.ts';
 import { el, getState, post, updateState, type View } from './api.ts';
 import { createBlameView } from './blame.ts';
 import { createDaemonView } from './daemon.ts';
-import { setDetailsLayout, showWholeFile, fileAction, setDetailsStyle, detailsViewAction } from './details.ts';
+import { setDetailsLayout, showWholeFile, fileAction, openAtCommit, setDetailsStyle, detailsViewAction } from './details.ts';
 import { setWrapLines } from './diffView.ts';
 import { createFileHistoryView } from './fileHistory.ts';
 import { createHistoryView } from './history.ts';
@@ -85,6 +85,10 @@ window.addEventListener('message', (event: MessageEvent<HostMessage>) => {
   }
   if (message.type === 'fileAction') {
     fileAction(message.oid, message.path, message.action);
+    return;
+  }
+  if (message.type === 'openAtCommit') {
+    openAtCommit(message.oid, message.path, message.line);
     return;
   }
   for (const v of Object.values(views)) {
