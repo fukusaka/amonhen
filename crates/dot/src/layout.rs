@@ -214,6 +214,13 @@ fn components(units: usize, out: &[Vec<usize>], cons: &[Con]) -> Vec<usize> {
     comp
 }
 
+/// 単位の形: クラスタをまとめたものか、そのランクの幅。
+#[derive(Clone, Copy, Debug)]
+struct UnitShape {
+    rigid: bool,
+    span: i64,
+}
+
 /// 単位（`units` 個、番号は 0 から）のランクを解く。`cons` は閉路を作るものを逆にし、`fixed` はそのまま足す
 /// （`total` は `fixed` のノードを含めた数）。`first` があれば閉路を探す深さ優先をそこから始める。
 ///
@@ -228,8 +235,9 @@ fn solve_ranks(
     fixed: &[NsEdge],
     first: Option<usize>,
     iter: usize,
-    rigid: &[bool],
+    shape: &[UnitShape],
 ) -> Vec<i64> {
+    let rigid: Vec<bool> = shape.iter().map(|s| s.rigid).collect();
     let mut out: Vec<Vec<usize>> = vec![Vec::new(); units];
     for (i, c) in cons.iter().enumerate() {
         out[c.tail].push(i);
@@ -281,13 +289,19 @@ fn solve_ranks(
     let mut edges: Vec<NsEdge> = Vec::with_capacity(cons.len() + fixed.len());
     // 向きを強いない辺は補助のノード z で |x_h - (x_t + d)| にする（z → t は c - d、z → h は c、c = max(d, 0)。
     // z → t の重みは短すぎる（上を向く）分、z → h は長すぎる分）。同じ値の形がいくつもあれば、辺が下を向くほうを選び
-    // （短すぎる分をわずかに重く）、それでも同じなら書いた順で先の単位から後の単位への辺を下に向ける
+    // （短すぎる分をわずかに重く）、それでも同じなら背の高い単位（クラスタのランクの幅）から低い単位への辺を、
+    // 同じ高さなら書いた順で先の単位から後の単位への辺を下に向ける（高いクラスタが上。Graphviz の絵と同じ）
+    let key = |u: usize| (std::cmp::Reverse(shape.get(u).map_or(0, |s| s.span)), u);
     let mut aux = total;
     for ((c, &r), &s) in cons.iter().zip(&reverse).zip(&soft) {
         if s {
             let d = c.fwd;
             let m = d.max(0);
-            let short = if c.tail < c.head { 1.00101 } else { 1.001 };
+            let short = if key(c.tail) < key(c.head) {
+                1.00101
+            } else {
+                1.001
+            };
             edges.push(NsEdge {
                 tail: aux,
                 head: c.tail,
@@ -480,8 +494,17 @@ fn rank(
                     weight: 0.0,
                 })
                 .collect();
-            let inner: Vec<bool> = local.iter().map(|&u| collapsed[u]).collect();
-            let x = solve_ranks(units + 1, units, &cons, &fixed, None, opt.rank_iter, &inner);
+            let shape: Vec<UnitShape> = local
+                .iter()
+                .map(|&u| {
+                    let offs = members[u].iter().map(|&v| off[v]);
+                    UnitShape {
+                        rigid: collapsed[u],
+                        span: offs.clone().max().unwrap_or(0) - offs.min().unwrap_or(0),
+                    }
+                })
+                .collect();
+            let x = solve_ranks(units + 1, units, &cons, &fixed, None, opt.rank_iter, &shape);
             let low = x[..units].iter().copied().min().unwrap_or(0);
             let into = local[0];
             for (i, &u) in local.iter().enumerate() {
@@ -509,18 +532,22 @@ fn rank(
     let min_c = min_u.map(|u| dense[u]);
     let max_c = max_u.map(|u| dense[u]);
     let mut cons = Vec::new();
+    // 最小の組へ入る辺・最大の組から出る辺は逆にして、ほかの辺の後に置く（閉路を探す深さ優先は、書いたままの
+    // 向きの辺を先にたどる。Graphviz の絵と同じ）
+    let mut turned = Vec::new();
     for e in edges.iter().filter(|e| constraint(e)) {
         let (mut t, mut h) = (e.tail, e.head);
         let (mut ut, mut uh) = (dense[unit[t]], dense[unit[h]]);
         if ut == uh {
             continue;
         }
-        if Some(uh) == min_c || Some(ut) == max_c {
+        let turn = Some(uh) == min_c || Some(ut) == max_c;
+        if turn {
             std::mem::swap(&mut t, &mut h);
             std::mem::swap(&mut ut, &mut uh);
         }
         let m = minlen(e);
-        cons.push(Con {
+        (if turn { &mut turned } else { &mut cons }).push(Con {
             tail: ut,
             head: uh,
             fwd: m + off[t] - off[h],
@@ -528,6 +555,7 @@ fn rank(
             weight: e.weight.clamp(0.0, 1000.0),
         });
     }
+    cons.extend(turned);
     // 最小・最大の組と、根（すべてをつなぐ）
     let root = units;
     let mut fixed: Vec<NsEdge> = Vec::new();
@@ -588,15 +616,23 @@ fn rank(
             rigid_units[dense[u]] |= collapsed[u];
         }
     }
-    let x = solve_ranks(
-        total,
-        units,
-        &cons,
-        &fixed,
-        min_c,
-        opt.rank_iter,
-        &rigid_units,
-    );
+    // 単位のランクの幅（クラスタの高さ）
+    let mut lo = vec![i64::MAX; units];
+    let mut hi = vec![i64::MIN; units];
+    for v in 0..n {
+        let u = dense[unit[v]];
+        if u < units {
+            lo[u] = lo[u].min(off[v]);
+            hi[u] = hi[u].max(off[v]);
+        }
+    }
+    let shape: Vec<UnitShape> = (0..units)
+        .map(|u| UnitShape {
+            rigid: rigid_units[u],
+            span: if hi[u] >= lo[u] { hi[u] - lo[u] } else { 0 },
+        })
+        .collect();
+    let x = solve_ranks(total, units, &cons, &fixed, min_c, opt.rank_iter, &shape);
     let r: Vec<i64> = (0..n).map(|v| x[dense[unit[v]]] + off[v]).collect();
     let low = r.iter().copied().min().unwrap_or(0);
     r.into_iter()

@@ -61,6 +61,10 @@ becomes the GitHub Release notes.
   Graphviz does, not as a triangle.
 - DOT diagrams: the dot layout reads the graph's `ratio` (a number, `fill` or `expand` with `size`) and spreads the nodes
   to that shape, as Graphviz does.
+- DOT diagrams: when clusters form a cycle that costs the same either way, the taller cluster goes on top, as in
+  Graphviz.
+- DOT diagrams: in a cycle through a `rank=min` node, the dot layout keeps the edges as written where it can, as
+  Graphviz does.
 - Exporting chosen folders as an archive in a partial clone fetches only the contents it asked about, not every missing
   file of the commit (git 2.41 or later; older git fetches them all, and the question now counts them all).
 
