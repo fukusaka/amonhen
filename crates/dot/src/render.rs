@@ -1415,6 +1415,40 @@ pub fn render(
     }
     // 引いた線（折れ線と外接の箱）
     let mut drawn: Vec<(Vec<P>, [f64; 4])> = Vec::new();
+    // 同じ 2 つのノードを結ぶ辺の束（向きは問わない。ラベルもポートもない見える辺）: 1 本の線に重ならないように
+    // 離す（Gansner ほか 1993 §5.1.1 の多重の辺）。隣り合うランクの辺は、書いた順に左から `nodesep` ずつ制御点を
+    // ずらす（線の真ん中の間は nodesep の 3/4。横向きの配置では絵の下から）。仮のノードのある辺は、それぞれの仮の
+    // ノードを通す（通り道の中を真っすぐ張ると、隣の仮のノードとの境に寄って重なる）
+    let mut bundle: Vec<Option<f64>> = vec![None; model.edges.len()];
+    if !(free || ortho) {
+        let mut groups: HashMap<(usize, usize), Vec<usize>> = HashMap::new();
+        for (ei, e) in model.edges.iter().enumerate() {
+            let a = &e.attrs;
+            let plain = e.tail != e.head
+                && matches!(&lay.routes[ei], Route::Path { label: None, .. })
+                && !ledges[ei].invisible
+                && [
+                    a.get("tailport").or(e.tail_port.as_deref()),
+                    a.get("headport").or(e.head_port.as_deref()),
+                ]
+                .into_iter()
+                .flatten()
+                .all(|p| p.trim().is_empty());
+            if plain {
+                groups
+                    .entry((e.tail.min(e.head), e.tail.max(e.head)))
+                    .or_default()
+                    .push(ei);
+            }
+        }
+        let side = if dir.sideways() { -1.0 } else { 1.0 };
+        for list in groups.values().filter(|l| l.len() > 1) {
+            let mid = (list.len() - 1) as f64 / 2.0;
+            for (k, &ei) in list.iter().enumerate() {
+                bundle[ei] = Some(side * (k as f64 - mid) * nodesep);
+            }
+        }
+    }
     for (ei, e) in model.edges.iter().enumerate() {
         let a = &e.attrs;
         let scheme = a.get("colorscheme").map(str::to_owned);
@@ -1531,7 +1565,13 @@ pub fn render(
                         (Some((m, _)), _) => from_final(m),
                         _ => pts[pts.len() - 1],
                     };
-                    pts = spline::shortest(start, end, gates);
+                    if bundle[ei].is_some() && pts.len() > 2 {
+                        let last = pts.len() - 1;
+                        pts[0] = start;
+                        pts[last] = end;
+                    } else {
+                        pts = spline::shortest(start, end, gates);
+                    }
                     obstacles.avoid(&mut pts, &edge_skip(ei), false);
                 } else if !(straight || curved || right_angles.is_some()) {
                     // dot 以外は点の間を直線として避け、あとでなめらかにつなぐ
@@ -1551,12 +1591,30 @@ pub fn render(
                     let (dx, dy) = (b0.0 - a0.0, b0.1 - a0.1);
                     let bend = (mx - dy * 0.2, my + dx * 0.2);
                     vec![Cubic(a0, bend, bend, b0)]
+                } else if let Some(d) = bundle[ei].filter(|_| fitted && points.len() == 2) {
+                    // 束の中の隣り合うランクの線: 両端はそのまま、間を横にずらす（避ける点が入っていれば、その点ごと）
+                    if lp.len() == 2 {
+                        let (p, q) = (lp[0], lp[1]);
+                        let third = ((q.0 - p.0) / 3.0, (q.1 - p.1) / 3.0);
+                        vec![Cubic(
+                            p,
+                            (p.0 + third.0 + d, p.1 + third.1),
+                            (q.0 - third.0 + d, q.1 - third.1),
+                            q,
+                        )]
+                    } else {
+                        let last = lp.len() - 1;
+                        for p in &mut lp[1..last] {
+                            p.0 += d * 0.75;
+                        }
+                        curve::smooth(&lp)
+                    }
                 } else if fitted {
                     spline::fit(&lp, gates)
                 } else {
                     curve::through(&lp, straight || polyline, true)
                 };
-                if fitted && roomy {
+                if fitted && roomy && bundle[ei].is_none() {
                     let bbox = |poly: &[P]| -> [f64; 4] {
                         let mut b = [
                             f64::INFINITY,

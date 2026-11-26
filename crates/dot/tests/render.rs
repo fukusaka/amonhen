@@ -1455,3 +1455,84 @@ fn dot_cluster_cycles_keep_outer_edges_pointing_down() {
         "{svg}"
     );
 }
+
+/// 辺ごとの線の 3 次曲線（M と C の点を 4 つずつ）。
+fn edge_cubics(svg: &str) -> Vec<Vec<[(f64, f64); 4]>> {
+    svg.split("class=\"dot-edge\"")
+        .skip(1)
+        .filter_map(|g| {
+            let g = g.split("</g>").next()?;
+            let d = g.split("<path d=\"").nth(1)?.split('"').next()?;
+            let nums: Vec<f64> = d
+                .split(|c: char| !(c.is_ascii_digit() || c == '.' || c == '-'))
+                .filter(|t| !t.is_empty())
+                .filter_map(|t| t.parse().ok())
+                .collect();
+            let mut at = (nums[0], nums[1]);
+            let mut out = Vec::new();
+            for c in nums[2..].as_chunks::<6>().0 {
+                out.push([at, (c[0], c[1]), (c[2], c[3]), (c[4], c[5])]);
+                at = (c[4], c[5]);
+            }
+            Some(out)
+        })
+        .collect()
+}
+
+/// 曲線の上の点（`t` は 0 から 1）。
+fn cubic_at(c: &[(f64, f64); 4], t: f64) -> (f64, f64) {
+    let u = 1.0 - t;
+    let f = |a: f64, b: f64, c: f64, d: f64| {
+        u * u * u * a + 3.0 * u * u * t * b + 3.0 * u * t * t * c + t * t * t * d
+    };
+    (
+        f(c[0].0, c[1].0, c[2].0, c[3].0),
+        f(c[0].1, c[1].1, c[2].1, c[3].1),
+    )
+}
+
+/// 線の上の点を細かく取る。
+fn edge_samples(curves: &[[(f64, f64); 4]]) -> Vec<(f64, f64)> {
+    curves
+        .iter()
+        .flat_map(|c| (0..=16).map(move |i| cubic_at(c, i as f64 / 16.0)))
+        .collect()
+}
+
+/// 同じ 2 つのノードを結ぶ辺（相互の矢印・同じ向きの重複）は、1 本の線に重ならず、`nodesep` の 3/4 ずつ離れる
+/// （Graphviz の絵と同じ。書いた順に左から）。
+#[test]
+fn dot_edges_between_the_same_two_nodes_are_drawn_apart() {
+    let mids = |src: &str| -> Vec<(f64, f64)> {
+        let svg = render(src).unwrap().svg;
+        edge_cubics(&svg)
+            .iter()
+            .map(|c| {
+                assert_eq!(c.len(), 1, "{svg}");
+                cubic_at(&c[0], 0.5)
+            })
+            .collect()
+    };
+    let two = mids("digraph { a -> b; b -> a }");
+    assert!((two[1].0 - two[0].0 - 13.5).abs() < 1.0, "{two:?}");
+    let three = mids("digraph { a -> b; a -> b; b -> a }");
+    assert!((three[1].0 - three[0].0 - 13.5).abs() < 1.0, "{three:?}");
+    assert!((three[2].0 - three[1].0 - 13.5).abs() < 1.0, "{three:?}");
+    // 横向きの配置では、絵の下から
+    let side = mids("digraph { rankdir=LR; a -> b; b -> a }");
+    assert!((side[0].1 - side[1].1 - 13.5).abs() < 1.0, "{side:?}");
+    // ラベルやポートのある辺は束に入れない（それぞれの道筋がある）
+    let one = mids("digraph { a -> b; a:e -> b:e }");
+    assert!((one[0].0 - 27.0).abs() < 6.0, "{one:?}");
+
+    // 仮のノードを通る長い辺どうしも、通り道の境に寄って重ならない（ラベルのある図ではランクが 2 倍になる）
+    let svg = render("digraph { rankdir=LR; a -> b; b -> a; b -> c; c -> b [label=\"x\"] }")
+        .unwrap()
+        .svg;
+    let lines = edge_cubics(&svg);
+    let middle = |i: usize| {
+        let p = edge_samples(&lines[i]);
+        p[p.len() / 2].1
+    };
+    assert!((middle(0) - middle(1)).abs() > 8.0, "{svg}");
+}
