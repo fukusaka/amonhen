@@ -9,9 +9,11 @@ use crate::layout::Portal;
 
 /// 関の端に触れる許し。
 const SLACK: f64 = 3.0;
-/// 切れ端の接線の長さ（切れ端の長さに対して）。関の高さの間でははみ出しを見ないので、長いと曲線が隣の線の通り道へ
-/// ふくらんで交わる（1/3 では 1/5 より交差が 1.6% 多く、ほかのノードを通る線が 1.7 倍）。
-const TANGENT: f64 = 0.2;
+/// 切れ端の接線の長さ（切れ端の長さに対して）。向きが弦からそれる端は、`BOW` でさらに短くする。
+const TANGENT: f64 = 1.0 / 3.0;
+/// 切れ端の曲線が弦からふくらんでよい幅（片方の端の分）。ランクの間でははみ出しを見ないので、大きいと曲線が隣の
+/// 線やラベルへふくらむ（16 ではラベルの多い図の交差が 3 割増え、4 では曲がりが折れ点に集まって角ばる）。
+const BOW: f64 = 8.0;
 
 /// `start` から `end` へ、関 `gates`（y の順）をすべて通る最短の折れ線（両端を含む）。
 pub fn shortest(start: P, end: P, gates: &[Portal]) -> Vec<P> {
@@ -182,6 +184,14 @@ pub fn fit(points: &[P], gates: &[Portal]) -> Vec<Cubic> {
         } else if i == n - 1 {
             (points[n - 2], points[n - 1])
         } else {
+            // 前後の区間の向き（単位の向き）の二等分。前の点から次の点への向きにすると、長い区間と短い区間が
+            // 隣り合うとき長い区間の向きにそろい、長い区間が直線になって、曲がりが短い区間だけに集まる
+            let u = unit((points[i].0 - points[i - 1].0, points[i].1 - points[i - 1].1));
+            let v = unit((points[i + 1].0 - points[i].0, points[i + 1].1 - points[i].1));
+            let t = unit((u.0 + v.0, u.1 + v.1));
+            if t != (0.0, 0.0) {
+                return t;
+            }
             (points[i - 1], points[i + 1])
         };
         unit((b.0 - a.0, b.1 - a.1))
@@ -381,11 +391,28 @@ fn span(
 fn piece(p: P, q: P, tp: P, tq: P, gates: &[Portal], depth: u32, out: &mut Vec<Cubic>) {
     let len = (q.0 - p.0).hypot(q.1 - p.1);
     let mut scale = len * TANGENT;
+    // 制御点が弦から離れる分を抑えて、曲線のふくらみを `BOW` までにする（片方の制御点が弦から h 離れると、曲線は
+    // 4h/9 までふくらむ）
+    let bow = BOW;
+    let chord = if len > 1e-9 {
+        ((q.0 - p.0) / len, (q.1 - p.1) / len)
+    } else {
+        (0.0, 0.0)
+    };
+    let sin = |t: P| (t.0 * chord.1 - t.1 * chord.0).abs();
+    let cap = |t: P, l: f64| {
+        if sin(t) > 1e-6 {
+            l.min(bow * 9.0 / 8.0 / sin(t))
+        } else {
+            l
+        }
+    };
     for _ in 0..3 {
+        let (lp, lq) = (cap(tp, scale), cap(tq, scale));
         let c = Cubic(
             p,
-            (p.0 + tp.0 * scale, p.1 + tp.1 * scale),
-            (q.0 - tq.0 * scale, q.1 - tq.1 * scale),
+            (p.0 + tp.0 * lp, p.1 + tp.1 * lp),
+            (q.0 - tq.0 * lq, q.1 - tq.1 * lq),
             q,
         );
         if fits(&c, gates) {
@@ -439,6 +466,23 @@ mod tests {
         assert!(c.len() > 1, "{c:?}");
         assert_eq!(c[0].0, zig[0]);
         assert_eq!(c[c.len() - 1].3, zig[4]);
+    }
+
+    #[test]
+    fn long_pieces_bow_into_the_turn_but_not_far() {
+        // 長い区間の先に短い区間が直角に続く: つなぎ目の向きは二等分なので、長い区間もふくらんで曲がる（弦の上に
+        // 制御点が並んだ直線にならない）。ふくらみは BOW まで
+        let points = [(0.0, 0.0), (300.0, 0.0), (300.0, 20.0), (0.0, 40.0)];
+        let c = fit(&points, &[]);
+        let end = c.iter().rfind(|q| q.3.0 == 300.0 && q.3.1 == 0.0).unwrap();
+        // つなぎ目へ入る制御点は弦（y = 0）から外れる
+        assert!(end.2.1.abs() > 1.0, "{c:?}");
+        let far = c
+            .iter()
+            .filter(|q| q.3.1 <= 0.0 + 1e-9 && q.0.1 <= 1e-9)
+            .flat_map(|q| (0..=32).map(move |i| q.at(i as f64 / 32.0).1.abs()))
+            .fold(0.0, f64::max);
+        assert!(far > 0.5 && far <= BOW + 1e-6, "{far} {c:?}");
     }
 
     #[test]
