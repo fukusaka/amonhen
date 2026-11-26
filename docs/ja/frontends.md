@@ -145,7 +145,7 @@ GTK4 のアプリは macOS のアプリと同じふるまいをめざす。わ�
 | --- | :-: | :-: | :-: | :-: | :-: | :-: | --- |
 | 設定のページ（ページの一覧・git の行・行ごとの出どころ・↩︎・ⓘ） | ✓ | ✓ | ✓ | ✓ | n/a | n/a | VSCode: メインビューの Repository Settings（エンジンがあるとき）で、このリポジトリの設定だけ。<br>Windows: ページを左に並べる（一般・Git・表示・差分とマージ・パフォーマンス）。設定の行には設定元・↩︎・ⓘ（段ごとの値をツールチップで）。<br>TUI: 設定のページはない。アプリと `amonhen run` が変える。 |
 | Author and Signing（署名の選択・集めた鍵・mailmap） | ✓ | ✓ | ✓ | ✓ | △ | n/a | VSCode: 鍵は今の形式のものだけを集める。<br>CLI: `amonhen run`（`signingKeys`・`configSet`）から。 |
-| Commits: メッセージのテンプレート（なし・共有・独自・ファイル） | ✓ | ✓ | ✓ | △ | △ | n/a | VSCode: なし・このリポジトリ専用（その場で書く）・ファイル。共有のテンプレートはない。<br>CLI: `amonhen run` から。 |
+| Commits: メッセージのテンプレート（なし・共有・独自・ファイル） | ✓ | ✓ | ✓ | △ | △ | n/a | VSCode: なし・このリポジトリ専用（その場で書く）・ファイル（行の下に最初の数行を出す）。共有のテンプレートはない。<br>CLI: `amonhen run` から。 |
 | Branches: 既定のブランチを選ぶ | ✓ | ✓ | ✓ | ✓ | △ | n/a | CLI: `amonhen run` から。 |
 | Operations: pull・fetch.prune・autostash・updateRefs・コンフリクトの書き方・rerere | ✓ | ✓ | ✓ | ✓ | △ | n/a | CLI: `amonhen run` から。 |
 | rerere: 1 つの解決を忘れる（マージエディタ）・すべて忘れる（リポジトリの設定） | ✓ | ✓ | ✓ | ✓ | △ | n/a | VSCode: rerere が解決したコンフリクトの Working Copy の右クリックに Forget Resolution（マージエディタは VSCode のもの）、Repository Settings > Operations に Forget All…。<br>CLI: `amonhen run`（`forgetResolution`・`forgetAllResolutions`）から。 |
@@ -153,7 +153,7 @@ GTK4 のアプリは macOS のアプリと同じふるまいをめざす。わ�
 | Remotes: 表と、つながるか確かめるシート | ✓ | ✓ | ✓ | ✓ | △ | n/a | VSCode: 表と行ごとのボタン（Edit URL…・Push URL…・Check・Prune・Rename…・Remove…）と Add…。値はシートでなく入力欄で聞く。<br>CLI: `amonhen run` から。 |
 | Hooks: 表・Enabled・スクリプト・Create Hook… | ✓ | ✓ | ✓ | ✓ | △ | n/a | VSCode: Open で VSCode のエディターにスクリプトを開く。<br>CLI: `amonhen run` から。<br>Windows: Windows ではフックを止められない（git が実行の許可にかかわらず動かす）。Edit With はない |
 | LFS: 入っているか・パターン・Track Pattern…・ファイルの数 | ✓ | ✓ | ✓ | ✓ | △ | n/a | CLI: `amonhen run` から。 |
-| Keys and Values（git config の表、Basic / Customized / All、Combined / Levels） | ✓ | ✓ | ✓ | ✓ | △ | n/a | VSCode: Basic / Customized / All、Combined / Levels と検索。値は入力欄で変える。<br>CLI: `amonhen run`（`configList`・`configSet`）から。 |
+| Keys and Values（git config の表、Basic / Customized / All、Combined / Levels） | ✓ | ✓ | ✓ | ✓ | △ | n/a | VSCode: Basic / Customized / All、Combined / Levels と検索。section ごとの組、列での並べ替え、いくつもある値はすべて出す。値は入力欄で変える。<br>CLI: `amonhen run`（`configList`・`configSet`）から。 |
 | 要る git の版を添えて行を無効にする | ✓ | ✓ | ✓ | ✓ | n/a | n/a | Windows: 取得とフォルダの行（partial clone・sparse checkout・maintenance） |
 | git の行にリポジトリの形（shallow・partial・sparse・maintenance） | ✓ | ✓ | ✓ | ✓ | △ | n/a | CLI: `status` が shallow・partial・sparse を添える。 |
 | 取得とフォルダ: shallow clone の履歴を取り足す（数・日付まで・すべて） | ✓ | ✓ | ✓ | ✓ | △ | ✓ | CLI: `amonhen run`（`deepen`・`unshallow`）から。<br>TUI: History の `+`。 |

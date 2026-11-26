@@ -128,6 +128,11 @@ export class DaemonClient {
     return this.closedReason;
   }
 
+  /** これまでに daemon へ送った・受け取ったバイト数（アプリのつながりの「Sent · Received」と同じ） */
+  get traffic(): { sent: number; received: number } {
+    return { sent: this.socket.bytesWritten, received: this.socket.bytesRead };
+  }
+
   /** 命令を送る。signal で取り消すと、daemon にも取り消しを送る（検索など） */
   call(request: Json, signal?: AbortSignal): Promise<Reply> {
     if (this.closedReason) {

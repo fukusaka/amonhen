@@ -3,8 +3,27 @@
  * 扱う git・リポジトリの形、右に選んだページの行。行は、質問とその下の説明、効いている値の欄、このリポジトリが
  * 上書きしている間だけ ↩︎、設定元、ⓘ（キーと値とファイル、上書きしなければ効く値）
  */
-import { ConfigView, normalizedBool, pullMethod, pullWrites, remoteKind, scopeLabel, type ConfigEntry, type PullMethod } from '../settings/model.ts';
-import { PAGES, pageKeys, type SettingRow } from '../settings/pages.ts';
+import {
+  BASIC_KEYS,
+  blankConfigRow,
+  canonicalKeys,
+  ConfigView,
+  configRows,
+  groupConfigRows,
+  keyParts,
+  normalizedBool,
+  pullMethod,
+  pullWrites,
+  remoteKind,
+  scopeLabel,
+  type ConfigEntry,
+  type ConfigGroup,
+  type ConfigRow,
+  type ConfigSort,
+  type ConfigSortColumn,
+  type PullMethod,
+} from '../settings/model.ts';
+import { PAGES, type SettingRow } from '../settings/pages.ts';
 import { hookWhen } from '../settings/hooks.ts';
 import type { FetchingAction, SettingsFacts } from '../settings/protocol.ts';
 import type { HostMessage } from '../view/protocol.ts';
@@ -42,6 +61,9 @@ export function createSettingsView(): View {
   /** 列はアプリと同じく、初めは Levels */
   let configColumns = getState().configColumns ?? 'levels';
   let configFilter = '';
+  /** 見出しで並べ替える（初めはキーの順）と、閉じた組（初めはすべて開いている） */
+  let configSort: ConfigSort = { column: 'key', reverse: false };
+  const configCollapsed = new Set<string>();
   /** 書きかけの exclude（読み直しで消さない） */
   let excludeDraft: string | undefined;
   let error: string | undefined;
@@ -331,9 +353,21 @@ export function createSettingsView(): View {
   }
 
   /**
-   * Keys and Values（アプリの git の設定の表）。Basic はページの行が聞くキー（設定してあってもなくても）、
+   * Keys and Values の値のセル: 同じ段に値がいくつもあれば 1 行ずつ、明示的に空の値は「(empty)」（アプリと同じ）。
+   * どこにも設定がなければ（`value` が undefined）空
+   */
+  function valueCell(value: string | undefined, extra: string): HTMLTableCellElement {
+    const td = el('td', `mono${extra}`);
+    if (value === undefined) return td;
+    for (const line of value.split('\n')) td.append(line ? el('div', '', line) : el('div', 'muted', '(empty)'));
+    return td;
+  }
+
+  /**
+   * Keys and Values（アプリの git の設定の表）。Basic はページ群が尋ねるキー（設定してあってもなくても）、
    * Customized はこのリポジトリ（と worktree）で決めているキー、All は git が読むキーすべて。列は Combined（効いている値と
-   * 設定元）か Levels（設定元ごとの列。効いている段を太字に）
+   * 設定元）か Levels（設定元ごとの列。効いている段を太字に）。行はキーのドットで開閉できる組にし（section、その下に
+   * subsection）、見出しで並べ替える
    */
   function configTable(): HTMLElement {
     const box = el('div');
@@ -376,58 +410,102 @@ export function createSettingsView(): View {
     bar.append(mode, columns, search, button('Add…', { action: 'configEdit' }, 'Add a key to this repository'));
     const table = el('table', 'settings-table settings-config');
     const fill = () => {
-      const lower = (k: string) => k.toLowerCase();
-      const named = new Map<string, string>();
-      for (const e of entries) named.set(lower(e.key), e.key);
-      let keys: string[];
-      if (configMode === 'basic') keys = pageKeys();
-      else if (configMode === 'customized') keys = [...new Set(entries.filter((e) => e.scope === 'local' || e.scope === 'worktree').map((e) => e.key))];
-      else keys = [...new Set([...facts.knownKeys, ...named.values()].map((k) => named.get(lower(k)) ?? k))];
-      const words = configFilter.toLowerCase().split(/\s+/).filter(Boolean);
-      const rows = keys
-        .map((key) => ({ key, e: config.effective(key) }))
-        .filter(({ key, e }) => words.every((w) => key.toLowerCase().includes(w) || (e?.value.toLowerCase().includes(w) ?? false)))
-        .sort((a, b) => a.key.localeCompare(b.key));
+      const all = configRows(entries, facts.knownKeys);
+      let rows: ConfigRow[];
+      if (configMode === 'basic') {
+        const byKey = new Map(all.map((r) => [r.key.toLowerCase(), r]));
+        const canonical = canonicalKeys(facts.knownKeys);
+        rows = BASIC_KEYS.map((k) => byKey.get(k) ?? blankConfigRow(canonical.get(k) ?? k));
+      } else if (configMode === 'customized') {
+        rows = all.filter((r) => r.values['local'] !== undefined || r.values['worktree'] !== undefined);
+      } else {
+        const present = new Set(all.map((r) => r.key.toLowerCase()));
+        rows = [...all, ...facts.knownKeys.filter((k) => !present.has(k.toLowerCase())).map(blankConfigRow)];
+      }
+      // 絞り込みはアプリと同じく、キーかどれかの段の値に含まれるもの
+      const f = configFilter.trim().toLowerCase();
+      rows = rows.filter((r) => !f || r.key.toLowerCase().includes(f) || Object.values(r.values).some((v) => v.toLowerCase().includes(f)));
+      const groups = groupConfigRows(rows, configSort);
       const levels = configColumns === 'levels';
-      // 段の列の見出しは設定元の言葉の文の頭だけ大文字に。ツールチップに git の呼び名
+      const span = levels ? 7 : 4;
+      // 見出しを押すとその列で並べ替える（同じ列をもう一度押すと逆に）。段の列の見出しは設定元の言葉の文の頭だけ
+      // 大文字に。ツールチップに git の呼び名
+      const th = (label: string, column: ConfigSortColumn, title?: string) => {
+        const cell = el('th', 'sortable', label);
+        if (configSort.column === column) cell.append(el('span', 'sort-mark', configSort.reverse ? ' ▼' : ' ▲'));
+        if (title) cell.title = title;
+        cell.addEventListener('click', () => {
+          configSort = { column, reverse: configSort.column === column ? !configSort.reverse : false };
+          fill();
+        });
+        return cell;
+      };
       const levelHeads = LEVELS.map((s) => {
         const label = scopeLabel(s);
-        const th = el('th', '', label[0]!.toUpperCase() + label.slice(1));
-        th.title = s;
-        return th;
+        return th(label[0]!.toUpperCase() + label.slice(1), s, s);
       });
       const head = el('tr');
-      head.append(el('th', '', 'Key'), el('th', '', 'Value in effect'), ...(levels ? levelHeads : [el('th', '', 'Source')]), el('th'));
+      head.append(th('Key', 'key'), th('Value in effect', 'effective'), ...(levels ? levelHeads : [th('Source', 'source')]), el('th'));
       table.replaceChildren(head);
-      for (const { key, e } of rows) {
+      const leaf = (r: ConfigRow, depth: number) => {
         const tr = el('tr');
-        const value = el('td', e ? 'mono' : 'mono muted', e ? e.value : '—');
-        const source = el('td', 'muted', e ? scopeLabel(e.scope) : 'git’s default');
-        if (e) source.title = e.origin.replace(/^file:/, '');
+        const isSet = r.effectiveScope !== '';
+        const key = el('td', 'mono key', keyParts(r.key).name || r.key);
+        key.title = r.key;
+        key.style.paddingLeft = `${8 + depth * 16}px`;
+        const value = valueCell(isSet ? r.effective : undefined, '');
+        if (isSet) value.title = `${scopeLabel(r.effectiveScope)} · ${r.files[r.effectiveScope] ?? ''}`;
+        const source = el('td', isSet ? '' : 'muted', isSet ? scopeLabel(r.effectiveScope) : 'git’s default');
+        if (isSet) source.title = `${r.effectiveScope} · ${r.files[r.effectiveScope] ?? ''}`;
         const actions = el('td', 'settings-actions');
-        actions.append(button('Edit…', { action: 'configEdit', key }, 'Edit in this repository'));
-        if (config.local(key) !== undefined) {
+        actions.append(button('Edit…', { action: 'configEdit', key: r.key }, 'Edit in this repository'));
+        if (r.values['local'] !== undefined) {
           const remove = el('button', 'secondary', 'Remove');
           remove.title = 'Remove from this repository';
-          remove.addEventListener('click', () => set([[key, null]]));
+          remove.addEventListener('click', () => set([[r.key, null]]));
           actions.append(remove);
         }
         const cells = levels
           ? LEVELS.map((s) => {
-              const at = config.at(key, s);
-              const td = el('td', `mono${at && e?.scope === s ? ' in-effect' : ''}`, at?.value ?? '');
-              if (at) td.title = `${s} · ${at.origin.replace(/^file:/, '')}`;
+              const td = valueCell(r.values[s], r.effectiveScope === s ? ' in-effect' : '');
+              if (r.values[s] !== undefined) td.title = `${s} · ${r.files[s] ?? ''}`;
               return td;
             })
           : [source];
-        if (levels && e) value.title = `${scopeLabel(e.scope)} · ${e.origin.replace(/^file:/, '')}`;
-        tr.append(el('td', 'mono key', key), value, ...cells, actions);
+        tr.append(key, value, ...cells, actions);
         table.append(tr);
+      };
+      // 組の見出しの行（押すと開閉。初めはすべて開いている）
+      const header = (g: ConfigGroup, depth: number) => {
+        const tr = el('tr', 'config-group');
+        const td = el('td', 'key');
+        td.colSpan = span;
+        td.style.paddingLeft = `${8 + depth * 16}px`;
+        const open = !configCollapsed.has(g.key);
+        const toggle = el('button', 'config-toggle', open ? '▾' : '▸');
+        toggle.title = open ? 'Collapse' : 'Expand';
+        td.append(toggle, el('span', 'config-group-label', g.label));
+        tr.addEventListener('click', () => {
+          if (open) configCollapsed.add(g.key);
+          else configCollapsed.delete(g.key);
+          fill();
+        });
+        tr.append(td);
+        table.append(tr);
+        return open;
+      };
+      for (const section of groups) {
+        if (!header(section, 0)) continue;
+        for (const r of section.rows) leaf(r, 1);
+        for (const sub of section.groups) {
+          if (!header(sub, 1)) continue;
+          for (const r of sub.rows) leaf(r, 2);
+        }
       }
       if (rows.length === 0) {
         const tr = el('tr');
         const td = el('td', 'muted', configMode === 'customized' && !configFilter ? 'Nothing is set in this repository' : 'No keys');
-        td.colSpan = levels ? 7 : 4;
+        td.colSpan = span;
         tr.append(td);
         table.append(tr);
       }
@@ -522,6 +600,8 @@ export function createSettingsView(): View {
       else if (v === 'pick') post({ type: 'settingsRun', action: 'templateFile' });
     });
     box.append(row('Message template', 'What the commit message starts with (commit.template).', [key], control, (v) => (isOwn(v) ? 'This repository’s own' : v)));
+    // ファイルのテンプレートは、その中身を行の下に（アプリと同じく等幅・薄い色で 12 行まで）
+    if (current === 'file' && facts.templatePreview) box.append(el('pre', 'setting-preview', facts.templatePreview));
     if (current === 'own') {
       const div = el('div', 'setting-row');
       const text = el('textarea', 'setting-text');

@@ -147,3 +147,160 @@ export function remoteKind(url: string): string {
   if (host) return host[1]!;
   return url ? 'Other' : '';
 }
+
+/**
+ * Keys and Values の Basic のキー: ページ群が尋ねるもの（アプリの `basicKeys` と同じ並び）。git が出す形（小文字）で
+ */
+export const BASIC_KEYS = [
+  'user.name',
+  'user.email',
+  'commit.gpgsign',
+  'gpg.format',
+  'user.signingkey',
+  'gpg.ssh.allowedsignersfile',
+  'commit.template',
+  'amonhen.defaultbranch',
+  'pull.rebase',
+  'pull.ff',
+  'fetch.prune',
+  'rebase.autostash',
+  'rebase.updaterefs',
+  'merge.conflictstyle',
+  'rerere.enabled',
+  'rerere.autoupdate',
+  'core.autocrlf',
+  'core.filemode',
+] as const;
+
+/**
+ * Keys and Values の表の 1 行: 1 つのキーと、設定元（段）ごとの値。同じ段に同じキーがいくつもあれば
+ * （`remote.origin.fetch` など）、改行で並べる（アプリの `ConfigRow`）
+ */
+export interface ConfigRow {
+  key: string;
+  /** 今効いている段の値（その段の値すべて）と、その段。どの段にもなければ空 */
+  effective: string;
+  effectiveScope: string;
+  /** 段ごとの値と、その段のファイル */
+  values: Record<string, string>;
+  files: Record<string, string>;
+}
+
+/** どこにも設定のない行（Basic の未設定のキー、All の git が知っているだけのキー） */
+export function blankConfigRow(key: string): ConfigRow {
+  return { key, effective: '', effectiveScope: '', values: {}, files: {} };
+}
+
+/** git が知っている変数の綴り（`core.fileMode`）を、小文字のキーから引く */
+export function canonicalKeys(knownKeys: readonly string[]): Map<string, string> {
+  const map = new Map<string, string>();
+  for (const k of knownKeys) if (!map.has(k.toLowerCase())) map.set(k.toLowerCase(), k);
+  return map;
+}
+
+/**
+ * 設定の並びをキーごとに 1 行にまとめる（順は git が出した順）。キーは git が知っている綴りにそろえる。
+ * 効いている段は最後に書かれたものの段で、その値はその段の値すべて
+ */
+export function configRows(entries: readonly ConfigEntry[], knownKeys: readonly string[]): ConfigRow[] {
+  const canonical = canonicalKeys(knownKeys);
+  const byKey = new Map<string, ConfigEntry[]>();
+  const names = new Map<string, string>();
+  for (const e of entries) {
+    const lower = e.key.toLowerCase();
+    if (!names.has(lower)) names.set(lower, canonical.get(lower) ?? e.key);
+    const list = byKey.get(lower);
+    if (list) list.push(e);
+    else byKey.set(lower, [e]);
+  }
+  return [...byKey].map(([lower, es]) => {
+    const values: Record<string, string> = {};
+    const files: Record<string, string> = {};
+    for (const e of es) {
+      values[e.scope] = e.scope in values ? `${values[e.scope]}\n${e.value}` : e.value;
+      files[e.scope] = e.origin.replace(/^file:/, '');
+    }
+    const scope = es[es.length - 1]!.scope;
+    return { key: names.get(lower)!, effective: values[scope] ?? '', effectiveScope: scope, values, files };
+  });
+}
+
+/**
+ * キーの 3 つの部分。`section.name` か `section.subsection.name` で、subsection にはドットが入りうる
+ * （`url.https://….insteadOf`）ので、最初と最後のドットで切る
+ */
+export function keyParts(key: string): { section: string; subsection?: string; name: string } {
+  const first = key.indexOf('.');
+  const last = key.lastIndexOf('.');
+  if (first < 0) return { section: key, name: '' };
+  return {
+    section: key.slice(0, first),
+    ...(first === last ? {} : { subsection: key.slice(first + 1, last) }),
+    name: key.slice(last + 1),
+  };
+}
+
+/** 表の並べ替えの列（アプリの表の見出しと同じ。`source` は Combined、段の名前は Levels） */
+export type ConfigSortColumn = 'key' | 'effective' | 'source' | 'system' | 'global' | 'local' | 'worktree';
+export interface ConfigSort {
+  column: ConfigSortColumn;
+  reverse: boolean;
+}
+
+/** 組（section か subsection）: 見出しのキー（`remote`・`remote.origin`）と名前、その中の行と組 */
+export interface ConfigGroup {
+  key: string;
+  label: string;
+  rows: ConfigRow[];
+  groups: ConfigGroup[];
+}
+
+function sortValue(row: ConfigRow, column: ConfigSortColumn): string {
+  switch (column) {
+    case 'key':
+      return row.key;
+    case 'effective':
+      return row.effective;
+    case 'source':
+      return row.effectiveScope;
+    default:
+      return row.values[column] ?? '';
+  }
+}
+
+/** Finder と同じ並べ方（大文字小文字を区別せず、数は数として） */
+const collator = new Intl.Collator('en', { numeric: true, sensitivity: 'base' });
+
+/**
+ * 行を並べ替えて、キーのドットで組にする（section の下に subsection。アプリの表と同じ）。組の順はキーの並びと同じ
+ * 向き（キーの逆順で並べていれば逆）、中の行の順は並べ替えのまま。section の中は、行が先で subsection が後
+ */
+export function groupConfigRows(rows: readonly ConfigRow[], sort: ConfigSort): ConfigGroup[] {
+  const sign = sort.reverse ? -1 : 1;
+  const sorted = [...rows].sort((a, b) => sign * collator.compare(sortValue(a, sort.column), sortValue(b, sort.column)));
+  const sections = new Map<string, ConfigGroup>();
+  for (const row of sorted) {
+    const p = keyParts(row.key);
+    let section = sections.get(p.section);
+    if (!section) {
+      section = { key: p.section, label: p.section, rows: [], groups: [] };
+      sections.set(p.section, section);
+    }
+    if (p.subsection === undefined) {
+      section.rows.push(row);
+      continue;
+    }
+    const key = `${p.section}.${p.subsection}`;
+    let sub = section.groups.find((g) => g.key === key);
+    if (!sub) {
+      sub = { key, label: p.subsection, rows: [], groups: [] };
+      section.groups.push(sub);
+    }
+    sub.rows.push(row);
+  }
+  const keyReversed = sort.column === 'key' && sort.reverse;
+  const order = (a: ConfigGroup, b: ConfigGroup) => (a.key < b.key ? -1 : a.key > b.key ? 1 : 0) * (keyReversed ? -1 : 1);
+  const result = [...sections.values()].sort(order);
+  for (const s of result) s.groups.sort(order);
+  return result;
+}
