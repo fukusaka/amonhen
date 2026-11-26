@@ -607,6 +607,8 @@ struct Root {
     merge_result_box: ElementRef<TextBox>,
     /// マージエディタの左右と Base の欄の、選んでいるコンフリクトの所。
     merge_chosen: [ElementRef<Grid>; 3],
+    /// マージエディタの帯（狭いときにボタンを隠す）。
+    merge_bar: ElementRef<Grid>,
     diff_find_query: String,
     diff_find_status: String,
     /// 今の一致がメッセージの中なら、その番号（件名から数えて）。差分の中なら None。
@@ -1859,6 +1861,7 @@ impl Component for Root {
             markdown_find: (0, 0),
             merge_result_box: ElementRef::new(),
             merge_chosen: std::array::from_fn(|_| ElementRef::new()),
+            merge_bar: ElementRef::new(),
             diff_find_query: String::new(),
             diff_find_status: String::new(),
             diff_find_message: None,
@@ -16975,10 +16978,32 @@ impl Root {
             .content(view)
     }
 
-    fn merge_view(&self, context: &ViewContext<Self>) -> View {
+    fn merge_view(&self, context: &mut ViewContext<Self>) -> View {
         let (Page::Merge, Some(state)) = (self.page, &self.merge) else {
             return View::empty();
         };
+        // 帯の中身が変わったら、幅に合わせ直す（幅が変わったときは帯が自分で合わせ直す）。
+        let bar = self.merge_bar.clone();
+        let key = format!(
+            "{}|{}|{}|{}|{:?}|{}",
+            state.conflicts(),
+            state.selected,
+            state.separate,
+            state.dirty(),
+            state
+                .sides
+                .as_ref()
+                .map(|s| s.as_ref().map(|(_, _, b)| b.is_some()).ok()),
+            state.note
+        );
+        context.use_effect("merge-bar", key, move || {
+            let _ = bar.request_native_element(|result| {
+                if let Ok(element) = result {
+                    crate::merge::fit_bar(&element);
+                }
+            });
+            None
+        });
         MERGE_UNDO.with(|u| u.set((state.can_undo(), state.can_redo())));
         let view = crate::merge::view(
             state,
@@ -16992,6 +17017,7 @@ impl Root {
                 result: context.callback(Message::MergeResult),
                 base: context.callback(Message::MergeBase),
                 option: context.callback(Message::Command),
+                bar: &self.merge_bar,
             },
         );
         // Working Copy に埋め込むなら右の列だけ（別の窓なら全体）。
