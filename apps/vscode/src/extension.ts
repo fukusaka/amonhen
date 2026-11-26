@@ -4,7 +4,7 @@ import { groupChanges, type Change } from './state/changes.ts';
 import { askpass, setAskpass } from './git/askpass.ts';
 import { setFsmonitor } from './git/fsmonitor.ts';
 import { startAskpass } from './ui/askpass.ts';
-import { openConflict } from './ui/diff.ts';
+import { closeMergeEditors, openConflict } from './ui/diff.ts';
 import { markResolvedWithoutMarkers } from './ui/stageCommands.ts';
 import { setDaemonLanguage } from './daemon/client.ts';
 import { daemonPath, disposeDaemonClients, initDaemon } from './daemon/connection.ts';
@@ -156,6 +156,8 @@ export async function activate(
         log.warn('could not open the first conflict', err);
       }
     }),
+    // 途中の操作をやめたら、そのリポジトリのファイルを開いているマージエディタを閉じる（アプリと同じ）
+    manager.onDidAbort((repo) => void closeMergeEditors(repo.root).catch((err) => log.warn('could not close the merge editors', err))),
     registerIgnoreCommand(manager),
     registerWcFileCommands(manager),
     vscode.commands.registerCommand('amonhen.selectRepository', () => manager.pick()),

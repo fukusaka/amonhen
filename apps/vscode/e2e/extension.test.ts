@@ -4211,6 +4211,13 @@ suite('Amon Hen in VSCode', () => {
       await repo.refresh();
       // アプリと同じく、止まったら Working Copy に切り替え、最初のコンフリクトのファイルをマージエディタで開く
       await until('マージエディタ', () => mergeEditorTabs('mm.txt').length > 0, undefined, lastErrors);
+      // Abort でやめると、アプリと同じく開いていたマージエディタを閉じる。もう一度 squash して続きを試す
+      await vscode.commands.executeCommand('amonhen.abortSequence');
+      await until('Abort でマージエディタを閉じる', () => mergeEditorTabs('mm.txt').length === 0, undefined, lastErrors);
+      await repo.refresh();
+      await merge('mm-topic', 'squash');
+      await until('もう一度 Squash の途中', async () => (await repo.backend.sequenceInProgress()) === 'squash', undefined, lastErrors);
+      await until('マージエディタ（2 回目）', () => mergeEditorTabs('mm.txt').length > 0, undefined, lastErrors);
       await vscode.window.tabGroups.close(mergeEditorTabs());
       // エンジンがあれば、アプリの帯と同じく何をどこへしている途中かと、なぜ止まったか（コンフリクト）を言う
       const row = await until('サイドバーの Squash の行', () =>

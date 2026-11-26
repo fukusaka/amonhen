@@ -33,3 +33,19 @@ test('the backend tells when an operation stops, whoever called it', async () =>
   await backend.predictMerge(['topic']);
   assert.equal(stops, 2);
 });
+
+test('the backend tells when an operation is aborted, and not when the abort fails', async () => {
+  let fail = false;
+  const inner = {
+    abort: async () => {
+      if (fail) throw new Error('no');
+    },
+  } as unknown as RepositoryBackend;
+  let aborts = 0;
+  const backend = withStopNotice(inner, () => {}, () => aborts++);
+  await backend.abort('merge');
+  assert.equal(aborts, 1);
+  fail = true;
+  await assert.rejects(backend.abort('merge'));
+  assert.equal(aborts, 1);
+});

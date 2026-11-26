@@ -1,4 +1,4 @@
-import { join } from 'node:path';
+import { isAbsolute, join, relative } from 'node:path';
 import * as vscode from 'vscode';
 import type { Sequence } from '../git/backend.ts';
 import { conflictSides } from '../git/status.ts';
@@ -39,4 +39,44 @@ async function openMergeEditor(root: string, change: Change, sequence: Sequence 
   } catch {
     return false;
   }
+}
+
+/**
+ * root の中のファイルを開いているマージエディタを閉じる（途中の操作をやめたあと。アプリも Abort でマージエディタを
+ * 閉じる）。保存していない Result は、保存せずにやめた後の中身へ戻してから閉じる（古い Result で上書きしない・保存を聞かない）
+ */
+export async function closeMergeEditors(root: string): Promise<void> {
+  // root と fsPath は大文字小文字（Windows のドライブ名など）や区切りが違うことがあるので、同じ形にしてから比べる
+  const base = vscode.Uri.file(root).fsPath;
+  const fold = (p: string) => (process.platform === 'win32' || process.platform === 'darwin' ? p.toLowerCase() : p);
+  const inside = (uri: vscode.Uri) => {
+    if (uri.scheme !== 'file') return false;
+    const rel = relative(fold(base), fold(uri.fsPath));
+    return rel !== '' && !rel.startsWith('..') && !isAbsolute(rel);
+  };
+  const tabs = vscode.window.tabGroups.all
+    .flatMap((g) => g.tabs)
+    .filter((t) => {
+      // TabInputTextMerge（base・input1・input2・result を持つ）
+      const input = t.input as { result?: vscode.Uri; input1?: vscode.Uri } | undefined;
+      return !!input?.result && !!input.input1 && inside(input.result);
+    });
+  if (tabs.length === 0) return;
+  // マージエディタの Result は開いた時から保存していない扱い。保存せずにファイルの中身（やめた後のもの）へ戻してから
+  // 閉じる。戻せなかった（やめた直後でファイルがまだ読めない、やめてファイルが消えた）ものは、閉じると保存を聞かれて
+  // 止まるので、少し待ってもう一度戻し、それでも戻らなければ開いたままにする
+  const resultOf = (t: vscode.Tab) => (t.input as { result: vscode.Uri }).result;
+  const dirty = (t: vscode.Tab) => vscode.workspace.textDocuments.some((d) => d.isDirty && d.uri.toString() === resultOf(t).toString());
+  const revert = async (list: readonly vscode.Tab[]) => {
+    for (const uri of new Set(list.map((t) => resultOf(t).toString()))) {
+      await Promise.resolve(vscode.commands.executeCommand('workbench.action.files.revert', vscode.Uri.parse(uri))).catch(() => undefined);
+    }
+  };
+  await revert(tabs);
+  if (tabs.some(dirty)) {
+    await new Promise((r) => setTimeout(r, 500));
+    await revert(tabs.filter(dirty));
+  }
+  const clean = tabs.filter((t) => !dirty(t));
+  if (clean.length > 0) await vscode.window.tabGroups.close(clean, true);
 }

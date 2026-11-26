@@ -1523,6 +1523,9 @@ First release.
   or the index to change.
 - The in-progress row and Working Copy notice when another editor or rerere removes a conflicted file's markers, as the
   app does, instead of waiting for a save in VSCode.
+- Aborting a merge, rebase or other operation closes the merge editors it left open, as the app does.
+- File History's "No commits changed this file." wraps in a narrow window instead of running off its edge.
+- Save as Bundle shows the commit count on the save button too, since the macOS save panel has no title.
 
 ### [0.2.9] - 2026-11-24
 
