@@ -355,6 +355,10 @@ mod tests {
         assert_eq!(paragraphs(r"\$x$ and $x\$"), ["[x] and [x]"]);
         assert_eq!(paragraphs(r"$x\$ y$"), ["[x] y$"]);
         assert_eq!(paragraphs(r"$\$$ and $\$x$"), ["$$$ and $$x$"]);
+        // `\\$` は文字の `\$`（閉じにならず、式の中なら文字の `$`）
+        assert_eq!(paragraphs(r"$x \\$ and $y$"), [r"$x \$ and [y]"]);
+        assert_eq!(paragraphs(r"$a\$ and $b \\$ c$"), [r"[a] and [b \$ c]"]);
+        assert_eq!(paragraphs(r"$a \\ b$ \\$x$"), [r"[a \\ b] \$x$"]);
         // 斜体・リンクの中は数式にしない。太字の中はする
         assert_eq!(
             paragraphs("*$x$* [$y$](https://example.com) **$z$**"),

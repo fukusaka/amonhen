@@ -48,10 +48,11 @@ pub(super) fn find(blocks: &mut [Block]) {
     }
 }
 
-/// pulldown-cmark が数式にした原文を、段落に置く文字にする（`\$` は `$` に。`\\` はそのまま）。
+/// pulldown-cmark が数式にした原文を、段落に置く文字にする（`\$` は `$` に。`\\` はそのままで、`$` の前の `\\` だけ
+/// `\` にする。GitHub と同じく、その `$` は文字の `$` で、式の開きにも閉じにもならない）。
 pub(super) fn unescape(raw: &str) -> String {
     let mut out = String::with_capacity(raw.len());
-    let mut chars = raw.chars();
+    let mut chars = raw.chars().peekable();
     while let Some(c) = chars.next() {
         if c != '\\' {
             out.push(c);
@@ -59,6 +60,7 @@ pub(super) fn unescape(raw: &str) -> String {
         }
         match chars.next() {
             Some('$') => out.push('$'),
+            Some('\\') if chars.peek() == Some(&'$') => out.push('\\'),
             Some(next) => {
                 out.push('\\');
                 out.push(next);
@@ -233,7 +235,12 @@ fn scan(text: &str) -> Vec<(std::ops::Range<usize>, String, bool)> {
             }
             Some(_) => {}
         }
-        let Some(end) = text[i + 1..].find('$').map(|j| i + 1 + j) else {
+        // `\$` は文字の `$`（閉じにならない）
+        let Some(end) = text[i + 1..]
+            .match_indices('$')
+            .map(|(j, _)| i + 1 + j)
+            .find(|&j| text.as_bytes()[j - 1] != b'\\')
+        else {
             break;
         };
         let next = char_at(end + 1);
