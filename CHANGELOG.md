@@ -54,6 +54,8 @@ becomes the GitHub Release notes.
   Graphviz does, instead of leaning to the left.
 - Exporting chosen folders as an archive in a partial clone fetches only the contents it asked about, not every missing
   file of the commit (git 2.41 or later; older git fetches them all, and the question now counts them all).
+- Markdown previews put a list item's mark on the same line as a list nested at its start (`- 1. text`), as GitHub
+  does, instead of leaving it alone on a line (macOS, GTK4).
 
 ### [0.2.15] - 2026-11-25
 
