@@ -89,6 +89,9 @@ becomes the GitHub Release notes.
   Graphviz.
 - DOT diagrams: dot edges are fitted as long smooth curves through their corridor instead of short curves joined at
   every bend, as Graphviz draws them.
+- DOT diagrams: the dot layout orders the nodes of a rank as the dot paper describes (depth-first starting orders, nodes
+  without neighbours left in place, ties flipped between sweeps), leaving about 15% fewer edge crossings.
+- DOT diagrams: a long dot edge no longer slants across the nodes of a rank it passes.
 - Exporting chosen folders as an archive in a partial clone fetches only the contents it asked about, not every missing
   file of the commit (git 2.41 or later; older git fetches them all, and the question now counts them all).
 - Markdown previews put a list item's mark on the same line as a list nested at its start (`- 1. text`), as GitHub

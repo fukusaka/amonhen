@@ -1514,103 +1514,108 @@ fn separate(
                                 && ((s.at == 0 && free_end(&e.tail_end))
                                     || (s.at + 2 == n && free_end(&e.head_end))))
                     };
-                    let (m, other) = if movable(&segs[j], paths) {
-                        (j, i)
-                    } else if movable(&segs[i], paths) {
-                        (i, j)
-                    } else {
-                        j += 1;
-                        continue;
-                    };
-                    let seg = segs[m];
-                    let base = segs[other].pos;
-                    let away = if seg.pos >= base { 1.0 } else { -1.0 };
-                    let mut tries: Vec<f64> = (1..=3)
-                        .flat_map(|k| [away * k as f64, -away * k as f64])
-                        .map(|k| base + k * TRACK)
-                        .collect();
-                    tries.sort_by(|a, b| (a - seg.pos).abs().total_cmp(&(b - seg.pos).abs()));
-                    let p = paths[seg.edge].clone().unwrap_or_default();
-                    let e = &edges[seg.edge];
-                    let skip = &e.skip;
-                    let mut done = false;
-                    // 端の線は、そのノードの幅の 9 割の中だけ
-                    let n_pts = p.len();
-                    let end_node = if seg.at == 0 {
-                        Some(e.tail)
-                    } else if seg.at + 2 == n_pts {
-                        Some(e.head)
-                    } else {
-                        None
-                    };
-                    for to in tries {
-                        if let Some(v) = end_node
-                            && let Some(&((cx, _), w, _)) = nodes.get(v)
-                            && (to - cx).abs() > w / 2.0 * 0.9
-                        {
-                            continue;
-                        }
-                        let probe = Seg { pos: to, ..seg };
-                        // 近くの線だけ（並びの時の位置で二分探索）と、動かした線
-                        let from =
-                            keys.partition_point(|k| (k.0, k.1) < (seg.vertical, to - TRACK));
-                        let mut window = 0;
-                        let mut crowded = false;
-                        for (k, s) in keys[from..].iter().zip(&segs[from..]) {
-                            if k.0 != seg.vertical || k.1 > to + TRACK {
-                                break;
-                            }
-                            window += 1;
-                            if near(&probe, s) {
-                                crowded = true;
-                                break;
-                            }
-                        }
-                        work = work.saturating_sub(window + shifted.len() + 1);
-                        if crowded || shifted.iter().any(|&x| near(&probe, &segs[x])) {
-                            continue;
-                        }
-                        let mut q = p.clone();
-                        for idx in [seg.at, seg.at + 1] {
-                            if seg.vertical {
-                                q[idx].0 = to;
-                            } else {
-                                q[idx].1 = to;
-                            }
-                        }
-                        // 端の線（ノードに出入りする線）は短くしない（ノードの外の分が矢じりより短くなる）
-                        let len = |p: &[P], k: usize| {
-                            (p[k].0 - p[k + 1].0).abs() + (p[k].1 - p[k + 1].1).abs()
+                    // 動かせるほうを順に試す（後の辺が動かせなければ、先の辺）
+                    let mut pairs: Vec<(usize, usize)> = Vec::new();
+                    if movable(&segs[j], paths) {
+                        pairs.push((j, i));
+                    }
+                    if movable(&segs[i], paths) {
+                        pairs.push((i, j));
+                    }
+                    for (m, other) in pairs {
+                        let seg = segs[m];
+                        let base = segs[other].pos;
+                        let away = if seg.pos >= base { 1.0 } else { -1.0 };
+                        let mut tries: Vec<f64> = (1..=3)
+                            .flat_map(|k| [away * k as f64, -away * k as f64])
+                            .map(|k| base + k * TRACK)
+                            .collect();
+                        tries.sort_by(|a, b| (a - seg.pos).abs().total_cmp(&(b - seg.pos).abs()));
+                        let p = paths[seg.edge].clone().unwrap_or_default();
+                        let e = &edges[seg.edge];
+                        let skip = &e.skip;
+                        let mut done = false;
+                        // 端の線は、そのノードの幅の 9 割の中だけ
+                        let n_pts = p.len();
+                        let end_node = if seg.at == 0 {
+                            Some(e.tail)
+                        } else if seg.at + 2 == n_pts {
+                            Some(e.head)
+                        } else {
+                            None
                         };
-                        let last = q.len() - 2;
-                        let ends_ok = [seg.at.checked_sub(1), Some(seg.at + 1)]
-                            .into_iter()
-                            .flatten()
-                            .filter(|&k| k <= last && k != seg.at && (k == 0 || k == last))
-                            .all(|k| len(&q, k) >= len(&p, k) - 1e-6);
-                        if !ends_ok {
-                            continue;
+                        for to in tries {
+                            if let Some(v) = end_node
+                                && let Some(&((cx, _), w, _)) = nodes.get(v)
+                                && (to - cx).abs() > w / 2.0 * 0.9
+                            {
+                                continue;
+                            }
+                            let probe = Seg { pos: to, ..seg };
+                            // 近くの線だけ（並びの時の位置で二分探索）と、動かした線
+                            let from =
+                                keys.partition_point(|k| (k.0, k.1) < (seg.vertical, to - TRACK));
+                            let mut window = 0;
+                            let mut crowded = false;
+                            for (k, s) in keys[from..].iter().zip(&segs[from..]) {
+                                if k.0 != seg.vertical || k.1 > to + TRACK {
+                                    break;
+                                }
+                                window += 1;
+                                if near(&probe, s) {
+                                    crowded = true;
+                                    break;
+                                }
+                            }
+                            work = work.saturating_sub(window + shifted.len() + 1);
+                            if crowded || shifted.iter().any(|&x| near(&probe, &segs[x])) {
+                                continue;
+                            }
+                            let mut q = p.clone();
+                            for idx in [seg.at, seg.at + 1] {
+                                if seg.vertical {
+                                    q[idx].0 = to;
+                                } else {
+                                    q[idx].1 = to;
+                                }
+                            }
+                            // 端の線（ノードに出入りする線）は短くしない（ノードの外の分が矢じりより短くなる）
+                            let len = |p: &[P], k: usize| {
+                                (p[k].0 - p[k + 1].0).abs() + (p[k].1 - p[k + 1].1).abs()
+                            };
+                            let last = q.len() - 2;
+                            let ends_ok = [seg.at.checked_sub(1), Some(seg.at + 1)]
+                                .into_iter()
+                                .flatten()
+                                .filter(|&k| k <= last && k != seg.at && (k == 0 || k == last))
+                                .all(|k| len(&q, k) >= len(&p, k) - 1e-6);
+                            if !ends_ok {
+                                continue;
+                            }
+                            let clear =
+                                (seg.at.saturating_sub(1)..=(seg.at + 1).min(last)).all(|k| {
+                                    let (a, b) = (q[k], q[k + 1]);
+                                    let r = [
+                                        a.0.min(b.0) - 0.5,
+                                        a.1.min(b.1) - 0.5,
+                                        a.0.max(b.0) + 0.5,
+                                        a.1.max(b.1) + 0.5,
+                                    ];
+                                    !obstacles.blocked(r, skip)
+                                });
+                            if clear {
+                                paths[seg.edge] = Some(q);
+                                segs[m].pos = to;
+                                shifted.push(m);
+                                moved = true;
+                                done = true;
+                                break;
+                            }
                         }
-                        let clear = (seg.at.saturating_sub(1)..=(seg.at + 1).min(last)).all(|k| {
-                            let (a, b) = (q[k], q[k + 1]);
-                            let r = [
-                                a.0.min(b.0) - 0.5,
-                                a.1.min(b.1) - 0.5,
-                                a.0.max(b.0) + 0.5,
-                                a.1.max(b.1) + 0.5,
-                            ];
-                            !obstacles.blocked(r, skip)
-                        });
-                        if clear {
-                            paths[seg.edge] = Some(q);
-                            segs[m].pos = to;
-                            shifted.push(m);
-                            moved = true;
-                            done = true;
+                        if done {
                             break;
                         }
                     }
-                    let _ = done;
                 }
                 j += 1;
             }

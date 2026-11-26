@@ -769,6 +769,8 @@ struct Ordering<'a> {
     after: Vec<Vec<usize>>,
     /// その辺のあるランク。
     has_flat: Vec<bool>,
+    /// 並べ替えで、同じ値の要素の順を逆にする（1 回おきの上り下りで。Gansner ほか 1993 §3）。
+    flip: bool,
 }
 
 impl Ordering<'_> {
@@ -849,8 +851,11 @@ impl Ordering<'_> {
             let mut c = self.nodes[v].cluster;
             let mut hops = 0;
             while let Some(ci) = c {
-                gsum[ci] += val[v];
-                gcount[ci] += 1;
+                // 値のないノード（その側に隣がない）は数えない
+                if !val[v].is_nan() {
+                    gsum[ci] += val[v];
+                    gcount[ci] += 1;
+                }
                 gfirst[ci] = gfirst[ci].min(self.pos[v]);
                 if !seen[ci] {
                     seen[ci] = true;
@@ -866,7 +871,8 @@ impl Ordering<'_> {
         let value = |it: &Item| -> (f64, usize) {
             match *it {
                 Item::Node(v) => (val[v], self.pos[v]),
-                Item::Cluster(c) => (gsum[c] / gcount[c].max(1) as f64, gfirst[c]),
+                Item::Cluster(c) if gcount[c] == 0 => (f64::NAN, gfirst[c]),
+                Item::Cluster(c) => (gsum[c] / gcount[c] as f64, gfirst[c]),
             }
         };
         let mut out: Vec<usize> = Vec::with_capacity(layer.len());
@@ -875,13 +881,28 @@ impl Ordering<'_> {
         let mut sorted: Vec<Vec<Item>> = vec![Vec::new(); k + 1];
         let prepare = |g: usize, groups: &mut Vec<Vec<Item>>, sorted: &mut Vec<Vec<Item>>| {
             let mut items = std::mem::take(&mut groups[g]);
-            items.sort_by(|a, b| {
+            // 値のない要素（その側に隣がない）は今の場所に固定し、ほかを値の順に残りの場所へ並べる（Gansner ほか
+            // 1993 §3: "left fixed in their current positions with non-fixed vertices sorted into the remaining positions"）
+            let mut movable: Vec<Item> = items
+                .iter()
+                .copied()
+                .filter(|it| !value(it).0.is_nan())
+                .collect();
+            movable.sort_by(|a, b| {
                 let (va, pa) = value(a);
                 let (vb, pb) = value(b);
                 va.partial_cmp(&vb)
                     .unwrap_or(std::cmp::Ordering::Equal)
-                    .then(pa.cmp(&pb))
+                    .then(if self.flip { pb.cmp(&pa) } else { pa.cmp(&pb) })
             });
+            let mut next = movable.into_iter();
+            for it in items.iter_mut() {
+                if !value(it).0.is_nan()
+                    && let Some(m) = next.next()
+                {
+                    *it = m;
+                }
+            }
             // クラスタの場所は、兄弟のクラスタのいつもの順で埋め直す
             let mut slots: Vec<usize> = Vec::new();
             let mut clusters: Vec<usize> = Vec::new();
@@ -1018,7 +1039,8 @@ impl Ordering<'_> {
                 } else {
                     &self.nodes[v].down
                 };
-                val[v] = self.median(list, down).unwrap_or(self.pos[v] as f64);
+                // その側に隣のないノードは値なし（今の場所に固定する）
+                val[v] = self.median(list, down).unwrap_or(f64::NAN);
             }
             self.sort_layer(r, val);
         }
@@ -1393,6 +1415,7 @@ pub fn layout(
         global: vec![0.0; k],
         after: vec![Vec::new(); total],
         has_flat: vec![false; max_rank + 1],
+        flip: false,
     };
     // 輪になる辺は、先に書いた辺を守って外す（Graphviz の文書どおり、輪は深さ優先で切る）
     for &(t, h) in &flat_edges {
@@ -1424,21 +1447,50 @@ pub fn layout(
     ord.refresh();
     ord.global_keys();
     let mut val = vec![0f64; total];
-    for r in 0..ord.layers.len() {
-        let layer = ord.layers[r].clone();
-        for &v in &layer {
-            val[v] = if r == 0 {
-                ord.pos[v] as f64
-            } else {
-                ord.median(&nodes[v].up, true)
-                    .unwrap_or(1e9 + ord.pos[v] as f64)
-            };
+    // 深さ優先の初めの並び（Gansner ほか 1993 §3 の init_order）: `top` なら小さいランクのノードから出る辺を、
+    // そうでなければ大きいランクのノードから入る辺をたどり、訪ねた順を各ランクの左からの順にする（木なら交差なし）
+    let dfs_order = |top: bool, val: &mut [f64]| {
+        let mut seen = vec![false; total];
+        let mut next = 0f64;
+        let mut starts: Vec<usize> = (0..total).collect();
+        if top {
+            starts.sort_by_key(|&v| (nodes[v].rank, nodes[v].seq, v));
+        } else {
+            starts.sort_by_key(|&v| (std::cmp::Reverse(nodes[v].rank), nodes[v].seq, v));
         }
+        for s0 in starts {
+            if seen[s0] {
+                continue;
+            }
+            let mut stack = vec![(s0, 0usize)];
+            seen[s0] = true;
+            val[s0] = next;
+            next += 1.0;
+            while let Some(&mut (v, ref mut k)) = stack.last_mut() {
+                let list = if top { &nodes[v].down } else { &nodes[v].up };
+                if *k < list.len() {
+                    let seg = &segs[list[*k]];
+                    let w = if top { seg.lower } else { seg.upper };
+                    *k += 1;
+                    if !seen[w] {
+                        seen[w] = true;
+                        val[w] = next;
+                        next += 1.0;
+                        stack.push((w, 0));
+                    }
+                } else {
+                    stack.pop();
+                }
+            }
+        }
+    };
+    dfs_order(true, &mut val);
+    for r in 0..ord.layers.len() {
         ord.sort_layer(r, &val);
     }
-    // 上からの初めの並びと、下からの初めの並び（下のランクの中央値）の 2 回。どちらも、中央値で上下に並べ替えて
-    // 入れ替え（1 回おきに交差の同じ入れ替えも）、減らなければいちばん良い並びに戻して続け、MINCROSS_STALE 回
-    // 続けて減らなければやめる。2 回のうち交差の少ないほう
+    // 上からの初めの並びと、下からの初めの並びの 2 回。どちらも、中央値で上下に並べ替えて入れ替え（1 回おきに
+    // 交差の同じ入れ替えも）、減らなければいちばん良い並びに戻して続け、MINCROSS_STALE 回続けて減らなければ
+    // やめる。2 回のうち交差の少ないほう
     let mut best = ord.layers.clone();
     let mut best_count = ord.crossings();
     let transpose = segs.len() <= TRANSPOSE_SEGS;
@@ -1447,16 +1499,9 @@ pub fn layout(
             break;
         }
         if start == 1 {
-            ord.layers = best.clone();
-            ord.refresh();
+            dfs_order(false, &mut val);
             ord.global_keys();
             for r in (0..ord.layers.len()).rev() {
-                let layer = ord.layers[r].clone();
-                for &v in &layer {
-                    val[v] = ord
-                        .median(&nodes[v].down, false)
-                        .unwrap_or(ord.pos[v] as f64);
-                }
                 ord.sort_layer(r, &val);
             }
         }
@@ -1468,7 +1513,10 @@ pub fn layout(
                 break;
             }
             ord.global_keys();
+            // 上り下りの 1 組おきに、同じ値の要素の順を逆にする（同じ交差の数の並びの間を動いて、減る形を探す）
+            ord.flip = i % 4 >= 2;
             ord.sweep((i + start) % 2 == 0, &mut val);
+            ord.flip = false;
             if transpose {
                 ord.transpose(i % 2 == 1);
             }
@@ -1760,6 +1808,11 @@ pub fn layout(
             }
         };
         gates.push(end_gate(a, true));
+        let (x0, x1) = chain
+            .iter()
+            .fold((f64::INFINITY, f64::NEG_INFINITY), |(lo, hi), &u| {
+                (lo.min(xs[u]), hi.max(xs[u]))
+            });
         for &v in &chain[1..chain.len() - 1] {
             let r = nodes[v].rank;
             let (left, right, mut lo, mut hi) = between(v);
@@ -1774,6 +1827,27 @@ pub fn layout(
             // 関の高さ: 左右の隣の本物のノード（避ける箱と同じく 4 広げる）とラベルの分。どちらもなければ行の中心だけ
             let mut half: f64 = 0.0;
             for u in [left, right].into_iter().flatten() {
+                if nodes[u].real {
+                    half = half.max(nodes[u].h / 2.0 + 4.0);
+                }
+            }
+            // 仮のノードどうしが隣り合う所では、線は行の中を斜めに抜けて、その先の本物のノードを横切る。線の通る横の
+            // 範囲（張った糸は列の点の左右の端を越えない）にある本物のノードの高さも関の高さに入れる（その高さの間は
+            // 左右の隣の間を通る。Gansner ほか 1993 §5 の、ランクの高さの仮のノードの箱）
+            let row = &layers[r];
+            for &u in row[pos[v] + 1..]
+                .iter()
+                .take_while(|&&u| xs[u] - nodes[u].left - 4.0 < x1)
+            {
+                if nodes[u].real {
+                    half = half.max(nodes[u].h / 2.0 + 4.0);
+                }
+            }
+            for &u in row[..pos[v]]
+                .iter()
+                .rev()
+                .take_while(|&&u| xs[u] + nodes[u].right + 4.0 > x0)
+            {
                 if nodes[u].real {
                     half = half.max(nodes[u].h / 2.0 + 4.0);
                 }
@@ -2674,6 +2748,147 @@ mod tests {
         assert_eq!(l.ranks[3], 0);
         assert!(l.ranks[0] >= 1);
         assert!(l.ranks[2] >= l.ranks[1]);
+    }
+
+    /// 名前の組の辺から、出てきた順にノードを作って配置し、交差の数を返す。
+    fn crossings_of(pairs: &[(u8, u8)]) -> usize {
+        let mut names: Vec<u8> = Vec::new();
+        let mut index = |n: u8| match names.iter().position(|&x| x == n) {
+            Some(i) => i,
+            None => {
+                names.push(n);
+                names.len() - 1
+            }
+        };
+        let edges: Vec<Edge> = pairs
+            .iter()
+            .map(|&(a, b)| edge(index(a), index(b)))
+            .collect();
+        let nodes = vec![node(None); names.len()];
+        layout(&nodes, &edges, &[], &[], &opts()).crossings
+    }
+
+    #[test]
+    fn nodes_without_neighbours_keep_their_place_while_sorting() {
+        // 上にも下にも隣のあるノードだけを中央値で並べ替え、その側に隣のないノードは今の場所に残す
+        // （Gansner ほか 1993 §3）。一緒に並べ替えると交差が 1 つ残っていた
+        let g = [
+            (0, 3),
+            (0, 5),
+            (1, 8),
+            (2, 4),
+            (2, 5),
+            (2, 7),
+            (3, 6),
+            (3, 7),
+            (3, 8),
+            (5, 7),
+            (5, 8),
+            (6, 7),
+        ];
+        assert_eq!(crossings_of(&g), 0);
+    }
+
+    #[test]
+    fn equal_medians_flip_on_alternate_sweeps() {
+        // 同じ中央値のノードの順を 1 組おきに逆にすると、同じ交差の数で止まっていた並びから抜けられる
+        let g = [
+            (0, 6),
+            (0, 7),
+            (0, 8),
+            (1, 4),
+            (1, 5),
+            (2, 3),
+            (2, 5),
+            (2, 8),
+            (3, 5),
+            (3, 6),
+            (4, 8),
+            (5, 6),
+            (6, 8),
+        ];
+        assert_eq!(crossings_of(&g), 0);
+    }
+
+    #[test]
+    fn initial_orders_come_from_depth_first_walks() {
+        // 初めの並びを、上からと下からの深さ優先の訪ねた順で作る。中央値だけで作った並びからは交差が 2 つ残っていた
+        let g = [
+            (0, 4),
+            (0, 6),
+            (1, 3),
+            (1, 6),
+            (2, 3),
+            (2, 6),
+            (2, 7),
+            (3, 4),
+            (3, 6),
+            (3, 7),
+            (4, 6),
+            (5, 6),
+        ];
+        assert_eq!(crossings_of(&g), 0);
+    }
+
+    /// 決まった乱数の図で、通り道の中のいちばん短い折れ線が、両端のほかのノードの箱を通る回数。
+    fn corridor_hits(seed: u64, n: usize, m: usize) -> usize {
+        let mut state = seed;
+        let mut next = |k: usize| {
+            state = state
+                .wrapping_mul(6364136223846793005)
+                .wrapping_add(1442695040888963407);
+            (state >> 33) as usize % k
+        };
+        let mut edges = Vec::new();
+        while edges.len() < m {
+            let (a, b) = (next(n), next(n));
+            if a < b {
+                edges.push(edge(a, b));
+            }
+        }
+        let nodes = vec![node(None); n];
+        let l = layout(&nodes, &edges, &[], &[], &opts());
+        let mut hits = 0;
+        for (ei, route) in l.routes.iter().enumerate() {
+            let Route::Path { points, .. } = route else {
+                continue;
+            };
+            let gates = &l.corridors[ei];
+            if gates.is_empty() {
+                continue;
+            }
+            let line = crate::spline::shortest(points[0], points[points.len() - 1], gates);
+            for (u, &(x, y)) in l.nodes.iter().enumerate() {
+                if u == edges[ei].tail || u == edges[ei].head {
+                    continue;
+                }
+                let inside = |p: (f64, f64)| (p.0 - x).abs() < 26.0 && (p.1 - y).abs() < 17.0;
+                let hit = line.windows(2).any(|w| {
+                    let len = (w[1].0 - w[0].0).hypot(w[1].1 - w[0].1);
+                    let steps = (len / 2.0).ceil().max(1.0) as usize;
+                    (0..=steps).any(|i| {
+                        let t = i as f64 / steps as f64;
+                        inside((
+                            w[0].0 + (w[1].0 - w[0].0) * t,
+                            w[0].1 + (w[1].1 - w[0].1) * t,
+                        ))
+                    })
+                });
+                if hit {
+                    hits += 1;
+                }
+            }
+        }
+        hits
+    }
+
+    #[test]
+    fn corridors_keep_the_line_off_the_nodes_of_a_row() {
+        // 仮のノードどうしが隣り合う所の関が行の中心だけだと、遠くへ向かう線が同じ行の先のノードを横切っていた
+        // （この 3 つの図で 2・5・16 回）
+        for (seed, n, m) in [(1, 40, 70), (2, 40, 70), (4, 80, 140)] {
+            assert_eq!(corridor_hits(seed, n, m), 0, "seed {seed}");
+        }
     }
 
     #[test]
