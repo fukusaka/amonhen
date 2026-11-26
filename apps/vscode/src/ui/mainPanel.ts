@@ -16,6 +16,9 @@ import { SettingsController } from './settingsController.ts';
 import { showError } from './stageCommands.ts';
 import { WorkingCopyController } from './workingCopyController.ts';
 
+/** シートの Check Connection: 欄の URL へつないでみて、結果の文とつながったかを返す */
+export type SheetCheck = (url: string) => Promise<{ text: string; ok: boolean }>;
+
 /**
  * メインビュー。エディタ領域の 1 つの Webview に、Working Copy・History・Reflog・Range Diff・Daemon などを出す。
  * どちらを出すかはサイドバーのナビで選ぶ。こちらは画面ごとのコントローラーにメッセージを振り分ける。
@@ -51,7 +54,10 @@ export class MainPanel implements vscode.Disposable {
   /** 準備ができる前に求められた画面 */
   private pendingView: ViewName | undefined;
   /** 答えを待っている確認のシート */
-  private readonly sheets = new Map<number, { resolve: (answer: SheetAnswer | undefined) => void; open?: (item: number) => void }>();
+  private readonly sheets = new Map<
+    number,
+    { resolve: (answer: SheetAnswer | undefined) => void; open?: (item: number) => void; check?: SheetCheck }
+  >();
   private nextSheet = 1;
   /** e2e が画面を押さずにシートに答える（あれば、シートを出さずにこれの答えを返す） */
   answerSheet:
@@ -201,12 +207,12 @@ export class MainPanel implements vscode.Disposable {
    * undefined。open は一覧の行（lists を通して数えた番号）を押したとき。準備ができているかは canAsk で確かめる
    * （できていなければ、呼ぶ側はモーダルで確かめる）
    */
-  async ask(sheet: Omit<Sheet, 'id'>, open?: (item: number) => void): Promise<SheetAnswer | undefined> {
+  async ask(sheet: Omit<Sheet, 'id'>, open?: (item: number) => void, check?: SheetCheck): Promise<SheetAnswer | undefined> {
     if (this.answerSheet) return this.answerSheet(sheet, open);
     const id = this.nextSheet++;
     this.panel.reveal(undefined, false);
     return new Promise((resolve) => {
-      this.sheets.set(id, { resolve, open });
+      this.sheets.set(id, { resolve, open, check });
       this.post({ type: 'sheet', id, ...sheet });
     });
   }
@@ -264,12 +270,26 @@ export class MainPanel implements vscode.Disposable {
       case 'sheetAnswer':
         this.sheets
           .get(message.id)
-          ?.resolve(message.index === undefined ? undefined : { index: message.index, choice: message.choice ?? 0 });
+          ?.resolve(
+            message.index === undefined
+              ? undefined
+              : { index: message.index, choice: message.choice ?? 0, ...(message.values ? { values: message.values } : {}) },
+          );
         this.sheets.delete(message.id);
         break;
       case 'sheetOpen':
         this.sheets.get(message.id)?.open?.(message.item);
         break;
+      case 'sheetCheck': {
+        const check = this.sheets.get(message.id)?.check;
+        if (!check) break;
+        const result = await check(message.url).catch((err: unknown) => ({
+          text: err instanceof Error ? err.message : String(err),
+          ok: false,
+        }));
+        this.post({ type: 'sheetChecked', id: message.id, ...result });
+        break;
+      }
       case 'wcSelect':
       case 'wcLayout':
       case 'wcDraft':

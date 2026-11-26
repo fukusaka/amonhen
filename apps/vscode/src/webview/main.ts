@@ -14,7 +14,7 @@ import { createHistoryView } from './history.ts';
 import { createRangeDiffView } from './rangeDiff.ts';
 import { createReflogView } from './reflog.ts';
 import { createSettingsView } from './settings.ts';
-import { openSheet } from './sheet.ts';
+import { openSheet, sheetChecked } from './sheet.ts';
 import { createWorkingCopyView } from './workingCopy.ts';
 
 const views: Record<ViewName, View> = {
@@ -57,6 +57,10 @@ window.addEventListener('message', (event: MessageEvent<HostMessage>) => {
   }
   if (message.type === 'sheet') {
     openSheet(message);
+    return;
+  }
+  if (message.type === 'sheetChecked') {
+    sheetChecked(message.id, message.text, message.ok);
     return;
   }
   if (message.type === 'detailsLayout') {

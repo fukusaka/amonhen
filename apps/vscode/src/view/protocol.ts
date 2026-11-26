@@ -44,7 +44,9 @@ export type HostMessage =
   /** 表示の設定で選んだ: 高さを中身に合わせ直す（fit）、コミット情報だけを表示する・戻す（expand） */
   | { type: 'detailsView'; action: 'fit' | 'expand' }
   /** 確認のシートを重ねる（答えは sheetAnswer） */
-  | ({ type: 'sheet' } & Sheet);
+  | ({ type: 'sheet' } & Sheet)
+  /** シートの Check Connection の結果（つながったときの要約か、エラー） */
+  | { type: 'sheetChecked'; id: number; text: string; ok: boolean };
 
 export type WebviewMessage =
   | HistoryWebviewMessage
@@ -64,7 +66,9 @@ export type WebviewMessage =
   /** 詳細の帯の表示の設定（kept: 仕切りを動かした高さを保っている、expanded: コミット情報だけを表示している） */
   | { type: 'detailsViewOptions'; kept: boolean; expanded: boolean }
   /** 確認のシートの答え。index は押したボタン（buttons の順）、やめたらなし。choice は選んでいた取り込み方など */
-  | { type: 'sheetAnswer'; id: number; index?: number; choice?: number }
+  | { type: 'sheetAnswer'; id: number; index?: number; choice?: number; values?: string[] }
+  /** シートの Check Connection を押した（url は欄の値） */
+  | { type: 'sheetCheck'; id: number; url: string }
   /** 確認のシートの一覧の行を押した（item は lists の行を通して数えた番号。シートは閉じない） */
   | { type: 'sheetOpen'; id: number; item: number };
 
@@ -72,6 +76,20 @@ export type WebviewMessage =
 export interface SheetAnswer {
   index: number;
   choice: number;
+  /** 入力欄の値（fields の順） */
+  values?: string[];
+}
+
+/** シートの入力欄（Add Remote の Name・Fetch URL・Push URL） */
+export interface SheetField {
+  label: string;
+  value: string;
+  /** 空のときに薄く出す文 */
+  placeholder?: string;
+  /** 空なら既定のボタンを押せない */
+  required?: boolean;
+  /** この値（前後の空白を除いて）なら既定のボタンを押せず、そう言う（もうある名前） */
+  taken?: string[];
 }
 
 /** シートで選ぶもの（ラジオ）。選んだものに絵があれば、シートの絵の代わりになる。文はシートの文の後ろに足す */
@@ -112,4 +130,10 @@ export interface Sheet {
   buttons: string[];
   /** 既定のボタンが取り消せない操作（Force Push） */
   destructive?: boolean;
+  /** 入力欄（あれば答えの values に入る） */
+  fields?: SheetField[];
+  /** この番号の欄の URL の先が何か（GitHub・パス・SSH 先…）を Points to の行に出す */
+  pointsTo?: number;
+  /** この番号の欄の URL へつないでみるボタン（Check Connection。結果は sheetChecked で受ける） */
+  check?: number;
 }

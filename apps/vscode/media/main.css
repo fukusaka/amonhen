@@ -724,6 +724,48 @@ button.secondary {
   overflow: auto;
 }
 
+/* シートの入力欄（ラベルと欄の 2 列） */
+.sheet-fields {
+  display: grid;
+  grid-template-columns: max-content minmax(0, 1fr);
+  align-items: baseline;
+  gap: 8px 10px;
+}
+
+.sheet-fields > label,
+.sheet-field-label {
+  text-align: right;
+}
+
+.sheet-fields .setting-input {
+  width: 100%;
+  box-sizing: border-box;
+  padding: 3px 6px;
+}
+
+.sheet-field-note {
+  color: var(--vscode-descriptionForeground);
+}
+
+.sheet-check {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.sheet-check-result {
+  color: var(--vscode-descriptionForeground);
+}
+
+.sheet-check-result.ok {
+  color: var(--vscode-testing-iconPassed, var(--vscode-foreground));
+}
+
+.sheet-check-result.error,
+.sheet-problem {
+  color: var(--vscode-errorForeground);
+}
+
 .sheet-choices {
   display: flex;
   flex-direction: column;
