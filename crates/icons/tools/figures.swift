@@ -49,8 +49,12 @@ let body = NSFont.systemFont(ofSize: 13), bold = NSFont.boldSystemFont(ofSize: 1
 func rule(_ y: CGFloat, _ W: CGFloat) { NSColor(white: 0.82, alpha: 1).setFill(); NSRect(x: pad, y: y, width: W - 2 * pad, height: 1).fill() }
 
 if mode == "intent" {
-    let W: CGFloat = 900, textX: CGFloat = 250, textW = W - textX - pad, legendH: CGFloat = 115
     let items = rows.filter { $0[0] == "head" || $0[0] == "icon" }
+    // The label and heading columns grow to the longest one, so a long name doesn't run into its text.
+    func lineWidth(_ s: String, _ f: NSFont) -> CGFloat { ceil(attr(s, f).size().width) }
+    let labelW = max(110, items.filter { $0[0] == "icon" }.map { lineWidth($0[2], bold) }.max() ?? 0)
+    let headW = max(170, items.filter { $0[0] == "head" }.map { lineWidth($0[1], NSFont.boldSystemFont(ofSize: 16)) }.max() ?? 0)
+    let W: CGFloat = 900, textX: CGFloat = labelW > 110 ? pad + 128 + labelW + 12 : 250, textW = W - textX - pad, legendH: CGFloat = 115
     let hs = items.map { $0[0] == "head" ? 64 : max(72, height(attr($0[3], body), textW) + 40) }
     render(W, 70 + legendH + hs.reduce(0, +) + pad) {
         text(attr(value("title")[1], NSFont.boldSystemFont(ofSize: 20)), pad, 22, W)
@@ -82,11 +86,11 @@ if mode == "intent" {
         for (r, h) in zip(items, hs) {
             if r[0] == "head" {
                 rule(y + 18, W)
-                text(attr(r[1], NSFont.boldSystemFont(ofSize: 16)), pad, y + 28, 300)
-                text(attr(r[2], body, sub), pad + 190, y + 31, W - 2 * pad - 190)
+                text(attr(r[1], NSFont.boldSystemFont(ofSize: 16)), pad, y + 28, max(300, headW + 10))
+                text(attr(r[2], body, sub), pad + headW + 20, y + 31, W - 2 * pad - headW - 20)
             } else {
                 icon(r[1], pad + 4, y + 12, 48); icon(r[1], pad + 68, y + 28, 20); icon(r[1], pad + 100, y + 30, 16)
-                text(attr(r[2], bold), pad + 128, y + 12, 110)
+                text(attr(r[2], bold), pad + 128, y + 12, labelW)
                 text(attr(r[3], body), textX, y + 12, textW)
             }
             y += h
@@ -99,27 +103,34 @@ if mode == "intent" {
     for r in rows {
         if r[0] == "group" { groups.append((r, [])) } else if r[0] == "alt" { groups[groups.count - 1].1.append(r) }
     }
-    let gh = groups.map { g in 44 + 110 + (g.1.map { height(attr($0[4], small), cw - 20) }.max() ?? 0) + 40 }
+    // A label that wraps pushes its text down by the extra lines.
+    let labelFont = NSFont.boldSystemFont(ofSize: 13)
+    let oneLine = height(attr("A", labelFont), cw - 20)
+    func labelDrop(_ a: [String]) -> CGFloat { height(attr(a[2], labelFont), cw - 20) - oneLine }
+    // A group with more drafts than columns wraps onto further rows of the same height.
+    let bh = groups.map { g in 142 + (g.1.map { labelDrop($0) + height(attr($0[4], small), cw - 20) }.max() ?? 0) }
+    let lines = groups.map { CGFloat(($0.1.count + cols - 1) / cols) }
+    let gh = zip(bh, lines).map { 44 + $1 * $0 + ($1 - 1) * gap + 8 }
     render(W, 90 + gh.reduce(0, +)) {
         text(attr(value("title")[1], NSFont.boldSystemFont(ofSize: 20)), pad, 22, W)
         text(attr(value("note")[1], small, sub), pad, 54, W)
         var y: CGFloat = 90
-        for ((g, alts), h) in zip(groups, gh) {
+        for (((g, alts), h), b) in zip(zip(groups, gh), bh) {
             rule(y + 8, W)
             text(attr(g[2], NSFont.boldSystemFont(ofSize: 16)), pad, y + 16, 400)
             for (i, a) in alts.enumerated() {
-                let x = pad + CGFloat(i) * (cw + gap), top = y + 44, chosen = a[3] == "chosen"
+                let x = pad + CGFloat(i % cols) * (cw + gap), top = y + 44 + CGFloat(i / cols) * (b + gap), chosen = a[3] == "chosen"
                 (chosen ? NSColor(red: 0.90, green: 0.95, blue: 1.0, alpha: 1) : NSColor.white).setFill()
-                NSBezierPath(roundedRect: NSRect(x: x, y: top, width: cw, height: h - 52), xRadius: 8, yRadius: 8).fill()
+                NSBezierPath(roundedRect: NSRect(x: x, y: top, width: cw, height: b), xRadius: 8, yRadius: 8).fill()
                 (chosen ? NSColor(red: 0.2, green: 0.5, blue: 0.9, alpha: 1) : NSColor(white: 0.86, alpha: 1)).setStroke()
-                let border = NSBezierPath(roundedRect: NSRect(x: x + 0.5, y: top + 0.5, width: cw - 1, height: h - 53), xRadius: 8, yRadius: 8)
+                let border = NSBezierPath(roundedRect: NSRect(x: x + 0.5, y: top + 0.5, width: cw - 1, height: b - 1), xRadius: 8, yRadius: 8)
                 border.lineWidth = chosen ? 2 : 1; border.stroke()
                 icon(a[1], x + 12, top + 12, 48); icon(a[1], x + 72, top + 40, 20); icon(a[1], x + 100, top + 42, 16)
                 NSColor(white: 0.16, alpha: 1).setFill()
                 NSBezierPath(roundedRect: NSRect(x: x + 122, y: top + 36, width: 28, height: 28), xRadius: 4, yRadius: 4).fill()
                 icon(a[1], x + 128, top + 42, 16, NSColor(white: 0.9, alpha: 1))
-                text(attr(a[2], NSFont.boldSystemFont(ofSize: 13)), x + 10, top + 72, cw - 20)
-                text(attr(a[4], small), x + 10, top + 94, cw - 20)
+                text(attr(a[2], labelFont), x + 10, top + 72, cw - 20)
+                text(attr(a[4], small), x + 10, top + 94 + labelDrop(a), cw - 20)
             }
             y += h
         }
