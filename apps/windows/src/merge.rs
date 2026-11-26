@@ -303,6 +303,8 @@ pub struct Callbacks<'a> {
     pub base: Callback<bool>,
     /// 表示の設定（View Options）の項目（今は `wrap-long-lines` だけ）。
     pub option: Callback<String>,
+    /// 帯（狭いときにボタンを隠す。`fit_bar`）。
+    pub bar: &'a ElementRef<Grid>,
 }
 
 /// 表示の設定（View Options）の項目。今は「コード」の「長い行を折り返す」だけ（macOS 版・GTK4 版と同じ）。
@@ -369,6 +371,22 @@ pub fn view(state: &State, callbacks: Callbacks) -> View {
     } else {
         View::empty()
     };
+    // 帯の並び（StackPanel の子の番号）。位置・∧・∨・✨・Accept の 3 つ（0〜6）、Base があれば Accept Base と
+    // Base の切り替え、Save・Save & Mark Resolved・Close、埋め込みなら ⧉、知らせ。
+    let (accept_base_at, toggle_at) = if has_base {
+        (Some(7), Some(8))
+    } else {
+        (None, None)
+    };
+    let saves = if has_base { 9 } else { 7 };
+    let popout_at = (!state.separate).then_some(saves + 3);
+    // 狭いときに隠す順（macOS 版の fitBar と同じ: ⧉、✨、Base の切り替え、Accept の各ボタン）。
+    let mut fold: Vec<usize> = popout_at.into_iter().collect();
+    fold.push(3);
+    fold.extend(toggle_at);
+    fold.extend([4, 5, 6]);
+    fold.extend(accept_base_at);
+    FOLD.with(|f| *f.borrow_mut() = fold);
     let bar = StackPanel::new()
         .orientation(Orientation::Horizontal)
         .spacing(6.0)
@@ -623,9 +641,10 @@ pub fn view(state: &State, callbacks: Callbacks) -> View {
     Grid::new()
         .rows([GridLength::Auto, GridLength::Auto, GridLength::Star(1.0)])
         .children((
-            // 窓が狭くても右端のボタン（閉じる）に届くよう、帯は横にスクロールできる。表示の設定は右端に置く
-            // （macOS 版・GTK4 版と同じ）。
+            // 窓が狭ければ、後回しのボタンから隠す（`fit_bar`。macOS 版と同じ）。それでも入りきらなければ横に
+            // スクロールできる。表示の設定は右端に置く（macOS 版・GTK4 版と同じ）。
             Grid::new()
+                .element_ref(callbacks.bar)
                 .columns([GridLength::Star(1.0), GridLength::Auto])
                 .grid_row(0)
                 .children((
@@ -645,6 +664,108 @@ pub fn view(state: &State, callbacks: Callbacks) -> View {
             banner,
             body,
         ))
+}
+
+thread_local! {
+    /// 帯の、狭いときに隠すボタン（StackPanel の子の番号）を隠す順に（`view` が描くたびに決める）。
+    static FOLD: std::cell::RefCell<Vec<usize>> = const { std::cell::RefCell::new(Vec::new()) };
+    /// 帯の幅の変化の知らせ（帯の ScrollViewer ごとに 1 つ）。
+    static RESIZED: std::cell::RefCell<Option<(usize, windows_core_reactor::EventRevoker)>> =
+        const { std::cell::RefCell::new(None) };
+}
+
+/// 帯（`Callbacks::bar` の Grid）を今の幅に合わせ、幅が変わったら合わせ直すようにする（UI のスレッドで、描いた
+/// 後に呼ぶ）。
+pub fn fit_bar(element: &windows_core_reactor::IInspectable) {
+    use amonhen_win_xaml as xaml;
+    use windows_core_reactor::Interface;
+    let Some(scroll) = element
+        .cast::<xaml::DependencyObject>()
+        .ok()
+        .and_then(|grid| xaml::VisualTreeHelper::GetChild(&grid, 0).ok())
+        .and_then(|child| child.cast::<xaml::ScrollViewer>().ok())
+    else {
+        return;
+    };
+    let id = scroll.as_raw() as usize;
+    if RESIZED.with(|r| r.borrow().as_ref().map(|(i, _)| *i)) != Some(id)
+        && let Ok(revoker) = scroll.cast::<xaml::FrameworkElement>().and_then(|f| {
+            f.SizeChanged(|sender, _| {
+                if let Some(scroll) = sender
+                    .as_ref()
+                    .and_then(|s| s.cast::<xaml::ScrollViewer>().ok())
+                {
+                    fold_bar(&scroll);
+                }
+            })
+        })
+    {
+        RESIZED.with(|r| *r.borrow_mut() = Some((id, revoker)));
+    }
+    fold_bar(&scroll);
+}
+
+/// 帯のボタンを、入りきるまで後回しのものから隠す（入りきるなら出す）。知らせ（最後の子）は切り詰まる前提で、
+/// 少しだけ数える（macOS 版と同じ）。
+fn fold_bar(scroll: &amonhen_win_xaml::ScrollViewer) {
+    use amonhen_win_xaml as xaml;
+    use windows_core_reactor::Interface;
+    let width = scroll
+        .cast::<xaml::FrameworkElement>()
+        .and_then(|f| f.ActualWidth())
+        .unwrap_or(0.0) as f32;
+    let Some(stack) = scroll
+        .cast::<xaml::ContentControl>()
+        .and_then(|c| c.Content())
+        .ok()
+        .and_then(|c| c.cast::<xaml::UIElement>().ok())
+    else {
+        return;
+    };
+    if width <= 0.0 {
+        return;
+    }
+    let Ok(node) = stack.cast::<xaml::DependencyObject>() else {
+        return;
+    };
+    let count = xaml::VisualTreeHelper::GetChildrenCount(&node).unwrap_or(0);
+    let child = |i: usize| -> Option<xaml::UIElement> {
+        xaml::VisualTreeHelper::GetChild(&node, i as i32)
+            .ok()?
+            .cast()
+            .ok()
+    };
+    let unbounded = xaml::Size {
+        Width: f32::INFINITY,
+        Height: f32::INFINITY,
+    };
+    let desired = |element: &xaml::UIElement| -> f32 {
+        let _ = element.Measure(unbounded);
+        element.DesiredSize().map_or(0.0, |s| s.Width)
+    };
+    let needed = || -> f32 {
+        let all = desired(&stack);
+        let note = (count > 0)
+            .then(|| child(count as usize - 1))
+            .flatten()
+            .map_or(0.0, |n| desired(&n));
+        all - note + note.min(40.0)
+    };
+    let fold = FOLD.with(|f| f.borrow().clone());
+    let fold: Vec<xaml::UIElement> = fold
+        .iter()
+        .filter(|&&i| i < count as usize)
+        .filter_map(|&i| child(i))
+        .collect();
+    for element in &fold {
+        let _ = element.SetVisibility(xaml::Visibility::Visible);
+    }
+    for element in &fold {
+        if needed() <= width {
+            break;
+        }
+        let _ = element.SetVisibility(xaml::Visibility::Collapsed);
+    }
 }
 
 #[cfg(test)]
