@@ -227,10 +227,11 @@ struct UnitShape {
 /// 単位（`units` 個、番号は 0 から）のランクを解く。`cons` は閉路を作るものを逆にし、`fixed` はそのまま足す
 /// （`total` は `fixed` のノードを含めた数）。`first` があれば閉路を探す深さ優先をそこから始める。
 ///
-/// `rigid` はクラスタをまとめた単位。それを含む閉路（強連結成分）に入る単位に触れる辺は、向きを強いずに
+/// `rigid` はクラスタをまとめた単位。それを含む閉路（強連結成分）に入るクラスタの単位に触れる辺は、向きを強いずに
 /// `weight * |長さ - minlen|` を小さくする（クラスタの中のずれで成り立つ閉路は並べ、成り立たなければ重みの軽い辺が
 /// 逆を向き、外のノードへの辺も得なら横や上を向く。Graphviz の `newrank=false` の絵と同じで、説明書の「head が
-/// tail より上のランクになることがある」にあたる）。ほかの閉路は深さ優先で逆にする（Gansner ほか 1993）。
+/// tail より上のランクになることがある」にあたる）。閉路の中でもクラスタに触れない辺と、ほかの閉路は深さ優先で逆に
+/// する（Gansner ほか 1993）。
 fn solve_ranks(
     total: usize,
     units: usize,
@@ -249,7 +250,7 @@ fn solve_ranks(
     for list in &mut out {
         list.sort_by_key(|&i| cons[i].head);
     }
-    // クラスタを含む閉路（強連結成分）に入る単位に触れる辺（向きを強いない）
+    // クラスタを含む閉路（強連結成分）に入るクラスタの単位に触れる辺（向きを強いない）
     let soft: Vec<bool> = if rigid.iter().any(|&r| r) {
         let comp = components(units, &out, cons);
         let mut size = vec![0usize; units];
@@ -258,9 +259,12 @@ fn solve_ranks(
             size[comp[u]] += 1;
             has_rigid[comp[u]] |= rigid.get(u).copied().unwrap_or(false);
         }
+        // 閉路に入るクラスタの単位に触れる辺だけ。クラスタに触れない辺は、閉路の中でも向きを守り、深さ優先で
+        // 切る（Graphviz の絵と同じ。クラスタに触れる辺も、逆にした長い辺を短すぎる側の重さで数えないため）
         let cyclic = |u: usize| size[comp[u]] > 1 && has_rigid[comp[u]];
+        let rigid_at = |u: usize| rigid.get(u).copied().unwrap_or(false);
         cons.iter()
-            .map(|c| cyclic(c.tail) || cyclic(c.head))
+            .map(|c| (rigid_at(c.tail) && cyclic(c.tail)) || (rigid_at(c.head) && cyclic(c.head)))
             .collect()
     } else {
         vec![false; cons.len()]
