@@ -92,6 +92,10 @@ becomes the GitHub Release notes.
 - DOT diagrams: the dot layout orders the nodes of a rank as the dot paper describes (depth-first starting orders, nodes
   without neighbours left in place, ties flipped between sweeps), leaving about 15% fewer edge crossings.
 - DOT diagrams: a long dot edge no longer slants across the nodes of a rank it passes.
+- DOT diagrams: edges between the same two nodes, such as a pair of opposite arrows, are drawn apart as in Graphviz
+  instead of on top of each other.
+- DOT diagrams: self-loops are flat rings beside the node (above it with `rankdir=LR`), sized as Graphviz sizes them,
+  instead of one large round curve.
 - Exporting chosen folders as an archive in a partial clone fetches only the contents it asked about, not every missing
   file of the commit (git 2.41 or later; older git fetches them all, and the question now counts them all).
 - Markdown previews put a list item's mark on the same line as a list nested at its start (`- 1. text`), as GitHub
