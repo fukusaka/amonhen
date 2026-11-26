@@ -57,6 +57,8 @@ becomes the GitHub Release notes.
 - DOT diagrams: an invisible edge between two nodes of a rank no longer pushes the visible edge between them into an
   arc.
 - DOT diagrams: the dot layout orders nodes by the ports their edges reach, so edges to a record's fields cross less.
+- DOT diagrams: a polygon with fewer than 3 sides is drawn as an ellipse (or an egg when distorted or skewed), as
+  Graphviz does, not as a triangle.
 - Exporting chosen folders as an archive in a partial clone fetches only the contents it asked about, not every missing
   file of the commit (git 2.41 or later; older git fetches them all, and the question now counts them all).
 

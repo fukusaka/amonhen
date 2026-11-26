@@ -153,12 +153,17 @@ pub fn spec(
         }
         "polygon" => {
             let n = sides.unwrap_or(4.0);
-            let n = if n.is_finite() {
-                n.round().max(3.0) as usize
+            let n = if n.is_finite() { n.round() } else { 4.0 };
+            if n < 3.0 {
+                // 辺が 3 未満は楕円（Graphviz と同じ）。ゆがみがあれば、egg と同じ多角形
+                if distortion != 0.0 || skew != 0.0 {
+                    poly(48, 0.0, distortion, skew)
+                } else {
+                    Kind::Ellipse
+                }
             } else {
-                4
-            };
-            poly(n, 0.0, distortion, skew)
+                poly(n as usize, 0.0, distortion, skew)
+            }
         }
         "ellipse" | "oval" | "" => Kind::Ellipse,
         "circle" => {
@@ -860,6 +865,15 @@ mod tests {
             tri.iter()
                 .any(|p| (p.1 + 1.0).abs() < 1e-9 && p.0.abs() < 1e-9)
         );
+        // 辺が 3 未満の polygon は楕円、ゆがみがあれば卵の形
+        assert!(matches!(
+            spec("polygon", Some(0.0), 0.0, 0.0, 0.0, false).kind,
+            Kind::Ellipse
+        ));
+        assert!(matches!(
+            spec("polygon", Some(2.0), 0.0, -0.3, 0.0, false).kind,
+            Kind::Polygon(p) if p.len() == 48
+        ));
         let diamond = polygon(4, 45.0, 0.0, 0.0);
         assert!(
             diamond
