@@ -291,8 +291,8 @@ fn fills(run: &Run) -> bool {
     width(run).is_some() && run.height.is_some()
 }
 
-/// 文の中に置く画像の一時ファイル、見せる大きさ、伸ばすか、代わりの文。
-type InlineImage = (std::path::PathBuf, f64, f64, bool, String);
+/// 文の中に置く画像の一時ファイル、見せる大きさ、伸ばすか、代わりの文、基線より下に出す分（文中の数式の深さ）。
+type InlineImage = (std::path::PathBuf, f64, f64, bool, String, f64);
 
 thread_local! {
     /// 文の中に置く画像（鍵 → `InlineImage`）。段落を組むときに入れ、部品を作るときに引く。
@@ -302,7 +302,7 @@ thread_local! {
 
 /// 文の中に置く画像の部品（InlineUIContainer の中の Image。鍵は `Pictures::inline_key` が作ったもの）。
 pub fn inline_image(key: &str) -> Option<windows_core_reactor::IInspectable> {
-    let (file, w, h, fill, alt) = INLINE_IMAGES.with(|m| m.borrow().get(key).cloned())?;
+    let (file, w, h, fill, alt, depth) = INLINE_IMAGES.with(|m| m.borrow().get(key).cloned())?;
     let stretch = if fill { "Fill" } else { "Uniform" };
     let uri = url_of(&file);
     let escape = |s: &str| {
@@ -317,10 +317,100 @@ pub fn inline_image(key: &str) -> Option<windows_core_reactor::IInspectable> {
         format!(r#" ToolTipService.ToolTip="{}""#, escape(&alt))
     };
     let xaml = format!(
-        r#"<InlineUIContainer xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"><Image Source="{}" Width="{w}" Height="{h}" Stretch="{stretch}"{tip}/></InlineUIContainer>"#,
-        escape(&uri)
+        r#"<InlineUIContainer xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"><Image Source="{}" Width="{w}" Height="{h}" Stretch="{stretch}" Margin="0,0,0,{}"{tip}/></InlineUIContainer>"#,
+        escape(&uri),
+        -depth
     );
     amonhen_win_xaml::XamlReader::Load(&windows_core_reactor::HSTRING::from(xaml)).ok()
+}
+
+/// 数式の 1 em の大きさ（DIP）: 本文の字 × 設定の倍率（macOS 版・GTK4 版と同じ。既定は `math::FONT_SCALE`）。
+fn math_em(size: f64) -> f64 {
+    size * amonhen_core::math::FONT_SCALE
+}
+
+/// 数式の絵（コアの SVG に本文の字の色を当て、resvg で 2 倍の細かさの PNG に）と、見せる大きさ（DIP）。色・大きさ
+/// ごとに覚えておく（段落を組むたびに描き直さない）。
+fn math_png(
+    math: &amonhen_core::math::MathPicture,
+    size: f64,
+) -> Option<(Arc<[u8]>, f64, f64, f64)> {
+    let em = math_em(size);
+    let (w, h, depth) = (
+        math.width * em,
+        (math.height + math.depth) * em,
+        math.depth * em,
+    );
+    let c = crate::palette::foreground();
+    let fg = format!("#{:02x}{:02x}{:02x}", c.r, c.g, c.b);
+    let key = {
+        use std::hash::{Hash, Hasher};
+        let mut hasher = std::collections::hash_map::DefaultHasher::new();
+        math.svg.hash(&mut hasher);
+        fg.hash(&mut hasher);
+        em.to_bits().hash(&mut hasher);
+        hasher.finish()
+    };
+    if let Some(png) = MATH_PNGS.with(|m| m.borrow().get(&key).cloned()) {
+        return Some((png, w, h, depth));
+    }
+    let colored = amonhen_core::math::colorize(&math.svg, &fg)?;
+    let options = usvg::Options {
+        fontdb: fonts(),
+        ..Default::default()
+    };
+    let tree = usvg::Tree::from_data(colored.as_bytes(), &options).ok()?;
+    let scale = (2.0 * w / f64::from(tree.size().width()).max(0.0001)) as f32;
+    let mut pixmap = tiny_skia::Pixmap::new(
+        (2.0 * w).ceil().max(1.0) as u32,
+        (2.0 * h).ceil().max(1.0) as u32,
+    )?;
+    resvg::render(
+        &tree,
+        tiny_skia::Transform::from_scale(scale, scale),
+        &mut pixmap.as_mut(),
+    );
+    let png: Arc<[u8]> = pixmap.encode_png().ok()?.into();
+    MATH_PNGS.with(|m| {
+        let mut m = m.borrow_mut();
+        if m.len() > 256 {
+            m.clear();
+        }
+        m.insert(key, png.clone());
+    });
+    Some((png, w, h, depth))
+}
+
+thread_local! {
+    /// 描いた数式の PNG（SVG・色・大きさの鍵 → PNG）。
+    static MATH_PNGS: std::cell::RefCell<std::collections::HashMap<u64, Arc<[u8]>>> =
+        std::cell::RefCell::default();
+}
+
+/// 文中の数式を文の中に置く鍵（`inline_image` が部品にする）。基線より下に式の深さだけ出す（GitHub と同じ）。
+fn math_key(run: &Run, size: f64) -> Option<String> {
+    let (png, w, h, depth) = math_png(run.math.as_ref()?, size)?;
+    let hash = {
+        use std::hash::{Hash, Hasher};
+        let mut hasher = std::collections::hash_map::DefaultHasher::new();
+        png.hash(&mut hasher);
+        hasher.finish()
+    };
+    let dir = std::env::temp_dir().join("amonhen-markdown-images");
+    let file = dir.join(format!("{hash:016x}"));
+    if !file.exists() {
+        std::fs::create_dir_all(&dir).ok()?;
+        std::fs::write(&file, &*png).ok()?;
+    }
+    let key = format!("math:{hash:016x}:{w}:{h}:{depth}");
+    INLINE_IMAGES.with(|m| {
+        let mut m = m.borrow_mut();
+        if m.len() > 512 {
+            m.clear();
+        }
+        m.insert(key.clone(), (file, w, h, false, run.text.clone(), depth));
+    });
+    Some(key)
 }
 
 /// ファイルの `file:///` の URL（`\` を `/` に、空白などは % で）。
@@ -607,7 +697,7 @@ impl Pictures<'_> {
             if m.len() > 512 {
                 m.clear();
             }
-            m.insert(key.clone(), (file, w, h, fill, run.text.clone()));
+            m.insert(key.clone(), (file, w, h, fill, run.text.clone(), 0.0));
         });
         Some(key)
     }
@@ -702,12 +792,18 @@ fn paragraph(runs: &[Run], size: f64, bold: bool, align: Align, pictures: &Pictu
     let has_text = runs
         .iter()
         .any(|r| (!r.text.trim().is_empty() && pictures.image(r).is_none()) || r.line_break);
-    let view = if has_text && runs.iter().any(|r| pictures.image(r).is_some()) {
-        // 文の途中の画像: 文と同じ行に置く（GitHub と同じく、行は切らない。macOS 版・GTK4 版と同じ）。
+    let has_math = runs.iter().any(|r| r.math.is_some());
+    let view = if has_math || (has_text && runs.iter().any(|r| pictures.image(r).is_some())) {
+        // 文の途中の画像と文中の数式: 文と同じ行に置く（GitHub と同じく、行は切らない。macOS 版・GTK4 版と同じ）。
         let mut inlines = inlines(runs, bold);
         for (inline, run) in inlines.iter_mut().zip(runs) {
             // リンクの中の画像も絵で（文の中の部品はリンクにできないので、リンクは外す）。
-            if let Some(key) = pictures.inline_key(run) {
+            let key = if run.math.is_some() {
+                math_key(run, size)
+            } else {
+                pictures.inline_key(run)
+            };
+            if let Some(key) = key {
                 *inline = RichTextInline::Run(RichTextRun {
                     text: run.text.clone(),
                     inline: Some(key),
@@ -863,19 +959,44 @@ fn block(b: &Block, pictures: &Pictures) -> View {
         },
         // 数式はまだ描かない（コアの math フィーチャーを入れていない）。TeX をコードとして見せ、理由があれば添える。
         // 文中の式は原文がコードの文字で来る。
+        // 描けた数式のブロックは、真ん中に絵で（幅は 640 まで、比を保って縮める。macOS 版・GTK4 版と同じ）。
+        // 描けなければ TeX をコードとして見せ、理由を添える。
         Block::Math {
-            text: code, error, ..
-        } => StackPanel::new().spacing(4.0).children((
-            Border::new()
-                .background(shade())
-                .corner_radius(4.0)
-                .padding(Thickness::new(10.0, 8.0, 10.0, 8.0))
-                .content(plain(code, BODY - 1.0, true, None)),
-            match error {
-                Some(error) => plain(error, BODY - 2.0, true, Some(Color::rgb(0xd9, 0x33, 0x33))),
-                None => View::empty(),
-            },
-        )),
+            text: code,
+            math,
+            error,
+        } => match math.as_ref().and_then(|m| math_png(m, BODY)) {
+            Some((png, w, h, _)) => {
+                let (w, h) = if w > MAX_IMAGE_WIDTH {
+                    (MAX_IMAGE_WIDTH, h * MAX_IMAGE_WIDTH / w)
+                } else {
+                    (w, h)
+                };
+                Border::new()
+                    .horizontal_alignment(HorizontalAlignment::Center)
+                    .content(
+                        Image::new()
+                            .source_data(EncodedImage::new(png.to_vec()))
+                            .stretch(Stretch::Uniform)
+                            .width(w)
+                            .height(h),
+                    )
+                    .tooltip(code.clone())
+            }
+            None => StackPanel::new().spacing(4.0).children((
+                Border::new()
+                    .background(shade())
+                    .corner_radius(4.0)
+                    .padding(Thickness::new(10.0, 8.0, 10.0, 8.0))
+                    .content(plain(code, BODY - 1.0, true, None)),
+                match error {
+                    Some(error) => {
+                        plain(error, BODY - 2.0, true, Some(Color::rgb(0xd9, 0x33, 0x33)))
+                    }
+                    None => View::empty(),
+                },
+            )),
+        },
         Block::Code { text: code, .. } => Border::new()
             .background(shade())
             .corner_radius(4.0)
