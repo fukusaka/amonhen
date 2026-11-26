@@ -209,6 +209,9 @@ pub struct Callbacks<'a> {
     pub mermaid_button: Box<dyn Fn(String) -> Callback<()> + 'a>,
     /// gantt の日付を数える時間帯を選んだ（IANA の名前、空なら OS の時間帯）。
     pub gantt_zone: Callback<String>,
+    /// 数式の大きさ・1 つのファイルで描く時間の上限を選んだ（`math::FONT_SCALES`・`math::TIME_LIMITS` の番号）。
+    pub math_scale: Callback<Option<usize>>,
+    pub math_time_limit: Callback<Option<usize>>,
     /// 窓の背景の欄（Choose…・Remove、位置、横棒、ツールバーの色を敷くか・色）。
     pub backdrop: BackdropCallbacks<'a>,
     pub ssh: crate::sshhosts::Callbacks<'a>,
@@ -398,6 +401,7 @@ fn appearance(callbacks: &Callbacks) -> View {
                 tr!("Use standard colors for diffs"),
             ),
             mermaid_section(callbacks),
+            math_section(callbacks),
         )),
     ))
 }
@@ -1295,6 +1299,75 @@ pub fn backdrop_section(b: &crate::backdrop::Backdrop, callbacks: &BackdropCallb
             .on_is_checked_changed(callbacks.tint.clone())
             .content(TextBlock::new().text(tr!("Tint the toolbar"))),
         tint_rows,
+    ))
+}
+
+/// Markdown の数式の欄（式の大きさ・1 つのファイルで描く時間の上限。macOS 版・GTK4 版と同じ選択肢）。
+fn math_section(callbacks: &Callbacks) -> View {
+    use amonhen_core::math::{FONT_SCALE, FONT_SCALES, TIME_LIMITS};
+    let scales: Vec<String> = FONT_SCALES
+        .iter()
+        .map(|&scale| {
+            let text = format!("{}%", (scale * 100.0).round() as i64);
+            if scale == FONT_SCALE {
+                tr!("{scale} (KaTeX)", scale = text)
+            } else {
+                text
+            }
+        })
+        .collect();
+    let current = crate::markdownview::math_scale();
+    let limits: Vec<String> = TIME_LIMITS
+        .iter()
+        .map(|&s| {
+            if s == 0 {
+                tr!("No limit")
+            } else {
+                tr!("{s} s", s = s)
+            }
+        })
+        .collect();
+    let row = |label: String, choice: View| {
+        StackPanel::new()
+            .orientation(Orientation::Horizontal)
+            .spacing(12.0)
+            .children((
+                // 「1 つのファイルで描く時間の上限」が切れない幅。
+                TextBlock::new()
+                    .text(label)
+                    .width(220.0)
+                    .vertical_alignment(VerticalAlignment::Center),
+                choice,
+            ))
+    };
+    StackPanel::new().spacing(8.0).children((
+        heading(tr!("Math")),
+        row(
+            tr!("Formula size"),
+            ComboBox::new()
+                .items_source(scales)
+                .selected_index(
+                    FONT_SCALES
+                        .iter()
+                        .position(|&s| (s - current).abs() < 1e-9)
+                        .unwrap_or(2),
+                )
+                .on_selection_changed(callbacks.math_scale.clone())
+                .into(),
+        ),
+        row(
+            tr!("Time limit per file"),
+            ComboBox::new()
+                .items_source(limits)
+                .selected_index(
+                    TIME_LIMITS
+                        .iter()
+                        .position(|&s| s == crate::markdownview::math_time_limit())
+                        .unwrap_or(1),
+                )
+                .on_selection_changed(callbacks.math_time_limit.clone())
+                .into(),
+        ),
     ))
 }
 

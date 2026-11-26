@@ -1583,6 +1583,9 @@ enum Message {
     DiffFindOpen(bool),
     /// Settings > Theme: gantt の時間帯を選んだ（IANA の名前、空なら OS の時間帯）。
     SettingsGanttZone(String),
+    /// Settings > Theme: 数式の大きさ・1 つのファイルで描く時間の上限を選んだ（選ぶ欄の番号）。
+    SettingsMathScale(Option<usize>),
+    SettingsMathTimeLimit(Option<usize>),
     /// ツールバーの見せ方を選んだ（`menus::Display::ALL` の番号）。
     ToolbarDisplay(Option<usize>),
     /// 整形した Markdown の中を探した（今の一致、一致の数）。
@@ -1694,6 +1697,7 @@ impl Component for Root {
 
     fn create(input: &RootInput, _context: &ComponentContext<Self>) -> Self {
         install_app_links();
+        crate::markdownview::apply_math_time_limit();
         if let Ok(path) = std::path::absolute(&input.tab.location)
             && path.join(".git").exists()
         {
@@ -8374,6 +8378,38 @@ impl Root {
                 });
             }
             // gantt の時間帯を替えた: 覚えて、開いている Markdown を読み直す（日付は図を描くときに数える）。
+            // 数式の大きさ・時間の上限を替えた: 覚えて、開いている Markdown を描き直す（時間の上限はコアにも渡す）。
+            Message::SettingsMathScale(index) => {
+                let Some(&scale) = index.and_then(|i| amonhen_core::math::FONT_SCALES.get(i))
+                else {
+                    return;
+                };
+                if (scale - crate::markdownview::math_scale()).abs() > 1e-9 {
+                    let _ = crate::prefs::set_string(
+                        crate::markdownview::MATH_SCALE,
+                        &scale.to_string(),
+                    );
+                    if self.markdown_shown() {
+                        self.reopen_file();
+                    }
+                }
+            }
+            Message::SettingsMathTimeLimit(index) => {
+                let Some(&seconds) = index.and_then(|i| amonhen_core::math::TIME_LIMITS.get(i))
+                else {
+                    return;
+                };
+                if seconds != crate::markdownview::math_time_limit() {
+                    let _ = crate::prefs::set_string(
+                        crate::markdownview::MATH_TIME_LIMIT,
+                        &seconds.to_string(),
+                    );
+                    crate::markdownview::apply_math_time_limit();
+                    if self.markdown_shown() {
+                        self.reopen_file();
+                    }
+                }
+            }
             Message::SettingsGanttZone(name) => {
                 if crate::prefs::string(crate::timezone::GANTT_TIME_ZONE).unwrap_or_default()
                     != name
@@ -16867,6 +16903,8 @@ impl Root {
                 syntax_theme: context.callback(|i| Message::SettingsSyntaxTheme(false, i)),
                 diagram_colors: context.callback(Message::SettingsDiagramColors),
                 gantt_zone: context.callback(Message::SettingsGanttZone),
+                math_scale: context.callback(Message::SettingsMathScale),
+                math_time_limit: context.callback(Message::SettingsMathTimeLimit),
                 mermaid_button: Box::new(|key: String| {
                     context.callback(move |()| Message::SettingsMermaidButton(key.clone()))
                 }),
