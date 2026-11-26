@@ -31,6 +31,8 @@ becomes the GitHub Release notes.
 - Markdown previews decode all of HTML5's named character references (such as `&rarr;` or `&NotEqualTilde;`), and
   the old names without `;` (`&copy`, `&amp`) by HTML's rules, where they were limited to 27 common ones.
 - The toolbar draws new icons shared by every front end, also used for branches in the sidebar (macOS, GTK4; see `docs/icons.md`).
+- The Windows app's sidebar shows the shared icon in front of each row, and the marks at a row's end use the shared
+  shapes instead of text marks and Segoe glyphs.
 - Fences named after a Graphviz engine, such as ` ```neato `, stay code, as on GitHub; ` ```dot `, ` ```graphviz `
   and ` ```gv ` are drawn, and `layout` still picks the engine.
 - DOT diagrams follow Graphviz's defaults: unfilled nodes and clusters stay transparent, cluster titles take the text
