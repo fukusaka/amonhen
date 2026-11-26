@@ -104,7 +104,7 @@ use crate::sidebar::{Page, Sidebar};
 use crate::stashes::Stashes;
 use crate::workcopy::WorkingCopy;
 
-const APP_ID: &str = "io.github.fukusaka.amonhen";
+pub(crate) const APP_ID: &str = "io.github.fukusaka.amonhen";
 
 #[derive(Clone, Default)]
 struct Args {

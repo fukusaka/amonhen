@@ -1818,6 +1818,8 @@ pub fn show_about(parent: &gtk::ApplicationWindow) {
         .transient_for(parent)
         .modal(true)
         .program_name("Amon Hen")
+        // アプリのアイコン（GTK4 の About は窓の既定のアイコンを引き継がないので、名前で渡す）。
+        .logo_icon_name(crate::APP_ID)
         // 配るときは scripts/package-gtk4.sh が版を埋め込む。
         .version(option_env!("AMONHEN_VERSION").unwrap_or(env!("CARGO_PKG_VERSION")))
         .website("https://github.com/fukusaka/amonhen")

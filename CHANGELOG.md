@@ -49,6 +49,7 @@ becomes the GitHub Release notes.
 
 #### Fixed
 
+- The GTK4 app's About window shows the app icon.
 - DOT diagrams: edges to record fields and compass ports in the dot layout use the same smooth curves as other edges.
 - DOT diagrams: dot-layout curves bulge less between ranks, crossing fewer edges and nodes.
 - DOT diagrams: `splines=ortho` in the dot layout keeps tracks between ranks at least 3 points apart, even past
