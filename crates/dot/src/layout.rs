@@ -637,11 +637,88 @@ fn rank(
         })
         .collect();
     let x = solve_ranks(total, units, &cons, &fixed, min_c, opt.rank_iter, &shape);
-    let r: Vec<i64> = (0..n).map(|v| x[dense[unit[v]]] + off[v]).collect();
+    let mut r: Vec<i64> = (0..n).map(|v| x[dense[unit[v]]] + off[v]).collect();
+    let mut unit_size = vec![0usize; units];
+    for v in 0..n {
+        unit_size[dense[unit[v]]] += 1;
+    }
+    // クラスタがあれば釣り合いはしない（Graphviz の絵と同じ）
+    if clusters == 0 {
+        balance_ranks(&mut r, edges, n, |v| {
+            cluster_of[v].is_none() && unit_size[dense[unit[v]]] == 1
+        });
+    }
     let low = r.iter().copied().min().unwrap_or(0);
     r.into_iter()
         .map(|v| (v - low).clamp(0, 100_000) as i32)
         .collect()
+}
+
+/// ランクの釣り合い（Gansner ほか 1993 §2）: 入る辺と出る辺の重みが等しいノードは、置けるランクのうちノードの
+/// いちばん少ないランクへ動かす（今より少ないときだけ。ノードの順に）。`free` は動かしてよいノード（クラスタや
+/// 組に入っていない）。ラベルのある図はランクが倍なので、同じ偶奇のランクだけ。クラスタのある図ではしない（呼ぶ側）。
+fn balance_ranks(r: &mut [i64], edges: &[Edge], n: usize, free: impl Fn(usize) -> bool) {
+    let labeled = edges.iter().any(|e| e.label.is_some() && e.tail != e.head);
+    let lo_rank = r.iter().copied().min().unwrap_or(0);
+    let hi_rank = r.iter().copied().max().unwrap_or(0);
+    let span = (hi_rank - lo_rank + 1).max(1) as usize;
+    if span > 100_000 {
+        return;
+    }
+    let mut count = vec![0usize; span];
+    for &x in r.iter() {
+        count[(x - lo_rank) as usize] += 1;
+    }
+    let mut ins: Vec<Vec<usize>> = vec![Vec::new(); n];
+    let mut outs: Vec<Vec<usize>> = vec![Vec::new(); n];
+    for (i, e) in edges.iter().enumerate() {
+        if e.constraint && e.tail < n && e.head < n && e.tail != e.head {
+            outs[e.tail].push(i);
+            ins[e.head].push(i);
+        }
+    }
+    let minlen = |e: &Edge| e.minlen.round().clamp(0.0, 1000.0) as i64;
+    for v in 0..n {
+        if (ins[v].is_empty() && outs[v].is_empty()) || !free(v) {
+            continue;
+        }
+        // 今の向き（閉路を切ったあと）で上から入る辺と下へ出る辺。同じランクの辺があれば動かさない
+        let (mut w_in, mut w_out) = (0f64, 0f64);
+        let (mut low, mut high) = (i64::MIN, i64::MAX);
+        let mut flat = false;
+        for &i in ins[v].iter().chain(&outs[v]) {
+            let e = &edges[i];
+            let other = if e.tail == v { e.head } else { e.tail };
+            let m = minlen(e);
+            if r[other] < r[v] {
+                w_in += e.weight;
+                low = low.max(r[other] + m);
+            } else if r[other] > r[v] {
+                w_out += e.weight;
+                high = high.min(r[other] - m);
+            } else {
+                flat = true;
+            }
+        }
+        if flat || w_in != w_out || low == i64::MIN || high == i64::MAX || low >= high {
+            continue;
+        }
+        let here = r[v];
+        let mut best = here;
+        for t in low..=high {
+            if labeled && (t - here) % 2 != 0 {
+                continue;
+            }
+            if count[(t - lo_rank) as usize] < count[(best - lo_rank) as usize] {
+                best = t;
+            }
+        }
+        if best != here {
+            count[(here - lo_rank) as usize] -= 1;
+            count[(best - lo_rank) as usize] += 1;
+            r[v] = best;
+        }
+    }
 }
 
 // ---- 2. 並び ----
