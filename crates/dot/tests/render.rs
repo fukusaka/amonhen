@@ -462,7 +462,13 @@ fn ortho_edges_ignore_ports() {
         (x, y)
     };
     let (x, y) = start("a-&gt;b");
-    assert!(x > 0.5 && x < 53.5 && (y - 36.0).abs() < 0.01, "{svg}");
+    let a = part(&svg, "a");
+    let (left, top) = (attr_num(a, "x"), attr_num(a, "y"));
+    let bottom = top + attr_num(a, "height");
+    assert!(
+        x > left + 0.5 && x < left + attr_num(a, "width") - 0.5 && (y - bottom).abs() < 0.01,
+        "{svg}"
+    );
     let (x, _) = start("b-&gt;b");
     let b = part(&svg, "b");
     let right = attr_num(b, "x") + attr_num(b, "width");
@@ -1170,4 +1176,16 @@ fn dot_invisible_flat_edges_leave_the_straight_lane() {
             .to_owned()
     };
     assert_eq!(path(&with), path(&without), "{with}");
+}
+
+/// dot の並べ替えはポートの左右を見る: 右のポートへ着く辺の尾は、左のポートへ着く辺の尾の右に（Graphviz と同じ）。
+#[test]
+fn dot_orders_nodes_by_their_ports() {
+    let svg = render(
+        "digraph { node [shape=record]; r [label=\"<l>left|<r>right\"]; a; b; a -> r:r; b -> r:l }",
+    )
+    .unwrap()
+    .svg;
+    let x = |id: &str| attr_num(part(&svg, id), "x");
+    assert!(x("b") < x("a"), "{svg}");
 }

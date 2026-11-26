@@ -647,6 +647,24 @@ struct Ordering<'a> {
 }
 
 impl Ordering<'_> {
+    /// 切れ端の上か下の端の並びの値: 位置に、ポートのずれをノードの幅で割った分（±0.45 まで）を足す。同じノードに
+    /// 着く辺も、ポートの左右の順で並ぶ（Gansner ほか 1993 §3）。
+    fn end_key(&self, s: usize, upper: bool) -> f64 {
+        let seg = &self.segs[s];
+        let (v, off) = if upper {
+            (seg.upper, seg.upper_off)
+        } else {
+            (seg.lower, seg.lower_off)
+        };
+        let w = self.nodes[v].left + self.nodes[v].right;
+        let frac = if off != 0.0 && w > 0.0 {
+            (off / w).clamp(-0.45, 0.45)
+        } else {
+            0.0
+        };
+        self.pos[v] as f64 + frac
+    }
+
     fn refresh(&mut self) {
         for layer in &self.layers {
             for (i, &v) in layer.iter().enumerate() {
@@ -839,17 +857,7 @@ impl Ordering<'_> {
     }
 
     fn median(&self, list: &[usize], upper: bool) -> Option<f64> {
-        let mut p: Vec<f64> = list
-            .iter()
-            .map(|&s| {
-                let seg = &self.segs[s];
-                if upper {
-                    self.pos[seg.upper] as f64
-                } else {
-                    self.pos[seg.lower] as f64
-                }
-            })
-            .collect();
+        let mut p: Vec<f64> = list.iter().map(|&s| self.end_key(s, upper)).collect();
         if p.is_empty() {
             return None;
         }
@@ -894,15 +902,23 @@ impl Ordering<'_> {
     fn crossings(&self) -> usize {
         let mut total = 0usize;
         for r in 0..self.layers.len().saturating_sub(1) {
-            let mut pairs: Vec<(usize, usize)> = Vec::new();
+            let mut keys: Vec<(f64, f64)> = Vec::new();
             for &u in &self.layers[r] {
                 for &s in &self.nodes[u].down {
-                    pairs.push((self.pos[u], self.pos[self.segs[s].lower]));
+                    keys.push((self.end_key(s, true), self.end_key(s, false)));
                 }
             }
-            pairs.sort_unstable();
+            // 下の端の値を順位に直す（同じ値は同じ順位）
+            let mut lows: Vec<f64> = keys.iter().map(|k| k.1).collect();
+            lows.sort_by(f64::total_cmp);
+            lows.dedup();
+            let mut pairs: Vec<(f64, usize)> = keys
+                .iter()
+                .map(|&(a, b)| (a, lows.partition_point(|&x| x < b)))
+                .collect();
+            pairs.sort_by(|x, y| x.0.total_cmp(&y.0).then(x.1.cmp(&y.1)));
             // 下の位置の逆順の数（BIT）
-            let size = self.layers[r + 1].len() + 1;
+            let size = lows.len() + 1;
             let mut tree = vec![0usize; size + 1];
             for (seen, &(_, b)) in pairs.iter().enumerate() {
                 // b より大きいものの数
@@ -960,17 +976,9 @@ impl Ordering<'_> {
             (&self.nodes[u].down, &self.nodes[v].down, false),
         ] {
             for &a in lu {
-                let pa = if upper {
-                    self.pos[self.segs[a].upper]
-                } else {
-                    self.pos[self.segs[a].lower]
-                };
+                let pa = self.end_key(a, upper);
                 for &b in lv {
-                    let pb = if upper {
-                        self.pos[self.segs[b].upper]
-                    } else {
-                        self.pos[self.segs[b].lower]
-                    };
+                    let pb = self.end_key(b, upper);
                     if pa > pb {
                         c += 1;
                     }

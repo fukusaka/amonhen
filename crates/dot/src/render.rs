@@ -712,8 +712,9 @@ pub fn render(
             let (w, h) = (t.fit_width() + 4.0, t.height + 2.0);
             if dir.sideways() { (h, w) } else { (w, h) }
         });
+        // ortho の線はポートを見ないので、並びと位置もポートを見ない（Graphviz と同じ）
         let off = |node: usize, port: Option<&str>| -> f64 {
-            match port_of(&views[node], port) {
+            match port_of(&views[node], port).filter(|_| !ortho) {
                 Some(p) => {
                     if dir.sideways() {
                         p.at.1
