@@ -1,5 +1,6 @@
 /** 共有の daemon のコアの命令を、進み具合を出して実行する（エンジンがなければ投げる） */
 import * as vscode from 'vscode';
+import { OperationError } from '../failure/kind.ts';
 import type { Json } from '../daemon/client.ts';
 import { daemonFor } from '../daemon/connection.ts';
 import type { Repository } from '../state/repository.ts';
@@ -11,6 +12,6 @@ export async function runEngine(repo: Repository, command: Json, title: string):
   const reply = await vscode.window.withProgress({ location: vscode.ProgressLocation.Notification, title }, async () =>
     (await client.call({ op: 'run', command })).json,
   );
-  if (reply['ok'] !== true) throw new Error(String(reply['error'] ?? `${title} failed`));
+  if (reply['ok'] !== true) throw new OperationError(String(reply['error'] ?? `${title} failed`), command['op']);
   return reply;
 }

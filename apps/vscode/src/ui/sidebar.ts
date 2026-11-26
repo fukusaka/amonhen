@@ -199,7 +199,7 @@ export class SidebarProvider implements vscode.TreeDataProvider<Node>, vscode.Di
     this.repoListener = repository?.onDidChange((changed) => {
       if (changed.has('workingCopy')) void this.loadSequence(repository);
       if (changed.has('workingCopy')) void this.countWithoutMarkers(repository);
-      if (changed.has('branches')) this.updateContext(repository);
+      if (changed.has('branches') || changed.has('remotes') || changed.has('workingCopy')) this.updateContext(repository);
       // sparse checkout にしたかは設定（core.sparseCheckout。worktree の config.worktree のこともある）に出る
       if (changed.has('config') || changed.has('workingCopy')) void this.checkSparse(repository);
       // Working Copy の変化は、入口の数と途中の merge / rebase に出る
@@ -294,10 +294,17 @@ export class SidebarProvider implements vscode.TreeDataProvider<Node>, vscode.Di
     }
   }
 
-  /** 今のブランチに upstream が無ければ、ナビの上の Push を Publish にする */
+  /**
+   * 今のブランチに upstream が無ければ、ナビの上の Push を Publish にする。リモートがなければ Publish の先がないので、
+   * ブランチの行とコマンドパレットの Publish を出さない（`amonhen.hasRemote`）。途中の操作（merge・rebase など）の
+   * 種類は `amonhen.sequence` に置き、Continue・Abort・Skip はその間だけ、Pull・Merge…・Rebase…・Apply Patch… は
+   * その間は出さない（アプリのメニューと同じ）
+   */
   private updateContext(repository: Repository | undefined): void {
     const head = repository?.current.branches?.find((b) => b.isHead);
     void vscode.commands.executeCommand('setContext', 'amonhen.unpublished', !!head && (!head.upstream || !!head.gone));
+    void vscode.commands.executeCommand('setContext', 'amonhen.hasRemote', (repository?.current.remotes ?? []).length > 0);
+    void vscode.commands.executeCommand('setContext', 'amonhen.sequence', repository?.current.sequence ?? '');
   }
 
   /** 遅延セクションが展開されたら取得を始める */

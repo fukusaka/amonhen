@@ -80,6 +80,8 @@ function toDropTarget(node: Node): DropTarget | undefined {
 
 export interface Action {
   label: string;
+  /** 失敗の見出しにする操作（コアの命令の名前。`failureTitle`） */
+  op?: string;
   detail?: string;
   /** undefined なら何も知らせない（続きを別に行うとき） */
   run: () => Promise<OperationResult | 'pushed' | undefined>;
@@ -101,6 +103,7 @@ export function rebaseAction(repo: Repository, target: string, onto: string): Ac
   let updateRefs: boolean | undefined;
   return {
     label: `$(git-pull-request) Rebase ${tgt} onto ${src}`,
+    op: 'rebase',
     confirm: async () => {
       const current = (await repo.backend.head()).branch === target;
       // 今のブランチなら書き換えの見通し。ほかのブランチなら、merge したときのコンフリクトの見込みを目安に（アプリと同じ）
@@ -154,6 +157,7 @@ function dropActions(repo: Repository, source: DragSource, target: DropTarget): 
     return [
       {
         label: `$(git-merge) Merge ${src} into ${tgt}`,
+        op: 'mergeInto',
         confirm: async () =>
           (mode = await pickMergeMode(`Merge ${src} into ${tgt}?`, true, { repo, theirs: sourceRef, ours: targetRef })) !== undefined,
         run: () => mergeInto(backend, undo, sourceRef, targetRef, mode),
@@ -178,6 +182,7 @@ function dropActions(repo: Repository, source: DragSource, target: DropTarget): 
     const setUpstream = target.kind === 'remote' && !force;
     return {
       label: force ? `$(warning) Force Push ${src} to ${dest}` : `$(cloud-upload) Push ${src} to ${dest}`,
+      op: 'push',
       detail: force
         ? '--force-with-lease: replaces the remote’s history, as after a rebase'
         : setUpstream && !toUpstream
@@ -219,7 +224,7 @@ export async function runAction(repo: Repository, action: Action): Promise<void>
     );
   } catch (err) {
     // つながらない・ロックなら、確かめ直さずに同じ操作をもう一度（アプリの帯の Try Again）
-    showError(err, { retry: () => runAction(repo, { ...action, confirm: undefined }), cwd: repo.root });
+    showError(err, { retry: () => runAction(repo, { ...action, confirm: undefined }), cwd: repo.root, op: action.op });
   } finally {
     await repo.refresh();
   }
@@ -259,7 +264,7 @@ async function handleConflict(repo: Repository, title: string, note?: string): P
     try {
       await repo.backend.abort(sequence);
     } catch (err) {
-      showError(err);
+      showError(err, { op: 'abort' });
     } finally {
       await repo.refresh();
     }

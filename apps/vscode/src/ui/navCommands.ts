@@ -68,6 +68,7 @@ export function registerNavCommands(manager: RepositoryManager, mergedBy: Merged
         let mode: MergeMode | undefined;
         await runAction(repo, {
           label: `$(git-merge) Merge ${shortName(ref)} into ${shortName(head)}`,
+          op: 'merge',
           // 取り込み方を選ぶことが確認になる
           confirm: async () =>
             (mode = await pickMergeMode(`Merge ${shortName(ref)} into ${shortName(head)}?`, true, { repo, theirs: ref, ours: head })) !==
@@ -88,6 +89,7 @@ export function registerNavCommands(manager: RepositoryManager, mergedBy: Merged
       if (!(await confirmFastForward(repo, ref))) return;
       await runAction(repo, {
         label: `$(arrow-down) Fast-Forward ${shortName(ref)}`,
+        op: 'fastForward',
         run: async () => {
           const result = await fastForwardBranch(repo.backend, repo.undo, ref);
           if (result === 'no-upstream') throw new Error(`${shortName(ref)} has no upstream`);
@@ -118,7 +120,7 @@ export async function checkoutRef(repo: Repository, ref: string): Promise<void> 
       await (local ? repo.backend.switchBranch(shortName(local.name)) : repo.backend.trackBranch(shortName(ref)));
     }
   } catch (err) {
-    showError(err);
+    showError(err, { op: 'checkout', branch: name });
   } finally {
     await repo.refresh();
   }
@@ -202,7 +204,7 @@ async function deleteBranches(repo: Repository, refs: string[], mergedBy: Merged
     );
     if (force === 'Delete Anyway') for (const ref of unmerged) await remove(ref, true);
   } catch (err) {
-    showError(err);
+    showError(err, { op: 'deleteBranch' });
   } finally {
     await repo.refresh();
   }
@@ -280,7 +282,7 @@ async function deleteBranch(repo: Repository, ref: string, mergedBy: MergedBy): 
     await remove(pr !== undefined || anyway);
   } catch (err) {
     if (!notMerged(err)) {
-      showError(err);
+      showError(err, { op: 'deleteBranch', branch: name });
       return;
     }
     const force = await vscode.window.showWarningMessage(
@@ -288,7 +290,7 @@ async function deleteBranch(repo: Repository, ref: string, mergedBy: MergedBy): 
       { modal: true, detail: 'You can undo this.' },
       'Delete Anyway',
     );
-    if (force === 'Delete Anyway') await remove(true).catch(showError);
+    if (force === 'Delete Anyway') await remove(true).catch((err) => showError(err, { op: 'deleteBranch', branch: name }));
   } finally {
     await repo.refresh();
   }

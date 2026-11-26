@@ -6,6 +6,7 @@ import { readFile } from 'node:fs/promises';
 import { homedir } from 'node:os';
 import { join } from 'node:path';
 import * as vscode from 'vscode';
+import { OperationError } from '../failure/kind.ts';
 import { daemonFor } from '../daemon/connection.ts';
 import { hooksDirectory } from '../settings/hookFiles.ts';
 import { HOOK_NAMES, hookWhen } from '../settings/hooks.ts';
@@ -143,7 +144,7 @@ export class SettingsController implements vscode.Disposable {
       const reply = await vscode.window.withProgress({ location: vscode.ProgressLocation.Notification, title }, async () =>
         (await client.call({ op: 'run', command })).json,
       );
-      if (reply['ok'] !== true) throw new Error(String(reply['error'] ?? `${title} failed`));
+      if (reply['ok'] !== true) throw new OperationError(String(reply['error'] ?? `${title} failed`), command['op']);
       if (command['op'] === 'configSet') signatureConfigWritten([String(command['key'])]);
     };
     const form = (await client.call({ op: 'run', command: { op: 'repositoryForm' } })).json['info'] as RepositoryForm | undefined;

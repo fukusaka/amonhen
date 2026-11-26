@@ -11,6 +11,7 @@ import type { MergeMode } from '../git/backend.ts';
 import { runAction } from './dragDrop.ts';
 import { pickMergeMode } from './mergeMode.ts';
 import { MainPanel } from './mainPanel.ts';
+import { refusedMidSequence } from './sequenceCommands.ts';
 
 interface RefItem extends vscode.QuickPickItem {
   ref: string;
@@ -26,7 +27,7 @@ interface Choice extends vscode.QuickPickItem {
 export function registerMergeBranchesCommand(manager: RepositoryManager): vscode.Disposable {
   return vscode.commands.registerCommand('amonhen.mergeBranches', async () => {
     const repo = manager.current;
-    if (repo) {
+    if (repo && !(await refusedMidSequence(repo))) {
       await mergeBranches(repo);
     }
   });
@@ -71,6 +72,7 @@ async function mergeRevs(repo: Repository, revs: string[], head: string | undefi
     let mode: MergeMode | undefined;
     await runAction(repo, {
       label: `$(git-merge) Merge ${shortName(ref)} into ${target}`,
+      op: 'merge',
       confirm: async () =>
         (mode = await pickMergeMode(`Merge ${shortName(ref)} into ${target}?`, true, { repo, theirs: ref, ours: head })) !== undefined,
       run: () => mergeInto(repo.backend, repo.undo, ref, head, mode),
@@ -196,6 +198,7 @@ async function run(repo: Repository, revs: string[], oneByOne: boolean, target: 
     label: oneByOne
       ? `$(list-ordered) Merge ${namesLabel(names)} into ${target} one by one`
       : `$(git-merge) Merge ${namesLabel(names)} into ${target}`,
+    op: 'merge',
     run: async () => {
       try {
         const result = await mergeSeveral(repo.backend, repo.undo, revs, oneByOne, mode);

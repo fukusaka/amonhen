@@ -63,7 +63,7 @@ GTK4 のアプリは macOS のアプリと同じふるまいをめざす。わ�
 | タグの署名の印 | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | VSCode: 行のアイコンで、説明はツールチップに。<br>CLI: `refs --verify`。<br>TUI: 行の右端に ✓（正しい署名。鍵を信用していなければ黄色）・!（期限切れ・失効）・✗（正しくない）・?（確かめられない）。`i` で署名の詳細を枠に出す。 |
 | タグのメニュー: Push to・Replace on・削除・リモートから削除 | ✓ | ✓ | ✓ | ✓ | △ | ✓ | VSCode: リモートがいくつもあれば一覧で選ぶ。Push はタグを並べて先に聞く。<br>CLI: `amonhen run` から。<br>TUI: `D` で手元のタグを消し、`t` でリモートへ push か置き換え、`X` でリモートから消す。リモートは数字で選ぶ。 |
 | リモートとそのブランチ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ |  |
-| リモートのメニュー: 追加・名前の変更・URL の変更・削除・Prune | ✓ | ✓ | ✓ | ✓ | △ | ✓ | VSCode: アプリの 1 つの Edit… のシートの代わりに Rename…・Edit URL…・Edit Push URL…・Check Connection。<br>CLI: `amonhen run` から。<br>TUI: 命令の一覧の Add Remote。サイドバーのリモートのブランチの上で `e` で名前と URL を直し、`X` で Prune、`x` で消す。 |
+| リモートのメニュー: 追加・名前の変更・URL の変更・削除・Prune | ✓ | ✓ | ✓ | ✓ | △ | ✓ | VSCode: Add Remote… はメインビューのアプリと同じシート（Name・Fetch URL・Push URL・指す先・Check Connection）。アプリの 1 つの Edit… のシートの代わりに Rename…・Edit URL…・Edit Push URL…・Check Connection。<br>CLI: `amonhen run` から。<br>TUI: 命令の一覧の Add Remote。サイドバーのリモートのブランチの上で `e` で名前と URL を直し、`X` で Prune、`x` で消す。 |
 | Pull Requests のグループ | ✓ | ✓ | ✓ | — | — | — |  |
 | Submodules のグループ（Update・新しい窓で開く） | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | CLI: `submodule`・`submodule update`。<br>TUI: サイドバーの Submodules の節。Enter でその submodule で TUI を開き直す。命令の一覧に Update Submodules。 |
 | submodule の印（取り出していない・違うコミット・中の変更・コンフリクト）とメニュー: Update…（中の submodule も・追うブランチの最新）・URL の編集・追うブランチ・外す（.git/modules も消せる）・追加・Sync URLs | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | VSCode: Remove は 2 つのボタンで、.git/modules を残すか一緒に消すかを聞く。<br>CLI: `submodule`（`add`・`remove`・`set-url`・`set-branch`・`sync`）。<br>TUI: 行の右端に印。コマンドの一覧に Update Submodules・Add Submodule、submodule の行で `e` URL、`B` 追うブランチ、`x` 外す（`d` で .git/modules も消す）、`y` Sync URLs。 |
@@ -307,7 +307,7 @@ GTK4 のアプリは macOS のアプリと同じふるまいをめざす。わ�
 | Save as Patch（コミットごとか mbox・カバーレター・-v） | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | VSCode: 形とカバーレターを組み合わせられ、前に選んだものが先頭。<br>CLI: `format-patch`。<br>TUI: 命令の一覧から、選んでいるコミットか、印をつけたコミットを古い順に。`.mbox` で終わる名前なら 1 つのファイル、`c` でカバーレター、`v` で版を聞く。 |
 | Apply Patch（am / apply・下見・3-way・--index） | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | CLI: `am`・`apply`（`--check`）。<br>TUI: 命令の一覧から。下見は確かめる文の件名かファイル、当たらなければ 3-way を勧め、`i` で index にも。 |
 | パッチのファイルを窓に落とす | ✓ | ✓ | ✓ | ✓ | n/a | n/a | VSCode: エクスプローラーのメニューから。<br>TUI: Apply Patch がファイルのパスを聞く。 |
-| Export Archive（zip・tar.gz・tar、先頭のフォルダ、1 つのフォルダ） | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | VSCode: エンジンがあれば。ブランチ・タグの右クリック、History のコミットの右クリック、HEAD はコマンドパレットから。<br>CLI: `archive`。<br>TUI: 命令の一覧から、選んでいるコミット。形は拡張子で決まり、`y` で先頭のフォルダ、`t` でなし、`o` で 1 つのフォルダ（パスを書く）。 |
+| Export Archive（zip・tar.gz・tar、先頭のフォルダ、1 つのフォルダ） | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | VSCode: エンジンがあれば。ブランチ・タグの右クリック、History のコミットの右クリック、HEAD はコマンドパレットから。先頭のフォルダは入力する（空ならなし）。<br>CLI: `archive`。<br>TUI: 命令の一覧から、選んでいるコミット。形は拡張子で決まり、`y` で先頭のフォルダ、`t` でなし、`o` で 1 つのフォルダ（パスを書く）。 |
 | Save as Bundle（すべて・一部の ref・基点より後） | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | VSCode: エンジンがあれば。選んだブランチ・タグの右クリック、リポジトリ全体はサイドバーの ⋯ から。<br>CLI: `bundle create`。<br>TUI: 命令の一覧から。すべて、`b` で今のブランチだけ、`a` で今のブランチの基点より後。 |
 | bundle のファイルから clone（HEAD がなければブランチを選ぶ） | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | VSCode: サイドバーの ⋯ と最初の画面から。clone したものを開く・新しい窓で開く・ワークスペースに足す。<br>CLI: `clone <file> [-b <branch>]`。<br>TUI: Quick Open に `.bundle` のパスを打つ。ブランチは `1`〜`9` で選ぶ。 |
 | Fetch from Bundle（名前の下に、前提のコミットを確かめて） | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | VSCode: エンジンがあれば。サイドバーの ⋯ から。<br>CLI: `bundle fetch`。<br>TUI: 命令の一覧から。 |

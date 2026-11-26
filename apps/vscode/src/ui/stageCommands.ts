@@ -3,7 +3,7 @@ import { readFile, stat } from 'node:fs/promises';
 import { join } from 'node:path';
 import * as vscode from 'vscode';
 import { failureCause, hasMoreThan } from '../failure/cause.ts';
-import { classifyFailure, failureAdvice, failureRemedies, failureSummary, type Failure, type Remedy } from '../failure/kind.ts';
+import { classifyFailure, failureAdvice, failureRemedies, failureSummary, failureTitle, operationOf, type Failure, type Remedy } from '../failure/kind.ts';
 import { GitError } from '../git/exec.ts';
 import { groupChanges, type Change } from '../state/changes.ts';
 import { conflictStates } from '../state/conflicts.ts';
@@ -149,6 +149,13 @@ export interface ShowErrorOptions {
   retry?: () => unknown;
   /** 端末を開く場所（認証・ホスト鍵のとき） */
   cwd?: string;
+  /**
+   * 失敗した操作（コアの命令の名前。`failureTitle`）。あればアプリの帯と同じく「Couldn’t Push」などを見出しにして
+   * 原因を続ける。読み込みなど、操作でないものの失敗には渡さない
+   */
+  op?: string;
+  /** 操作したブランチ（ほかの worktree で checkout しているとき、その名前を言う） */
+  branch?: string;
 }
 
 const REMEDY_TITLES: Record<Remedy, string> = {
@@ -168,14 +175,17 @@ export function showError(err: unknown, options: ShowErrorOptions = {}): void {
   const message = err instanceof GitError || err instanceof Error ? err.message : String(err);
   const cause = failureCause(message);
   const failure = classifyFailure(err instanceof GitError ? `${err.stderr}\n${message}` : message);
-  const summary = failure && failureSummary(failure);
+  const summary = failure && failureSummary(failure, options.branch);
   const remedies = failure ? failureRemedies(failure, options.retry !== undefined) : [];
+  // 見出し（何が失敗したか）に原因を続ける（アプリの帯の見出しと要点）
+  const op = options.op ?? operationOf(err);
+  const headed = (text: string) => (op ? `${failureTitle(op)}: ${text}` : text);
   if (!summary && !hasMoreThan(cause, message) && !(err instanceof GitError)) {
-    void vscode.window.showErrorMessage(message);
+    void vscode.window.showErrorMessage(headed(message));
     return;
   }
   const buttons = [...remedies.map((r) => REMEDY_TITLES[r]), 'Details'];
-  void vscode.window.showErrorMessage(summary ?? cause, ...buttons).then((choice) => {
+  void vscode.window.showErrorMessage(headed(summary ?? cause), ...buttons).then((choice) => {
     const remedy = remedies.find((r) => REMEDY_TITLES[r] === choice);
     if (remedy) {
       runRemedy(remedy, failure!, options);
@@ -185,7 +195,7 @@ export function showError(err: unknown, options: ShowErrorOptions = {}): void {
     failures ??= vscode.window.createOutputChannel('Amon Hen Failures');
     const command = err instanceof GitError ? `git ${err.args.join(' ')}\n${err.exitCode === null ? '' : `exit code ${err.exitCode}\n`}` : '';
     const advice = failure && failureAdvice(failure);
-    failures.appendLine(`[${new Date().toLocaleString()}] ${summary ?? cause}`);
+    failures.appendLine(`[${new Date().toLocaleString()}] ${headed(summary ?? cause)}`);
     if (advice) failures.appendLine(advice);
     failures.appendLine(`${command}${(err instanceof GitError ? err.stderr : message).trimEnd()}`);
     failures.appendLine('');

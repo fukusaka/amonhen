@@ -5,6 +5,7 @@
  */
 import { basename, dirname, join } from 'node:path';
 import * as vscode from 'vscode';
+import { OperationError } from '../failure/kind.ts';
 import type { Json } from '../daemon/client.ts';
 import { closeDaemonClient, daemonFor } from '../daemon/connection.ts';
 import { samePath, worktreeName, type Worktree } from '../git/worktrees.ts';
@@ -21,7 +22,7 @@ async function run(repo: Repository, command: Json, title: string): Promise<Json
   const reply = await vscode.window.withProgress({ location: vscode.ProgressLocation.Notification, title }, async () =>
     (await client.call({ op: 'run', command })).json,
   );
-  if (reply['ok'] !== true) throw new Error(String(reply['error'] ?? `${title} failed`));
+  if (reply['ok'] !== true) throw new OperationError(String(reply['error'] ?? `${title} failed`), command['op']);
   return reply;
 }
 

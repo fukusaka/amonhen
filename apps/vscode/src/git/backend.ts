@@ -318,7 +318,7 @@ async function exists(path: string): Promise<boolean> {
  * ほかの操作の途中で始めた操作を git が断ったとき（断りの文は操作と git の版でまちまち）。止まったのではないので、
  * 何の途中かを言って失敗する（コアと同じ文）
  */
-function inProgress(sequence: Sequence): Error {
+export function inProgress(sequence: Sequence): Error {
   return new Error(`A ${sequence} is in progress. Continue or Abort it, then try again.`);
 }
 

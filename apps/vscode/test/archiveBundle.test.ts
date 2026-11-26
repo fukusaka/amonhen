@@ -1,6 +1,7 @@
 import assert from 'node:assert/strict';
 import { test } from 'node:test';
 import {
+  archivePrefix,
   archiveTopFolder,
   cloneBranch,
   defaultArchiveFormat,
@@ -22,6 +23,12 @@ test('the archive format starts from the last one, else zip on macOS and Windows
 test('the top folder joins the repository and the name, without characters files can’t have', () => {
   assert.equal(archiveTopFolder('amonhen', 'v1.0'), 'amonhen-v1.0');
   assert.equal(archiveTopFolder('amonhen', 'feature/x'), 'amonhen-feature-x');
+});
+
+test('the typed top folder drops surrounding spaces and slashes, and empty means none', () => {
+  assert.equal(archivePrefix('  app-1/ '), 'app-1');
+  assert.equal(archivePrefix('/a/b/'), 'a/b');
+  assert.equal(archivePrefix('  '), '');
 });
 
 test('a bundle header lists its refs and HEAD, and counts what it builds on', () => {

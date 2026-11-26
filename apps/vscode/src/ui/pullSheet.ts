@@ -123,6 +123,7 @@ export async function pullWithSheet(repo: Repository): Promise<void> {
   const how = methodOf(chosen, situation);
   await runAction(repo, {
     label: `$(repo-pull) Pull ${target} into ${head}`,
+    op: 'pull',
     run: async () => {
       if (!upstream) {
         upstream = from;

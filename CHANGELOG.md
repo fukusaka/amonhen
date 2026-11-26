@@ -1482,6 +1482,17 @@ First release.
   math time limit and gantt time zone (now following daylight saving) as settings (with the engine).
 - The SVG mobile check shows Android's and flutter_svg's real conversions with their notes, and always compares the
   original with the renderer's picture in the image comparison, even when nothing breaks (with the engine).
+- Failures are headed by the operation, as in the app ("Couldn't Push"), and a branch checked out in another worktree
+  is named.
+- Add Remote is one sheet in the main view with Name, Fetch URL, Push URL, where the URL points to, and Check
+  Connection, as in the app.
+- Continue, Abort and Skip appear only while an operation is in progress, and Pull, Merge Branches…, Rebase… and Apply
+  Patch… aren't offered during one.
+- Publish isn't offered without a remote, and publishing to an existing remote branch says how many commits it pushes
+  or that it only sets the upstream.
+- Export Archive takes any top folder name (empty for none), Save as Bundle shows the commit count, and removing a
+  remote says it can't be undone.
+- Fetch…, Pull…, Push… and Force Push… end with "…", and the sidebar's right-click menus offer the app's items.
 
 #### Fixed
 
