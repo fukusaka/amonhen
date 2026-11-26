@@ -377,6 +377,42 @@ fn with_history(f: impl FnOnce(&mut HistoryView)) {
     }
 }
 
+thread_local! {
+    /// 整形した Markdown の根の幅の変化の知らせ（幅を割合で決めた画像があるときだけ）。
+    static MARKDOWN_RESIZED: RefCell<Option<windows_core_reactor::EventRevoker>> =
+        const { RefCell::new(None) };
+}
+
+/// 整形した Markdown の根（`HistoryView::markdown_root`）の幅を今と変わるたびに `MarkdownWidth` で知らせる。
+fn watch_markdown_width(element: &windows_core_reactor::IInspectable) {
+    use amonhen_win_xaml as xaml;
+    use windows_core_reactor::Interface;
+    let Ok(root) = element.cast::<xaml::FrameworkElement>() else {
+        return;
+    };
+    let send = |root: &xaml::FrameworkElement| {
+        let Ok(width) = root.ActualWidth() else {
+            return;
+        };
+        if width > 0.0 {
+            let column = crate::markdownview::column_width(width);
+            with_history(|h| {
+                h.sender.send(Message::MarkdownWidth(column));
+            });
+        }
+    };
+    let revoker = root.SizeChanged(move |sender, _| {
+        if let Some(root) = sender
+            .as_ref()
+            .and_then(|s| s.cast::<xaml::FrameworkElement>().ok())
+        {
+            send(&root);
+        }
+    });
+    MARKDOWN_RESIZED.with(|r| *r.borrow_mut() = revoker.ok());
+    send(&root);
+}
+
 /// 根の部品（タブ）の History（開くまでは None）。タブごとに持ち、後ろのタブも開いたままにする。
 type HistoryCell = Rc<RefCell<Option<Rc<RefCell<HistoryView>>>>>;
 
@@ -603,6 +639,8 @@ struct Root {
     /// 整形した Markdown の根（帯の検索を、その中の文字に向ける）と、今の一致・一致の数。
     markdown_root: ElementRef<Grid>,
     markdown_find: (usize, usize),
+    /// 整形した Markdown の本文の欄の今の幅（幅の割合の画像の基準。`MarkdownWidth` で変わる）。
+    markdown_column: f64,
     /// マージエディタの Result の欄（Ctrl+Z・Ctrl+Y を付ける）。
     merge_result_box: ElementRef<TextBox>,
     /// マージエディタの左右と Base の欄の、選んでいるコンフリクトの所。
@@ -1603,6 +1641,8 @@ enum Message {
     ToolbarDisplay(Option<usize>),
     /// 整形した Markdown の中を探した（今の一致、一致の数）。
     MarkdownFound(usize, usize),
+    /// 整形した Markdown の欄の幅が変わった（本文の欄の幅、DIP）。
+    MarkdownWidth(f64),
     DiffFindQuery(String),
     DiffFindStep(i32),
     /// 差分が替わって数え直した、差分の中の一致の数（メッセージの一致と合わせて出す）。
@@ -1861,6 +1901,7 @@ impl Component for Root {
             diff_find_box: ElementRef::new(),
             markdown_root: ElementRef::new(),
             markdown_find: (0, 0),
+            markdown_column: crate::markdownview::column_width(f64::MAX),
             merge_result_box: ElementRef::new(),
             merge_chosen: std::array::from_fn(|_| ElementRef::new()),
             merge_bar: ElementRef::new(),
@@ -3489,6 +3530,11 @@ impl Root {
                 }
                 let next = (now as i64 + i64::from(step)).rem_euclid(total as i64) as usize;
                 self.find_in_markdown(self.diff_find_query.clone(), next);
+            }
+            Message::MarkdownWidth(column) => {
+                if (column - self.markdown_column).abs() >= 1.0 {
+                    self.markdown_column = column;
+                }
             }
             Message::MarkdownFound(now, total) => {
                 self.markdown_find = (now, total);
@@ -17990,7 +18036,7 @@ impl Root {
     }
 
     /// すべてのファイルの木の一覧（ファイルを開いていないとき、差分の欄に重ねる）。
-    fn files_list(&self, context: &ViewContext<Self>) -> View {
+    fn files_list(&self, context: &mut ViewContext<Self>) -> View {
         let Some(browser) = &self.browser else {
             return View::empty();
         };
@@ -18014,6 +18060,23 @@ impl Root {
                     images = f.images.clone();
                 }
             });
+            // 幅を割合で決めた画像があれば、欄の幅が変わるたびにその幅で描き直す（macOS 版と同じ）。
+            if parsed
+                .as_deref()
+                .is_some_and(crate::markdownview::has_percent_images)
+            {
+                let root = self.markdown_root.clone();
+                context.use_effect("markdown-width", key, move || {
+                    let _ = root.request_native_element(|result| {
+                        if let Ok(element) = result {
+                            watch_markdown_width(&element);
+                        }
+                    });
+                    Some(Box::new(|| {
+                        MARKDOWN_RESIZED.with(|r| *r.borrow_mut() = None)
+                    }))
+                });
+            }
             return Grid::new()
                 .element_ref(&self.markdown_root)
                 .background(Brush::Solid(crate::palette::background()))
@@ -18022,6 +18085,7 @@ impl Root {
                     parsed.as_deref(),
                     &diagrams,
                     &images,
+                    self.markdown_column,
                 ),));
         }
         let flat = !crate::prefs::bool(crate::prefs::HISTORY_FILE_TREE);
