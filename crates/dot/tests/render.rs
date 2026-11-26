@@ -1221,3 +1221,26 @@ fn dot_ratio_stretches_positions() {
         view("digraph { size=\"1,9\"; a -> {b c d} }").0
     );
 }
+
+/// クラスタをまたぐ閉路で、どちらを上にしても辺の長さが同じなら、背の高いクラスタが上（同じ高さなら先に書いたほう）。
+/// Graphviz の絵と同じ。
+#[test]
+fn dot_puts_the_taller_cluster_first_in_a_tied_cycle() {
+    let cy = |svg: &str, id: &str| attr_num(part(svg, id), "cy");
+    for src in [
+        "digraph { subgraph cluster_small { a -> b } subgraph cluster_big { p -> q -> r -> s -> t; t -> p } t -> a; b -> q }",
+        "digraph { subgraph cluster_b { b1 } subgraph cluster_a { a1 -> a2 -> a3 } a3 -> b1; b1 -> a1 }",
+    ] {
+        let svg = render(src).unwrap().svg;
+        let (top, bottom) = if src.contains("cluster_small") {
+            ("p", "a")
+        } else {
+            ("a1", "b1")
+        };
+        assert!(cy(&svg, top) < cy(&svg, bottom), "{svg}");
+    }
+    let svg = render("digraph { subgraph cluster_x { x1 -> x2 } subgraph cluster_y { y1 -> y2 } y2 -> x1; x2 -> y1 }")
+        .unwrap()
+        .svg;
+    assert!(cy(&svg, "x1") < cy(&svg, "y1"), "{svg}");
+}
