@@ -1537,6 +1537,31 @@ fn dot_edges_between_the_same_two_nodes_are_drawn_apart() {
     assert!((middle(0) - middle(1)).abs() > 8.0, "{svg}");
 }
 
+/// 同じランクの並びは Graphviz の絵と同じ: 辺を書いた順ではなく、ノードの宣言の順。
+#[test]
+fn dot_ranks_follow_the_declaration_order_as_in_graphviz() {
+    let order = |src: &str, names: &[&str]| -> Vec<String> {
+        let svg = render(src).unwrap().svg;
+        let mut xs: Vec<(f64, String)> = names
+            .iter()
+            .map(|n| (attr_num(part(&svg, n), "cx"), n.to_string()))
+            .collect();
+        xs.sort_by(|a, b| a.0.total_cmp(&b.0));
+        xs.into_iter().map(|(_, n)| n).collect()
+    };
+    assert_eq!(
+        order("digraph { r; c; r -> a; r -> b; r -> c }", &["a", "b", "c"]),
+        ["c", "a", "b"]
+    );
+    assert_eq!(
+        order(
+            "digraph { r; n; f; l; j; r -> {f l j n} }",
+            &["n", "f", "l", "j"]
+        ),
+        ["n", "f", "l", "j"]
+    );
+}
+
 /// 辺のラベルは線のすぐ脇にある（Graphviz の絵と同じく、線はラベルの仮のノードの脇を通る）。
 #[test]
 fn dot_edge_labels_sit_beside_their_line() {

@@ -1505,6 +1505,27 @@ pub fn layout(
     let dfs_order = |top: bool, val: &mut [f64]| {
         let mut seen = vec![false; total];
         let mut next = 0f64;
+        // 辺は行き先のノードの作られた順にたどる（Graphviz の絵と同じく、書いた順ではなく宣言の順で並ぶ）。仮のノードは
+        // その先の本物のノードの順
+        let far = |mut w: usize| -> usize {
+            while !nodes[w].real {
+                let list = if top { &nodes[w].down } else { &nodes[w].up };
+                let Some(&s) = list.first() else { break };
+                w = if top { segs[s].lower } else { segs[s].upper };
+            }
+            w
+        };
+        let next_of: Vec<Vec<usize>> = (0..total)
+            .map(|v| {
+                let list = if top { &nodes[v].down } else { &nodes[v].up };
+                let mut ws: Vec<usize> = list
+                    .iter()
+                    .map(|&s| if top { segs[s].lower } else { segs[s].upper })
+                    .collect();
+                ws.sort_by_key(|&w| nodes[far(w)].seq);
+                ws
+            })
+            .collect();
         let mut starts: Vec<usize> = (0..total).collect();
         if top {
             starts.sort_by_key(|&v| (nodes[v].rank, nodes[v].seq, v));
@@ -1520,10 +1541,9 @@ pub fn layout(
             val[s0] = next;
             next += 1.0;
             while let Some(&mut (v, ref mut k)) = stack.last_mut() {
-                let list = if top { &nodes[v].down } else { &nodes[v].up };
+                let list = &next_of[v];
                 if *k < list.len() {
-                    let seg = &segs[list[*k]];
-                    let w = if top { seg.lower } else { seg.upper };
+                    let w = list[*k];
                     *k += 1;
                     if !seen[w] {
                         seen[w] = true;
