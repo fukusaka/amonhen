@@ -1359,6 +1359,12 @@ impl Operations for RemoteOperations {
         self.op(Op::WorkingStats)
     }
 
+    fn working_stats_split(
+        &self,
+    ) -> Result<(Vec<amonhen_model::FileStat>, Vec<amonhen_model::FileStat>)> {
+        self.op(Op::WorkingStatsSplit)
+    }
+
     fn ignore_matches(
         &self,
         patterns: &[String],

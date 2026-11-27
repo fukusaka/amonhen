@@ -83,11 +83,11 @@ final class DiffViewController: NSViewController, NSSearchFieldDelegate {
     private var lineHeight: CGFloat { ceil(CTFontGetAscent(font) + CTFontGetDescent(font) + CTFontGetLeading(font)) + 4 }
     /// 行番号の欄の幅。
     private let numbersWidth: CGFloat = 96
-    /// 変更の行の左のチェックボックスの欄（`showsStageChecks` のときだけ）。
-    private let checkWidth: CGFloat = 22
+    /// 変更の行の左の、staged・unstaged の帯の欄（`showsStageChecks` のときだけ）。
+    private let checkWidth: CGFloat = 10
     /// いちばん長い行の幅（横にスクロールできる範囲）。読んだときに文字数から見積もり、描いた行がそれより長ければ広げる。
     private var textWidth: CGFloat = 0
-    private var gutterWidth: CGFloat { numbersWidth + (showsStageChecks ? checkWidth : 0) }
+    private var gutterWidth: CGFloat { numbersWidth + (showsBarColumn ? checkWidth : 0) }
 
     // 長い行の折り返し（`Settings.wrapDiffLines`）。折り返すときは横にスクロールしない。
     private var wrapsLines = Settings.wrapDiffLines
@@ -123,9 +123,34 @@ final class DiffViewController: NSViewController, NSSearchFieldDelegate {
     }
     /// Working Copy の HEAD と作業ツリーの差分か。変更の行と hunk の見出しの左に、次のコミットに含めるかの
     /// チェックボックスを出す。
-    private var showsStageChecks: Bool { (diff as? WorkingFileDiff)?.isCombined == true }
+    private var showsStageChecks: Bool {
+        (diff as? WorkingFileDiff)?.isCombined == true || (diff is WorkingStackedDiff && stackedStageChecks)
+    }
+    /// Working Copy でいくつかのファイルをつないだ差分（`WorkingStackedDiff`）が、HEAD と作業ツリーの差分（All）か。
+    var stackedStageChecks = false
+
+    /// `row` 行目の変更が index に入っているか（行の `STAGED` の印）。
+    fileprivate func rowIsStaged(_ row: Int) -> Bool {
+        diff?.withRows { $0[row].flags & UInt8(AmonhenDiffRow_STAGED) != 0 } ?? false
+    }
     /// チェックボックスを押した・Space を押した: `rows` 行目の変更を含める（true）・外す。
     var onSetStaged: ((_ rows: [Int], _ staged: Bool) -> Void)?
+    /// index → working tree・HEAD → index の差分（Working Copy の Unstaged・Staged）で、変更のかたまりのボタンの名前
+    /// （Stage・Unstage）。nil なら出さない。
+    var splitStageTitle: String?
+    /// その差分の `rows` 行目の変更を stage する（Staged の差分なら unstage する）。ボタン・Space。
+    var onStageRows: (([Int]) -> Void)?
+    /// 変更のかたまりにボタンを出すか。
+    /// Working Copy の差分で、行を stage・unstage できるか。
+    fileprivate var stagesRows: Bool { foldsGaps && (showsStageChecks || splitStageTitle != nil) }
+    /// 行の左に帯の欄を置くか（All なら staged かを示す。「変更の帯」の形なら、押して stage する所）。
+    fileprivate var showsBarColumn: Bool { showsStageChecks || (stagesRows && stageStyle == .bar) }
+    /// 行の Stage の仕方（`Settings.lineStageStyle`）。
+    fileprivate var stageStyle = Settings.lineStageStyle
+    /// 選んだ行・hunk の変更を捨てる（Unstaged の差分。行は差分の行）。
+    var onDiscardRows: (([Int]) -> Void)?
+    /// 「変更の帯」の形で、行番号の上をドラッグしている行（離したら stage する）。
+    fileprivate var numberDrag: (anchor: Int, rows: [Int])?
     /// 全ファイルを並べた差分の、ファイルの見出しの行（`AmonhenDiffRow_FILE`）。i 番目がファイル i。
     private var fileRows: [Int] = []
     /// 見出しを押した: ファイルを畳む・開く。
@@ -148,6 +173,27 @@ final class DiffViewController: NSViewController, NSSearchFieldDelegate {
     var expandsHunks = false
     /// 前後を広げる印を押した（ファイルの番号）。
     var onExpandHunk: ((Int) -> Void)?
+    /// 変更のない所（隙間）を少しずつ開いたり閉じたりする差分（Working Copy）。hunk の見出しの行の代わりに隙間の
+    /// 行があり（k 番目が隙間 k。`old_no` が隠している行数、`new_no` が見せている行数、文字は関数名）、破線と札で
+    /// 描く。マウスを乗せると、上・下から開く・すべて開く・畳むのボタンが出る。
+    var foldsGaps = false
+    /// 隙間の開き方（隙間の番号 → 上・下から見せている行数）。
+    var gapOpenings: [Int: GapOpening] = [:]
+    /// 隙間の開き方を変えた（隙間の番号、新しい開き方。nil なら畳む）。
+    var onSetGap: ((Int, GapOpening?) -> Void)?
+    /// 隙間の行 → 隙間の番号（`foldsGaps` のとき）。
+    fileprivate var gapOfRow: [Int: Int] = [:]
+    /// 最初と最後の変更の行（隙間がファイルの頭・末尾かを決める）。
+    fileprivate var changeSpan: ClosedRange<Int>?
+    /// マウスが乗っている隙間の行と、そのボタン。
+    fileprivate var hoveredGap: (row: Int, action: GapAction?)? {
+        didSet { if hoveredGap?.row != oldValue?.row || hoveredGap?.action != oldValue?.action { redraw() } }
+    }
+    /// マウスが乗っている変更のかたまり（含める・外すのボタンを出す）。
+    fileprivate var hoveredBlock: Range<Int>? {
+        didSet { if hoveredBlock != oldValue { redraw() } }
+    }
+
     /// ファイルごとの行数（まだ差分を取っていないファイル。見出しの行は 0 なので、詳細の行数で出す）。
     var fileCounts: [Int: (added: Int, removed: Int)] = [:] {
         didSet { redraw() }
@@ -422,6 +468,10 @@ final class DiffViewController: NSViewController, NSSearchFieldDelegate {
     }
 
     fileprivate func hover(at point: NSPoint?) {
+        if foldsGaps {
+            gapHover(at: point)
+            return
+        }
         if fileMode {
             document.toolTip = point.flatMap { deletedText(at: $0) }
             return
@@ -456,6 +506,8 @@ final class DiffViewController: NSViewController, NSSearchFieldDelegate {
         scrollView.hasHorizontalScroller = !wrapsLines
         scrollView.drawsBackground = false
         NotificationCenter.default.addObserver(self, selector: #selector(wrapSettingChanged), name: .diffWrapLinesChanged, object: nil)
+        NotificationCenter.default.addObserver(
+            self, selector: #selector(stageStyleChanged), name: .lineStageStyleChanged, object: nil)
         scrollView.contentView.postsBoundsChangedNotifications = true
         NotificationCenter.default.addObserver(
             self, selector: #selector(redraw), name: NSView.boundsDidChangeNotification, object: scrollView.contentView)
@@ -561,6 +613,25 @@ final class DiffViewController: NSViewController, NSSearchFieldDelegate {
         wrapMeasureOffsets = [:]
         computeWraps()
         fileRows = diff?.withRows { all in all.indices.filter { all[$0].kind == UInt8(AmonhenDiffRow_FILE) } } ?? []
+        gapOfRow = !foldsGaps ? [:] : diff?.withRows { all in
+            let hunks = all.indices.filter { all[$0].kind == UInt8(AmonhenDiffRow_HUNK) }
+            return Dictionary(uniqueKeysWithValues: hunks.enumerated().map { ($1, $0) })
+        } ?? [:]
+        changeSpan = !foldsGaps ? nil : diff?.withRows { all in
+            guard let first = all.firstIndex(where: Self.isChange), let last = all.lastIndex(where: Self.isChange) else { return nil }
+            return first...last
+        }
+        hoveredGap = nil
+        hoveredBlock = nil
+        // 確かめる用（`--snapshot`）: `-AMHDiffHoverGap n` で n 番目（1 始まり）の隙間の行に、`-AMHDiffHoverBlock 1` で
+        // 最初の変更のかたまりにマウスが乗っている形で描く。
+        if foldsGaps {
+            let gap = UserDefaults.standard.integer(forKey: "AMHDiffHoverGap")
+            if gap > 0, let row = gapOfRow.first(where: { $0.value == gap - 1 })?.key { hoveredGap = (row, nil) }
+            if UserDefaults.standard.bool(forKey: "AMHDiffHoverBlock"), let first = changeSpan?.lowerBound {
+                hoveredBlock = changeBlock(containing: first)
+            }
+        }
         if !filePanels.isEmpty || !folderGroups.isEmpty || !hiddenRows.isEmpty {
             folderGroups = [:]
             hiddenFiles = []
@@ -572,6 +643,11 @@ final class DiffViewController: NSViewController, NSSearchFieldDelegate {
         textWidth = diff.map(estimatedTextWidth) ?? 0
         topFile = nil
         selectedRows.removeAll()
+        // 確かめる用（`--snapshot`）: `-AMHDiffSelect 4-6` で、その行（0 始まり）を選んだ形で描く。
+        if foldsGaps, let range = UserDefaults.standard.string(forKey: "AMHDiffSelect") {
+            let parts = range.split(separator: "-").compactMap { Int($0) }
+            if parts.count == 2, let diff, parts[1] < diff.rowCount { selectedRows = Set(parts[0]...parts[1]) }
+        }
         anchorRow = nil
         textSelection = nil
         onSelectionChange?()
@@ -709,6 +785,7 @@ final class DiffViewController: NSViewController, NSSearchFieldDelegate {
 
     fileprivate func menu(at point: NSPoint) -> NSMenu? {
         if let file = fileHeader(at: point) { return fileMenu?(file) }
+        if stagesRows, let menu = stageMenu(at: point) { return menu }
         if let onOpenAtCommit, let diff, !fileRows.isEmpty {
             let row = rowAt(point.y)
             if row >= 0, row < diff.rowCount, let file = fileRows.lastIndex(where: { $0 <= row }) {
@@ -731,6 +808,7 @@ final class DiffViewController: NSViewController, NSSearchFieldDelegate {
         return diff.withRows { rows -> (String, String)? in
             guard row >= 0, row < rows.count,
                   let start = rows.indices.prefix(row + 1).last(where: { rows[$0].kind == UInt8(AmonhenDiffRow_HUNK) })
+                    ?? (foldsGaps ? 0 : nil)
             else { return nil }
             // 見出しより後ろで、次の hunk の前（ファイルの見出しが間にあれば、その hunk は別のファイル）。
             if rows.indices[start...row].contains(where: { rows[$0].kind == UInt8(AmonhenDiffRow_FILE) }) { return nil }
@@ -743,7 +821,7 @@ final class DiffViewController: NSViewController, NSSearchFieldDelegate {
             for i in start..<end {
                 let text = diff.text(row: i)
                 switch rows[i].kind {
-                case UInt8(AmonhenDiffRow_HUNK): out += text + "\n"
+                case UInt8(AmonhenDiffRow_HUNK): if !foldsGaps { out += text + "\n" }
                 case UInt8(AmonhenDiffRow_ADDED): out += "+" + text + "\n"
                 case UInt8(AmonhenDiffRow_REMOVED): out += "-" + text + "\n"
                 default: out += " " + text + "\n"
@@ -763,9 +841,13 @@ final class DiffViewController: NSViewController, NSSearchFieldDelegate {
     /// 表示し直した後に選ぶ hunk の番号（含める・外すの後に次の hunk へ進むため）。
     var hunkToSelectAfterShow: Int?
 
-    /// hunk の見出しの行。
+    /// hunk の見出しの行。隙間を開閉する差分では、変更のかたまり（続いた追加・削除の行）の最初の行。
     private var hunkRows: [Int] {
-        diff?.withRows { all in all.indices.filter { all[$0].kind == UInt8(AmonhenDiffRow_HUNK) } } ?? []
+        diff?.withRows { all in
+            foldsGaps
+                ? all.indices.filter { Self.isChange(all[$0]) && ($0 == 0 || !Self.isChange(all[$0 - 1])) }
+                : all.indices.filter { all[$0].kind == UInt8(AmonhenDiffRow_HUNK) }
+        } ?? []
     }
 
     /// 今の hunk の番号（選んだ行か、見えている一番上の行を含む hunk）。
@@ -801,7 +883,9 @@ final class DiffViewController: NSViewController, NSSearchFieldDelegate {
         let hunks = hunkRows
         guard hunks.indices.contains(index) else { return }
         let start = hunks[index]
-        let end = index + 1 < hunks.count ? hunks[index + 1] : (diff?.rowCount ?? start + 1)
+        let end = foldsGaps
+            ? (changeBlock(containing: start)?.upperBound ?? start + 1)
+            : index + 1 < hunks.count ? hunks[index + 1] : (diff?.rowCount ?? start + 1)
         hunkCursor = index
         if isSelectable {
             selectedRows = Set(start..<end)
@@ -830,6 +914,18 @@ final class DiffViewController: NSViewController, NSSearchFieldDelegate {
         }
     }
 
+    /// `row` を含む変更のかたまり（続いた追加・削除の行）。
+    fileprivate func changeBlock(containing row: Int) -> Range<Int>? {
+        guard let diff, row >= 0, row < diff.rowCount else { return nil }
+        return diff.withRows { all in
+            guard Self.isChange(all[row]) else { return nil }
+            var start = row, end = row + 1
+            while start > 0, Self.isChange(all[start - 1]) { start -= 1 }
+            while end < all.count, Self.isChange(all[end]) { end += 1 }
+            return start..<end
+        }
+    }
+
     /// `row` を含む hunk の、追加・削除の行（`row` が hunk の見出しでも中の行でもよい）。
     private func changeRows(inHunkOf row: Int) -> [Int] {
         guard let diff else { return [] }
@@ -842,30 +938,44 @@ final class DiffViewController: NSViewController, NSSearchFieldDelegate {
         }
     }
 
-    private static func isChange(_ row: AmonhenDiffRow) -> Bool {
+    fileprivate static func isChange(_ row: AmonhenDiffRow) -> Bool {
         row.kind == UInt8(AmonhenDiffRow_ADDED) || row.kind == UInt8(AmonhenDiffRow_REMOVED)
     }
 
     /// `rows` の変更を、すべて含めていれば外し、そうでなければすべて含める。切り替えた後は、次の hunk へ進む。
-    private func toggleStaged(_ rows: [Int]) {
-        guard let diff = diff as? WorkingFileDiff, !rows.isEmpty else { return }
+    fileprivate func toggleStaged(_ rows: [Int]) {
+        guard diff is WorkingFileDiff || diff is WorkingStackedDiff, !rows.isEmpty else { return }
         let hunks = hunkRows
         if let last = rows.max(), let index = hunks.lastIndex(where: { $0 <= last }) {
             hunkToSelectAfterShow = index + 1 < hunks.count ? index + 1 : index
         }
-        onSetStaged?(rows, !rows.allSatisfy { diff.isStaged(row: $0) })
+        onSetStaged?(rows, !rows.allSatisfy { rowIsStaged($0) })
     }
 
     /// Space: 選んだ変更の行（なければ何もしない）を含める・外す。扱ったら true。
     fileprivate func toggleSelectedStaged() -> Bool {
-        guard showsStageChecks, !selectedChangeRows.isEmpty else { return false }
+        guard !selectedChangeRows.isEmpty else { return false }
+        if !showsStageChecks, splitStageTitle != nil, let onStageRows {
+            onStageRows(selectedChangeRows)
+            return true
+        }
+        guard showsStageChecks else { return false }
         toggleStaged(selectedChangeRows)
         return true
     }
 
     /// クリックで行を選ぶ。hunk の見出しなら hunk 全体、Shift で範囲、Command で追加・解除。
     /// 左端のチェックボックスなら、その行（hunk の見出しなら hunk の変更すべて）を含める・外す。
+    fileprivate func mouseUp(_ event: NSEvent, at point: NSPoint) {
+        guard let drag = numberDrag else { return }
+        numberDrag = nil
+        stageRows(drag.rows)
+        redraw()
+    }
+
     fileprivate func mouseDown(_ event: NSEvent, at point: NSPoint) {
+        rowDrag = nil
+        numberDrag = nil
         guard let diff else { return }
         if let folder = folder(at: point) {
             onToggleFolder?(folder)
@@ -880,16 +990,23 @@ final class DiffViewController: NSViewController, NSSearchFieldDelegate {
             }
             return
         }
+        // 隙間の行: ボタン・札で開く・畳む。行のほかの所は何もしない（選ばない）。
+        if foldsGaps, gapOfRow[rowAt(point.y)] != nil {
+            gapClick(at: point)
+            return
+        }
+        // 「変更の帯」の形: 帯を押すとかたまり、行番号を押す・ドラッグするとその行を stage・unstage する。
+        if stagesRows, stageStyle == .bar, barClick(event, at: point) { return }
         // hunk の見出しの左の印: そのファイルの前後の行を広げる。
         if expandsHunks, let onExpandHunk, point.x - scrollView.contentView.bounds.origin.x < numbersWidth {
             let row = rowAt(point.y)
             if row >= 0, row < diff.rowCount, diff.withRows({ $0[row].kind }) == UInt8(AmonhenDiffRow_HUNK),
-               let file = fileRows.lastIndex(where: { $0 <= row }) {
+               let file = fileRows.lastIndex(where: { $0 <= row }) ?? (fileRows.isEmpty ? 0 : nil) {
                 onExpandHunk(file)
                 return
             }
         }
-        if showsStageChecks, point.x - scrollView.contentView.bounds.origin.x < checkWidth {
+        if showsBarColumn, point.x - scrollView.contentView.bounds.origin.x < checkWidth {
             let row = rowAt(point.y)
             guard row >= 0, row < diff.rowCount else { return }
             let kind = diff.withRows { $0[row].kind }
@@ -925,13 +1042,31 @@ final class DiffViewController: NSViewController, NSSearchFieldDelegate {
         }
         if event.modifierFlags.contains(.shift), let anchor = anchorRow {
             selectedRows = Set(min(anchor, row)...max(anchor, row))
+            rowDrag = (anchor, [])
         } else if event.modifierFlags.contains(.command) {
+            let before = selectedRows
             selectedRows = selectedRows.isSuperset(of: rows) ? selectedRows.subtracting(rows) : selectedRows.union(rows)
             anchorRow = row
+            rowDrag = (row, before.subtracting(rows))
         } else {
             selectedRows = rows
             anchorRow = row
+            rowDrag = (row, [])
         }
+        onSelectionChange?()
+        redraw()
+    }
+
+    /// 行をドラッグして範囲を選ぶ（押した行から、今の行まで。⌘ なら前に選んでいた行に足す）。
+    fileprivate var rowDrag: (anchor: Int, base: Set<Int>)?
+
+    private func dragRows(to point: NSPoint) {
+        guard let diff, let drag = rowDrag, diff.rowCount > 0 else { return }
+        let row = min(max(rowAt(point.y), 0), diff.rowCount - 1)
+        let range = Set(min(drag.anchor, row)...max(drag.anchor, row))
+        let next = drag.base.union(range)
+        guard next != selectedRows else { return }
+        selectedRows = next
         onSelectionChange?()
         redraw()
     }
@@ -996,6 +1131,18 @@ final class DiffViewController: NSViewController, NSSearchFieldDelegate {
     }
 
     fileprivate func mouseDragged(_ event: NSEvent, at point: NSPoint) {
+        if let drag = numberDrag, let diff {
+            let row = min(max(rowAt(point.y), 0), diff.rowCount - 1)
+            let rows = diff.withRows { all in
+                (min(drag.anchor, row)...max(drag.anchor, row)).filter { Self.isChange(all[$0]) }
+            }
+            if rows != drag.rows {
+                numberDrag = (drag.anchor, rows)
+                redraw()
+            }
+            return
+        }
+        if isSelectable { return dragRows(to: point) }
         guard !isSelectable, let p = position(at: point), let current = textSelection else { return }
         if let unit = selectionUnit {
             let extended = unitRange(at: p, clicks: event.clickCount)
@@ -1355,7 +1502,8 @@ final class DiffViewController: NSViewController, NSSearchFieldDelegate {
                     renderer.addRect(CGRect(x: 0, y: top, width: width, height: height),
                                      color: modifiedRows.contains(row) ? NSColor.systemBlue.withAlphaComponent(0.2).rgba : added)
                 case UInt8(AmonhenDiffRow_REMOVED): renderer.addRect(CGRect(x: 0, y: top, width: width, height: height), color: removed)
-                case UInt8(AmonhenDiffRow_HUNK): renderer.addRect(CGRect(x: 0, y: top, width: width, height: height), color: hunk)
+                case UInt8(AmonhenDiffRow_HUNK) where !foldsGaps:
+                    renderer.addRect(CGRect(x: 0, y: top, width: width, height: height), color: hunk)
                 case UInt8(AmonhenDiffRow_OURS): renderer.addRect(CGRect(x: 0, y: top, width: width, height: height), color: ours)
                 case UInt8(AmonhenDiffRow_THEIRS): renderer.addRect(CGRect(x: 0, y: top, width: width, height: height), color: theirs)
                 case UInt8(AmonhenDiffRow_BASE): renderer.addRect(CGRect(x: 0, y: top, width: width, height: height), color: base)
@@ -1371,13 +1519,18 @@ final class DiffViewController: NSViewController, NSSearchFieldDelegate {
                 if expandsHunks, r.kind == UInt8(AmonhenDiffRow_HUNK) {
                     drawExpandMark(top: top, scale: scale)
                 }
-                if showsStageChecks {
+                if foldsGaps, r.kind == UInt8(AmonhenDiffRow_HUNK) {
+                    drawGapRow(row, top: top, scale: scale)
+                    continue
+                }
+                if showsBarColumn {
                     drawStageCheck(row: row, kind: r.kind, all: all, top: top, scale: scale)
                 }
                 let numbers = isConflictView || fileMode
                     ? [(fileMode && r.new_no == 0 ? r.old_no : r.new_no, gutterWidth - 6)]
                     : [(r.old_no, gutterWidth - numbersWidth / 2 - 6), (r.new_no, gutterWidth - 6)]
-                for (number, right) in numbers where number > 0 {
+                // 隙間の見出しの old_no は隙間の行数（行番号ではない）。
+                for (number, right) in numbers where number > 0 && r.kind != UInt8(AmonhenDiffRow_HUNK) {
                     let line = numberCache[number] ?? renderer.shape("\(number)" as CFString, font: font, scale: scale)
                     numberCache[number] = line
                     renderer.addLine(line, origin: CGPoint(x: right - line.width, y: baseline), color: secondary, scale: scale)
@@ -1452,6 +1605,7 @@ final class DiffViewController: NSViewController, NSSearchFieldDelegate {
             }
             if !folderGroups.isEmpty { drawFolders(origin: origin, scale: scale) }
             if !deletionMarks.isEmpty { drawDeletionMarks(origin: origin, scale: scale) }
+
             // 見出しの行が上に隠れたファイルは、見出しを上に張り付かせる。
             if let (file, top) = stickyHeader(origin: origin) {
                 let row = fileRows[file]
@@ -1567,43 +1721,30 @@ extension DiffViewController {
                          color: NSColor.controlAccentColor.rgba, scale: scale)
     }
 
-    /// 変更の行・hunk の見出しの左のチェックボックス。hunk は中の変更がすべて含まれていれば ✓、一部なら −。
+    /// 変更の行の左の帯（All の差分）: staged なら塗り、unstaged なら枠だけ。押すとその行を Stage・Unstage する。
     fileprivate func drawStageCheck(
         row: Int, kind: UInt8, all: UnsafeBufferPointer<AmonhenDiffRow>, top: CGFloat, scale: CGFloat
     ) {
-        let state: NSControl.StateValue
-        switch kind {
-        case UInt8(AmonhenDiffRow_ADDED), UInt8(AmonhenDiffRow_REMOVED):
-            state = all[row].flags & UInt8(AmonhenDiffRow_STAGED) != 0 ? .on : .off
-        case UInt8(AmonhenDiffRow_HUNK):
-            var end = row + 1
-            var staged = 0, total = 0
-            while end < all.count, all[end].kind != UInt8(AmonhenDiffRow_HUNK) {
-                if all[end].kind == UInt8(AmonhenDiffRow_ADDED) || all[end].kind == UInt8(AmonhenDiffRow_REMOVED) {
-                    total += 1
-                    if all[end].flags & UInt8(AmonhenDiffRow_STAGED) != 0 { staged += 1 }
-                }
-                end += 1
-            }
-            state = staged == 0 ? .off : staged == total ? .on : .mixed
-        default:
+        guard kind == UInt8(AmonhenDiffRow_ADDED) || kind == UInt8(AmonhenDiffRow_REMOVED) else { return }
+        let staged = all[row].flags & UInt8(AmonhenDiffRow_STAGED) != 0
+        let hot = hoveredBlock?.contains(row) == true || numberDrag?.rows.contains(row) == true
+        var bar = CGRect(x: 3, y: top, width: 4, height: rowHeight(row))
+        if hot {
+            bar = CGRect(x: 2, y: top, width: 6, height: rowHeight(row))
+            renderer.addRect(CGRect(x: checkWidth, y: top, width: gutterWidth - checkWidth, height: rowHeight(row)),
+                             color: NSColor.controlAccentColor.withAlphaComponent(0.14).rgba)
+        }
+        if !showsStageChecks {
+            // Unstaged・Staged: 変更のかたまりの印（押せる所）。
+            renderer.addRect(bar, color: NSColor.controlAccentColor.withAlphaComponent(hot ? 1 : 0.55).rgba)
             return
         }
-        let size: CGFloat = 12
-        let box = CGRect(x: 5, y: top + (lineHeight - size) / 2, width: size, height: size)
-        if state == .off {
-            renderer.addRect(box, color: NSColor.secondaryLabelColor.rgba)
-            renderer.addRect(box.insetBy(dx: 1, dy: 1), color: backdrop.boxColor)
-            return
+        if staged {
+            renderer.addRect(bar, color: NSColor.controlAccentColor.rgba)
+        } else {
+            renderer.addRect(bar, color: NSColor.secondaryLabelColor.rgba)
+            renderer.addRect(bar.insetBy(dx: 1, dy: 0), color: backdrop.boxColor)
         }
-        renderer.addRect(box, color: NSColor.controlAccentColor.rgba)
-        let mark = state == .on ? "✓" : "−"
-        let font = NSFont.boldSystemFont(ofSize: 10) as CTFont
-        let glyph = checkGlyphs[mark] ?? renderer.shape(mark as CFString, font: font, scale: scale)
-        checkGlyphs[mark] = glyph
-        let baseline = box.midY + (CTFontGetAscent(font) - CTFontGetDescent(font)) / 2
-        renderer.addLine(
-            glyph, origin: CGPoint(x: box.midX - glyph.width / 2, y: baseline), color: NSColor.white.rgba, scale: scale)
     }
 }
 
@@ -1636,6 +1777,13 @@ extension DiffViewController {
     }
 
     /// 設定が変わった（History の View Options などで切り替えた）。
+    @objc fileprivate func stageStyleChanged() {
+        stageStyle = Settings.lineStageStyle
+        hoveredBlock = nil
+        updateDocumentSize()
+        redraw()
+    }
+
     @objc fileprivate func wrapSettingChanged() {
         let on = Settings.wrapDiffLines
         guard on != wrapsLines, isViewLoaded else { return }
@@ -1938,6 +2086,11 @@ final class DiffDocumentView: NSView, NSMenuItemValidation {
     override func mouseDragged(with event: NSEvent) {
         autoscroll(with: event)
         owner?.mouseDragged(event, at: convert(event.locationInWindow, from: nil))
+    }
+
+    override func mouseUp(with event: NSEvent) {
+        owner?.mouseUp(event, at: convert(event.locationInWindow, from: nil))
+        super.mouseUp(with: event)
     }
 
     @objc func copy(_ sender: Any?) { owner?.copySelection() }
@@ -3197,7 +3350,8 @@ extension CommitDetailViewController {
         return titles
     }
 
-    /// コミットを選んだ: すべて畳んで、変更ファイルの一覧として見せる。
+    /// コミットを選んだ: 先頭から `Settings.diffOpenFiles` 個のファイルを開いて並べる（変更が `collapseAbove` 行を
+    /// 超えるファイルは畳んだまま）。残りは見出しだけ。
     fileprivate func showInline(_ stacked: StackedDiff) {
         openFiles = []
         svgAsText = []
@@ -3220,6 +3374,17 @@ extension CommitDetailViewController {
         diffView.fileNotes = notes
         updateMissing()
         updatePendingCounts()
+        let sizes = stacked.view(collapsed: [Bool](repeating: true, count: stacked.count)).withRows { rows in
+            rows.filter { $0.kind == UInt8(AmonhenDiffRow_FILE) }.map { Int($0.old_no) + Int($0.new_no) }
+        }
+        let first = (0..<min(Settings.diffOpenFiles, stacked.count)).filter { file in
+            let size = pendingFiles.contains(file)
+                ? fileStats[path(of: file)].map { ($0.added ?? 0) + ($0.removed ?? 0) } ?? 0
+                : file < sizes.count ? sizes[file] : 0
+            return size <= Self.collapseAbove
+        }
+        load(first)
+        openFiles = Set(first)
         filesBrowser = nil
         setFilesMode(false)
         reshowStacked(keepScroll: false)
@@ -3683,3 +3848,351 @@ func moveHistoryMatch(from window: NSWindow?, by step: Int) -> Bool {
 }
 
 
+
+// MARK: - 変更のない所（隙間）の行（Working Copy）
+
+extension DiffViewController {
+    /// 隙間の行の操作。開く・畳むは隙間に、stage・unstage・discard はその下の hunk に効く。
+    enum GapAction: Equatable {
+        /// 上（前の変更に続く所）から開く。
+        case down
+        /// 下（次の変更の手前）から開く。
+        case up
+        case all
+        case collapse
+        case stage
+        case unstage
+        case discard
+    }
+
+    /// 1 度に開く行数。
+    fileprivate static let gapStep: UInt32 = 20
+
+    fileprivate struct GapLayout {
+        /// 中央の札（0 行の見出しの行にはない）と、その文字・行を選んでいるか。
+        var pill: CGRect?
+        var pillText: String
+        var pillSelected: Bool
+        /// 札の右のボタン（開く・畳む。マウスが乗っているときだけ）と、右端の hunk の操作。
+        var buttons: [(action: GapAction, title: String, rect: CGRect)]
+        /// 関数名（左寄せ）。
+        var function: (text: String, x: CGFloat)?
+        /// hunk の操作が効く行（選んだ行か、hunk の変更すべて）。
+        var target: [Int]
+    }
+
+    private var gapFont: CTFont { NSFont.systemFont(ofSize: 11) as CTFont }
+
+    private func gapGlyph(_ text: String, scale: CGFloat, bold: Bool = false) -> TextRenderer.ShapedLine {
+        let key = "gap|\(bold)|\(text)|\(scale)"
+        if let glyph = headerGlyphs[key] { return glyph }
+        let font = bold ? NSFont.systemFont(ofSize: 11, weight: .medium) as CTFont : gapFont
+        let glyph = renderer.shape(text as CFString, font: font, scale: scale)
+        headerGlyphs[key] = glyph
+        return glyph
+    }
+
+    /// 見えている範囲の座標（描くときの座標）。
+    fileprivate func visiblePoint(_ point: NSPoint) -> CGPoint {
+        let origin = scrollView.contentView.bounds.origin
+        return CGPoint(x: point.x - origin.x, y: point.y - origin.y)
+    }
+
+    /// `row` 行目（隙間の行）の下の hunk の変更の行（次の隙間の行・ファイルの見出しの手前まで）。
+    fileprivate func hunkChanges(below row: Int) -> [Int] {
+        guard let diff else { return [] }
+        return diff.withRows { all in
+            var out: [Int] = []
+            var i = row + 1
+            while i < all.count, all[i].kind != UInt8(AmonhenDiffRow_HUNK), all[i].kind != UInt8(AmonhenDiffRow_FILE) {
+                if Self.isChange(all[i]) { out.append(i) }
+                i += 1
+            }
+            return out
+        }
+    }
+
+    /// `row` 行目を含む hunk の見出し（隙間の行）。なければ nil。
+    fileprivate func hunkHeader(of row: Int) -> Int? {
+        guard let diff else { return nil }
+        return diff.withRows { all in
+            var i = row
+            while i >= 0, all[i].kind != UInt8(AmonhenDiffRow_HUNK), all[i].kind != UInt8(AmonhenDiffRow_FILE) { i -= 1 }
+            return i >= 0 && all[i].kind == UInt8(AmonhenDiffRow_HUNK) ? i : nil
+        }
+    }
+
+    /// `rows` に効く操作と名前（Stage・Unstage・Discard。`lines` なら Lines、そうでなければ Hunk）。
+    private func stageActions(for rows: [Int], lines: Bool) -> [(GapAction, String)] {
+        guard stagesRows, !rows.isEmpty else { return [] }
+        let noun = lines ? "Lines" : "Hunk"
+        if showsStageChecks {
+            return rows.allSatisfy { rowIsStaged($0) } ? [(.unstage, "Unstage \(noun)")] : [(.stage, "Stage \(noun)")]
+        }
+        if splitStageTitle == "Unstage" { return [(.unstage, "Unstage \(noun)")] }
+        var out: [(GapAction, String)] = [(.stage, "Stage \(noun)")]
+        if onDiscardRows != nil { out.append((.discard, "Discard \(noun)")) }
+        return out
+    }
+
+    /// 隙間の行の置き場所（見えている範囲の座標）。左に関数名、中央に札、札の右に開く・畳むボタン（マウスが
+    /// 乗っているとき）、右端にその下の hunk の操作（「選んでから」の形）。hunk の行を選んでいれば、札は
+    /// 選んだ行の数になり、操作は選んだ行に効く。
+    private func gapLayout(row: Int, top: CGFloat, scale: CGFloat) -> GapLayout? {
+        guard let diff, gapOfRow[row] != nil else { return nil }
+        let (hidden, shown) = diff.withRows { all in (Int(all[row].old_no), Int(all[row].new_no)) }
+        let function = diff.text(row: row)
+        // ファイルの頭・末尾の隙間か（いくつかのファイルをつないだ差分では、そのファイルの中で）。
+        let (leading, trailing) = diff.withRows { all -> (Bool, Bool) in
+            var up = row - 1
+            while up >= 0, all[up].kind != UInt8(AmonhenDiffRow_FILE), !Self.isChange(all[up]) { up -= 1 }
+            var down = row + 1
+            while down < all.count, all[down].kind != UInt8(AmonhenDiffRow_FILE), !Self.isChange(all[down]) { down += 1 }
+            return (up < 0 || all[up].kind == UInt8(AmonhenDiffRow_FILE),
+                    down >= all.count || all[down].kind == UInt8(AmonhenDiffRow_FILE))
+        }
+        let changes = stagesRows && stageStyle == .select ? hunkChanges(below: row) : []
+        let selected = changes.isEmpty ? [] : Set(selectedChangeRows).intersection(changes).sorted()
+        let pillText: String
+        if !selected.isEmpty {
+            pillText = L("%ld lines selected", selected.count)
+        } else if hidden > 0 {
+            pillText = "⋯  " + L("%ld unchanged lines", hidden)
+        } else if shown > 0 {
+            pillText = L("%ld unchanged lines shown", shown)
+        } else {
+            pillText = ""
+        }
+        var gapActions: [(GapAction, String)] = []
+        if hoveredGap?.row == row, selected.isEmpty {
+            let step = Int(Self.gapStep)
+            if hidden > step {
+                if !leading { gapActions.append((.down, "↓ " + L("%ld lines", step))) }
+                if !trailing { gapActions.append((.up, "↑ " + L("%ld lines", step))) }
+            }
+            if hidden > 0 { gapActions.append((.all, L("All"))) }
+            if shown > 0 { gapActions.append((.collapse, L("Collapse"))) }
+        }
+        let target = selected.isEmpty ? changes : selected
+        let hunkActions = stageActions(for: target, lines: !selected.isEmpty)
+        let height: CGFloat = 16
+        let y = top + (lineHeight - height) / 2
+        let space: CGFloat = 6
+        let width = textView.bounds.width
+        var buttons: [(GapAction, String, CGRect)] = []
+        // 右端の hunk の操作（右から並べる）。
+        var right = width - 10
+        for (action, title) in hunkActions.reversed() {
+            let w = gapGlyph(title, scale: scale, bold: true).width + 12
+            buttons.append((action, title, CGRect(x: right - w, y: y, width: w, height: height)))
+            right -= w + 2
+        }
+        // 中央の札と、その右の開く・畳む。
+        var pill: CGRect?
+        var x = gutterWidth + 8
+        if !pillText.isEmpty {
+            let pillWidth = gapGlyph(pillText, scale: scale).width + 20
+            let chipWidths = gapActions.map { gapGlyph($0.1, scale: scale, bold: true).width + 16 }
+            // 札は自分の幅だけで中央に置く（マウスが乗ってボタンが出ても、札が動かない）。
+            x = max(gutterWidth + 8, gutterWidth + (width - gutterWidth - pillWidth) / 2)
+            pill = CGRect(x: x, y: y, width: pillWidth, height: height)
+            x += pillWidth + space
+            for (i, (action, title)) in gapActions.enumerated() where x + chipWidths[i] < right - 8 {
+                buttons.append((action, title, CGRect(x: x, y: y, width: chipWidths[i], height: height)))
+                x += chipWidths[i] + space
+            }
+        }
+        // 左の関数名（札にかかるなら出さない）。
+        var functionPlace: (String, CGFloat)?
+        if !function.isEmpty {
+            let text = "ƒ " + function
+            let end = gutterWidth + 8 + gapGlyph(text, scale: scale).width
+            if end + 12 < (pill?.minX ?? right) { functionPlace = (text, gutterWidth + 8) }
+        }
+        return GapLayout(pill: pill, pillText: pillText, pillSelected: !selected.isEmpty, buttons: buttons,
+                         function: functionPlace, target: target)
+    }
+
+    /// 隙間の行: 破線と、札・ボタン・関数名。
+    fileprivate func drawGapRow(_ row: Int, top: CGFloat, scale: CGFloat) {
+        guard let layout = gapLayout(row: row, top: top, scale: scale) else { return }
+        let width = textView.bounds.width
+        let mid = (top + lineHeight / 2).rounded(.down)
+        let font = gapFont
+        let textOffset = (CTFontGetAscent(font) - CTFontGetDescent(font)) / 2
+        // 破線（札・ボタン・関数名の所は空ける）。
+        var holes: [ClosedRange<CGFloat>] = layout.buttons.map { $0.rect.minX - 6...$0.rect.maxX + 6 }
+        if let pill = layout.pill { holes.append(pill.minX - 6...pill.maxX + 6) }
+        if let function = layout.function {
+            holes.append(function.x - 4...function.x + gapGlyph(function.text, scale: scale).width + 8)
+        }
+        var x = gutterWidth + 4
+        while x < width - 4 {
+            if !holes.contains(where: { $0.contains(x) || $0.contains(x + 4) }) {
+                renderer.addRect(CGRect(x: x, y: mid, width: 4, height: 1), color: NSColor.separatorColor.rgba)
+            }
+            x += 8
+        }
+        if let pill = layout.pill {
+            let pillHovered = hoveredGap?.row == row && hoveredGap?.action == nil
+            let fill = layout.pillSelected
+                ? NSColor.controlAccentColor.withAlphaComponent(0.18)
+                : NSColor.secondaryLabelColor.withAlphaComponent(pillHovered ? 0.22 : 0.12)
+            renderer.addRoundedRect(pill, radius: pill.height / 2, color: fill.rgba)
+            let glyph = gapGlyph(layout.pillText, scale: scale)
+            renderer.addLine(
+                glyph, origin: CGPoint(x: pill.midX - glyph.width / 2, y: pill.midY + textOffset),
+                color: (layout.pillSelected ? NSColor.controlAccentColor : NSColor.secondaryLabelColor).rgba, scale: scale)
+        }
+        for button in layout.buttons {
+            let hovered = hoveredGap?.row == row && hoveredGap?.action == button.action
+            let hunk = [.stage, .unstage, .discard].contains(button.action)
+            let color: NSColor = button.action == .discard ? .systemRed : .controlAccentColor
+            if hunk {
+                // hunk の操作は文字だけ（乗ったら薄く塗る）。
+                if hovered {
+                    renderer.addRoundedRect(button.rect, radius: 4, color: color.withAlphaComponent(0.14).rgba)
+                }
+            } else {
+                renderer.addRoundedRect(
+                    button.rect, radius: button.rect.height / 2, color: color.withAlphaComponent(hovered ? 0.30 : 0.14).rgba)
+            }
+            let glyph = gapGlyph(button.title, scale: scale, bold: true)
+            renderer.addLine(
+                glyph, origin: CGPoint(x: button.rect.midX - glyph.width / 2, y: button.rect.midY + textOffset),
+                color: color.rgba, scale: scale)
+        }
+        if let function = layout.function {
+            renderer.addLine(
+                gapGlyph(function.text, scale: scale), origin: CGPoint(x: function.x, y: mid + textOffset),
+                color: NSColor.tertiaryLabelColor.rgba, scale: scale)
+        }
+    }
+
+    /// 隙間の行を押した: ボタンならその操作、札ならすべて開く（すべて開いていれば畳む）。
+    fileprivate func gapClick(at point: NSPoint) {
+        let row = rowAt(point.y)
+        let top = rowY(row) - scrollView.contentView.bounds.origin.y
+        let scale = cachedScale ?? view.window?.backingScaleFactor ?? 2
+        guard let gap = gapOfRow[row], let diff, let layout = gapLayout(row: row, top: top, scale: scale) else { return }
+        let p = visiblePoint(point)
+        let action: GapAction
+        if let button = layout.buttons.first(where: { $0.rect.insetBy(dx: -2, dy: -3).contains(p) }) {
+            action = button.action
+        } else if let pill = layout.pill, !layout.pillSelected, pill.insetBy(dx: -2, dy: -3).contains(p) {
+            let (hidden, shown) = diff.withRows { ($0[row].old_no, $0[row].new_no) }
+            guard hidden > 0 || shown > 0 else { return }
+            action = hidden > 0 ? .all : .collapse
+        } else {
+            return
+        }
+        var opening = gapOpenings[gap] ?? GapOpening()
+        func grow(_ value: UInt32) -> UInt32 { value > .max - Self.gapStep ? .max : value + Self.gapStep }
+        switch action {
+        case .down: opening.top = grow(opening.top)
+        case .up: opening.bottom = grow(opening.bottom)
+        // すべて開くときは、隙間の行を開いた行の上に残す（そこから畳める）。
+        case .all: opening.bottom = .max
+        case .collapse:
+            onSetGap?(gap, nil)
+            return
+        case .stage, .unstage:
+            stageRows(layout.target)
+            return
+        case .discard:
+            onDiscardRows?(layout.target)
+            return
+        }
+        onSetGap?(gap, opening)
+    }
+
+    /// `rows` の変更を stage・unstage する（Unstaged・Staged の差分なら その側の操作、All なら入れ替える）。
+    fileprivate func stageRows(_ rows: [Int]) {
+        guard !rows.isEmpty else { return }
+        if showsStageChecks { toggleStaged(rows) } else { onStageRows?(rows) }
+    }
+
+    /// 「変更の帯」の形の、帯・行番号を押した。扱ったら true。
+    fileprivate func barClick(_ event: NSEvent, at point: NSPoint) -> Bool {
+        guard let diff else { return false }
+        let x = point.x - scrollView.contentView.bounds.origin.x
+        let row = rowAt(point.y)
+        guard x < gutterWidth, row >= 0, row < diff.rowCount, diff.withRows({ Self.isChange($0[row]) }) else { return false }
+        if x < checkWidth {
+            if let block = changeBlock(containing: row) { stageRows(Array(block)) }
+        } else {
+            // 行番号: 離したときに、押した行からドラッグした行までを stage する。
+            numberDrag = (row, [row])
+            redraw()
+        }
+        return true
+    }
+
+    /// マウスの位置から、乗っている隙間の行・ボタンと、帯の上のかたまりを決める。
+    fileprivate func gapHover(at point: NSPoint?) {
+        guard let point, let diff else {
+            hoveredGap = nil
+            hoveredBlock = nil
+            return
+        }
+        let row = rowAt(point.y)
+        guard row >= 0, row < diff.rowCount else {
+            hoveredGap = nil
+            hoveredBlock = nil
+            return
+        }
+        if gapOfRow[row] != nil {
+            // 先に行だけ決めて（ボタンを並べるため）、ボタンに乗っているかを調べる。
+            if hoveredGap?.row != row { hoveredGap = (row, nil) }
+            let top = rowY(row) - scrollView.contentView.bounds.origin.y
+            let scale = cachedScale ?? view.window?.backingScaleFactor ?? 2
+            let p = visiblePoint(point)
+            let action = gapLayout(row: row, top: top, scale: scale)?.buttons
+                .first { $0.rect.insetBy(dx: -2, dy: -3).contains(p) }?.action
+            hoveredGap = (row, action)
+            hoveredBlock = nil
+            return
+        }
+        hoveredGap = nil
+        // 「変更の帯」の形: 帯の上なら、そのかたまりを強調する（押すとかたまりごと）。
+        let x = point.x - scrollView.contentView.bounds.origin.x
+        hoveredBlock = stagesRows && stageStyle == .bar && x < checkWidth ? changeBlock(containing: row) : nil
+    }
+
+    /// 右クリックのメニュー（Working Copy の差分）: 選んだ行・その hunk・その行の Stage・Unstage と Discard。
+    fileprivate func stageMenu(at point: NSPoint) -> NSMenu? {
+        guard let diff else { return nil }
+        let row = rowAt(point.y)
+        guard row >= 0, row < diff.rowCount else { return nil }
+        let menu = NSMenu()
+        func add(_ rows: [Int], lines: Bool, suffix: String) {
+            for (action, title) in stageActions(for: rows, lines: lines) {
+                let name = lines ? title.replacingOccurrences(of: "Lines", with: suffix) : title
+                // 行・hunk の Discard は、帯の Discard Lines と同じく確かめずに捨てる（Undo で戻せる）。
+                menu.addItem(ClosureMenuItem(title: name) { [weak self] in
+                    if action == .discard { self?.onDiscardRows?(rows) } else { self?.stageRows(rows) }
+                })
+            }
+        }
+        let selected = selectedChangeRows
+        if !selected.isEmpty { add(selected, lines: true, suffix: L("%ld Selected Lines", selected.count)) }
+        let isGap = gapOfRow[row] != nil
+        if let header = isGap ? row : hunkHeader(of: row) {
+            let changes = hunkChanges(below: header)
+            if !changes.isEmpty {
+                if menu.numberOfItems > 0 { menu.addItem(.separator()) }
+                add(changes, lines: false, suffix: "")
+            }
+        }
+        if !isGap, diff.withRows({ Self.isChange($0[row]) }) {
+            if menu.numberOfItems > 0 { menu.addItem(.separator()) }
+            add([row], lines: true, suffix: L("This Line"))
+        }
+        if menu.numberOfItems == 0 { return nil }
+        if let onExplainHunk, Assistant.isConfigured, let (path, text) = hunkText(containing: row) {
+            menu.addItem(.separator())
+            menu.addItem(ClosureMenuItem(title: L("Explain This Hunk with AI")) { onExplainHunk(path, text) })
+        }
+        return menu
+    }
+}

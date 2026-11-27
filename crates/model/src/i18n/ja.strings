@@ -2552,6 +2552,7 @@
 "Parse error on line {line}:" = "{line} 行目の書き方に誤りがあります:";
 "Lexical error on line {line}. Unrecognized text." = "{line} 行目に読めない文字があります。";
 "Front matter is not valid YAML. {error}" = "front matter が YAML として正しくありません。{error}";
+"Can’t count the changed lines here" = "この環境では変更の行数を数えられません";
 "The contents of {count} files aren’t here yet (partial clone)" = "partial clone なので、{count} 個のファイルの中身がまだ手元にありません";
 "Not here yet" = "まだ手元にない";
 "The contents of {count} files aren’t here yet (partial clone)." = "partial clone なので、{count} 個のファイルの中身がまだ手元にありません。";

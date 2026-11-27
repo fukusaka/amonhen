@@ -1,8 +1,8 @@
 import AmonhenKit
 import AppKit
 
-/// Working Copy: 左の上にコミットの入力、その下に変更のあるファイルの 1 つの一覧（チェックボックスで次のコミットに
-/// 含めるか）。右に選んだファイルの差分（行を選んで stage・unstage）。
+/// Working Copy: 左に変更のあるファイルの 1 つの一覧（チェックボックスで次のコミットに含めるか。上下いっぱい）。
+/// 右の上にコミットの入力（Summary だけに畳める）、その下に選んだファイルの差分（行を選んで stage・unstage）。
 /// チェックボックスは index の状態そのもので、FE だけの選択状態は持たない（ターミナルで `git add` しても揃う）。
 final class WorkingCopyViewController: NSSplitViewController, NSOutlineViewDataSource, NSOutlineViewDelegate,
     NSTextViewDelegate, NSMenuDelegate, NSSearchFieldDelegate, NSMenuItemValidation
@@ -15,6 +15,7 @@ final class WorkingCopyViewController: NSSplitViewController, NSOutlineViewDataS
     private let repository: Repository
     private let diffView: DiffViewController
     private let files = KeyOutlineView()
+    private let filesScroll = NSScrollView()
     /// コミットメッセージの 1 行目と、2 行目以降。
     private let summary = NSTextField()
     private let summaryCount = NSTextField(labelWithString: "")
@@ -33,10 +34,26 @@ final class WorkingCopyViewController: NSSplitViewController, NSOutlineViewDataS
         return UserDefaults.standard.bool(forKey: "workingCopyTree") ? .tree : .list
     }
     private var showsTree: Bool { layout == .tree }
+    /// 一覧を git status のように Staged・Unstaged の節に分ける（Mixed なら 1 つの一覧）。覚える。
+    private var showsSections = UserDefaults.standard.bool(forKey: "workingCopySections") {
+        didSet { UserDefaults.standard.set(showsSections, forKey: "workingCopySections") }
+    }
+    private let sectionsButton = NSButton()
     /// ファイルごとの追加・削除の行数（HEAD と作業ツリー。untracked はない）。
     private var stats: [String: (added: Int?, removed: Int?)] = [:]
+    /// 節分けの一覧の、節ごとの行数（Staged は HEAD と index、Unstaged は index と作業ツリー）。
+    private var splitStats: (staged: [String: (added: Int?, removed: Int?)], unstaged: [String: (added: Int?, removed: Int?)])?
     /// 一覧の見出し: すべてを含める・外すチェックボックスと、含める数。
-    private let allCheckbox = NSButton(checkboxWithTitle: L("Changes"), target: nil, action: nil)
+    private let allCheckbox = NSButton(checkboxWithTitle: "", target: nil, action: nil)
+    /// 一覧に出すもの: 変更のあるファイルか、作業ツリーのすべてのファイル（History と同じ切り替え）。
+    private let contentSwitch = NSSegmentedControl(
+        labels: [L("Changes"), L("All Files")], trackingMode: .selectOne, target: nil, action: nil)
+    private lazy var treeFiles = WorkingTreeFiles(repository: repository)
+    private var showsAllFiles: Bool { contentSwitch.selectedSegment == 1 }
+    /// すべてのファイルで開いている、変えていないファイル（変えたファイルは `selectedKey`）。
+    private var treeFilePath: String?
+    /// 一覧の見出しの 2 段目（すべてを含める・外すと、含める数）。すべてのファイルでは隠す。
+    private let includeRow = NSStackView()
     private let countLabel = NSTextField(labelWithString: "")
     /// sparse checkout のとき、一覧の上に薄く出す「一部のフォルダだけ取り出し中」（押すと取得とフォルダのページ）。
     private let sparseNote = NSButton(title: "", target: nil, action: nil)
@@ -50,6 +67,21 @@ final class WorkingCopyViewController: NSSplitViewController, NSOutlineViewDataS
     private let whitespacePopUp = WhitespacePopUp()
     /// 差分の表示の設定（長い行を折り返す）。
     private let wrapButton = WrapLinesButton()
+    /// ファイル全体を表示（差分の前後を、変わっていない行も含めてファイル全体にする）。
+    private let wholeFileButton = NSButton()
+    /// 差分の中を探す（⌘F）。
+    private let findButton = NSButton()
+    /// 帯の右端の表示の設定（コード > 長い行を折り返す・ファイル全体を表示、コミットメッセージ > 畳む）。
+    private lazy var viewOptions = ViewOptionsPopUp { [weak self] menu in self?.fillViewOptions(menu) }
+    /// ファイルごとの、変更のない所（隙間）の開き方と、隙間の数・まだ隠している行のある隙間の数。覚えない。
+    private var openGaps: [String: [Int: GapOpening]] = [:]
+    private var gapCounts: [String: (all: Int, folded: Int)] = [:]
+    /// 画像のファイルの比べ方（History と同じ 4 つ）。
+    private var imageMode: ImageDiffPanel.Mode = .twoUp
+    /// 差分の代わりに出している画像の比較。
+    private var imagePanel: ImageDiffPanel?
+    /// SVG をテキストの差分で見ているファイル。
+    private var svgAsText: Set<String> = []
     private let amend = NSButton(checkboxWithTitle: "Amend", target: nil, action: nil)
     private let commitButton = YieldingButton(title: "Commit", target: nil, action: nil)
     private let suggestButton = NSButton(title: "", target: nil, action: nil)
@@ -64,7 +96,11 @@ final class WorkingCopyViewController: NSSplitViewController, NSOutlineViewDataS
     /// ⌥↑ を押す前に書いていたもの（⌥↓ で戻ってきたら戻す）。
     private var draftBeforeRecall: (String, String)?
     /// 一部だけ stage したファイルで、作業ツリーの側と stage 済みの側のどちらの差分を見せるか。
-    private let sideControl = NSSegmentedControl(labels: ["Unstaged", "Staged"], trackingMode: .selectOne, target: nil, action: nil)
+    private let sideControl = NSSegmentedControl(labels: ["Unstaged", "Staged", "All"], trackingMode: .selectOne, target: nil, action: nil)
+    /// 差分で見る側（git の index → working tree・HEAD → index・HEAD → working tree）。Working Copy で 1 つ。
+    private enum DiffSide: Int { case unstaged, staged, all }
+    /// 確かめる用（`--snapshot`）に `-AMHWorkingCopySide 1` で最初の側を決められる（0 Unstaged・1 Staged・2 All）。
+    private var diffSide = DiffSide(rawValue: UserDefaults.standard.integer(forKey: "AMHWorkingCopySide")) ?? .unstaged
     private let linesButton = NSButton(title: "Stage Lines", target: nil, action: nil)
     private let discardButton = NSButton(title: "Discard Lines", target: nil, action: nil)
     var actions: Actions?
@@ -73,23 +109,67 @@ final class WorkingCopyViewController: NSSplitViewController, NSOutlineViewDataS
     private let lineEndingsLabel = NSTextField(labelWithString: "")
     /// merge・rebase などの途中のときに出す帯。
     private let sequenceBar = NSStackView()
-    /// 左の列の上下の仕切り（コミットの入力と、ファイルの一覧）。NSSplitViewController 自身を delegate にすると
+    /// 右の列の上下の仕切り（コミットの入力と、差分）。NSSplitViewController 自身を delegate にすると
     /// 自分の分割項目と照合して崩れるので、専用の delegate を持つ。
     private let messageSplit = NSSplitView()
     private let messageSplitDelegate = MessageSplitDelegate()
+    /// コミットの入力の行: Summary（畳んだときは Commit も）と、その下のボタンの行。
+    private let summaryRow = NSStackView()
+    private let commitRow = NSStackView()
+    private let messageScroll = NSScrollView()
+    /// コミットの入力を畳む・開く（畳むと Summary と Commit の 1 行）。
+    private let collapseButton = NSButton()
+    /// コミットの入力を畳んでいる（覚える）。
+    private var commitCollapsed = UserDefaults.standard.bool(forKey: "workingCopyCommitCollapsed") {
+        didSet { UserDefaults.standard.set(commitCollapsed, forKey: "workingCopyCommitCollapsed") }
+    }
+    /// 畳む前の仕切りの位置（開いたら戻す）。
+    private var expandedMessageHeight: CGFloat?
     private let sequenceLabel = NSTextField(labelWithString: "")
 
     /// 一覧の 1 ファイル。
     private final class Entry {
         let item: StatusItem
-        init(item: StatusItem) { self.item = item }
+        /// 節分けの一覧で、どの節の行か（Mixed とコンフリクトは nil）。一部だけ stage したファイルは両方の節に出る。
+        let section: DiffSide?
+        init(item: StatusItem, section: DiffSide? = nil) {
+            self.item = item
+            self.section = section
+        }
         var isConflict: Bool { item.kind == .unmerged }
-        /// 次のコミットに含めるか（index の状態）。
+        /// 次のコミットに含めるか（index の状態）。節では、Staged の行は含める、Unstaged の行は含めない。
         var check: NSControl.StateValue {
-            if isConflict || !item.isStaged { return .off }
-            return item.isUnstaged ? .mixed : .on
+            if isConflict { return .off }
+            switch section {
+            case .staged: return .on
+            case .unstaged: return .off
+            default:
+                if !item.isStaged { return .off }
+                return item.isUnstaged ? .mixed : .on
+            }
         }
     }
+
+    /// 節分けの一覧の節（git status の Unmerged paths・Changes to be committed・Changes not staged）。
+    private final class Section {
+        /// nil なら Unmerged。
+        let side: DiffSide?
+        let entries: [Entry]
+        let tree: Dir?
+        init(side: DiffSide?, entries: [Entry], tree: Dir?) {
+            self.side = side
+            self.entries = entries
+            self.tree = tree
+        }
+        var title: String {
+            switch side {
+            case .staged: "Staged"
+            case .unstaged: "Unstaged"
+            default: "Unmerged"
+            }
+        }
+    }
+    private var sections: [Section]?
 
     private var status: WorkingStatus?
     /// 一覧に出すファイル（コンフリクトが先、あとはパスの順。絞り込み済み）。
@@ -119,6 +199,10 @@ final class WorkingCopyViewController: NSSplitViewController, NSOutlineViewDataS
     /// 読み直した木を開いている途中（開いた・畳んだの知らせを、使う人の操作として覚えない）。
     private var isExpandingTree = false
     private var current: WorkingFileDiff?
+    /// 一覧で 2 つ以上選んだとき、右に並べている差分（選んだファイルのパスと、つないだ差分）。
+    private var multi: (paths: [String], stacked: WorkingStackedDiff?)?
+    /// 並べた差分で畳んだファイル（パス）。
+    private var multiCollapsed: Set<String> = []
     /// 選んでいたファイルと、見せていた側（読み直した後に選び直す）。
     private var selectedKey: (path: String, staged: Bool)?
     /// 読み直した後に選び直している途中（選択の変化で差分を替えない）。
@@ -165,7 +249,6 @@ final class WorkingCopyViewController: NSSplitViewController, NSOutlineViewDataS
         summary.action = #selector(summaryChanged)
         NotificationCenter.default.addObserver(
             self, selector: #selector(summaryChanged), name: NSControl.textDidChangeNotification, object: summary)
-        let messageScroll = NSScrollView()
         messageScroll.documentView = message
         messageScroll.hasVerticalScroller = true
         messageScroll.borderType = .bezelBorder
@@ -216,17 +299,23 @@ final class WorkingCopyViewController: NSSplitViewController, NSOutlineViewDataS
         message.guideColumn = 72
         restoreDraftOrTemplate()
         loadRecentCommits()
-        // 件名の文字数は Commit の横に置く（件名の欄は Description と同じ幅にする）。
-        let commitRow = NSStackView(views: [
-            amend, historyButton, insertButton, NSView(), summaryCount, suggestButton, commitButton, commitMenuButton,
-        ])
+        // 件名の文字数は Commit の横に置く（件名の欄は Description と同じ幅にする）。畳んだときは Summary の行に移す。
         commitRow.spacing = 3
+        summaryRow.spacing = 6
         summaryCount.setContentHuggingPriority(.required, for: .horizontal)
         summaryCount.setContentCompressionResistancePriority(.required, for: .horizontal)
         // 狭くても Amend の文字は削らない（足りなければ余白が縮む）。
         amend.setContentCompressionResistancePriority(.required, for: .horizontal)
         summaryCount.toolTip = L("Length of the summary (yellow over 50, orange over 72)")
-        let summaryRow = summary
+        summary.setContentHuggingPriority(.init(1), for: .horizontal)
+        summary.setContentCompressionResistancePriority(.init(1), for: .horizontal)
+        collapseButton.bezelStyle = .accessoryBarAction
+        collapseButton.isBordered = false
+        collapseButton.controlSize = .small
+        collapseButton.imagePosition = .imageOnly
+        collapseButton.target = self
+        collapseButton.action = #selector(toggleCommitCollapsed)
+        collapseButton.setContentHuggingPriority(.required, for: .horizontal)
 
         sequenceLabel.textColor = .systemOrange
         sequenceLabel.lineBreakMode = .byTruncatingTail
@@ -257,7 +346,27 @@ final class WorkingCopyViewController: NSSplitViewController, NSOutlineViewDataS
         layoutControl.selectedSegment = layout.rawValue
         layoutControl.target = self
         layoutControl.action = #selector(layoutChanged)
-        let filesHeader = NSStackView(views: [allCheckbox, countLabel, NSView(), layoutControl])
+        contentSwitch.selectedSegment = 0
+        contentSwitch.controlSize = .small
+        contentSwitch.target = self
+        contentSwitch.action = #selector(contentSwitchChanged)
+        contentSwitch.setToolTip(L("Changed files, with checkboxes for the next commit"), forSegment: 0)
+        contentSwitch.setToolTip(L("Every file in the working tree (ignored files are left out)"), forSegment: 1)
+        sectionsButton.setButtonType(.pushOnPushOff)
+        sectionsButton.bezelStyle = .accessoryBarAction
+        sectionsButton.isBordered = false
+        sectionsButton.image = AppIcons.image(symbol: "rectangle.split.1x2", label: L("Staged and Unstaged"))
+        sectionsButton.target = self
+        sectionsButton.action = #selector(sectionsChanged)
+        sectionsButton.state = showsSections ? .on : .off
+        sectionsButton.contentTintColor = showsSections ? .controlAccentColor : nil
+        sectionsButton.toolTip = L("Split the list into Staged and Unstaged, like git status (a partly staged file is in both)")
+        let filesHeader = NSStackView(views: [contentSwitch, NSView(), sectionsButton, layoutControl])
+        filesHeader.spacing = 6
+        includeRow.setViews([allCheckbox, countLabel], in: .leading)
+        includeRow.spacing = 2
+        treeFiles.onOpen = { [weak self] path in self?.openTreeFile(path) }
+        treeFiles.scroll.isHidden = true
         sparseNote.isBordered = false
         sparseNote.controlSize = .small
         sparseNote.font = .systemFont(ofSize: NSFont.smallSystemFontSize)
@@ -278,6 +387,8 @@ final class WorkingCopyViewController: NSSplitViewController, NSOutlineViewDataS
         files.outlineTableColumn = column
         files.headerView = nil
         files.style = .sourceList
+        // 節の見出しは張り付かせない（ほかの行と同じに流れる）。
+        files.floatsGroupRows = false
         files.allowsMultipleSelection = true
         files.dataSource = self
         files.delegate = self
@@ -292,7 +403,6 @@ final class WorkingCopyViewController: NSSplitViewController, NSOutlineViewDataS
         let fileMenu = NSMenu()
         fileMenu.delegate = self
         files.menu = fileMenu
-        let filesScroll = NSScrollView()
         filesScroll.documentView = files
         filesScroll.hasVerticalScroller = true
         emptyLabel.textColor = .secondaryLabelColor
@@ -302,8 +412,8 @@ final class WorkingCopyViewController: NSSplitViewController, NSOutlineViewDataS
         emptyLabel.centerXAnchor.constraint(equalTo: filesScroll.centerXAnchor).isActive = true
         emptyLabel.centerYAnchor.constraint(equalTo: filesScroll.centerYAnchor).isActive = true
 
-        // 左の列は上下 2 段: 上にコミットの入力、下にファイルの一覧。間の仕切りをドラッグするとメッセージの欄の
-        // 高さが変わり、位置は覚えておく。窓の高さが変わったときは、ファイルの一覧の側が伸び縮みする。
+        // 左の列はファイルの一覧だけ（上下いっぱい）。右の列は上下 2 段: 上にコミットの入力、下に差分。間の仕切りを
+        // ドラッグするとメッセージの欄の高さが変わり、位置は覚えておく。窓の高さが変わったときは、差分の側が伸び縮みする。
         let stackOf = { (views: [NSView], top: CGFloat, bottom: CGFloat) -> NSStackView in
             let stack = NSStackView(views: views)
             stack.orientation = .vertical
@@ -315,26 +425,20 @@ final class WorkingCopyViewController: NSSplitViewController, NSOutlineViewDataS
             }
             return stack
         }
-        let top = stackOf([sequenceBar, summaryRow, messageScroll, commitRow], 8, 6)
-        top.setCustomSpacing(10, after: commitRow)
-        messageScroll.heightAnchor.constraint(greaterThanOrEqualToConstant: 72).isActive = true
-        messageScroll.setContentHuggingPriority(.init(1), for: .vertical)
-        let bottom = stackOf([filesHeader, sparseNote, filterField, filesScroll], 6, 8)
+        let left = stackOf([filesHeader, includeRow, sparseNote, filterField, filesScroll, treeFiles.scroll], 8, 8)
         filesScroll.setContentHuggingPriority(.init(1), for: .vertical)
-        messageSplit.isVertical = false
-        messageSplit.dividerStyle = .thin
-        messageSplit.addArrangedSubview(top)
-        messageSplit.addArrangedSubview(bottom)
-        messageSplitDelegate.minimum = { [weak self] in self?.messageMinimum ?? 170 }
-        messageSplit.delegate = messageSplitDelegate
-        messageSplit.frame = NSRect(x: 0, y: 0, width: 280, height: 500)
-        messageSplit.autosaveName = "WorkingCopyMessage"
+        treeFiles.scroll.setContentHuggingPriority(.init(1), for: .vertical)
+        left.frame = NSRect(x: 0, y: 0, width: 280, height: 500)
         let leftController = NSViewController()
-        leftController.view = messageSplit
+        leftController.view = left
         let leftItem = NSSplitViewItem(viewController: leftController)
         leftItem.minimumThickness = 220
         leftItem.holdingPriority = .init(260)
         addSplitViewItem(leftItem)
+        let commitPanel = stackOf([sequenceBar, summaryRow, messageScroll, commitRow], 8, 8)
+        messageScroll.heightAnchor.constraint(greaterThanOrEqualToConstant: 48).isActive = true
+        messageScroll.setContentHuggingPriority(.init(1), for: .vertical)
+        applyCommitCollapsed()
 
         // 右: 操作ボタンと差分。
         sideControl.target = self
@@ -342,6 +446,9 @@ final class WorkingCopyViewController: NSSplitViewController, NSOutlineViewDataS
         sideControl.controlSize = .small
         sideControl.setToolTip(L("Changes in the working tree that are not staged yet"), forSegment: 0)
         sideControl.setToolTip(L("Staged changes (included in the next commit)"), forSegment: 1)
+        sideControl.setToolTip(
+            L("Every change from HEAD to the working tree (the bar on the left of each line shows whether it’s staged)"),
+            forSegment: 2)
         linesButton.target = self
         linesButton.action = #selector(stageLines)
         titleLabel.lineBreakMode = .byTruncatingMiddle
@@ -358,12 +465,32 @@ final class WorkingCopyViewController: NSSplitViewController, NSOutlineViewDataS
         lineEndingsLabel.font = .systemFont(ofSize: NSFont.smallSystemFontSize)
         lineEndingsLabel.isHidden = true
         whitespacePopUp.onChange = { [weak self] _ in self?.whitespaceChanged() }
+        wholeFileButton.target = self
+        wholeFileButton.action = #selector(toggleWholeFile)
+        findButton.image = AppIcons.image(symbol: "magnifyingglass", label: L("Find"))
+        findButton.toolTip = L("Find in the diff (⌘F)")
+        findButton.target = self
+        findButton.action = #selector(findInDiff)
+        for button in [wholeFileButton, findButton] {
+            button.bezelStyle = .accessoryBarAction
+            button.controlSize = .small
+            button.isBordered = false
+            button.imagePosition = .imageOnly
+        }
+        updateWholeFileButton()
+        // 見せ方（ファイル全体・空白・折り返し・検索・表示の設定）を先に、ファイルの操作を右端に。
+        let viewButtons = NSStackView(views: [lineEndingsLabel, wholeFileButton, whitespacePopUp, wrapButton, findButton, viewOptions])
+        viewButtons.spacing = 8
         let actionButtons = NSStackView(views: [
-            lineEndingsLabel, whitespacePopUp, wrapButton, sideControl, conflictButtons, discardButton, linesButton,
+            viewButtons, sideControl, conflictButtons, discardButton, linesButton,
         ])
+        actionButtons.spacing = 10
         let bar = TitleAndButtonsBar(title: titleLabel, buttons: actionButtons)
         diffBar = bar
         diffView.isSelectable = true
+        // 隙間の行のボタン: 変更のない所を開く・畳む。
+        diffView.foldsGaps = true
+        diffView.onSetGap = { [weak self] gap, opening in self?.setGap(gap, opening) }
         diffView.onSelectionChange = { [weak self] in self?.updateButtons() }
         diffView.onExplainHunk = { [weak self] path, hunk in
             guard let self, Assistant.confirm(repository: repository.workdir ?? "remote", summary: L("One hunk of %@", path)) else { return }
@@ -375,6 +502,10 @@ final class WorkingCopyViewController: NSSplitViewController, NSOutlineViewDataS
             }
         }
         diffView.onSetStaged = { [weak self] rows, staged in self?.setStaged(rows: rows, staged: staged) }
+        diffView.onStageRows = { [weak self] rows in self?.stageRows(rows) }
+        diffView.onDiscardRows = { [weak self] rows in self?.discardRows(rows) }
+        NotificationCenter.default.addObserver(
+            self, selector: #selector(stageStyleChanged), name: .lineStageStyleChanged, object: nil)
         // ⌥J・⌥K: 一覧の次・前のファイルへ。
         diffView.onMoveFile = { [weak self] step in
             guard let self else { return }
@@ -386,10 +517,22 @@ final class WorkingCopyViewController: NSSplitViewController, NSOutlineViewDataS
             files.scrollRowToVisible(rows[next])
         }
         let right = BarAndContentView(bar: bar, content: diffView.view)
-        right.frame = NSRect(x: 0, y: 0, width: 700, height: 500)
+        right.frame = NSRect(x: 0, y: 0, width: 700, height: 400)
+        messageSplit.isVertical = false
+        messageSplit.dividerStyle = .thin
+        messageSplit.addArrangedSubview(commitPanel)
+        messageSplit.addArrangedSubview(right)
+        messageSplitDelegate.minimum = { [weak self] in self?.messageMinimum ?? 170 }
+        messageSplitDelegate.maximum = { [weak self] in
+            guard let self else { return 0 }
+            return commitCollapsed ? messageMinimum : messageSplit.bounds.height - 200
+        }
+        messageSplit.delegate = messageSplitDelegate
+        messageSplit.frame = NSRect(x: 0, y: 0, width: 700, height: 600)
+        messageSplit.autosaveName = "WorkingCopyCommitMessage"
         // NSSplitViewController に addChild すると分割の項目が増えるので、右側の親に付ける。
         let rightController = NSViewController()
-        rightController.view = right
+        rightController.view = messageSplit
         rightController.addChild(diffView)
         self.rightView = right
         self.rightController = rightController
@@ -397,6 +540,11 @@ final class WorkingCopyViewController: NSSplitViewController, NSOutlineViewDataS
         rightItem.minimumThickness = 300
         addSplitViewItem(rightItem)
         updateButtons()
+        // 確かめる用（`--snapshot`）に `-AMHWorkingCopyView all` で、すべてのファイルで開く。
+        if UserDefaults.standard.string(forKey: "AMHWorkingCopyView") == "all" {
+            contentSwitch.selectedSegment = 1
+            contentSwitchChanged()
+        }
         // 開く前に裏で読んだ status でコンフリクトのファイルを選んでいたら、そのとき読んだマージエディタをここで出す。
         if let key = selectedKey, let editor = mergeEditors[key.path] { embed(editor) }
     }
@@ -453,6 +601,15 @@ final class WorkingCopyViewController: NSSplitViewController, NSOutlineViewDataS
 
     /// 出している差分を読み直し、中身が変わっていれば位置を保って出し直す（コンフリクトはマージエディタのまま）。
     private func reloadShownDiff() {
+        if let multi, !showsAllFiles {
+            let chosen = multi.paths.compactMap { path in entries.first { $0.item.path == path } }
+            if chosen.count >= 2 { return showMulti(chosen, keepScroll: true) }
+        }
+        if showsAllFiles, let path = treeFilePath ?? selectedKey?.path {
+            // 変えていないファイルはそのまま（作業ツリーで書き換えれば status が変わり、作り直す）。
+            if treeFilePath == nil { openTreeFile(path, keepScroll: true) }
+            return
+        }
         guard let key = selectedKey, let entry = entries.first(where: { $0.item.path == key.path }),
               !entry.isConflict else { return }
         showDiff(of: entry, staged: side(for: entry.item), keepScroll: true, onlyIfChanged: true)
@@ -471,6 +628,28 @@ final class WorkingCopyViewController: NSSplitViewController, NSOutlineViewDataS
             }.value
             guard let read else { return }
             stats = Dictionary(read.stats.map { ($0.path, ($0.added, $0.removed)) }, uniquingKeysWith: { a, _ in a })
+            files.reloadData(forRowIndexes: IndexSet(integersIn: 0..<files.numberOfRows), columnIndexes: [0])
+            if showsSections { loadSplitStats() }
+        }
+    }
+
+    /// 節ごとの行数を裏で読み、一覧を描き直す（節分けのときだけ）。
+    private func loadSplitStats() {
+        let repository = self.repository
+        Task {
+            struct Split: Decodable {
+                struct Stat: Decodable { let path: String; let added: Int?; let removed: Int? }
+                let staged: [Stat]
+                let unstaged: [Stat]
+            }
+            let read = try? await Task.detached(priority: .utility) {
+                try repository.info(["op": "workingStatsSplit"], as: Split.self)
+            }.value
+            guard let read else { return }
+            let map = { (list: [Split.Stat]) in
+                Dictionary(list.map { ($0.path, ($0.added, $0.removed)) }, uniquingKeysWith: { a, _ in a })
+            }
+            splitStats = (map(read.staged), map(read.unstaged))
             files.reloadData(forRowIndexes: IndexSet(integersIn: 0..<files.numberOfRows), columnIndexes: [0])
         }
     }
@@ -515,7 +694,7 @@ final class WorkingCopyViewController: NSSplitViewController, NSOutlineViewDataS
         mergeEditors = mergeEditors.filter { conflicted.contains($0.key) }
         autoAppliedPaths.formIntersection(conflicted)
         if let editor = embeddedEditor, !conflicted.contains(editor.path) { unembed() }
-        allEntries = status.items.map(Entry.init).sorted {
+        allEntries = status.items.map { Entry(item: $0) }.sorted {
             $0.isConflict != $1.isConflict ? $0.isConflict : $0.item.path < $1.item.path
         }
         notifySequence()
@@ -584,19 +763,51 @@ final class WorkingCopyViewController: NSSplitViewController, NSOutlineViewDataS
         // 選んでいたファイル（いくつでも）。読み直しても、一覧に残っているものは選んだままにする。
         let selectedPaths = Set(files.selectedRowIndexes.compactMap { (files.item(atRow: $0) as? Entry)?.item.path })
         let query = filterField.stringValue.trimmingCharacters(in: .whitespaces).lowercased()
-        entries = query.isEmpty ? allEntries : allEntries.filter { $0.item.path.lowercased().contains(query) }
-        tree = showsTree ? Self.makeTree(entries) : nil
+        let filtered = query.isEmpty ? allEntries : allEntries.filter { $0.item.path.lowercased().contains(query) }
+        if showsSections {
+            // git status と同じ節: Unmerged（あれば）、Staged、Unstaged。
+            let conflicts = filtered.filter(\.isConflict)
+            let staged = filtered.filter { !$0.isConflict && $0.item.isStaged }.map { Entry(item: $0.item, section: .staged) }
+            let unstaged = filtered.filter { !$0.isConflict && $0.item.isUnstaged }.map { Entry(item: $0.item, section: .unstaged) }
+            sections = [(nil, conflicts), (DiffSide.staged, staged), (DiffSide.unstaged, unstaged)]
+                .filter { $0.0 != nil || !$0.1.isEmpty }
+                .map { Section(side: $0.0, entries: $0.1, tree: showsTree ? Self.makeTree($0.1) : nil) }
+            entries = conflicts + staged + unstaged
+            tree = nil
+        } else {
+            sections = nil
+            entries = filtered
+            tree = showsTree ? Self.makeTree(entries) : nil
+        }
         files.reloadData()
+        if let sections {
+            for section in sections {
+                files.expandItem(section)
+                expandTree(below: section.tree)
+            }
+        }
         expandTree(below: tree)
         emptyLabel.stringValue = allEntries.isEmpty ? L("No changes") : L("No matching files")
         emptyLabel.isHidden = !entries.isEmpty
         updateHeader()
+        // すべてのファイルを見ている間は、変更の一覧で選んでいるファイルの差分に替えない。
+        guard !showsAllFiles else { return reloadTreeFiles() }
 
         // 同じファイルを選び直す（いくつか選んでいれば、残っているものをすべて）。差分に出していたファイルが
         // なくなれば、選んでいたほかのファイル、それもなければ最初のもの。
         let kept = entries.filter { selectedPaths.contains($0.item.path) }
-        let target = selectedKey.flatMap { key in entries.first { $0.item.path == key.path } } ?? kept.first ?? entries.first
+        // 確かめる用（`--snapshot`）に `-AMHWorkingCopySelect <パス>` で最初に選ぶファイルを決められる。
+        if selectedKey == nil, let path = UserDefaults.standard.string(forKey: "AMHWorkingCopySelect"),
+           let entry = entries.first(where: { $0.item.path == path }) {
+            selectedKey = (path, side(for: entry.item))
+        }
+        // 節分けでは、今見ている側の節の行を選ぶ（なければもう一方の節）。
+        let target = selectedKey.flatMap { key in
+            entries.first { $0.item.path == key.path && ($0.section == nil || $0.section == diffSide) }
+                ?? entries.first { $0.item.path == key.path }
+        } ?? kept.first ?? entries.first
         if let target {
+            adoptSection(of: target)
             let row = files.row(forItem: target)
             let others = IndexSet(kept.filter { $0 !== target }.map { files.row(forItem: $0) }.filter { $0 >= 0 })
             // 差分に出すファイルを最後に足し、選択の起点（selectedRow）にする。途中の選択の変化では差分を替えない。
@@ -606,7 +817,13 @@ final class WorkingCopyViewController: NSSplitViewController, NSOutlineViewDataS
             files.selectRowIndexes(row >= 0 ? [row] : [], byExtendingSelection: !others.isEmpty)
             isRestoringSelection = false
             let keep = target.item.path == selectedKey?.path
-            showDiff(of: target, staged: side(for: target.item), keepScroll: keep)
+            // いくつか選んでいれば、並べた差分のまま。
+            let chosen = files.selectedRowIndexes.compactMap { files.item(atRow: $0) as? Entry }.filter { !$0.isConflict }
+            if multi != nil, chosen.count >= 2 {
+                showMulti(chosen, keepScroll: true)
+            } else {
+                showDiff(of: target, staged: side(for: target.item), keepScroll: keep)
+            }
         } else {
             current = nil
             selectedKey = nil
@@ -617,15 +834,49 @@ final class WorkingCopyViewController: NSSplitViewController, NSOutlineViewDataS
             showLineEndings(nil)
             updateButtons()
         }
+        // 確かめる用（`--snapshot`）に `-AMHWorkingCopySelectMany a,b` でいくつか選んだ形にできる。
+        if !appliedSelectMany, let many = UserDefaults.standard.string(forKey: "AMHWorkingCopySelectMany") {
+            appliedSelectMany = true
+            let paths = Set(many.split(separator: ",").map(String.init))
+            let rows = IndexSet((0..<files.numberOfRows).filter { (files.item(atRow: $0) as? Entry).map { paths.contains($0.item.path) } ?? false })
+            isRestoringSelection = true
+            files.selectRowIndexes(rows, byExtendingSelection: false)
+            isRestoringSelection = false
+            let chosen = rows.compactMap { files.item(atRow: $0) as? Entry }
+            if chosen.count >= 2 { showMulti(chosen) }
+        }
+    }
+    private var appliedSelectMany = false
+
+    /// 節分けの一覧の行を選んだ: 差分の側をその節にそろえる。替えたら true。
+    @discardableResult
+    private func adoptSection(of entry: Entry) -> Bool {
+        guard let section = entry.section, section != diffSide else { return false }
+        diffSide = section
+        sideControl.selectedSegment = section.rawValue
+        return true
     }
 
-    /// `item` の差分で見せる側。stage 済みの変更だけなら stage 済み、作業ツリーにも変更があれば作業ツリー。
-    /// 両方にあるファイルを選び直すときは、前に見せていた側のまま。
-    private func side(for item: StatusItem) -> Bool {
-        if !item.isUnstaged { return item.isStaged }
-        if !item.isStaged { return false }
-        return selectedKey?.path == item.path ? selectedKey?.staged ?? false : false
+    /// 一覧の Mixed・節分けを切り替える。
+    @objc private func sectionsChanged() {
+        showsSections = sectionsButton.state == .on
+        sectionsButton.contentTintColor = showsSections ? .controlAccentColor : nil
+        rebuildList()
+        if showsSections { loadSplitStats() }
     }
+
+    /// `item` の差分で見せる側が Staged か（見る側は Working Copy で 1 つ）。
+    private func side(for item: StatusItem) -> Bool {
+        diffSide == .staged
+    }
+
+    /// 隙間の開き方を覚えるキー（見る側ごとに隙間が違う）。
+    private func gapKey(_ path: String) -> String {
+        "\(effectiveSide.rawValue)\u{0}\(path)"
+    }
+
+    /// 今の差分の側（すべてのファイルでは、ファイル全体を All で見せる）。
+    private var effectiveSide: DiffSide { showsAllFiles ? .all : diffSide }
 
     /// sparse checkout なら、一覧の上にそう出す（取り出していないフォルダのファイルは変更に出ない）。
     func setSparse(_ sparse: RepositoryForm.Sparse?) {
@@ -702,7 +953,110 @@ final class WorkingCopyViewController: NSSplitViewController, NSOutlineViewDataS
 
     @objc private func layoutChanged() {
         layout = Layout(rawValue: layoutControl.selectedSegment) ?? .list
+        treeFiles.layout = switch layout {
+        case .list: .list
+        case .tree: .tree
+        case .flat: .flat
+        }
         rebuildList()
+    }
+
+    /// 変更 ／ すべてのファイル。
+    @objc private func contentSwitchChanged() {
+        let all = showsAllFiles
+        filesScroll.isHidden = all
+        treeFiles.scroll.isHidden = !all
+        includeRow.isHidden = all
+        filterField.isHidden = all
+        treeFilePath = nil
+        if all {
+            treeFiles.layout = switch layout {
+            case .list: .list
+            case .tree: .tree
+            case .flat: .flat
+            }
+            reloadTreeFiles()
+            // 差分に出していたファイルを、すべてのファイルの木でも選ぶ（ファイル全体の差分にする）。
+            if let path = selectedKey?.path { openTreeFile(path) }
+        } else {
+            rebuildList()
+        }
+        view.window?.makeFirstResponder(all ? treeFiles.outline : files)
+    }
+
+    /// すべてのファイルの木を、HEAD と今の status で作り直す。
+    private func reloadTreeFiles() {
+        guard showsAllFiles, let status else { return }
+        let repository = self.repository
+        Task {
+            let head = await Task.detached(priority: .userInitiated) { try? repository.resolveCommit("HEAD") }.value
+            guard showsAllFiles, self.status === status else { return }
+            treeFiles.reload(head: head, items: status.items) { Self.mark(of: Entry(item: $0)) }
+            treeHead = head
+            if treeFilePath == nil, selectedKey == nil,
+               let path = UserDefaults.standard.string(forKey: "AMHWorkingCopySelect") {
+                treeFiles.select(path: path)
+            }
+        }
+    }
+
+    /// すべてのファイルを作った HEAD（40 桁）。
+    private var treeHead: String?
+
+    /// すべてのファイルで `path` を開く: 変えたファイルはファイル全体の差分（行の stage もできる）、変えていない
+    /// ファイルは今の中身。
+    private func openTreeFile(_ path: String, keepScroll: Bool = false) {
+        if let entry = allEntries.first(where: { $0.item.path == path }) {
+            treeFilePath = nil
+            showDiff(of: entry, staged: side(for: entry.item), keepScroll: keepScroll)
+            return
+        }
+        treeFilePath = path
+        selectedKey = nil
+        current = nil
+        sideControl.isHidden = true
+        isConflict = false
+        unembed()
+        removeImage()
+        titleLabel.stringValue = path
+        diffView.path = path
+        showLineEndings(nil)
+        request += 1
+        let request = self.request
+        let repository = self.repository
+        updateButtons()
+        guard let head = treeHead, let commit = Data(hex: head) else {
+            return diffView.show(nil, message: L("Couldn’t load the diff"))
+        }
+        if ImageDiffPanel.isImage(path) {
+            Task {
+                let data = await Task.detached(priority: .userInitiated) { () -> Data? in
+                    let folder = (path as NSString).deletingLastPathComponent, name = (path as NSString).lastPathComponent
+                    guard let entry = (try? repository.treeEntries(commit: head, path: folder))?.first(where: { $0.name == name })
+                    else { return nil }
+                    return repository.blob(oid: entry.oid)
+                }.value
+                guard request == self.request else { return }
+                guard let data, NSImage(data: data) != nil else { return diffView.show(nil, message: L("Binary file")) }
+                let panel = ImageDiffPanel(before: nil, after: data, svg: false, mode: .twoUp, position: 0.5, single: true)
+                imagePanel = panel
+                imagePanelPath = path
+                rightView?.content = panel
+                Backdrop.clearBackgrounds(in: panel, clear: true)
+                diffView.show(nil)
+                updateButtons()
+            }
+            return
+        }
+        Task {
+            let diff = await Task.detached(priority: .userInitiated) { try? repository.treeFile(commit: commit, path: path) }.value
+            guard request == self.request else { return }
+            guard let diff else { return diffView.show(nil, message: L("Couldn’t load the diff")) }
+            if diff.isBinary { return diffView.show(nil, message: L("Binary file")) }
+            diffView.fileMode = true
+            diffView.show(diff, keepScroll: keepScroll)
+            updateButtons()
+        }
     }
 
     func controlTextDidChange(_ obj: Notification) {
@@ -795,16 +1149,27 @@ final class WorkingCopyViewController: NSSplitViewController, NSOutlineViewDataS
     /// `onlyIfChanged` なら、読んだ差分が出しているものと同じ中身のとき出し直さない（選んだ行を外さない）。
     private func showDiff(of entry: Entry, staged: Bool, keepScroll: Bool = false, onlyIfChanged: Bool = false) {
         guard let status else { return }
+        if multi != nil {
+            multi = nil
+            diffView.onToggleFile = nil
+            diffView.fileMenu = nil
+            diffView.fileMarks = [:]
+        }
+        diffView.stackedStageChecks = false
         selectedKey = (entry.item.path, staged)
+        treeFilePath = nil
+        diffView.fileMode = false
         titleLabel.stringValue = entry.item.path
         diffView.path = entry.item.path
         request += 1
         let request = self.request
         isConflict = entry.isConflict
         diffView.isConflictView = entry.isConflict
-        // 一部だけ含めたファイルで、1 本の差分にできないときだけ、見る側を切り替える。
-        sideControl.isHidden = true
-        sideControl.selectedSegment = staged ? 1 : 0
+        // 見る側（Unstaged・Staged・All）はファイルを替えても同じ。
+        let side = effectiveSide
+        sideControl.isHidden = entry.isConflict || showsAllFiles
+        sideControl.selectedSegment = diffSide.rawValue
+        selectedKey = (entry.item.path, side == .staged)
         if entry.isConflict {
             let path = entry.item.path
             current = nil
@@ -837,14 +1202,55 @@ final class WorkingCopyViewController: NSSplitViewController, NSOutlineViewDataS
         }
         unembed()
         let whitespace = whitespacePopUp.whitespace
+        // すべてのファイルでは、変えたファイルもファイル全体で見せる（畳まない）。
+        let context: UInt32 = showsAllFiles ? .max : 3
+        // 確かめる用（`--snapshot`）に `-AMHWorkingCopyOpenGaps 1:20:0,2:0:max` で隙間の開き方（番号・上・下）を
+        // 決められる。
+        if openGaps[gapKey(entry.item.path)] == nil, let gaps = UserDefaults.standard.string(forKey: "AMHWorkingCopyOpenGaps") {
+            var parsed: [Int: GapOpening] = [:]
+            for item in gaps.split(separator: ",") {
+                let parts = item.split(separator: ":").map { $0 == "max" ? UInt32.max : UInt32($0) ?? 0 }
+                guard parts.count == 3 else { continue }
+                parsed[Int(parts[0])] = GapOpening(top: parts[1], bottom: parts[2])
+            }
+            openGaps[gapKey(entry.item.path)] = parsed
+        }
+        let open: [Int: GapOpening]? = showsAllFiles ? nil : openGaps[gapKey(entry.item.path)] ?? [:]
+        diffView.foldsGaps = !showsAllFiles
+        diffView.gapOpenings = openGaps[gapKey(entry.item.path)] ?? [:]
+        updateWholeFileButton()
+        // その側に変更がなければ、読まずにそう出す。
+        if side != .all, !(side == .staged ? entry.item.isStaged : entry.item.isUnstaged) {
+            current = nil
+            removeImage()
+            showLineEndings(nil)
+            diffView.show(nil, message: side == .staged ? L("No staged changes in this file") : L("No unstaged changes in this file"))
+            updateButtons()
+            return
+        }
+        // Unstaged・Staged では、変更のかたまりのボタンで Stage・Unstage する（空白を無視していれば出さない）。
+        diffView.splitStageTitle = side == .all || whitespace != .exact ? nil : side == .staged ? "Unstage" : "Stage"
         Task {
-            // HEAD と作業ツリーの 1 本の差分（行ごとのチェック）。表せないとき・空白を無視するときは、選んだ側の差分。
+            // All は HEAD と作業ツリーの 1 本の差分（行ごとに staged か）。表せないとき・空白を無視するときは、そう出す。
             let (diff, combined, failure) = await Task.detached(priority: .userInitiated) { () -> (WorkingFileDiff?, Bool, String?) in
-                if whitespace == .exact, let combined = try? status.combinedDiff(of: entry.item) { return (combined, true, nil) }
+                if side == .all {
+                    guard whitespace == .exact else {
+                        return (nil, false, L("All can’t be shown while whitespace is ignored. See Unstaged and Staged."))
+                    }
+                    do {
+                        if let combined = try status.combinedDiff(of: entry.item, context: context, openGaps: open) {
+                            return (combined, true, nil)
+                        }
+                        return (nil, false, L("This file’s staged and unstaged changes can’t be shown in one diff. See Unstaged and Staged."))
+                    } catch {
+                        return (nil, false, L("Can’t read the diff: %@", "\(error)"))
+                    }
+                }
                 do {
-                    return (try status.diff(of: entry.item, staged: staged, whitespace: whitespace), false, nil)
+                    return (try status.diff(of: entry.item, staged: side == .staged, context: context, openGaps: open, whitespace: whitespace),
+                            false, nil)
                 } catch {
-                    return (nil, false, "\(error)")
+                    return (nil, false, L("Can’t read the diff: %@", "\(error)"))
                 }
             }.value
             guard request == self.request else { return }
@@ -852,20 +1258,138 @@ final class WorkingCopyViewController: NSSplitViewController, NSOutlineViewDataS
                shown.isCombined == diff.isCombined, shown.staged == diff.staged, shown.hasSameRows(as: diff) {
                 return
             }
-            sideControl.isHidden = combined || !(entry.item.isStaged && entry.item.isUnstaged)
-            selectedKey = (entry.item.path, combined ? false : staged)
+            _ = combined
             current = diff
             showLineEndings(diff?.lineEndings)
-            if let failure {
-                // 空の差分にせず、読めなかった理由を出す。
-                diffView.show(nil, message: L("Can’t read the diff: %@", failure))
-            } else if let diff, diff.isBinary {
-                diffView.show(nil, message: L("Binary file"))
+            let path = entry.item.path
+            if let diff, open != nil {
+                gapCounts[gapKey(path)] = (diff.hunkCount, diff.foldedGapCount)
+                updateWholeFileButton()
+            }
+            let svg = ImageDiffPanel.isSVG(path)
+            if failure == nil, let diff, ImageDiffPanel.isImage(path) || svg, diff.isBinary || (svg && !svgAsText.contains(path)) {
+                // 画像は History と同じく、前後を並べる・スワイプ・重ねる・違いの 4 つで比べる。
+                showImage(diff, path: path, keepMode: keepScroll)
+                diffView.show(nil)
             } else {
-                diffView.show(diff, keepScroll: keepScroll)
+                removeImage()
+                if let failure {
+                    // 空の差分にせず、読めなかった・出せない理由を出す。
+                    diffView.show(nil, message: failure)
+                } else if let diff, diff.isBinary {
+                    diffView.show(nil, message: L("Binary file"))
+                } else {
+                    diffView.show(diff, keepScroll: keepScroll)
+                }
             }
             updateButtons()
         }
+    }
+
+    /// 選んだいくつかのファイルの差分を、見出しでつないで並べる（上から `Settings.diffOpenFiles` 個まで）。見る側
+    /// （Unstaged・Staged・All）は 1 ファイルのときと同じ。その側に変更のないファイルは並べない。
+    private func showMulti(_ chosen: [Entry], keepScroll: Bool = false) {
+        guard let status else { return }
+        let side = diffSide
+        let whitespace = whitespacePopUp.whitespace
+        let candidates = chosen.filter { entry in
+            side == .all || (side == .staged ? entry.item.isStaged : entry.item.isUnstaged)
+        }
+        let shown = Array(candidates.prefix(Settings.diffOpenFiles))
+        let paths = chosen.map(\.item.path)
+        if multi?.paths != paths { multiCollapsed = [] }
+        multi = (paths, multi?.paths == paths ? multi?.stacked : nil)
+        selectedKey = nil
+        current = nil
+        treeFilePath = nil
+        isConflict = false
+        unembed()
+        removeImage()
+        showLineEndings(nil)
+        sideControl.isHidden = false
+        sideControl.selectedSegment = side.rawValue
+        var title = L("%ld files", chosen.count)
+        if candidates.count > shown.count { title += "  " + L("(showing the first %ld)", shown.count) }
+        titleLabel.stringValue = title
+        request += 1
+        let request = self.request
+        let openings = shown.map { openGaps[gapKey($0.item.path)] ?? [:] }
+        diffView.foldsGaps = true
+        diffView.splitStageTitle = side == .all || whitespace != .exact ? nil : side == .staged ? "Unstage" : "Stage"
+        diffView.stackedStageChecks = side == .all
+        guard !shown.isEmpty else {
+            diffView.show(nil, message: side == .staged ? L("No staged changes in these files") : L("No unstaged changes in these files"))
+            return updateButtons()
+        }
+        Task {
+            let diffs = await Task.detached(priority: .userInitiated) { () -> [WorkingFileDiff] in
+                zip(shown, openings).compactMap { entry, open in
+                    if side == .all {
+                        guard whitespace == .exact else { return nil }
+                        return try? status.combinedDiff(of: entry.item, context: 3, openGaps: open)
+                    }
+                    return try? status.diff(of: entry.item, staged: side == .staged, context: 3, openGaps: open, whitespace: whitespace)
+                }
+            }.value
+            guard request == self.request, multi?.paths == paths else { return }
+            showStacked(diffs, keepScroll: keepScroll)
+        }
+    }
+
+    /// 並べる差分を、畳んだファイルを除いてつなぎ、出す。
+    private func showStacked(_ diffs: [WorkingFileDiff], keepScroll: Bool) {
+        let collapsed = diffs.map { multiCollapsed.contains($0.item.path) }
+        let stacked = WorkingStackedDiff(files: diffs, collapsed: collapsed)
+        multi?.stacked = stacked
+        // 隙間の番号は、並べた差分の頭から数える（畳んだファイルには隙間の行がない）。ファイルごとに直す。
+        var offsets: [(file: Int, first: Int, count: Int)] = []
+        var next = 0
+        for (i, d) in diffs.enumerated() where !collapsed[i] && !d.isBinary {
+            offsets.append((i, next, d.hunkCount))
+            next += d.hunkCount
+        }
+        var openings: [Int: GapOpening] = [:]
+        for o in offsets {
+            for (gap, opening) in openGaps[gapKey(diffs[o.file].item.path)] ?? [:] where gap < o.count {
+                openings[o.first + gap] = opening
+            }
+        }
+        diffView.gapOpenings = openings
+        diffView.onSetGap = { [weak self] gap, opening in
+            guard let self, let o = offsets.last(where: { $0.first <= gap }) else { return }
+            openGaps[gapKey(diffs[o.file].item.path), default: [:]][gap - o.first] = opening
+            reloadShownDiff()
+        }
+        var marks: [Int: (String, NSColor)] = [:]
+        for (i, d) in diffs.enumerated() { marks[i] = Self.mark(of: Entry(item: d.item)) }
+        diffView.fileMarks = marks
+        diffView.onToggleFile = { [weak self] file in
+            guard let self, file < diffs.count else { return }
+            let path = diffs[file].item.path
+            if multiCollapsed.remove(path) == nil { multiCollapsed.insert(path) }
+            showStacked(diffs, keepScroll: true)
+        }
+        diffView.fileMenu = { [weak self] file in
+            guard let self, file < diffs.count,
+                  let entry = entries.first(where: { $0.item.path == diffs[file].item.path }) else { return nil }
+            let menu = NSMenu()
+            menu.addItem(ClosureMenuItem(title: entry.item.isStaged && !entry.item.isUnstaged ? "Unstage" : "Stage") { [weak self] in
+                guard let self else { return }
+                let repository = self.repository
+                let path = entry.item.path
+                if entry.item.isStaged && !entry.item.isUnstaged {
+                    run { try repository.unstage(paths: [path]) }
+                } else {
+                    run { try repository.stage(paths: [path]) }
+                }
+            })
+            if entry.item.isUnstaged {
+                menu.addItem(ClosureMenuItem(title: "Discard…") { [weak self] in self?.discardFile(entry) })
+            }
+            return menu
+        }
+        diffView.show(stacked, keepScroll: keepScroll)
+        updateButtons()
     }
 
     /// 改行を変換している（作業ツリーと git で違う）・改行が混ざっているファイルの印。普段のファイルでは出さない。
@@ -896,6 +1420,98 @@ final class WorkingCopyViewController: NSSplitViewController, NSOutlineViewDataS
         lineEndingsLabel.isHidden = false
     }
 
+    /// 画像の比較を、差分の代わりに出す。`keepMode` なら（読み直し）スワイプの位置などを保つため、同じファイルなら
+    /// 作り直さない。
+    private func showImage(_ diff: WorkingFileDiff, path: String, keepMode: Bool) {
+        if keepMode, imagePanel != nil, imagePanelPath == path { return }
+        let item = diff.item
+        let added = item.kind == .untracked || (diff.isCombined ? item.indexState == "A" : (diff.staged ? item.indexState == "A" : false))
+        let deleted = item.worktreeState == "D" || (diff.staged && item.indexState == "D")
+        let panel = ImageDiffPanel(
+            before: added ? nil : diff.blob(after: false), after: deleted ? nil : diff.blob(after: true),
+            svg: ImageDiffPanel.isSVG(path), mode: imageMode, position: 0.5)
+        panel.onModeChange = { [weak self] mode in self?.imageMode = mode }
+        panel.onShowText = { [weak self] in
+            guard let self, let key = selectedKey, let entry = entries.first(where: { $0.item.path == key.path }) else { return }
+            svgAsText.insert(path)
+            showDiff(of: entry, staged: key.staged)
+        }
+        imagePanel = panel
+        imagePanelPath = path
+        rightView?.content = panel
+        Backdrop.clearBackgrounds(in: panel, clear: true)
+    }
+
+    private var imagePanelPath: String?
+
+    /// 画像の比較をやめ、差分に戻す。
+    private func removeImage() {
+        guard imagePanel != nil else { return }
+        imagePanel = nil
+        imagePanelPath = nil
+        if embeddedEditor == nil { rightView?.content = diffView.view }
+    }
+
+    /// 隙間の行のボタン: 出している差分の、その変更のない所の開き方を変える（nil なら畳む）。
+    private func setGap(_ gap: Int, _ opening: GapOpening?) {
+        guard !showsAllFiles, let key = selectedKey, !isConflict,
+              let entry = entries.first(where: { $0.item.path == key.path }) else { return }
+        openGaps[gapKey(key.path), default: [:]][gap] = opening
+        showDiff(of: entry, staged: key.staged, keepScroll: true)
+    }
+
+    /// 帯のボタンと表示の設定: 出している差分の変更のない所をすべて開く（ファイル全体）・すべて閉じる。
+    @objc private func toggleWholeFile() {
+        guard !showsAllFiles, let key = selectedKey, !isConflict, let entry = entries.first(where: { $0.item.path == key.path }) else {
+            return NSSound.beep()
+        }
+        let count = gapCounts[gapKey(key.path)]?.all ?? 0
+        openGaps[gapKey(key.path)] = showsWholeFile ? [:] : Dictionary(uniqueKeysWithValues: (0..<count).map {
+            // 隙間の行は上に残す（末尾の隙間でも同じ。そこから畳める）。
+            ($0, GapOpening(top: 0, bottom: .max))
+        })
+        showDiff(of: entry, staged: key.staged, keepScroll: true)
+    }
+
+    private var showsWholeFile: Bool {
+        showsAllFiles || selectedKey.map { key in
+            let counts = gapCounts[gapKey(key.path)] ?? (0, 0)
+            return counts.all > 0 && counts.folded == 0
+        } ?? false
+    }
+
+    private func updateWholeFileButton() {
+        let on = showsWholeFile
+        wholeFileButton.image = AppIcons.image(symbol: "doc.plaintext", label: L("Show Whole File"))
+        wholeFileButton.contentTintColor = on ? .controlAccentColor : nil
+        wholeFileButton.toolTip = (on ? L("Showing the whole file") : L("Show Whole File")) + "\n"
+            + L("Open every unchanged part of the file (each part also opens from its own row)")
+    }
+
+    @objc private func findInDiff() {
+        guard imagePanel == nil, embeddedEditor == nil, selectedKey != nil || treeFilePath != nil else { return NSSound.beep() }
+        diffView.showFindBar()
+    }
+
+    /// 表示の設定のメニュー（開くたびに作る）: コード（ファイル全体・長い行を折り返す）、コミットメッセージ（畳む）。
+    private func fillViewOptions(_ menu: NSMenu) {
+        menu.addItem(.sectionHeader(title: L("Code")))
+        let whole = ClosureMenuItem(title: L("Show Whole File")) { [weak self] in self?.toggleWholeFile() }
+        whole.state = showsWholeFile ? .on : .off
+        whole.isEnabled = selectedKey != nil && !isConflict && !showsAllFiles
+        whole.indentationLevel = 1
+        menu.addItem(whole)
+        let wrap = DiffViewController.wrapLinesMenuItem()
+        wrap.indentationLevel = 1
+        menu.addItem(wrap)
+        menu.addItem(.sectionHeader(title: L("Commit Message")))
+        let collapse = ClosureMenuItem(title: L("Summary Only")) { [weak self] in self?.toggleCommitCollapsed() }
+        collapse.state = commitCollapsed ? .on : .off
+        collapse.indentationLevel = 1
+        collapse.toolTip = L("Collapse the commit message to the summary line to give the diff more room")
+        menu.addItem(collapse)
+    }
+
     /// 無視する空白を選び直した: 出している差分を読み直す。
     private func whitespaceChanged() {
         guard let key = selectedKey, !isConflict,
@@ -904,8 +1520,19 @@ final class WorkingCopyViewController: NSSplitViewController, NSOutlineViewDataS
     }
 
     @objc private func sideChanged() {
-        guard let entry = files.item(atRow: files.selectedRow) as? Entry else { return }
-        showDiff(of: entry, staged: sideControl.selectedSegment == 1)
+        diffSide = DiffSide(rawValue: sideControl.selectedSegment) ?? .unstaged
+        guard let key = selectedKey else { return }
+        // 節分けでは、一覧の選択もその側の節の行に移す（その節になければ、そのまま）。
+        if showsSections, let entry = entries.first(where: { $0.item.path == key.path && $0.section == diffSide }) {
+            let row = files.row(forItem: entry)
+            if row >= 0 {
+                isRestoringSelection = true
+                files.selectRowIndexes([row], byExtendingSelection: false)
+                isRestoringSelection = false
+            }
+        }
+        guard let entry = entries.first(where: { $0.item.path == key.path }) else { return }
+        showDiff(of: entry, staged: diffSide == .staged)
     }
 
     /// 埋め込んだ・覚えているマージエディタに、保存していない Result の変更がある（閉じる前に確かめる）。
@@ -966,27 +1593,37 @@ final class WorkingCopyViewController: NSSplitViewController, NSOutlineViewDataS
         let staged = selectedKey?.staged ?? false
         let selected = diffView.selectedChangeRows
         // 1 本の差分では、選んだ行がすべて含まれていれば外す、そうでなければ含める。
-        let selectedStaged = current?.isCombined == true && !selected.isEmpty
-            && selected.allSatisfy { current?.isStaged(row: $0) == true }
+        let stacked = multi?.stacked
+        let selectedStaged = !selected.isEmpty && (stacked != nil
+            ? effectiveSide == .all && selected.allSatisfy { stacked?.isStaged(row: $0) == true }
+            : current?.isCombined == true && selected.allSatisfy { current?.isStaged(row: $0) == true })
+        let shown = selectedKey != nil || multi != nil
         // 選んだファイルがなければ、ファイルの操作は出さない。
-        linesButton.isHidden = isConflict || selectedKey == nil
+        // 「選んでから」の形では、選んだ行の操作は hunk の見出しの行と Space・右クリックで（帯のボタンは出さない）。
+        let selectStyle = Settings.lineStageStyle == .select
+        linesButton.isHidden = isConflict || !shown || selectStyle
         linesButton.title = staged || selectedStaged ? "Unstage Lines" : "Stage Lines"
         // 空白を無視した差分の行は中身をそのまま表していないので、行ごとには stage・破棄しない。
         let exact = whitespacePopUp.whitespace == .exact
-        whitespacePopUp.isHidden = isConflict || selectedKey == nil
+        whitespacePopUp.isHidden = isConflict || !shown || imagePanel != nil
         wrapButton.isHidden = whitespacePopUp.isHidden
-        linesButton.isEnabled = current != nil && !selected.isEmpty && exact
+        wholeFileButton.isHidden = whitespacePopUp.isHidden || showsAllFiles
+        findButton.isHidden = isConflict || imagePanel != nil || (selectedKey == nil && treeFilePath == nil)
+        viewOptions.isHidden = isConflict
+        updateWholeFileButton()
+        linesButton.isEnabled = (current != nil || stacked != nil) && !selected.isEmpty && exact
         linesButton.toolTip = !exact ? L("Can’t stage or discard lines while whitespace is ignored")
             : current?.isCombined == true ? L("Include or exclude the selected lines in the next commit (Space)") : nil
         // 選んだ行があれば行を、なければファイルを破棄する。stage 済みの変更は破棄しない。
         discardButton.isHidden = staged || isConflict || selectedKey == nil
-        discardButton.title = selected.isEmpty ? "Discard File" : "Discard Lines"
+        let linesDiscard = !selected.isEmpty && !selectStyle
+        discardButton.title = linesDiscard ? "Discard Lines" : "Discard File"
         // 作業ツリーに変更がない（すべて stage 済みの）ファイルには、捨てるものがない。
         discardButton.isEnabled = selectedKey != nil && current?.item.isUnstaged == true
-            && !(current?.isCombined == true && selected.contains { current?.isStaged(row: $0) == true })
-            && (selected.isEmpty || exact)
-        discardButton.toolTip = !selected.isEmpty && !exact ? L("Can’t stage or discard lines while whitespace is ignored")
-            : selected.isEmpty
+            && !(linesDiscard && current?.isCombined == true && selected.contains { current?.isStaged(row: $0) == true })
+            && (!linesDiscard || exact)
+        discardButton.toolTip = linesDiscard && !exact ? L("Can’t stage or discard lines while whitespace is ignored")
+            : !linesDiscard
             ? L("Discard the working tree changes and return to the content of the next commit (the index)")
             : L("Discard the selected lines’ changes from the working tree (included lines are excluded first)")
         let count = stagedCount
@@ -1056,6 +1693,7 @@ final class WorkingCopyViewController: NSSplitViewController, NSOutlineViewDataS
         switch item {
         case let entry as Entry: [entry]
         case let dir as Dir: dir.allFiles
+        case let section as Section: section.entries
         default: []
         }
     }
@@ -1073,6 +1711,16 @@ final class WorkingCopyViewController: NSSplitViewController, NSOutlineViewDataS
     }
 
     @objc private func stageLines() {
+        if let stacked = multi?.stacked {
+            let rows = diffView.selectedChangeRows
+            guard !rows.isEmpty else { return }
+            if effectiveSide == .all {
+                setStaged(rows: rows, staged: !rows.allSatisfy { stacked.isStaged(row: $0) })
+            } else {
+                stageRows(rows)
+            }
+            return
+        }
         guard let current else { return }
         let rows = diffView.selectedChangeRows
         guard !rows.isEmpty else { return }
@@ -1084,38 +1732,103 @@ final class WorkingCopyViewController: NSSplitViewController, NSOutlineViewDataS
         }
     }
 
+    /// Unstaged・Staged の差分の `rows` 行目の変更を stage する（Staged なら unstage する）。
+    private func stageRows(_ rows: [Int]) {
+        if let stacked = multi?.stacked {
+            guard whitespacePopUp.whitespace == .exact else { return NSSound.beep() }
+            let parts = stacked.split(rows)
+            return run { for (file, rows) in parts { try stacked.files[file].stage(rows: rows) } }
+        }
+        guard let current, !current.isCombined, !rows.isEmpty else { return }
+        guard whitespacePopUp.whitespace == .exact else { return NSSound.beep() }
+        run { try current.stage(rows: rows) }
+    }
+
     /// 1 本の差分の `rows` 行目の変更を、次のコミットに含める・外す。
     private func setStaged(rows: [Int], staged: Bool) {
+        if let stacked = multi?.stacked {
+            let parts = stacked.split(rows)
+            return run { for (file, rows) in parts { try stacked.files[file].setStaged(rows: rows, staged: staged) } }
+        }
         guard let current, current.isCombined else { return }
         run { try current.setStaged(rows: rows, staged: staged) }
     }
 
-    // MARK: - コミットの入力とファイルの一覧の間の仕切り
+    // MARK: - コミットの入力と差分の間の仕切り
 
-    /// 上の段の最小の高さ: Summary、72 pt のメッセージ、ボタンの行（操作の途中ならその帯も）。
-    private var messageMinimum: CGFloat { 170 + (sequenceBar.isHidden ? 0 : 34) }
+    /// 上の段の最小の高さ: Summary、48 pt のメッセージ、ボタンの行（操作の途中ならその帯も）。畳んでいれば Summary の
+    /// 1 行だけ。
+    private var messageMinimum: CGFloat {
+        (commitCollapsed ? 38 : 146) + (sequenceBar.isHidden ? 0 : 34)
+    }
 
     override func viewDidAppear() {
         super.viewDidAppear()
-        // 覚えた位置がなければ、メッセージの欄を少し広めに。
-        if messageSplit.arrangedSubviews.first.map({ $0.frame.height < messageMinimum }) ?? false {
-            messageSplit.setPosition(messageMinimum + 60, ofDividerAt: 0)
+        // 畳んでいれば 1 行の高さに。覚えた位置がなければ、メッセージの欄を少し広めに。
+        if commitCollapsed {
+            messageSplit.setPosition(messageMinimum, ofDividerAt: 0)
+        } else if messageSplit.arrangedSubviews.first.map({ $0.frame.height < messageMinimum }) ?? false {
+            messageSplit.setPosition(messageMinimum + 40, ofDividerAt: 0)
         }
+    }
+
+    /// コミットの入力を畳む・開く（ボタンと表示の設定）。
+    @objc private func toggleCommitCollapsed() {
+        if !commitCollapsed { expandedMessageHeight = messageSplit.arrangedSubviews.first?.frame.height }
+        commitCollapsed.toggle()
+        applyCommitCollapsed()
+        messageSplit.setPosition(commitCollapsed ? messageMinimum : max(messageMinimum, expandedMessageHeight ?? messageMinimum + 40), ofDividerAt: 0)
+        if commitCollapsed, view.window?.firstResponder === message { view.window?.makeFirstResponder(summary) }
+    }
+
+    /// 畳んでいれば Summary の行に Commit を並べ、Description とボタンの行を隠す。
+    private func applyCommitCollapsed() {
+        collapseButton.image = AppIcons.image(
+            symbol: commitCollapsed ? "chevron.right" : "chevron.down",
+            label: commitCollapsed ? L("Show Description") : L("Hide Description"))
+        collapseButton.toolTip = commitCollapsed
+            ? L("Show the description and the commit options") : L("Collapse to the summary line")
+        if commitCollapsed {
+            summaryRow.setViews([collapseButton, summary, summaryCount, commitButton, commitMenuButton], in: .leading)
+            commitRow.setViews([], in: .leading)
+        } else {
+            summaryRow.setViews([collapseButton, summary], in: .leading)
+            commitRow.setViews(
+                [amend, historyButton, insertButton, NSView(), summaryCount, suggestButton, commitButton, commitMenuButton],
+                in: .leading)
+        }
+        messageScroll.isHidden = commitCollapsed
+        commitRow.isHidden = commitCollapsed
+        messageSplit.adjustSubviews()
     }
 
 
     @objc private func discard() {
         guard let key = selectedKey, !key.staged, let actions else { return }
         guard current?.item.isUnstaged == true else { return NSSound.beep() }
-        let rows = diffView.selectedChangeRows
-        if let current, !rows.isEmpty {
-            guard whitespacePopUp.whitespace == .exact else { return NSSound.beep() }
-            actions.perform { try current.discard(rows: rows) }
+        let rows = Settings.lineStageStyle == .select ? [] : diffView.selectedChangeRows
+        if !rows.isEmpty {
+            discardRows(rows)
         } else if current?.item.kind == .untracked {
             confirmDeleteUntracked(key.path, actions: actions)
         } else {
             // ファイル全体を一度に捨てるときは確かめる（行の単位は選んで押すので、そのまま）。
             confirmDiscard(key.path, actions: actions)
+        }
+    }
+
+    @objc private func stageStyleChanged() { updateButtons() }
+
+    /// 差分の `rows` 行目の変更を作業ツリーから捨てる（hunk の見出しの Discard・帯の Discard Lines・右クリック）。
+    /// いくつかのファイルを並べた差分なら、ファイルごとに。
+    private func discardRows(_ rows: [Int]) {
+        guard let actions, !rows.isEmpty else { return }
+        guard whitespacePopUp.whitespace == .exact else { return NSSound.beep() }
+        if let stacked = multi?.stacked {
+            let parts = stacked.split(rows)
+            actions.perform { for (file, rows) in parts { try stacked.files[file].discard(rows: rows) } }
+        } else if let current {
+            actions.perform { try current.discard(rows: rows) }
         }
     }
 
@@ -1618,6 +2331,8 @@ final class WorkingCopyViewController: NSSplitViewController, NSOutlineViewDataS
 
     func outlineView(_ outlineView: NSOutlineView, numberOfChildrenOfItem item: Any?) -> Int {
         switch item {
+        case nil where sections != nil: sections!.count
+        case let section as Section: section.tree.map { $0.dirs.count + $0.files.count } ?? section.entries.count
         case nil: tree.map { $0.dirs.count + $0.files.count } ?? entries.count
         case let dir as Dir: dir.dirs.count + dir.files.count
         default: 0
@@ -1625,16 +2340,61 @@ final class WorkingCopyViewController: NSSplitViewController, NSOutlineViewDataS
     }
 
     func outlineView(_ outlineView: NSOutlineView, child index: Int, ofItem item: Any?) -> Any {
+        if item == nil, let sections { return sections[index] }
+        if let section = item as? Section {
+            guard let dir = section.tree else { return section.entries[index] }
+            return index < dir.dirs.count ? dir.dirs[index] : dir.files[index - dir.dirs.count]
+        }
         let dir = item as? Dir ?? tree
         guard let dir else { return entries[index] }
         return index < dir.dirs.count ? dir.dirs[index] : dir.files[index - dir.dirs.count]
     }
 
     func outlineView(_ outlineView: NSOutlineView, isItemExpandable item: Any) -> Bool {
-        item is Dir
+        item is Dir || item is Section
+    }
+
+    func outlineView(_ outlineView: NSOutlineView, isGroupItem item: Any) -> Bool {
+        item is Section
+    }
+
+    func outlineView(_ outlineView: NSOutlineView, shouldSelectItem item: Any) -> Bool {
+        !(item is Section)
+    }
+
+    /// 節の見出し: 名前と数、Stage All・Unstage All。
+    private func sectionHeader(_ section: Section) -> NSView {
+        let cell = NSTableCellView()
+        let title = NSTextField(labelWithString: section.title)
+        title.font = .systemFont(ofSize: NSFont.smallSystemFontSize, weight: .semibold)
+        title.textColor = .secondaryLabelColor
+        let count = NSTextField(labelWithString: "\(section.entries.count)")
+        count.font = .monospacedDigitSystemFont(ofSize: NSFont.smallSystemFontSize, weight: .regular)
+        count.textColor = .tertiaryLabelColor
+        var views: [NSView] = [title, count, NSView()]
+        if let side = section.side, !section.entries.isEmpty {
+            let entries = section.entries
+            let button = SectionActionButton(title: side == .staged ? "Unstage All" : "Stage All") { [weak self] in self?.toggle(entries) }
+            button.isBordered = false
+            button.controlSize = .small
+            button.font = .systemFont(ofSize: NSFont.smallSystemFontSize)
+            button.contentTintColor = .controlAccentColor
+            views.append(button)
+        }
+        let stack = NSStackView(views: views)
+        stack.spacing = 6
+        stack.translatesAutoresizingMaskIntoConstraints = false
+        cell.addSubview(stack)
+        NSLayoutConstraint.activate([
+            stack.leadingAnchor.constraint(equalTo: cell.leadingAnchor, constant: 2),
+            stack.trailingAnchor.constraint(equalTo: cell.trailingAnchor, constant: -4),
+            stack.centerYAnchor.constraint(equalTo: cell.centerYAnchor),
+        ])
+        return cell
     }
 
     func outlineView(_ outlineView: NSOutlineView, viewFor tableColumn: NSTableColumn?, item: Any) -> NSView? {
+        if let section = item as? Section { return sectionHeader(section) }
         let cell = outlineView.makeView(withIdentifier: WorkingFileCell.identifier, owner: nil) as? WorkingFileCell ?? WorkingFileCell()
         switch item {
         case let dir as Dir:
@@ -1655,8 +2415,10 @@ final class WorkingCopyViewController: NSSplitViewController, NSOutlineViewDataS
                 check: entry.isConflict ? nil : entry.check, mark: state != nil ? ("✓", .systemOrange) : Self.mark(of: entry),
                 name: name, dimmed: false, tip: state.map { "\(tip)\n" + Self.withoutMarkersMessage(rerere: $0.rerere) } ?? tip,
                 detail: state.map { $0.rerere ? "rerere" : L("no markers") } ?? (layout == .flat && !parent.isEmpty ? parent : nil),
-                stat: stats[path])
-            cell.onDiscard = entry.isConflict || !entry.item.isUnstaged ? nil : { [weak self] in self?.discardFile(entry) }
+                stat: entry.section == .staged ? splitStats?.staged[path]
+                    : entry.section == .unstaged ? splitStats?.unstaged[path] ?? stats[path] : stats[path])
+            cell.onDiscard = entry.isConflict || !entry.item.isUnstaged || entry.section == .staged ? nil
+                : { [weak self] in self?.discardFile(entry) }
         default:
             break
         }
@@ -1764,8 +2526,13 @@ final class WorkingCopyViewController: NSSplitViewController, NSOutlineViewDataS
     }
 
     func outlineViewSelectionDidChange(_ notification: Notification) {
-        guard !isRestoringSelection, let entry = files.item(atRow: files.selectedRow) as? Entry else { return }
-        if selectedKey?.path == entry.item.path, current != nil || isConflict { return }
+        guard !isRestoringSelection else { return }
+        // 2 つ以上選んだら、選んだファイルの差分を並べる（すべてのファイルを見ている間は 1 つ）。
+        let chosen = files.selectedRowIndexes.compactMap { files.item(atRow: $0) as? Entry }.filter { !$0.isConflict }
+        if !showsAllFiles, chosen.count >= 2 { return showMulti(chosen) }
+        guard let entry = files.item(atRow: files.selectedRow) as? Entry else { return }
+        let sideChanged = adoptSection(of: entry)
+        if !sideChanged, selectedKey?.path == entry.item.path, current != nil || isConflict { return }
         showDiff(of: entry, staged: side(for: entry.item))
     }
 }
@@ -2044,17 +2811,19 @@ enum HookOutputSheet {
     }
 }
 
-/// コミットの入力とファイルの一覧の間の仕切りの決まり: 上は最低限の高さを保ち、下にも一覧の分を残し、窓の高さが
+/// コミットの入力と差分の間の仕切りの決まり: 上は最低限の高さを保ち、下にも差分の分を残し、窓の高さが
 /// 変わったら下だけが伸び縮みする。
 final class MessageSplitDelegate: NSObject, NSSplitViewDelegate {
     var minimum: () -> CGFloat = { 170 }
+    /// 上の段の最大の高さ（nil なら下に 140 残す）。
+    var maximum: (() -> CGFloat)?
 
     func splitView(_ splitView: NSSplitView, constrainMinCoordinate proposedMinimumPosition: CGFloat, ofSubviewAt dividerIndex: Int) -> CGFloat {
         max(proposedMinimumPosition, minimum())
     }
 
     func splitView(_ splitView: NSSplitView, constrainMaxCoordinate proposedMaximumPosition: CGFloat, ofSubviewAt dividerIndex: Int) -> CGFloat {
-        min(proposedMaximumPosition, splitView.bounds.height - 140)
+        min(proposedMaximumPosition, maximum?() ?? splitView.bounds.height - 140)
     }
 
     func splitView(_ splitView: NSSplitView, shouldAdjustSizeOfSubview view: NSView) -> Bool {
@@ -2070,4 +2839,19 @@ private final class YieldingButton: NSButton {
         if yieldsKeyEquivalent?() == true { return false }
         return super.performKeyEquivalent(with: event)
     }
+}
+
+/// 節の見出しの、押したら `action` を呼ぶボタン（Stage All・Unstage All）。
+private final class SectionActionButton: NSButton {
+    private var handler: (() -> Void)?
+
+    convenience init(title: String, action: @escaping () -> Void) {
+        self.init(frame: .zero)
+        self.title = title
+        handler = action
+        target = self
+        self.action = #selector(run)
+    }
+
+    @objc private func run() { handler?() }
 }

@@ -765,6 +765,9 @@ pub enum Command {
     /// HEAD と作業ツリーの、ファイルごとの追加・削除の行数（`info.stats`: `path`・`added`・`removed`。
     /// バイナリは null。untracked は含まない）。
     WorkingStats,
+    /// `WorkingStats` を index で分けたもの（`info.staged`: HEAD と index、`info.unstaged`: index と作業ツリー。
+    /// 形は `info.stats` と同じ）。
+    WorkingStatsSplit,
     /// `.gitignore` の書きかけの中身（`text`）の各行に合うファイルの例（`info.lines`: 行の番号・パターン・
     /// 例・合う数）。空行・# の行・! の行は飛ばす。多すぎないよう 40 行まで。
     IgnoreMatches {
@@ -5424,6 +5427,14 @@ impl Repository {
                 info: Some(serde_json::json!({ "stats": ops.working_stats()? })),
                 ..Default::default()
             }),
+            Command::WorkingStatsSplit => {
+                let (staged, unstaged) = ops.working_stats_split()?;
+                Ok(Response {
+                    ok: true,
+                    info: Some(serde_json::json!({ "staged": staged, "unstaged": unstaged })),
+                    ..Default::default()
+                })
+            }
             Command::Remotes => Ok(Response {
                 ok: true,
                 info: Some(serde_json::json!({ "remotes": ops.remotes()? })),
@@ -9127,6 +9138,16 @@ mod tests {
             (stats[0]["added"].as_u64(), stats[0]["removed"].as_u64()),
             (Some(2), Some(1))
         );
+        // index で分ける: staged は 2 → x、unstaged は y を足しただけ。
+        let r = run(&repo, r#"{"op":"workingStatsSplit"}"#);
+        let count = |side: &str| {
+            let list = r["info"][side].as_array().unwrap();
+            assert_eq!(list.len(), 1, "{r}");
+            assert_eq!(list[0]["path"], "a.txt");
+            (list[0]["added"].as_u64(), list[0]["removed"].as_u64())
+        };
+        assert_eq!(count("staged"), (Some(1), Some(1)));
+        assert_eq!(count("unstaged"), (Some(1), Some(0)));
     }
 
     #[test]
@@ -11237,6 +11258,94 @@ mod tests {
         assert!(repo.discard_rows(&diff, &[3]).is_err());
         assert_eq!(index_blob(dir), b"a\nb\n", "index は変えない");
         assert_eq!(std::fs::read(dir.join("a.txt")).unwrap(), b"a  \nB\n");
+    }
+
+    #[test]
+    fn a_whole_file_working_diff_shows_every_line_and_stages_rows() {
+        let lines: String = (1..=20).map(|i| format!("{i}\n")).collect();
+        let (tmp, repo) = setup_converting(&[], lines.as_bytes());
+        let dir = tmp.path();
+        std::fs::write(dir.join("a.txt"), lines.replace("10\n", "ten\n")).unwrap();
+        let status = repo.load_status().unwrap();
+        let entry = &status.status.entries[0];
+        let narrow = repo
+            .working_diff_combined(entry, &FrontendProfile::MACOS)
+            .unwrap()
+            .unwrap();
+        let whole = repo
+            .working_diff_combined_context(entry, u32::MAX, None, &FrontendProfile::MACOS)
+            .unwrap()
+            .unwrap();
+        let unchanged = |d: &crate::WorkingDiff| {
+            d.view
+                .rows
+                .iter()
+                .filter(|r| r.kind == amonhen_layout::DiffRow::CONTEXT)
+                .count()
+        };
+        assert_eq!(unchanged(&narrow), 6);
+        assert_eq!(unchanged(&whole), 19, "変わっていない行をすべて出す");
+        let split = repo
+            .working_diff_context(
+                entry,
+                false,
+                u32::MAX,
+                None,
+                crate::diff::Whitespace::Exact,
+                &FrontendProfile::MACOS,
+            )
+            .unwrap();
+        assert_eq!(unchanged(&split), 19);
+        // ファイル全体の差分の行でも、その行だけを stage できる。
+        let added = whole
+            .view
+            .rows
+            .iter()
+            .position(|r| r.kind == amonhen_layout::DiffRow::ADDED)
+            .unwrap();
+        let removed = whole
+            .view
+            .rows
+            .iter()
+            .position(|r| r.kind == amonhen_layout::DiffRow::REMOVED)
+            .unwrap();
+        repo.set_rows_staged(&whole, &[removed, added], true)
+            .unwrap();
+        assert_eq!(index_blob(dir), lines.replace("10\n", "ten\n").as_bytes());
+        // いくつかのファイルを見出しでつなぐ: 各ファイルの行は見出しの次から同じ順で、stage の印も付く。
+        let status = repo.load_status().unwrap();
+        let staged = repo
+            .working_diff_combined(&status.status.entries[0], &FrontendProfile::MACOS)
+            .unwrap()
+            .unwrap();
+        let view = crate::WorkingDiff::stacked_view(
+            &[&narrow, &staged],
+            &[false, false],
+            &FrontendProfile::MACOS,
+        );
+        let file = amonhen_layout::DiffRow::FILE;
+        let second = 1 + narrow.view.rows.len();
+        assert_eq!(
+            view.rows.len(),
+            2 + narrow.view.rows.len() + staged.view.rows.len()
+        );
+        assert_eq!((view.rows[0].kind, view.rows[second].kind), (file, file));
+        let flags = |rows: &[amonhen_layout::DiffRow]| {
+            rows.iter().map(|r| (r.kind, r.flags)).collect::<Vec<_>>()
+        };
+        assert_eq!(flags(&view.rows[second + 1..]), flags(&staged.view.rows));
+        assert!(
+            view.rows[second + 1..]
+                .iter()
+                .any(|r| r.flags & amonhen_layout::DiffRow::STAGED != 0)
+        );
+        // 畳んだファイルは見出しだけ。
+        let folded = crate::WorkingDiff::stacked_view(
+            &[&narrow, &staged],
+            &[true, false],
+            &FrontendProfile::MACOS,
+        );
+        assert_eq!(folded.rows.len(), 2 + staged.view.rows.len());
     }
 
     #[test]

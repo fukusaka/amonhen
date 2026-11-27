@@ -228,6 +228,27 @@ enum Settings {
     }
 
 
+    /// 複数のファイルを並べた差分（History のコミット、Working Copy で選んだファイル）で、開いて並べるファイルの数。
+    static let diffOpenFilesChoices = [5, 10, 20, 50, 100]
+    static var diffOpenFiles: Int {
+        get {
+            let value = UserDefaults.standard.integer(forKey: "diffOpenFiles")
+            return diffOpenFilesChoices.contains(value) ? value : 20
+        }
+        set { UserDefaults.standard.set(newValue, forKey: "diffOpenFiles") }
+    }
+
+    /// Working Copy の差分で行を stage・unstage する形: 選んでから見出しの行・Space・右クリックで（`select`）、
+    /// 行の左の変更の帯・行番号を押して（`bar`）。変えたら `lineStageStyleChanged` を知らせる。
+    enum LineStageStyle: String, CaseIterable { case select, bar }
+    static var lineStageStyle: LineStageStyle {
+        get { UserDefaults.standard.string(forKey: "lineStageStyle").flatMap(LineStageStyle.init) ?? .select }
+        set {
+            UserDefaults.standard.set(newValue.rawValue, forKey: "lineStageStyle")
+            NotificationCenter.default.post(name: .lineStageStyleChanged, object: nil)
+        }
+    }
+
     /// File History にマージのコミットも出すか（既定は出さない）。変えたら `fileHistoryMergesChanged` を知らせる。
     static var fileHistoryMerges: Bool {
         get { UserDefaults.standard.bool(forKey: "fileHistoryMerges") }
@@ -473,6 +494,7 @@ extension Notification.Name {
     static let commitMessageStyleChanged = Notification.Name("commitMessageStyleChanged")
     static let historyFileTreeChanged = Notification.Name("historyFileTreeChanged")
     static let diffWrapLinesChanged = Notification.Name("diffWrapLinesChanged")
+    static let lineStageStyleChanged = Notification.Name("lineStageStyleChanged")
     static let fileHistoryMergesChanged = Notification.Name("fileHistoryMergesChanged")
     static let gitHubSettingsChanged = Notification.Name("gitHubSettingsChanged")
     static let autoFetchChanged = Notification.Name("autoFetchChanged")
@@ -558,6 +580,8 @@ enum MergeMode: String, CaseIterable {
 @Observable
 final class SettingsModel {
     var autoFetchMinutes = Settings.autoFetchMinutes { didSet { Settings.autoFetchMinutes = autoFetchMinutes } }
+    var diffOpenFiles = Settings.diffOpenFiles { didSet { Settings.diffOpenFiles = diffOpenFiles } }
+    var lineStageStyle = Settings.lineStageStyle { didSet { Settings.lineStageStyle = lineStageStyle } }
     var monospacedCommitMessage = Settings.monospacedCommitMessage {
         didSet { Settings.monospacedCommitMessage = monospacedCommitMessage }
     }
@@ -723,6 +747,21 @@ private struct DiffMergeSettings: View {
     @Bindable var model: SettingsModel
     var body: some View {
         Form {
+            Section(L("Diff")) {
+                Picker(L("Files to open together"), selection: $model.diffOpenFiles) {
+                    ForEach(Settings.diffOpenFilesChoices, id: \.self) { Text("\($0)").tag($0) }
+                }
+                Text(L("When a diff lists several files (a commit in History, files selected in Working Copy), this many are shown open from the top."))
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+                Picker(L("Staging lines"), selection: $model.lineStageStyle) {
+                    Text(L("Select lines, then use the hunk header")).tag(Settings.LineStageStyle.select)
+                    Text(L("Click the change bar or line numbers")).tag(Settings.LineStageStyle.bar)
+                }
+                Text(L("How lines are staged and unstaged in the Working Copy diff. Space and the right-click menu work either way."))
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+            }
             Section(L("Merge Editor")) {
                 Toggle(L("Resolve unambiguous conflicts when the merge editor opens"), isOn: $model.autoMagicMerge)
             }

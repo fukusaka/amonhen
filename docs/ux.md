@@ -428,44 +428,47 @@ a rebase, a History edit or an amend. Its main use is checking a rebuilt stacked
 
 ## 6. Working Copy
 
-Reference: Tower and JetBrains (a single checkbox list, commit input on top).
+Reference: Tower and JetBrains (one list of changed files), git status and Fork (Staged and Unstaged apart), Fork and Sublime Merge (actions on the hunk header), GitHub (unchanged lines opened a part at a time).
 
-### Left column (from the top)
+### Layout
 
 ```
-┌ Commit ─────────────────────────────────┐
-│ [Subject                      ] 42/50   │
-│ ┌ Body (grows with the text) ────────┐ │
-│ └────────────────────────────────────┘ │
-│ ☐ Amend               [Commit ▾] ⌘↩   │
-├ Changes ──────────── [≡ List|🌲 Tree] ┤
-│ 🔍 Filter                              │
-│ ☐ Changes (4 / 2 included)             │
-│   ☑ M  src/lib.rs            +12 −3    │
-│   ▣ M  src/main.rs           +5  −1    │  ← only some lines included
-│   ☐ M  README.md             +1  −1    │
-│   ☐ ?  notes.txt                       │
-└────────────────────────────────────────┘
+┌ Changes|All Files  [⊟][≡|🌲|📄] ┬ [Subject                   ] 42/50   ⌄ ┐
+│ ☐ 4 / 13                        │ ┌ Body (grows with the text) ─────────┐ │
+│ 🔍 Filter                       │ └─────────────────────────────────────┘ │
+│ ☑ M  src/lib.rs        +12 −3   │ ☐ Amend                  [Commit ▾] ⌘↩ │
+│ ▣ M  src/main.rs       +5  −1   ├ src/main.rs  [Unstaged|Staged|All]  … ─┤
+│ ☐ M  README.md         +1  −1   │ ƒ fn parse ┄┄ ⋯ 56 unchanged lines ┄┄ Stage Hunk  Discard Hunk
+│ ☐ ?  notes.txt                  │   57   let a = 1;                       │
+│                                 │ − 58   let b = 2;                       │
+│   (the full height)             │ + 58   let b = 20;                      │
+└─────────────────────────────────┴─────────────────────────────────────────┘
 ```
 
-### A single checkbox list
+- The list of changed files takes the left column from top to bottom. The commit input sits at the top right, above the diff, so "what to write" is next to "what goes in". ⌄ collapses it to the subject line (the count and Commit move onto that line), and the divider between it and the diff is remembered.
+- Changes and All Files at the top of the list. All Files lists every file of the working tree (HEAD's tree with the status laid over it: changed files are marked, folders that contain changes have ●, deleted files and the old names of renamed files are struck through in red), in the same three layouts. A changed file shows its diff over the whole file; an unchanged one shows its contents.
+- The band above the diff: the side (Unstaged, Staged, All), Show Whole File, whitespace, wrapping, find, and the view options (Show Whole File, Wrap, and the commit message's Summary Only). Images are compared as in History (2-up, swipe, onion skin, difference); SVG can switch to its text.
 
-Drop the two lists, Staged and Unstaged, and put all changed files in one list, where each row's checkbox shows "whether it goes into the next commit". The checkbox is the index (stage) state itself; the FE keeps no selection state of its own (a `git add` in the terminal shows up as is).
+### The list: one list, or Staged and Unstaged
 
-| State | Meaning | On click |
+The ⊟ button above the list switches between Mixed (one list) and the sections of `git status`.
+
+- Mixed: all changed files in one list, where each row's checkbox shows whether it goes into the next commit. The checkbox is the index (stage) state itself; the FE keeps no selection state of its own (a `git add` in the terminal shows up as is).
+- Sections: Unmerged (when there are conflicts), Staged and Unstaged. A partly staged file is in both. Each section's header has Unstage All or Stage All, and its rows count only their own side's lines (HEAD → index, index → working tree). Choosing a row switches the diff to that row's side.
+
+| State (Mixed) | Meaning | On click |
 | --- | --- | --- |
 | ☑ | All working tree changes are staged | Unstage the whole file |
 | ▣ | Only partly staged (lines or hunks included) | Stage everything |
 | ☐ | Not staged | Stage everything |
 
-- The header row (Changes) and directory rows also have three-state checkboxes that toggle everything below them.
-- The header shows "total / included". Commit cannot be clicked when nothing is included (except with Amend).
+- The header row and directory rows also have three-state checkboxes that toggle everything below them.
+- The header shows "included / total". Commit cannot be clicked when nothing is included (except with Amend).
 - New files (?), deletions and renames are treated the same way. Conflicted files show ⚠ instead of a checkbox, and clicking it opens the merge editor.
-
-- Put the commit input on top (as in JetBrains and GitHub Desktop, show "what to write" first). The input can be collapsed (to just the one subject line).
-- Choose from three ways to show the list: List (paths in one column), Tree (a directory tree, collapsing levels with a single child; done), Flat (file name, with the parent directory in faint text). Sort by path / status / extension.
-- A filter field (fuzzy search on paths). Helps when hundreds of files change.
-- Each row shows +/− line counts and a status icon (M / A / D / R / ? / U), and a Discard button on hover. Space toggles the check of the selected files (several allowed), ⌫ discards (with confirmation).
+- Choose from three ways to show the list: List (paths in one column), Tree (a directory tree, collapsing levels with a single child), File Name (the file name, with the parent directory in faint text).
+- A filter field on paths. Helps when hundreds of files change.
+- Each row shows +/− line counts and a status mark (M / A / D / R / U), and a Discard button on hover. Space toggles the check of the selected files (several allowed), ⌫ discards (with confirmation).
+- Selecting two or more files stacks their diffs on the right (see below).
 
 ### Making commits easier to write
 
@@ -481,29 +484,51 @@ Drop the two lists, Staged and Unstaged, and put all changed files in one list, 
 | AI | "Suggest a message" (from the staged diff). See below |
 | Reason when disabled | When Commit cannot be clicked, its tooltip says why ("No files are checked", "Write a commit message", "Committing…") |
 
-### Fine-grained staging in the diff on the right
+### The diff on the right: Unstaged, Staged and All
 
-Reference: GitHub Desktop's checks in the line gutter, JetBrains' per-line include and exclude.
+The diff shows one of git's three diffs. The side is one for the whole Working Copy (Unstaged at first) and stays when another file is chosen.
 
-Since the list is a single one, the diff is a single one too. The right side shows the diff from HEAD → working tree, and a check in the gutter on each changed line shows "whether it goes into the next commit" (whether it is in the index).
+- Unstaged: `git diff` (index → working tree), what isn't going in yet.
+- Staged: `git diff --cached` (HEAD → index), the next commit as it is. With Show Whole File, a partly staged file can be read through as it will be committed.
+- All: HEAD → working tree. A bar left of each changed line is filled when the line is staged and outlined when it isn't. The core overlays HEAD → index and index → working tree (`working_diff_combined`, `STAGED` in the line's `flags`). A file whose index can't be expressed as "HEAD with part of the changes applied" (a change only in the index that was reverted in the working tree, for example) says so and points to Unstaged and Staged. So does ignoring whitespace.
+- A file with nothing on the chosen side says so ("No staged changes in this file").
 
 ```
- ☑ ▾ @@ fn parse @@                         [Discard hunk]
-     12   let a = 1;
- ☑ − 13   let b = 2;
- ☑ + 13   let b = 3;
- ☐ + 14   dbg!(b);          ← line only in the working tree
+ ƒ fn parse ┄┄┄┄┄┄ ⋯ 56 unchanged lines ┄┄┄┄┄┄ Stage Hunk  Discard Hunk
+     57   let a = 1;
+ −   58   let b = 2;
+ +   58   let b = 20;
+ +   59   log(b);
+ ┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄ ⋯ 17 unchanged lines ┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄
 ```
 
-- The core overlays the two diffs HEAD → index and index → working tree, and returns each changed line of HEAD → working tree marked with "staged or not" (`working_diff_combined`, `STAGED` in the line's `flags`). Files whose index cannot be expressed as "HEAD with part of the changes applied" (for example, a change only in the index that was reverted in the working tree) are shown per file with the old Unstaged / Staged switch.
-- Toggling rebuilds and writes "which changes applied to HEAD make up the index" (`set_rows_staged`). Including everything is the same as `git add`, and excluding everything the same as `git reset` (for new and deleted files).
-- The check on the hunk header has three states; clicking it includes or excludes the whole hunk.
-- Clicking a line's check toggles that line. Drag in the gutter to select a range, ⌘-click to add to the selection, and Space toggles them all at once.
-- Clicking the boundary of a block of changes (consecutive − and ＋) selects just that block.
-- Keys: Space toggles the check of the selected lines (or the current hunk if none), `D` discards, `J` / `K` go to the next / previous hunk, `⌥J` / `⌥K` to the next / previous file.
-- After toggling, stay in the same position and move the cursor to the next hunk (update the display optimistically and reconcile when status settles).
-- Display options (the bar above the diff): unified / split, ignore whitespace, context lines (3 / 10 / all), wrapping.
-- Discard keeps the contents in the oplog and can be undone (the current working tree contents are written to a blob).
+- Unchanged lines between hunks are folded into one row: a dashed line with "⋯ 56 unchanged lines" in the middle and, at the left, the function of the hunk below (as git finds it for the hunk header). There are no other hunk header rows. A hunk that starts at the first line gets such a row of its own, without the label.
+- On hover the row offers ↓ 20 lines (below the change above), ↑ 20 lines (above the change below), All, and Collapse once something is open. Clicking the label opens it all. An opened part keeps its row ("56 unchanged lines shown") to fold it again. Show Whole File opens or closes every part. Which parts are open is kept per file and side while the app runs.
+- How it works: `file_diff_folded` takes the opened amounts per part (`GapOpen`: the part's number and how many lines to show from its top and bottom) and returns the part's row as a `HUNK` row whose `old_no` is the hidden line count, `new_no` the shown one, and text the function name.
+
+### Staging lines
+
+Two ways, chosen in Settings > Diff & Merge > Staging lines.
+
+- Select lines, then use the hunk header (the default). The row above each hunk has Stage Hunk and Discard Hunk (only Unstage Hunk on Staged; Stage Hunk or Unstage Hunk by the hunk's state on All). Selecting lines in the hunk (click, drag, Shift for a range, ⌘ to add) turns the label into "2 lines selected" and the actions into Stage Lines and Discard Lines.
+- Click the change bar or line numbers. A thin bar left of each block of changes (consecutive − and +) marks it; pointing at it highlights the block and clicking it stages or unstages the whole block. Clicking a line number does that line, and dragging over line numbers does the range when the mouse is released. The band has Stage Lines and Discard Lines for selected lines.
+
+Either way:
+
+- Space stages or unstages the selected lines. J / K select the next / previous block of changes, ⌥J / ⌥K go to the next / previous file.
+- The right-click menu on a line has the selected lines, its hunk and that line, each with Stage (Unstage) and Discard.
+- Staging one side of a replaced line works as in `git add -p`: only the added line puts both the old and the new line in the index; only the removed line takes the old line out.
+- Ignoring whitespace stops staging and discarding lines (the lines don't show the contents as they are).
+- Discarding lines and hunks needs no confirmation and can be undone, as Discard Lines did; discarding a file asks first.
+- Including everything is the same as `git add`, and excluding everything the same as `git reset` (for new and deleted files). Other states are written by rebuilding "which changes applied to HEAD make up the index" (`set_rows_staged`, and `stage_rows` for Unstaged and Staged).
+
+### Several files at once
+
+Selecting two or more files in the list stacks their diffs on the side chosen, as History does with a commit's files.
+
+- Each file has a header row (path, status mark, +/− counts) that sticks to the top while its lines scroll by. Clicking it folds the file; its ⋯ has Stage (Unstage) and Discard…. Files with nothing on the chosen side are left out.
+- Unchanged parts, the hunk header actions, the bars and the right-click menu work in every file; the core joins the files' diffs into one view (`WorkingDiff::stacked_view`), and the FE maps a row back to its file and line before staging.
+- Settings > Diff & Merge > Files to open together (5, 10, 20, 50, 100; 20 by default) caps how many are shown; past it, the band says "(showing the first 20)". The same setting decides how many of a commit's files History shows open.
 
 ## 7. History's right column
 
@@ -529,7 +554,7 @@ In addition to today's "choose a file to show only its diff", offer a view that 
 ```
 
 - Clicking a file in the tree on the left jumps to it. The tree's selection follows scrolling.
-- Each file can be collapsed. Lockfiles, `linguist-generated`, binaries and anything over 1000 lines start collapsed.
+- Each file can be collapsed. Selecting a commit shows its first files open, as many as Settings > Diff & Merge > Files to open together (20 by default); a file with more than 1000 changed lines stays collapsed.
 - Marking a file "Viewed" collapses it and puts a ✓ in the tree. Remembered per commit (for reviews that span several commits).
 - The header's ⋯: blame, file history, open the contents as of this commit, open in the editor.
 - How it works: the core takes the diffs of all files once and holds them (`StackedDiff`; taken in parallel when there are many files), and builds a view that joins "a file header row (`DiffRow::FILE`) + each file's rows" into one. The strings keep sharing the file contents. Collapsing and expanding only rebuild the view. The Metal machinery of the diff view works as is. On linux, the time from choosing a commit to the diff appearing is the same as with one file at a time (p50 15–16 ms).

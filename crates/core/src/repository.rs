@@ -56,6 +56,43 @@ pub struct WorkingDiff {
     pub line_endings: Option<LineEndings>,
 }
 
+impl WorkingDiff {
+    /// Working Copy で選んだいくつかのファイルの差分を、見出しの行（`DiffRow::FILE`）でつないだ表示（History の
+    /// コミットの全ファイルと同じ形）。`collapsed[i]` が true のファイルは見出しだけ。HEAD と作業ツリーの差分
+    /// （`combined`）の行には、index に入っているかの印（`STAGED`）を付ける。ファイルの行は、見出しの次の行から
+    /// そのファイルの `view` の行と同じ順に並ぶ。
+    pub fn stacked_view(
+        diffs: &[&WorkingDiff],
+        collapsed: &[bool],
+        profile: &FrontendProfile,
+    ) -> DiffView {
+        let stacked = diff::StackedDiff {
+            files: diffs
+                .iter()
+                .map(|d| (d.entry.path.clone(), d.file.clone()))
+                .collect(),
+        };
+        let mut view = stacked.view(collapsed, profile);
+        let mut at = 0;
+        for (i, d) in diffs.iter().enumerate() {
+            at += 1;
+            let hidden = collapsed.get(i).copied().unwrap_or(false) || d.file.binary;
+            if hidden {
+                continue;
+            }
+            if let Some(staged) = &d.combined {
+                for (row, &on) in view.rows[at..].iter_mut().zip(staged) {
+                    if on {
+                        row.flags |= DiffRow::STAGED;
+                    }
+                }
+            }
+            at += d.file.lines.len();
+        }
+        view
+    }
+}
+
 /// 2 つ選んだときの差分の取り方。
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 pub enum PairMode {
@@ -1562,11 +1599,13 @@ impl Repository {
         path: &str,
         old: Arc<Vec<u8>>,
         new: Arc<Vec<u8>>,
+        context: u32,
+        open: Option<&[diff::GapOpen]>,
         whitespace: diff::Whitespace,
     ) -> FileDiff {
         let attrs = self.diff_attributes(&[path]);
         let funcname = crate::funcname::FuncName::new(attrs[0].funcname.as_ref());
-        let mut diff = diff::file_diff_ws(old, new, 3, &funcname, whitespace);
+        let mut diff = diff::file_diff_folded(old, new, context, open, &funcname, whitespace);
         diff.generated = attrs[0].generated;
         diff
     }
@@ -1656,6 +1695,20 @@ impl Repository {
         whitespace: diff::Whitespace,
         profile: &FrontendProfile,
     ) -> Result<WorkingDiff> {
+        self.working_diff_context(entry, staged, 3, None, whitespace, profile)
+    }
+
+    /// `working_diff_ws` の、前後 `context` 行のもの（`u32::MAX` ならファイル全体。Working Copy の「ファイル全体を
+    /// 表示」）。`open` があれば、変更のない所を開いたり閉じたりできる形にする（`diff::file_diff_folded`）。
+    pub fn working_diff_context(
+        &self,
+        entry: &StatusEntry,
+        staged: bool,
+        context: u32,
+        open: Option<&[diff::GapOpen]>,
+        whitespace: diff::Whitespace,
+        profile: &FrontendProfile,
+    ) -> Result<WorkingDiff> {
         let blob = |id: &Option<Oid>| -> Result<Arc<Vec<u8>>> {
             match id {
                 Some(id) if entry.submodule => {
@@ -1677,7 +1730,7 @@ impl Repository {
             let line_endings = self.line_endings(entry, &index)?;
             (index, worktree, line_endings)
         };
-        let file = self.path_diff(&entry.path, old, new, whitespace);
+        let file = self.path_diff(&entry.path, old, new, context, open, whitespace);
         let view = DiffView::new(&file, profile).with_path(&entry.path);
         Ok(WorkingDiff {
             entry: entry.clone(),
@@ -1728,6 +1781,18 @@ impl Repository {
         entry: &StatusEntry,
         profile: &FrontendProfile,
     ) -> Result<Option<WorkingDiff>> {
+        self.working_diff_combined_context(entry, 3, None, profile)
+    }
+
+    /// `working_diff_combined` の、前後 `context` 行のもの（`u32::MAX` ならファイル全体）。`open` は
+    /// `working_diff_context` と同じ。
+    pub fn working_diff_combined_context(
+        &self,
+        entry: &StatusEntry,
+        context: u32,
+        open: Option<&[diff::GapOpen]>,
+        profile: &FrontendProfile,
+    ) -> Result<Option<WorkingDiff>> {
         if entry.submodule
             || entry.is_directory()
             || entry.kind == amonhen_model::StatusKind::Unmerged
@@ -1746,7 +1811,14 @@ impl Repository {
             b'D' => Arc::default(),
             _ => self.backend.worktree_file(&entry.path)?,
         };
-        let file = self.path_diff(&entry.path, head, worktree, diff::Whitespace::Exact);
+        let file = self.path_diff(
+            &entry.path,
+            head,
+            worktree,
+            context,
+            open,
+            diff::Whitespace::Exact,
+        );
         let Some(staged) = diff::staged_lines(&file, &index) else {
             return Ok(None);
         };

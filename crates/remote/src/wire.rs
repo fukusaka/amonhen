@@ -450,6 +450,8 @@ pub enum Op {
     IgnoredFiles,
     /// → `()`
     DeleteIgnored(Vec<String>),
+    /// → `(Vec<FileStat>, Vec<FileStat>)`（staged・unstaged の行数）
+    WorkingStatsSplit,
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize)]

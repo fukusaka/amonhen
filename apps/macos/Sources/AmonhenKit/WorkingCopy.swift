@@ -58,21 +58,45 @@ public final class WorkingStatus: @unchecked Sendable {
         amonhen_status_release(raw)
     }
 
+    /// 開く隙間を C に渡す（nil なら NULL: 畳まない。空でも NULL でないポインタを渡す）。
+    private func withGaps<R>(_ gaps: [Int: GapOpening]?, _ body: (UnsafePointer<UInt32>?, UInt32) -> R) -> R {
+        guard let gaps else { return body(nil, 0) }
+        var values: [UInt32] = []
+        for (gap, opening) in gaps.sorted(by: { $0.key < $1.key }) {
+            values += [UInt32(gap), opening.top, opening.bottom]
+        }
+        if values.isEmpty { values = [UInt32.max] }
+        return values.withUnsafeBufferPointer { body($0.baseAddress, UInt32(gaps.count)) }
+    }
+
     /// `item` の差分。`staged` なら HEAD と index、そうでなければ index と作業ツリー。空白を無視した差分は、行ごとの
-    /// stage・破棄に使えない。裏のスレッドで呼ぶ。
-    public func diff(of item: StatusItem, staged: Bool, whitespace: DiffWhitespace = .exact) throws -> WorkingFileDiff {
-        guard let raw = amonhen_working_diff(
-            repository.raw, raw, UInt32(item.index), staged, whitespace.rawValue, UInt8(AmonhenEncoding_Utf16.rawValue))
+    /// stage・破棄に使えない。`context` は前後の行数（`.max` ならファイル全体）。`openGaps` があれば、変更のない所
+    /// （隙間）を少しずつ開いたり閉じたりできる形にする（hunk の見出しの行の代わりに隙間の行。`old_no` が隠して
+    /// いる行数、`new_no` が見せている行数、文字は関数名）。キーは隙間の番号（頭から 0, 1, …）。裏のスレッドで呼ぶ。
+    public func diff(
+        of item: StatusItem, staged: Bool, context: UInt32 = 3, openGaps: [Int: GapOpening]? = nil,
+        whitespace: DiffWhitespace = .exact
+    ) throws -> WorkingFileDiff {
+        let raw = withGaps(openGaps) { open, count in
+            amonhen_working_diff(
+                repository.raw, self.raw, UInt32(item.index), staged, context, open, count, whitespace.rawValue,
+                UInt8(AmonhenEncoding_Utf16.rawValue))
+        }
+        guard let raw
         else { throw AmonhenError.last() }
         return WorkingFileDiff(raw: raw, status: self, item: item, staged: staged)
     }
 
     /// `item` の HEAD と作業ツリーの差分。変更の行ごとに index に入っているか（`WorkingFileDiff.isStaged(row:)`）が
     /// わかる。index がその形で表せないファイル（作業ツリーで書き戻した変更が index にだけあるなど）・
-    /// サブモジュール・バイナリ・コンフリクトでは nil。裏のスレッドで呼ぶ。
-    public func combinedDiff(of item: StatusItem) throws -> WorkingFileDiff? {
-        guard let raw = amonhen_working_diff_combined(
-            repository.raw, raw, UInt32(item.index), UInt8(AmonhenEncoding_Utf16.rawValue))
+    /// サブモジュール・バイナリ・コンフリクトでは nil。`context` は前後の行数（`.max` ならファイル全体）。
+    /// 裏のスレッドで呼ぶ。
+    public func combinedDiff(of item: StatusItem, context: UInt32 = 3, openGaps: [Int: GapOpening]? = nil) throws -> WorkingFileDiff? {
+        let raw = withGaps(openGaps) { open, count in
+            amonhen_working_diff_combined(
+                repository.raw, self.raw, UInt32(item.index), context, open, count, UInt8(AmonhenEncoding_Utf16.rawValue))
+        }
+        guard let raw
         else {
             // 理由が空の NULL は「表せない」。
             let error = AmonhenError.last()
@@ -80,6 +104,17 @@ public final class WorkingStatus: @unchecked Sendable {
             throw error
         }
         return WorkingFileDiff(raw: raw, status: self, item: item, staged: false, combined: true)
+    }
+}
+
+/// 変更のない所（隙間）の開き方: 上（前の変更に続く所）から `top` 行、下（次の変更の手前）から `bottom` 行を
+/// 見せる。足して隙間の行数以上なら、すべて見せる。
+public struct GapOpening: Hashable, Sendable {
+    public var top: UInt32
+    public var bottom: UInt32
+    public init(top: UInt32 = 0, bottom: UInt32 = 0) {
+        self.top = top
+        self.bottom = bottom
     }
 }
 
@@ -149,6 +184,14 @@ public final class WorkingFileDiff: FileDiff, @unchecked Sendable {
             amonhen_set_rows_staged(repository.raw, raw, $0.baseAddress, UInt32($0.count), staged)
         }
         if !ok { throw AmonhenError.last() }
+    }
+
+    /// 差分の前（`after` が false）か後の中身（画像の比較など）。空なら nil。
+    public func blob(after: Bool) -> Data? {
+        var length: UInt = 0
+        guard let bytes = amonhen_working_diff_blob(raw, after, &length) else { return nil }
+        defer { amonhen_blob_free(bytes, length) }
+        return Data(bytes: bytes, count: Int(length))
     }
 
     /// `rows` 行目の変更だけを stage する（stage 済みの差分なら unstage する）。
@@ -300,5 +343,47 @@ public enum LocalGit {
     public static func setGlobalConfig(_ key: String, _ value: String?) throws {
         let ok = value.map { amonhen_set_global_config(key, $0) } ?? amonhen_set_global_config(key, nil)
         if !ok { throw AmonhenError.last() }
+    }
+}
+
+/// Working Copy で選んだいくつかのファイルの差分を、見出しの行（`AmonhenDiffRow_FILE`）でつないだ表示。HEAD と
+/// 作業ツリーの差分の行には `STAGED` の印が付く。行の操作は、`location(of:)` でファイルとその中の行に直して、
+/// そのファイルの差分（`files`）に頼む。
+public final class WorkingStackedDiff: FileDiff, @unchecked Sendable {
+    public let files: [WorkingFileDiff]
+    /// 各ファイルの見出しの行（i 番目がファイル i）。
+    public let fileRows: [Int]
+
+    /// `files` をつなぐ。`collapsed[i]` が true のファイルは見出しだけ。
+    public init(files: [WorkingFileDiff], collapsed: [Bool]) {
+        self.files = files
+        let raws: [OpaquePointer?] = files.map { $0.raw }
+        let raw = raws.withUnsafeBufferPointer { diffs in
+            collapsed.withUnsafeBufferPointer {
+                amonhen_working_stacked_view(diffs.baseAddress, $0.baseAddress, UInt32(files.count), UInt8(AmonhenEncoding_Utf16.rawValue))!
+            }
+        }
+        var rows: [Int] = []
+        let view = amonhen_diff_view(raw)
+        for i in 0..<Int(view.row_count) where view.rows[i].kind == UInt8(AmonhenDiffRow_FILE) { rows.append(i) }
+        fileRows = rows
+        super.init(raw: raw, owner: files as AnyObject, view: view, free: { amonhen_diff_free($0) })
+    }
+
+    /// `row` 行目が、どのファイルの何行目か（見出しの行なら nil）。
+    public func location(of row: Int) -> (file: Int, row: Int)? {
+        guard let file = fileRows.lastIndex(where: { $0 <= row }), fileRows[file] != row else { return nil }
+        return (file, row - fileRows[file] - 1)
+    }
+
+    /// `rows` をファイルごとに分ける（ファイルの番号 → その中の行）。
+    public func split(_ rows: [Int]) -> [Int: [Int]] {
+        var out: [Int: [Int]] = [:]
+        for row in rows { if let at = location(of: row) { out[at.file, default: []].append(at.row) } }
+        return out
+    }
+
+    public func isStaged(row: Int) -> Bool {
+        withRows { $0[row].flags & UInt8(AmonhenDiffRow_STAGED) != 0 }
     }
 }

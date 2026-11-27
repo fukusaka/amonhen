@@ -1610,6 +1610,29 @@ impl Operations for Git {
             .collect())
     }
 
+    fn working_stats_split(
+        &self,
+    ) -> Result<(Vec<amonhen_model::FileStat>, Vec<amonhen_model::FileStat>)> {
+        let base = if self
+            .read(&["rev-parse", "--verify", "--quiet", "HEAD"])
+            .is_ok()
+        {
+            "HEAD"
+        } else {
+            "4b825dc642cb6eb9a060e54bf8d69288fbee4904"
+        };
+        // `working_stats` と同じく plumbing で（index.lock を取らない）。0 行・0 行は時刻だけ変わったファイル。
+        let parse = |out: &[u8]| {
+            crate::extras::parse_numstat(out)
+                .into_iter()
+                .filter(|s| (s.added, s.removed) != (Some(0), Some(0)))
+                .collect::<Vec<_>>()
+        };
+        let staged = self.read(&["diff-index", "-z", "--numstat", "-M", "--cached", base])?;
+        let unstaged = self.read(&["diff-files", "-z", "--numstat"])?;
+        Ok((parse(&staged), parse(&unstaged)))
+    }
+
     fn ignore_matches(
         &self,
         patterns: &[String],
