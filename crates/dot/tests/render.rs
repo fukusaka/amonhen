@@ -1703,6 +1703,49 @@ fn dot_flat_edges_in_clusters_may_point_left_as_in_graphviz() {
     assert_eq!(order(src, &["a", "b"]), ["b", "a"]);
 }
 
+/// 並べ替えで交差の数が同じなら、後の回の並びを採る（Graphviz の例の図で、Graphviz と同じ並び）。
+#[test]
+fn dot_equal_crossings_keep_the_later_order_as_in_graphviz() {
+    let src = "digraph Viewfile { atoi; chkmalloc; close; error; exit; fclose; fgets; fopen; fprintf; free; free_list; fstat; getopt; init_list; insert_list; main; makeargs; makepairs; malloc; open; printf; read; rewind; viewline; viewlines; walk_list; write; fclose -> close; fgets -> fstat; fgets -> read; fopen -> open; printf -> write; main -> fgets; main -> getopt; main -> makeargs; main -> makepairs; main -> chkmalloc; main -> error; main -> viewlines; makeargs -> chkmalloc; makepairs -> atoi; makepairs -> init_list; makepairs -> insert_list; makepairs -> chkmalloc; free_list -> free; init_list -> chkmalloc; insert_list -> chkmalloc; walk_list -> error; walk_list -> viewline; chkmalloc -> malloc; chkmalloc -> error; error -> exit; error -> fprintf; error -> error; viewline -> fgets; viewline -> printf; viewline -> rewind; viewlines -> fclose; viewlines -> fopen; viewlines -> walk_list; viewlines -> viewline; }";
+    let order = |names: &[&str]| x_order(&render(src).unwrap().svg, names);
+    assert_eq!(
+        order(&[
+            "init_list",
+            "atoi",
+            "insert_list",
+            "fclose",
+            "fopen",
+            "walk_list"
+        ]),
+        [
+            "init_list",
+            "atoi",
+            "insert_list",
+            "fclose",
+            "fopen",
+            "walk_list"
+        ]
+    );
+    assert_eq!(
+        order(&["chkmalloc", "close", "open", "viewline"]),
+        ["chkmalloc", "close", "open", "viewline"]
+    );
+}
+
+/// Diskless の図: Failed から戻る線は、Graphviz と同じくいちばん右を通る。
+#[test]
+fn dot_diskless_runs_the_edge_back_on_the_right_as_in_graphviz() {
+    let svg = render(DISKLESS).unwrap().svg;
+    let xs: Vec<f64> = svg
+        .split("<text class=\"dot-edge-label\"")
+        .skip(1)
+        .map(|t| attr_num(t, "x"))
+        .collect();
+    // ラベルは辺を書いた順: 最後は Failed -> Diskless
+    let back = xs[xs.len() - 1];
+    assert!(xs[..xs.len() - 1].iter().all(|&x| x < back), "{xs:?}");
+}
+
 /// 辺のラベルは線のすぐ脇にある（Graphviz の絵と同じく、線はラベルの仮のノードの脇を通る）。
 #[test]
 fn dot_edge_labels_sit_beside_their_line() {
