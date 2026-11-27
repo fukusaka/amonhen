@@ -420,7 +420,10 @@ bookmark (the repository list's context menu, Window Background…).
   - **Window Transparency.** See through in (`style`): Nowhere (Standard), Sidebar and Toolbar, or Whole Window, with
     Transparency (`transparency`, 10–90%) and Blur (`blur`, 0–100%). The place applies only to this.
   - **Background Image** (`image`): Position (fill, or a corner) and Transparency (`imageTransparency`, 50–95%).
-  - **Toolbar**: a tint color and its strength.
+  - **Toolbar**: a tint color and its strength. On macOS 26 the toolbar's glass buttons don't take the band's color
+    and look dark on it, so there each item also gets the color through its own glass (`style` prominent with
+    `backgroundTintColor`, the same color and strength). macOS 27 shows the band through the glass, so it is left as it
+    is.
 - **Where.** Nowhere (Standard) is macOS's standard window: the glass sidebar runs to the top of the window with the
   Sidebar and Repositories buttons over it, the toolbar sits over the content in the content's color, and the lists,
   diffs and commit form share one opaque color (`textBackgroundColor`). Before, each pane kept its own color, and the
