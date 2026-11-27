@@ -46,6 +46,7 @@ mod menu;
 mod merge;
 mod mergeseveral;
 mod messagefind;
+mod missingband;
 mod patches;
 mod preview;
 mod programs;
@@ -1420,6 +1421,7 @@ fn build_tab(
                     sb.set_repository_form(&form);
                     wc.set_sparse(form.sparse.as_ref());
                     cd.set_sparse(form.sparse.clone());
+                    cd.set_partial(form.partial.is_some());
                 }
             });
         })

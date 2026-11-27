@@ -60,3 +60,4 @@
 "{count} files" = "{count} file";
 "{count} lines deleted here" = "{count} line deleted here";
 "The contents of {count} files aren’t here yet (partial clone)" = "The contents of {count} file aren’t here yet (partial clone)";
+"The contents of {count} files aren’t here yet (partial clone)." = "The contents of {count} file aren’t here yet (partial clone).";

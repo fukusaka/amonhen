@@ -2553,3 +2553,11 @@
 "Lexical error on line {line}. Unrecognized text." = "{line} 行目に読めない文字があります。";
 "Front matter is not valid YAML. {error}" = "front matter が YAML として正しくありません。{error}";
 "The contents of {count} files aren’t here yet (partial clone)" = "partial clone なので、{count} 個のファイルの中身がまだ手元にありません";
+"Not here yet" = "まだ手元にない";
+"The contents of {count} files aren’t here yet (partial clone)." = "partial clone なので、{count} 個のファイルの中身がまだ手元にありません。";
+"Fetch Contents" = "取ってくる";
+"Fetch just these contents from the remote, in one go, and show them." = "これらの中身だけをリモートからまとめて取ってきて、出します。";
+"Couldn’t fetch the contents: {error}" = "中身を取ってこられませんでした: {error}";
+"Fetching the contents…" = "中身を取ってきています…";
+"This file’s contents aren’t here yet." = "このファイルの中身はまだ手元にありません。";
+"This file’s contents aren’t here yet (partial clone)." = "partial clone なので、このファイルの中身がまだ手元にありません。";
