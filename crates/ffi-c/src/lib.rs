@@ -2562,7 +2562,7 @@ pub unsafe extern "C" fn amonhen_status_view(status: *const AmonhenStatus) -> Am
 
 /// `status` の `index` 番目のファイルの差分。`staged` なら HEAD と index、そうでなければ index と作業ツリー
 /// （`amonhen_working_diff_free` で解放する）。`whitespace` は `amonhen_file_diff_context` と同じで、無視した差分は
-/// 行ごとの stage・破棄に使えない。
+/// 行ごとの stage・破棄に使えない。`context` は前後の行数（`u32::MAX` ならファイル全体）。
 ///
 /// # Safety
 /// `repo` と `status` は有効であること。
@@ -2572,6 +2572,7 @@ pub unsafe extern "C" fn amonhen_working_diff(
     status: *const AmonhenStatus,
     index: u32,
     staged: bool,
+    context: u32,
     whitespace: u8,
     encoding: AmonhenEncoding,
 ) -> *mut AmonhenWorkingDiff {
@@ -2581,7 +2582,13 @@ pub unsafe extern "C" fn amonhen_working_diff(
         return std::ptr::null_mut();
     };
     let whitespace = amonhen_core::diff::Whitespace::from_u8(whitespace);
-    match repo!(repo_ptr).working_diff_ws(entry, staged, whitespace, &profile(encoding)) {
+    match repo!(repo_ptr).working_diff_context(
+        entry,
+        staged,
+        context,
+        whitespace,
+        &profile(encoding),
+    ) {
         Ok(d) => Box::into_raw(Box::new(d)).cast(),
         Err(e) => {
             set_error(e);
@@ -2593,6 +2600,7 @@ pub unsafe extern "C" fn amonhen_working_diff(
 /// `status` の `index` 番目のファイルの、HEAD と作業ツリーの差分。変更の行ごとに、index に入っているかを
 /// `DiffRow` の `flags`（`STAGED`）で示す（`amonhen_working_diff_free` で解放する）。index がその形で表せない
 /// ファイルでは、`amonhen_last_error` を空にして NULL を返す（FE は `amonhen_working_diff` で 2 つに分けて見せる）。
+/// `context` は前後の行数（`u32::MAX` ならファイル全体）。
 ///
 /// # Safety
 /// `repo` と `status` は有効であること。
@@ -2601,6 +2609,7 @@ pub unsafe extern "C" fn amonhen_working_diff_combined(
     repo_ptr: *const AmonhenRepo,
     status: *const AmonhenStatus,
     index: u32,
+    context: u32,
     encoding: AmonhenEncoding,
 ) -> *mut AmonhenWorkingDiff {
     let s = handle!(status, StatusHandle);
@@ -2608,7 +2617,7 @@ pub unsafe extern "C" fn amonhen_working_diff_combined(
         set_error(tr!("File index out of range"));
         return std::ptr::null_mut();
     };
-    match repo!(repo_ptr).working_diff_combined(entry, &profile(encoding)) {
+    match repo!(repo_ptr).working_diff_combined_context(entry, context, &profile(encoding)) {
         Ok(Some(d)) => Box::into_raw(Box::new(d)).cast(),
         Ok(None) => {
             set_error("");
@@ -2619,6 +2628,28 @@ pub unsafe extern "C" fn amonhen_working_diff_combined(
             std::ptr::null_mut()
         }
     }
+}
+
+/// Working Copy の差分の、前（`after` が false）か後の中身（`amonhen_blob_free` で解放する。画像の比較など）。
+/// 空なら NULL で、`len` は 0。
+///
+/// # Safety
+/// `diff` は `amonhen_working_diff` が返したもので、まだ解放していないこと。`len` は書ける領域であること。
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn amonhen_working_diff_blob(
+    diff: *const AmonhenWorkingDiff,
+    after: bool,
+    len: *mut usize,
+) -> *mut u8 {
+    let d = handle!(diff, WorkingDiff);
+    if let Some(len) = unsafe { len.as_mut() } {
+        *len = 0;
+    }
+    let data = if after { &d.file.new } else { &d.file.old };
+    if data.is_empty() {
+        return std::ptr::null_mut();
+    }
+    blob_out(data, len)
 }
 
 /// Working Copy の差分のファイルの改行（`amonhen_working_diff_line_endings`）。改行は 0: なし、1: LF、2: CRLF、

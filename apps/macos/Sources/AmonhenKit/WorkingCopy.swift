@@ -59,20 +59,24 @@ public final class WorkingStatus: @unchecked Sendable {
     }
 
     /// `item` の差分。`staged` なら HEAD と index、そうでなければ index と作業ツリー。空白を無視した差分は、行ごとの
-    /// stage・破棄に使えない。裏のスレッドで呼ぶ。
-    public func diff(of item: StatusItem, staged: Bool, whitespace: DiffWhitespace = .exact) throws -> WorkingFileDiff {
+    /// stage・破棄に使えない。`context` は前後の行数（`.max` ならファイル全体）。裏のスレッドで呼ぶ。
+    public func diff(
+        of item: StatusItem, staged: Bool, context: UInt32 = 3, whitespace: DiffWhitespace = .exact
+    ) throws -> WorkingFileDiff {
         guard let raw = amonhen_working_diff(
-            repository.raw, raw, UInt32(item.index), staged, whitespace.rawValue, UInt8(AmonhenEncoding_Utf16.rawValue))
+            repository.raw, raw, UInt32(item.index), staged, context, whitespace.rawValue,
+            UInt8(AmonhenEncoding_Utf16.rawValue))
         else { throw AmonhenError.last() }
         return WorkingFileDiff(raw: raw, status: self, item: item, staged: staged)
     }
 
     /// `item` の HEAD と作業ツリーの差分。変更の行ごとに index に入っているか（`WorkingFileDiff.isStaged(row:)`）が
     /// わかる。index がその形で表せないファイル（作業ツリーで書き戻した変更が index にだけあるなど）・
-    /// サブモジュール・バイナリ・コンフリクトでは nil。裏のスレッドで呼ぶ。
-    public func combinedDiff(of item: StatusItem) throws -> WorkingFileDiff? {
+    /// サブモジュール・バイナリ・コンフリクトでは nil。`context` は前後の行数（`.max` ならファイル全体）。
+    /// 裏のスレッドで呼ぶ。
+    public func combinedDiff(of item: StatusItem, context: UInt32 = 3) throws -> WorkingFileDiff? {
         guard let raw = amonhen_working_diff_combined(
-            repository.raw, raw, UInt32(item.index), UInt8(AmonhenEncoding_Utf16.rawValue))
+            repository.raw, raw, UInt32(item.index), context, UInt8(AmonhenEncoding_Utf16.rawValue))
         else {
             // 理由が空の NULL は「表せない」。
             let error = AmonhenError.last()
@@ -149,6 +153,14 @@ public final class WorkingFileDiff: FileDiff, @unchecked Sendable {
             amonhen_set_rows_staged(repository.raw, raw, $0.baseAddress, UInt32($0.count), staged)
         }
         if !ok { throw AmonhenError.last() }
+    }
+
+    /// 差分の前（`after` が false）か後の中身（画像の比較など）。空なら nil。
+    public func blob(after: Bool) -> Data? {
+        var length: UInt = 0
+        guard let bytes = amonhen_working_diff_blob(raw, after, &length) else { return nil }
+        defer { amonhen_blob_free(bytes, length) }
+        return Data(bytes: bytes, count: Int(length))
     }
 
     /// `rows` 行目の変更だけを stage する（stage 済みの差分なら unstage する）。

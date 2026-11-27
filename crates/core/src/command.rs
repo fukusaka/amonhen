@@ -11202,6 +11202,59 @@ mod tests {
     }
 
     #[test]
+    fn a_whole_file_working_diff_shows_every_line_and_stages_rows() {
+        let lines: String = (1..=20).map(|i| format!("{i}\n")).collect();
+        let (tmp, repo) = setup_converting(&[], lines.as_bytes());
+        let dir = tmp.path();
+        std::fs::write(dir.join("a.txt"), lines.replace("10\n", "ten\n")).unwrap();
+        let status = repo.load_status().unwrap();
+        let entry = &status.status.entries[0];
+        let narrow = repo
+            .working_diff_combined(entry, &FrontendProfile::MACOS)
+            .unwrap()
+            .unwrap();
+        let whole = repo
+            .working_diff_combined_context(entry, u32::MAX, &FrontendProfile::MACOS)
+            .unwrap()
+            .unwrap();
+        let unchanged = |d: &crate::WorkingDiff| {
+            d.view
+                .rows
+                .iter()
+                .filter(|r| r.kind == amonhen_layout::DiffRow::CONTEXT)
+                .count()
+        };
+        assert_eq!(unchanged(&narrow), 6);
+        assert_eq!(unchanged(&whole), 19, "変わっていない行をすべて出す");
+        let split = repo
+            .working_diff_context(
+                entry,
+                false,
+                u32::MAX,
+                crate::diff::Whitespace::Exact,
+                &FrontendProfile::MACOS,
+            )
+            .unwrap();
+        assert_eq!(unchanged(&split), 19);
+        // ファイル全体の差分の行でも、その行だけを stage できる。
+        let added = whole
+            .view
+            .rows
+            .iter()
+            .position(|r| r.kind == amonhen_layout::DiffRow::ADDED)
+            .unwrap();
+        let removed = whole
+            .view
+            .rows
+            .iter()
+            .position(|r| r.kind == amonhen_layout::DiffRow::REMOVED)
+            .unwrap();
+        repo.set_rows_staged(&whole, &[removed, added], true)
+            .unwrap();
+        assert_eq!(index_blob(dir), lines.replace("10\n", "ten\n").as_bytes());
+    }
+
+    #[test]
     fn diffs_and_stages_lines_through_autocrlf() {
         // Windows の既定（core.autocrlf=true）: 作業ツリーは CRLF、index は LF。
         let (tmp, repo) = setup_converting(&[("core.autocrlf", "true")], b"1\n2\n3\n");

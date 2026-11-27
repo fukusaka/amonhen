@@ -1424,11 +1424,12 @@ impl Repository {
         path: &str,
         old: Arc<Vec<u8>>,
         new: Arc<Vec<u8>>,
+        context: u32,
         whitespace: diff::Whitespace,
     ) -> FileDiff {
         let attrs = self.diff_attributes(&[path]);
         let funcname = crate::funcname::FuncName::new(attrs[0].funcname.as_ref());
-        let mut diff = diff::file_diff_ws(old, new, 3, &funcname, whitespace);
+        let mut diff = diff::file_diff_ws(old, new, context, &funcname, whitespace);
         diff.generated = attrs[0].generated;
         diff
     }
@@ -1518,6 +1519,19 @@ impl Repository {
         whitespace: diff::Whitespace,
         profile: &FrontendProfile,
     ) -> Result<WorkingDiff> {
+        self.working_diff_context(entry, staged, 3, whitespace, profile)
+    }
+
+    /// `working_diff_ws` の、前後 `context` 行のもの（`u32::MAX` ならファイル全体。Working Copy の「前後を広げる」
+    /// 「ファイル全体を表示」）。
+    pub fn working_diff_context(
+        &self,
+        entry: &StatusEntry,
+        staged: bool,
+        context: u32,
+        whitespace: diff::Whitespace,
+        profile: &FrontendProfile,
+    ) -> Result<WorkingDiff> {
         let blob = |id: &Option<Oid>| -> Result<Arc<Vec<u8>>> {
             match id {
                 Some(id) if entry.submodule => {
@@ -1539,7 +1553,7 @@ impl Repository {
             let line_endings = self.line_endings(entry, &index)?;
             (index, worktree, line_endings)
         };
-        let file = self.path_diff(&entry.path, old, new, whitespace);
+        let file = self.path_diff(&entry.path, old, new, context, whitespace);
         let view = DiffView::new(&file, profile).with_path(&entry.path);
         Ok(WorkingDiff {
             entry: entry.clone(),
@@ -1590,6 +1604,16 @@ impl Repository {
         entry: &StatusEntry,
         profile: &FrontendProfile,
     ) -> Result<Option<WorkingDiff>> {
+        self.working_diff_combined_context(entry, 3, profile)
+    }
+
+    /// `working_diff_combined` の、前後 `context` 行のもの（`u32::MAX` ならファイル全体）。
+    pub fn working_diff_combined_context(
+        &self,
+        entry: &StatusEntry,
+        context: u32,
+        profile: &FrontendProfile,
+    ) -> Result<Option<WorkingDiff>> {
         if entry.submodule
             || entry.is_directory()
             || entry.kind == amonhen_model::StatusKind::Unmerged
@@ -1608,7 +1632,13 @@ impl Repository {
             b'D' => Arc::default(),
             _ => self.backend.worktree_file(&entry.path)?,
         };
-        let file = self.path_diff(&entry.path, head, worktree, diff::Whitespace::Exact);
+        let file = self.path_diff(
+            &entry.path,
+            head,
+            worktree,
+            context,
+            diff::Whitespace::Exact,
+        );
         let Some(staged) = diff::staged_lines(&file, &index) else {
             return Ok(None);
         };

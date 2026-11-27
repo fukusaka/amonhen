@@ -1411,7 +1411,7 @@ AmonhenStatusView amonhen_status_view(const AmonhenStatus *status);
 /**
  * `status` の `index` 番目のファイルの差分。`staged` なら HEAD と index、そうでなければ index と作業ツリー
  * （`amonhen_working_diff_free` で解放する）。`whitespace` は `amonhen_file_diff_context` と同じで、無視した差分は
- * 行ごとの stage・破棄に使えない。
+ * 行ごとの stage・破棄に使えない。`context` は前後の行数（`u32::MAX` ならファイル全体）。
  *
  * # Safety
  * `repo` と `status` は有効であること。
@@ -1420,6 +1420,7 @@ AmonhenWorkingDiff *amonhen_working_diff(const AmonhenRepo *repo_ptr,
                                          const AmonhenStatus *status,
                                          uint32_t index,
                                          bool staged,
+                                         uint32_t context,
                                          uint8_t whitespace,
                                          AmonhenEncoding encoding);
 
@@ -1427,6 +1428,7 @@ AmonhenWorkingDiff *amonhen_working_diff(const AmonhenRepo *repo_ptr,
  * `status` の `index` 番目のファイルの、HEAD と作業ツリーの差分。変更の行ごとに、index に入っているかを
  * `DiffRow` の `flags`（`STAGED`）で示す（`amonhen_working_diff_free` で解放する）。index がその形で表せない
  * ファイルでは、`amonhen_last_error` を空にして NULL を返す（FE は `amonhen_working_diff` で 2 つに分けて見せる）。
+ * `context` は前後の行数（`u32::MAX` ならファイル全体）。
  *
  * # Safety
  * `repo` と `status` は有効であること。
@@ -1434,7 +1436,19 @@ AmonhenWorkingDiff *amonhen_working_diff(const AmonhenRepo *repo_ptr,
 AmonhenWorkingDiff *amonhen_working_diff_combined(const AmonhenRepo *repo_ptr,
                                                   const AmonhenStatus *status,
                                                   uint32_t index,
+                                                  uint32_t context,
                                                   AmonhenEncoding encoding);
+
+/**
+ * Working Copy の差分の、前（`after` が false）か後の中身（`amonhen_blob_free` で解放する。画像の比較など）。
+ * 空なら NULL で、`len` は 0。
+ *
+ * # Safety
+ * `diff` は `amonhen_working_diff` が返したもので、まだ解放していないこと。`len` は書ける領域であること。
+ */
+uint8_t *amonhen_working_diff_blob(const AmonhenWorkingDiff *diff,
+                                   bool after,
+                                   uintptr_t *len);
 
 /**
  * # Safety
