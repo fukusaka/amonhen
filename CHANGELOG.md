@@ -9,6 +9,11 @@ becomes the GitHub Release notes.
 
 ### Unreleased
 
+#### Changed
+
+- DOT diagrams order clusters as Graphviz does: a cluster is placed whole when first reached, and sorts by where the
+  whole cluster sits.
+
 #### Fixed
 
 - On macOS 26, a tinted toolbar's buttons take the tint too, instead of showing dark glass on the color.

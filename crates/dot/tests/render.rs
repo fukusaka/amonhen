@@ -1661,6 +1661,34 @@ fn dot_ranks_follow_the_declaration_order_as_in_graphviz() {
     assert_eq!(order(src, &["y", "a"]), ["y", "a"]);
 }
 
+/// クラスタは初めの並びで丸ごと置かれ、ほかのクラスタの中の隣はそのクラスタの場所で見る（Graphviz の絵と同じ並び）。
+#[test]
+fn dot_clusters_are_ordered_as_in_graphviz() {
+    let order = |src: &str, names: &[&str]| x_order(&render(src).unwrap().svg, names);
+    // b に子があり、クラスタが 2 ランク: クラスタが左
+    let src = "digraph { a -> b -> c; subgraph cluster0 { x0 -> y0 } a -> x0 }";
+    assert_eq!(order(src, &["b", "x0"]), ["x0", "b"]);
+    assert_eq!(order(src, &["c", "y0"]), ["y0", "c"]);
+    // b に子がない: b が左
+    let src = "digraph { a -> b; subgraph cluster0 { x0 -> y0 } a -> x0 }";
+    assert_eq!(order(src, &["b", "x0"]), ["b", "x0"]);
+    // 3 つのクラスタ（Graphviz の例）: 交差なしで、Graphviz と同じ並び
+    let src = "digraph { a -> b -> c; \
+               subgraph cluster0 { x0 -> y0; x0 -> z0 } \
+               subgraph cluster1 { x1 -> y1; x1 -> z1 } \
+               subgraph cluster2 { x2 -> y2; x2 -> z2 } \
+               a -> x0; b -> x1; b -> x2; a -> z2; c -> z1 }";
+    assert_eq!(order(src, &["b", "x0"]), ["x0", "b"]);
+    assert_eq!(
+        order(src, &["y0", "z0", "c", "x1", "x2"]),
+        ["y0", "z0", "c", "x1", "x2"]
+    );
+    assert_eq!(
+        order(src, &["z1", "y1", "y2", "z2"]),
+        ["z1", "y1", "y2", "z2"]
+    );
+}
+
 /// 辺のラベルは線のすぐ脇にある（Graphviz の絵と同じく、線はラベルの仮のノードの脇を通る）。
 #[test]
 fn dot_edge_labels_sit_beside_their_line() {
