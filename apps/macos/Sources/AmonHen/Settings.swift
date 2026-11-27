@@ -228,6 +228,16 @@ enum Settings {
     }
 
 
+    /// 複数のファイルを並べた差分（History のコミット、Working Copy で選んだファイル）で、開いて並べるファイルの数。
+    static let diffOpenFilesChoices = [5, 10, 20, 50, 100]
+    static var diffOpenFiles: Int {
+        get {
+            let value = UserDefaults.standard.integer(forKey: "diffOpenFiles")
+            return diffOpenFilesChoices.contains(value) ? value : 20
+        }
+        set { UserDefaults.standard.set(newValue, forKey: "diffOpenFiles") }
+    }
+
     /// File History にマージのコミットも出すか（既定は出さない）。変えたら `fileHistoryMergesChanged` を知らせる。
     static var fileHistoryMerges: Bool {
         get { UserDefaults.standard.bool(forKey: "fileHistoryMerges") }
@@ -558,6 +568,7 @@ enum MergeMode: String, CaseIterable {
 @Observable
 final class SettingsModel {
     var autoFetchMinutes = Settings.autoFetchMinutes { didSet { Settings.autoFetchMinutes = autoFetchMinutes } }
+    var diffOpenFiles = Settings.diffOpenFiles { didSet { Settings.diffOpenFiles = diffOpenFiles } }
     var monospacedCommitMessage = Settings.monospacedCommitMessage {
         didSet { Settings.monospacedCommitMessage = monospacedCommitMessage }
     }
@@ -723,6 +734,14 @@ private struct DiffMergeSettings: View {
     @Bindable var model: SettingsModel
     var body: some View {
         Form {
+            Section(L("Diff")) {
+                Picker(L("Files to open together"), selection: $model.diffOpenFiles) {
+                    ForEach(Settings.diffOpenFilesChoices, id: \.self) { Text("\($0)").tag($0) }
+                }
+                Text(L("When a diff lists several files (a commit in History, files selected in Working Copy), this many are shown open from the top."))
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+            }
             Section(L("Merge Editor")) {
                 Toggle(L("Resolve unambiguous conflicts when the merge editor opens"), isOn: $model.autoMagicMerge)
             }

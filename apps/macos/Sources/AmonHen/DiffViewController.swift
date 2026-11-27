@@ -3177,7 +3177,8 @@ extension CommitDetailViewController {
         return titles
     }
 
-    /// コミットを選んだ: すべて畳んで、変更ファイルの一覧として見せる。
+    /// コミットを選んだ: 先頭から `Settings.diffOpenFiles` 個のファイルを開いて並べる（変更が `collapseAbove` 行を
+    /// 超えるファイルは畳んだまま）。残りは見出しだけ。
     fileprivate func showInline(_ stacked: StackedDiff) {
         openFiles = []
         svgAsText = []
@@ -3199,6 +3200,17 @@ extension CommitDetailViewController {
         diffView.fileMarks = marks
         diffView.fileNotes = notes
         updatePendingCounts()
+        let sizes = stacked.view(collapsed: [Bool](repeating: true, count: stacked.count)).withRows { rows in
+            rows.filter { $0.kind == UInt8(AmonhenDiffRow_FILE) }.map { Int($0.old_no) + Int($0.new_no) }
+        }
+        let first = (0..<min(Settings.diffOpenFiles, stacked.count)).filter { file in
+            let size = pendingFiles.contains(file)
+                ? fileStats[path(of: file)].map { ($0.added ?? 0) + ($0.removed ?? 0) } ?? 0
+                : file < sizes.count ? sizes[file] : 0
+            return size <= Self.collapseAbove
+        }
+        load(first)
+        openFiles = Set(first)
         filesBrowser = nil
         setFilesMode(false)
         reshowStacked(keepScroll: false)

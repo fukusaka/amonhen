@@ -2116,3 +2116,6 @@
 "Show Only Commit Details" = "コミット情報だけを表示";
 "Restore Commit Details" = "コミット情報を戻す";
 "Code" = "コード";
+"Diff" = "差分";
+"Files to open together" = "一度に開いて並べるファイル";
+"When a diff lists several files (a commit in History, files selected in Working Copy), this many are shown open from the top." = "複数のファイルを並べた差分（History のコミット、Working Copy で選んだファイル）で、上からこの数だけ開いて並べる";
