@@ -56,6 +56,17 @@ pub struct Browser {
 impl Browser {
     /// コミット `commit`（変更 `changes`）の木。変更を含むフォルダは開いておく（macOS 版と同じ）。
     pub fn new(repo: Arc<Repository>, commit: Oid, changes: Vec<FileChange>) -> Self {
+        Self::build(repo, commit, changes, false)
+    }
+
+    /// Working Copy の「すべてのファイル」（GTK4 版の `Browser::new_working`）: `head` の木に作業ツリーの変更
+    /// `changes` を重ねる。足したファイル（untracked を含む）は木にないので足し、消したファイルは木にあるので
+    /// 印を付けるだけ。
+    pub fn new_working(repo: Arc<Repository>, head: Oid, changes: Vec<FileChange>) -> Self {
+        Self::build(repo, head, changes, true)
+    }
+
+    fn build(repo: Arc<Repository>, commit: Oid, changes: Vec<FileChange>, working: bool) -> Self {
         let mut changed = HashMap::new();
         let mut changed_folders = HashSet::new();
         let mut deleted: HashMap<String, Vec<String>> = HashMap::new();
@@ -69,7 +80,16 @@ impl Browser {
                 }
                 folder = parent_of(folder);
             }
-            if c.kind == ChangeKind::Deleted {
+            // 木にないファイル（コミットでは消したもの、作業ツリーでは足したもの）は足す。
+            let missing = if working {
+                matches!(
+                    c.kind,
+                    ChangeKind::Added | ChangeKind::Renamed | ChangeKind::Copied
+                )
+            } else {
+                c.kind == ChangeKind::Deleted
+            };
+            if missing {
                 deleted
                     .entry(parent_of(&c.path).to_owned())
                     .or_default()
@@ -148,7 +168,7 @@ impl Browser {
                 name: name_of(path).to_owned(),
                 path: path.clone(),
                 is_dir: false,
-                kind: Some(ChangeKind::Deleted),
+                kind: self.change_of(path).map(|c| c.kind),
                 contains_changes: true,
             });
         }
@@ -252,11 +272,12 @@ fn kind_mark(kind: ChangeKind) -> (&'static str, Color) {
     }
 }
 
-/// 木・リストの一覧。行を選ぶと `selected`（`rows` の番号）。
+/// 木・リストの一覧。行を選ぶと `selected`（`rows` の番号）。`chosen` は選んでおく行（開いているファイル）。
 pub fn list(
     rows: &[Row],
     flat: bool,
     expanded: &HashSet<String>,
+    chosen: Option<usize>,
     selected: Callback<Option<usize>>,
 ) -> View {
     let items = rows.iter().map(|r| {
@@ -350,7 +371,7 @@ pub fn list(
         .collect::<Vec<_>>()
         .join("\n");
     let list = ListView::new()
-        .selected_index(None)
+        .selected_index(chosen)
         .on_selection_changed(selected)
         .collection_slot(ListViewSlot::Items, items);
     View::keyed_fragment([(format!("{}{}", flat, key.len()), list)])

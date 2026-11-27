@@ -115,6 +115,79 @@ pub fn selected_tags(element: &IInspectable) -> Vec<String> {
         .collect()
 }
 
+/// `element` の中の最初の一覧で、Tag が `tags` のどれかの行を選ぶ（作り直した一覧で、前に選んでいた行を選び
+/// 直す）。もう選んでいる行はそのまま、ほかの行は外さない。行は作ってある（見えている）ものだけで、作ったばかりの
+/// 一覧でまだ行がなければ、一覧の大きさが決まったとき（行を作った後）に 1 度だけ選ぶ。
+pub fn select_tags(element: &IInspectable, tags: &[String]) {
+    let Some(list) = find_list(element) else {
+        return;
+    };
+    if select_in(&list, tags) {
+        return;
+    }
+    let done = std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false));
+    let tags = tags.to_vec();
+    let revoker = list.SizeChanged(move |sender, _| {
+        if done.load(std::sync::atomic::Ordering::Relaxed) {
+            return;
+        }
+        if let Some(list) = sender.as_ref().and_then(|s| s.cast::<ListViewBase>().ok())
+            && select_in(&list, &tags)
+        {
+            done.store(true, std::sync::atomic::Ordering::Relaxed);
+        }
+    });
+    if let Ok(revoker) = revoker {
+        PENDING_SELECT.with(|p| *p.borrow_mut() = Some(revoker));
+    }
+}
+
+thread_local! {
+    /// 大きさが決まるのを待って選び直す一覧の知らせ（次に頼まれたら替える）。
+    static PENDING_SELECT: std::cell::RefCell<Option<EventRevoker>> = const { std::cell::RefCell::new(None) };
+}
+
+/// 一覧 `list` の作ってある行のうち、Tag が `tags` のどれかの行を選ぶ。行が 1 つも見つからなければ false。
+fn select_in(list: &ListViewBase, tags: &[String]) -> bool {
+    fn walk(node: &DependencyObject, depth: u32, out: &mut Vec<(String, IInspectable)>) {
+        if let Ok(item) = node.cast::<IInspectable>()
+            && let Some(tag) = tag_of(&item)
+        {
+            out.push((tag, item));
+            return;
+        }
+        if depth == 0 {
+            return;
+        }
+        let count = VisualTreeHelper::GetChildrenCount(node).unwrap_or(0);
+        for i in 0..count {
+            if let Ok(child) = VisualTreeHelper::GetChild(node, i) {
+                walk(&child, depth - 1, out);
+            }
+        }
+    }
+    let Ok(selected) = list.SelectedItems() else {
+        return true;
+    };
+    let count = selected.Size().unwrap_or(0);
+    let already: Vec<String> = (0..count)
+        .filter_map(|i| tag_of(&selected.GetAt(i).ok()?))
+        .collect();
+    let mut items = Vec::new();
+    if let Ok(node) = list.cast::<DependencyObject>() {
+        walk(&node, 24, &mut items);
+    }
+    if items.is_empty() {
+        return false;
+    }
+    for (tag, item) in items {
+        if tags.contains(&tag) && !already.contains(&tag) {
+            let _ = selected.Append(&item);
+        }
+    }
+    true
+}
+
 /// 引いている行の Tag（この一覧から引き始めたとき。落とした先が読む）。
 static DRAGGED: std::sync::Mutex<Vec<String>> = std::sync::Mutex::new(Vec::new());
 
