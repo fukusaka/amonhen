@@ -306,9 +306,7 @@ pub fn view(
             let revert_button: View = if current.is_empty() {
                 View::empty()
             } else {
-                Button::new()
-                    .on_click(revert(id))
-                    .content(TextBlock::new().text("↩︎").font_size(12.0))
+                crate::small::button("↩︎", |b| b.on_click(revert(id)))
                     .tooltip(tr!("Stop overriding here. The value above takes over."))
             };
             // ⓘ: どこで何に決めているか（マウスを載せると出す）。

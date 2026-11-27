@@ -491,7 +491,8 @@ fn environment(state: &State, callbacks: &Callbacks) -> View {
             .is_checked(*passed)
             .is_enabled(!always && refusal.is_none())
             .on_is_checked_changed((callbacks.env)(name.clone()))
-            .min_width(0.0);
+            .min_width(0.0)
+            .min_height(0.0);
         let help = match (&refusal, always) {
             (Some(reason), _) => Some(reason.clone()),
             (None, true) => Some(tr!("git and ssh always get this")),
@@ -531,26 +532,29 @@ fn environment(state: &State, callbacks: &Callbacks) -> View {
         };
         (
             name.clone(),
-            ListViewItem::new().tag(name.clone()).content(
-                Grid::new()
-                    .columns([
-                        GridLength::Pixel(36.0),
-                        GridLength::Pixel(200.0),
-                        GridLength::Star(1.0),
-                    ])
-                    .children((
-                        Border::new().grid_column(0).content(check),
-                        name_cell,
-                        TextBlock::new()
-                            .text(shown.clone())
-                            .font_size(12.0)
-                            .opacity(0.7)
-                            .text_trimming(TextTrimming::CharacterEllipsis)
-                            .vertical_alignment(VerticalAlignment::Center)
-                            .grid_column(2)
-                            .tooltip(shown),
-                    )),
-            ),
+            ListViewItem::new()
+                .tag(name.clone())
+                .min_height(crate::small::ROW_HEIGHT)
+                .content(
+                    Grid::new()
+                        .columns([
+                            GridLength::Pixel(36.0),
+                            GridLength::Pixel(200.0),
+                            GridLength::Star(1.0),
+                        ])
+                        .children((
+                            Border::new().grid_column(0).content(check),
+                            name_cell,
+                            TextBlock::new()
+                                .text(shown.clone())
+                                .font_size(12.0)
+                                .opacity(0.7)
+                                .text_trimming(TextTrimming::CharacterEllipsis)
+                                .vertical_alignment(VerticalAlignment::Center)
+                                .grid_column(2)
+                                .tooltip(shown),
+                        )),
+                ),
         )
     });
     let mut always: Vec<&str> = ALWAYS_PASSED.to_vec();
@@ -566,12 +570,12 @@ fn environment(state: &State, callbacks: &Callbacks) -> View {
                 .columns([GridLength::Auto, GridLength::Star(1.0)])
                 .column_spacing(12.0)
                 .children((
-                    RadioButtons::new()
-                        .items_source(vec![tr!("Passed"), tr!("All")])
-                        .selected_index(usize::from(!state.env_passed_only))
-                        .max_columns(2)
-                        .on_selection_changed(callbacks.env_shown.clone())
-                        .grid_column(0),
+                    crate::small::picker(
+                        &[tr!("Passed"), tr!("All")],
+                        usize::from(!state.env_passed_only),
+                        &callbacks.env_shown,
+                        |p| p.grid_column(0),
+                    ),
                     TextBox::new()
                         .text(state.env_query.clone())
                         .placeholder_text(tr!("Search by name or value"))
@@ -647,10 +651,9 @@ fn env_value(state: &State, callbacks: &Callbacks) -> View {
                 .font_weight(FontWeight::SEMI_BOLD)
                 .vertical_alignment(VerticalAlignment::Center),
             if masked {
-                Button::new()
-                    .grid_column(1)
-                    .on_click(callbacks.env_reveal.clone())
-                    .content(TextBlock::new().text(tr!("Show")).font_size(11.0))
+                crate::small::button(tr!("Show"), |b| {
+                    b.grid_column(1).on_click(callbacks.env_reveal.clone())
+                })
             } else {
                 View::empty()
             },
@@ -757,6 +760,7 @@ fn templates(state: &State, callbacks: &Callbacks) -> View {
             t.id.clone(),
             ListViewItem::new()
                 .tag(t.id.clone())
+                .min_height(crate::small::ROW_HEIGHT)
                 .content(TextBlock::new().text(name).font_size(13.0)),
         )
     });
@@ -791,24 +795,18 @@ fn templates(state: &State, callbacks: &Callbacks) -> View {
                 ])
                 .column_spacing(6.0)
                 .children((
-                    Button::new()
-                        .on_click(callbacks.template_add.clone())
-                        .content(TextBlock::new().text("+")),
+                    crate::small::button("+", |b| b.on_click(callbacks.template_add.clone())),
                     match selected {
-                        Some(i) => Button::new()
-                            .grid_column(1)
-                            .on_click((callbacks.template_remove)(i))
-                            .content(TextBlock::new().text("−")),
-                        None => Button::new()
-                            .grid_column(1)
-                            .is_enabled(false)
-                            .content(TextBlock::new().text("−")),
+                        Some(i) => crate::small::button("−", |b| {
+                            b.grid_column(1).on_click((callbacks.template_remove)(i))
+                        }),
+                        None => crate::small::button("−", |b| b.grid_column(1).is_enabled(false)),
                     },
-                    Button::new()
-                        .grid_column(3)
-                        .is_enabled(selected.is_some())
-                        .on_click(callbacks.template_edit.clone())
-                        .content(TextBlock::new().text(tr!("Edit…"))),
+                    crate::small::button(tr!("Edit…"), |b| {
+                        b.grid_column(3)
+                            .is_enabled(selected.is_some())
+                            .on_click(callbacks.template_edit.clone())
+                    }),
                 )),
         ))
 }

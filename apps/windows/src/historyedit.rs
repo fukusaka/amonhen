@@ -837,11 +837,15 @@ pub fn bar(state: &State, callbacks: Callbacks) -> View {
         .vertical_alignment(VerticalAlignment::Center)
         .children((
             if state.stacked {
-                let check = CheckBox::new()
+                let check = crate::small::check(CheckBox::new())
                     .is_checked(state.moves_stacked())
                     .is_enabled(state.update_refs_available && !state.busy)
                     .on_is_checked_changed(callbacks.stacked.clone())
-                    .content(TextBlock::new().text(tr!("Also move the stacked branches")));
+                    .content(
+                        TextBlock::new()
+                            .text(tr!("Also move the stacked branches"))
+                            .font_size(12.0),
+                    );
                 let tip = if state.update_refs_available {
                     tr!("For this edit only (git’s update-ref). Starts from rebase.updateRefs.")
                 } else {

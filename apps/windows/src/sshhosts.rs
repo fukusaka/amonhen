@@ -637,11 +637,13 @@ pub fn view(state: &State, callbacks: &Callbacks<'_>, git: Option<View>) -> View
         (
             // 鍵は名前だけ（つながらない印で作り直すと、選んだ行の印が消える）。
             host.clone(),
-            ListViewItem::new().content(
-                StackPanel::new()
-                    .margin(Thickness::new(0.0, 3.0, 0.0, 3.0))
-                    .children([View::keyed_fragment(lines)]),
-            ),
+            ListViewItem::new()
+                .min_height(crate::small::ROW_HEIGHT)
+                .content(
+                    StackPanel::new()
+                        .margin(Thickness::new(0.0, 3.0, 0.0, 3.0))
+                        .children([View::keyed_fragment(lines)]),
+                ),
         )
     });
     let selected = state
@@ -661,14 +663,12 @@ pub fn view(state: &State, callbacks: &Callbacks<'_>, git: Option<View>) -> View
             .spacing(4.0)
             .margin(Thickness::new(0.0, 6.0, 0.0, 0.0))
             .children((
-                button("+".into(), (callbacks.button)(|| Event::Add), true, false)
+                crate::small::button("+", |b| b.on_click((callbacks.button)(|| Event::Add)))
                     .tooltip(tr!("Add an SSH host")),
-                button(
-                    "−".into(),
-                    (callbacks.button)(|| Event::Remove),
-                    state.selected.is_some(),
-                    false,
-                )
+                crate::small::button("−", |b| {
+                    b.on_click((callbacks.button)(|| Event::Remove))
+                        .is_enabled(state.selected.is_some())
+                })
                 .tooltip(tr!("Forget this host")),
             )),
     ));
@@ -694,9 +694,12 @@ pub fn view(state: &State, callbacks: &Callbacks<'_>, git: Option<View>) -> View
             PAGES.iter().map(|title| {
                 (
                     (*title).to_owned(),
-                    ListViewItem::new().content(
-                        TextBlock::new().text(amonhen_model::i18n::translate(title).into_owned()),
-                    ),
+                    ListViewItem::new()
+                        .min_height(crate::small::ROW_HEIGHT)
+                        .content(
+                            TextBlock::new()
+                                .text(amonhen_model::i18n::translate(title).into_owned()),
+                        ),
                 )
             }),
         );
@@ -755,10 +758,9 @@ fn scan_folders(host: &str, callbacks: &Callbacks<'_>) -> View {
                             .items_source(levels.clone())
                             .selected_index(depth.clamp(1, 6) as usize - 1)
                             .on_selection_changed((callbacks.scan_depth)(path.clone())),
-                        Button::new()
-                            .grid_column(2)
-                            .on_click((callbacks.scan_remove)(path))
-                            .content(TextBlock::new().text("−")),
+                        crate::small::button("−", |b| {
+                            b.grid_column(2).on_click((callbacks.scan_remove)(path))
+                        }),
                     )),
             )
         });
@@ -950,7 +952,9 @@ fn add_view(state: &State, typed: &str, callbacks: &Callbacks<'_>) -> View {
             names.iter().map(|n| {
                 (
                     n.clone(),
-                    ListViewItem::new().content(TextBlock::new().text(n.clone()).font_size(12.0)),
+                    ListViewItem::new()
+                        .min_height(crate::small::ROW_HEIGHT)
+                        .content(TextBlock::new().text(n.clone()).font_size(12.0)),
                 )
             }),
         );

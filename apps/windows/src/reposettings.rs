@@ -824,9 +824,7 @@ pub fn keys_view(
         .map(|r| {
             let here = state.at(scope, &r.key).is_some();
             let remove: View = if here {
-                Button::new()
-                    .on_click(button(format!("remove:{}", r.key)))
-                    .content(TextBlock::new().text("−").font_size(12.0))
+                crate::small::button("−", |b| b.on_click(button(format!("remove:{}", r.key))))
                     .tooltip(if global {
                         tr!("Remove from All Repositories")
                     } else {
@@ -935,10 +933,10 @@ pub fn keys_view(
                 .on_text_changed(field("value"))
                 .grid_column(1),
             crate::tip::holder(
-                Button::new()
-                    .is_enabled(state.new_key.trim().contains('.'))
-                    .on_click(button("add".to_owned()))
-                    .content(TextBlock::new().text("+")),
+                crate::small::button("+", |b| {
+                    b.is_enabled(state.new_key.trim().contains('.'))
+                        .on_click(button("add".to_owned()))
+                }),
                 if global {
                     tr!("Add a key for all repositories")
                 } else {
@@ -1012,10 +1010,10 @@ pub fn choice_views(
         let revert: View = if set_here.is_empty() {
             View::empty()
         } else {
-            Button::new()
-                .on_click(button(format!("revert:{}", set_here.join(","))))
-                .content(TextBlock::new().text("↩︎").font_size(12.0))
-                .tooltip(tr!("Stop overriding here. The value above takes over."))
+            crate::small::button("↩︎", |b| {
+                b.on_click(button(format!("revert:{}", set_here.join(","))))
+            })
+            .tooltip(tr!("Stop overriding here. The value above takes over."))
         };
         // ⓘ: 段ごとの値（マウスを載せると出す）。
         let details: Vec<String> = keys
@@ -1554,7 +1552,7 @@ pub fn view(state: &State, callbacks: Callbacks) -> View {
                             .vertical_alignment(VerticalAlignment::Center)
                             .grid_column(1),
                         // Windows の git は実行の許可にかかわらずフックを動かすので、切り替えられない。
-                        crate::tip::holder(CheckBox::new()
+                        crate::tip::holder(crate::small::check(CheckBox::new())
                                 .is_checked(*enabled)
                                 .is_enabled(false)
                                 .on_is_checked_changed((callbacks.toggle)(name.clone()))
@@ -1566,16 +1564,14 @@ pub fn view(state: &State, callbacks: Callbacks) -> View {
                             .spacing(6.0)
                             .grid_column(3)
                             .children((
-                                Button::new()
-                                    .on_click((callbacks.button)(format!("hook-show:{name}")))
-                                    .content(TextBlock::new().text(tr!("Show"))),
+                                crate::small::button(tr!("Show"), |b| {
+                                    b.on_click((callbacks.button)(format!("hook-show:{name}")))
+                                }),
                                 // 選んだエディタで編集（GTK4 版・macOS 版の「〜で編集」）。
-                                Button::new()
-                                    .on_click((callbacks.button)(format!("hook-edit:{name}")))
-                                    .content(TextBlock::new().text(tr!(
-                                        "Edit in {app}",
-                                        app = &state.editor
-                                    ))),
+                                crate::small::button(
+                                    tr!("Edit in {app}", app = &state.editor),
+                                    |b| b.on_click((callbacks.button)(format!("hook-edit:{name}"))),
+                                ),
                             )),
                     ))
                     // 右クリック: 編集とファイルの場所（GTK4 版の `hook_context_menu` のうち Edit With 以外）。
@@ -1668,10 +1664,10 @@ pub fn view(state: &State, callbacks: Callbacks) -> View {
                     TextBlock::new()
                         .text(p.clone())
                         .vertical_alignment(VerticalAlignment::Center),
-                    Button::new()
-                        .on_click((callbacks.button)(format!("lfs-untrack:{p}")))
-                        .content(TextBlock::new().text("−").font_size(12.0))
-                        .tooltip(tr!("Remove")),
+                    crate::small::button("−", |b| {
+                        b.on_click((callbacks.button)(format!("lfs-untrack:{p}")))
+                    })
+                    .tooltip(tr!("Remove")),
                 )),
         )
     });
@@ -1834,21 +1830,19 @@ pub fn view(state: &State, callbacks: Callbacks) -> View {
                                             .text(folder.clone())
                                             .is_text_selection_enabled(true)
                                             .vertical_alignment(VerticalAlignment::Center),
-                                        crate::tip::holder(Button::new()
+                                        crate::tip::holder(crate::small::button("−", |b| b
                                                 .is_enabled(can)
                                                 .on_click((callbacks.button)(format!(
                                                     "sparse-remove:{folder}"
-                                                )))
-                                                .content(TextBlock::new().text("−")), tr!("Stop checking out this folder"), 0),
+                                                )))), tr!("Stop checking out this folder"), 0),
                                     )),
                             ));
                         }
                         rows.push((
                             "sparse-add".to_owned(),
-                            crate::tip::holder(Button::new()
+                            crate::tip::holder(crate::small::button("+", |b| b
                                     .is_enabled(can)
-                                    .on_click((callbacks.button)("sparse-add".to_owned()))
-                                    .content(TextBlock::new().text("+")), tr!("Check out one more folder"), 0),
+                                    .on_click((callbacks.button)("sparse-add".to_owned()))), tr!("Check out one more folder"), 0),
                         ));
                     }
                     Some(sparse) => {
@@ -2012,9 +2006,7 @@ pub fn view(state: &State, callbacks: Callbacks) -> View {
     }
     let remote_rows = remotes.iter().map(|(name, url)| {
         let button = |key: String, label: String| {
-            Button::new()
-                .on_click((callbacks.button)(key))
-                .content(TextBlock::new().text(label).font_size(12.0))
+            crate::small::button(label, |b| b.on_click((callbacks.button)(key)))
         };
         (
             name.clone(),
