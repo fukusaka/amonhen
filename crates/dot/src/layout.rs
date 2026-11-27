@@ -22,6 +22,8 @@ pub struct Node {
     /// 左右に空ける分（自分への辺の輪）。
     pub extra_left: f64,
     pub extra_right: f64,
+    /// 図を書き換えても変わらない手がかり（ノードの名前から）。並べ替えの混ぜた初めの並びの種に使う。
+    pub key: u64,
 }
 
 #[derive(Clone, Debug)]
@@ -126,6 +128,18 @@ pub const LABEL_GAP: f64 = 2.0;
 /// ラベルの仮のノードの所で、線がラベルの脇から離れてよい幅。
 const LABEL_SLACK: f64 = 2.0;
 
+/// いくつかの値から 64 ビットの手がかりを作る（splitmix64 を重ねる）。
+fn mix(parts: &[u64]) -> u64 {
+    let mut h: u64 = 0x243f_6a88_85a3_08d3;
+    for &p in parts {
+        let mut z = h ^ p.wrapping_add(0x9e37_79b9_7f4a_7c15);
+        z = (z ^ (z >> 30)).wrapping_mul(0xbf58_476d_1ce4_e5b9);
+        z = (z ^ (z >> 27)).wrapping_mul(0x94d0_49bb_1331_11eb);
+        h = z ^ (z >> 31);
+    }
+    h
+}
+
 /// 左右の向きを決めるときに数える行の大きさの上限（組の数が行の大きさの 2 乗で増えるため）。
 const MIRROR_ROW: usize = 2000;
 
@@ -144,6 +158,9 @@ const MINCROSS_STALE: usize = 12;
 /// 混ぜた初めの並びからの並べ替えの回数と、それを行う図の大きさ（区間の数）の上限。
 const RANDOM_STARTS: usize = 16;
 const RANDOM_START_SEGS: usize = 200;
+/// 混ぜ方の種。どの種でも交差の少ない並びを探すことは同じだが、交差の同じ並びのどれに行き着くかが変わる。手元の
+/// 実例の図で 4 つの種を比べ、Graphviz と並びの合う割合と交差がいちばん良かったもの。
+const RANDOM_SALT: u64 = 1;
 /// 隣どうしの入れ替えを使う、ランクの間の線の切れ端の数の上限（大きな図の時間のため）。
 const TRANSPOSE_SEGS: usize = 1500;
 
@@ -763,6 +780,8 @@ struct LNode {
     down: Vec<usize>,
     /// 元の順（並びのくずれのない比べ）。
     seq: usize,
+    /// 書き換えに強い手がかり（本物のノードは名前から、仮のノードは辺の両端とランクから）。
+    key: u64,
 }
 
 #[derive(Clone, Copy, Debug)]
@@ -1242,6 +1261,7 @@ pub fn layout(
             up: vec![],
             down: vec![],
             seq: i,
+            key: nd.key,
         })
         .collect();
     let mut segs: Vec<Segment> = Vec::new();
@@ -1271,6 +1291,7 @@ pub fn layout(
         }
     }
     let mut loops = vec![0usize; n];
+    let mut pair_seen: std::collections::HashMap<(usize, usize), u64> = Default::default();
     let mut flat_pairs: std::collections::HashMap<(usize, usize), usize> = Default::default();
     let mut flat_edges: Vec<(usize, usize)> = Vec::new();
     // 区間の重み（Gansner ほか 1993 §4.2 の Ω: 本物どうし 1、片方が仮 2、仮どうし 8）
@@ -1347,6 +1368,12 @@ pub fn layout(
             chains[ei] = Some((chain, rev, None));
             continue;
         }
+        // 同じ両端の辺の何本目か（仮のノードの手がかりを分ける）
+        let occurrence = {
+            let c = pair_seen.entry((a, b)).or_insert(0u64);
+            *c += 1;
+            *c
+        };
         let mut chain = vec![a];
         let mut label_node = None;
         for r in ra + 1..rb {
@@ -1372,6 +1399,7 @@ pub fn layout(
                 up: vec![],
                 down: vec![],
                 seq: n + ei,
+                key: mix(&[nodes[a].key, nodes[b].key, r as u64, occurrence]),
             });
             chain.push(v);
         }
@@ -1455,6 +1483,7 @@ pub fn layout(
                         up: vec![],
                         down: vec![],
                         seq: usize::MAX / 2 + c,
+                        key: mix(&[c as u64, r as u64, 0xc1]),
                     });
                 }
             }
@@ -1593,14 +1622,10 @@ pub fn layout(
             break;
         }
         if start >= 3 {
-            // 決まった種の xorshift で、ランクの中の初めの並びを混ぜる（毎回同じ結果）
-            let mut x: u64 =
-                0x9e37_79b9_7f4a_7c15 ^ (start as u64).wrapping_mul(0xbf58_476d_1ce4_e5b9);
-            for v in val.iter_mut() {
-                x ^= x << 13;
-                x ^= x >> 7;
-                x ^= x << 17;
-                *v = (x % 1_000_000) as f64;
+            // ノードの手がかり（名前から）と回の番号で、ランクの中の初めの並びを混ぜる（毎回同じ結果で、ほかのノードを
+            // 足しても同じノードの値は変わらない）
+            for (v, x) in val.iter_mut().enumerate() {
+                *x = (mix(&[nodes[v].key, start as u64, RANDOM_SALT]) % 1_000_000) as f64;
             }
             ord.layers = first_layers.clone();
             ord.refresh();
@@ -2884,6 +2909,7 @@ mod tests {
             cluster: c,
             extra_left: 0.0,
             extra_right: 0.0,
+            key: 0,
         }
     }
 
