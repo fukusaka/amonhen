@@ -1537,6 +1537,33 @@ fn dot_edges_between_the_same_two_nodes_are_drawn_apart() {
     assert!((middle(0) - middle(1)).abs() > 8.0, "{svg}");
 }
 
+/// 辺のラベルは線のすぐ脇にある（Graphviz の絵と同じく、線はラベルの仮のノードの脇を通る）。
+#[test]
+fn dot_edge_labels_sit_beside_their_line() {
+    let svg = render(
+        "digraph { init [shape=circle]; s [shape=circle, width=1.2]; \
+         init -> s [label=\"event_a\"]; s -> init [label=\"event_b\"] }",
+    )
+    .unwrap()
+    .svg;
+    let labels: Vec<(f64, f64)> = svg
+        .split("<text class=\"dot-edge-label\"")
+        .skip(1)
+        .map(|t| (attr_num(t, "x"), attr_num(t, "y")))
+        .collect();
+    let lines = edge_cubics(&svg);
+    assert_eq!(labels.len(), 2, "{svg}");
+    for (i, &(lx, ly)) in labels.iter().enumerate() {
+        let p = edge_samples(&lines[i]);
+        let near = p
+            .iter()
+            .min_by(|a, b| (a.1 - ly).abs().total_cmp(&(b.1 - ly).abs()))
+            .unwrap();
+        // ラベルの真ん中から線まで: ラベルの幅の半分（約 28）と間の 6 ほど
+        assert!((lx - near.0).abs() < 40.0, "{i} {lx} {near:?} {svg}");
+    }
+}
+
 /// 仮のノードを通る長い辺の束は、仮のノードの列を 1 本だけ持ち、真ん中の線から左右に同じだけ離れる（Graphviz の
 /// 絵と同じく、線の間は `nodesep` の 3/4 ほど。Gansner ほか 1993 §5.1.1）。
 #[test]

@@ -98,6 +98,7 @@ becomes the GitHub Release notes.
 - DOT diagrams: self-loops are flat rings beside the node (above it with `rankdir=LR`), sized as Graphviz sizes them,
   instead of one large round curve.
 - DOT diagrams: a self-loop grows taller with the space to the next rank, as in Graphviz.
+- DOT diagrams: an edge label sits right beside its line, as in Graphviz, instead of the line cutting a shorter way.
 - DOT diagrams: an edge to a subgraph that names a node twice (`a -> {b c b}`) draws one edge to it, as Graphviz
   does, not two.
 - DOT diagrams: polygons with `distortion` or `skew` keep the size of the plain polygon and widen only as much as
