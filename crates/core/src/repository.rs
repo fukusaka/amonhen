@@ -1112,6 +1112,25 @@ impl Repository {
         Ok(())
     }
 
+    /// `stacked` の、中身が手元になかったファイルのうち、その後ほかの画面（すべてのファイル）で取って手元にそろった
+    /// ものの差分を取る（取りには行かない）。まだ足りないファイルは、足りない中身だけを印に残す。
+    pub fn refresh_stacked_missing(&self, stacked: &mut diff::StackedDiff) -> Result<()> {
+        for file in 0..stacked.files.len() {
+            let ids = stacked.files[file].1.missing.clone();
+            if ids.is_empty() {
+                continue;
+            }
+            let still = self.backend.missing_blobs(&ids)?;
+            if still.is_empty() {
+                stacked.files[file].1.missing.clear();
+                self.set_stacked_context(stacked, file, 3)?;
+            } else {
+                stacked.files[file].1.missing = still;
+            }
+        }
+        Ok(())
+    }
+
     /// `stacked_diff` が、すべてのファイルの差分を先に取るのはこの数まで（多ければ開いたときに取る）。
     pub const STACK_EAGER: usize = 200;
 
@@ -2995,6 +3014,15 @@ mod tests {
         let head = resolve("HEAD");
         assert_eq!(repo.file_missing(&head, "a.txt").unwrap().len(), 1);
         assert_eq!(absent(), 4);
+
+        // ほかの画面で 1 つのファイルの中身を取ったら、取り直すとそのファイルだけ印が消える（取りには行かない）。
+        let mut again = repo.stacked_diff(&changes).unwrap();
+        repo.fetch_contents(&repo.file_missing(&two, "a.txt").unwrap())
+            .unwrap();
+        assert_eq!(absent(), 2);
+        repo.refresh_stacked_missing(&mut again).unwrap();
+        assert_eq!(again.missing_files(), 1);
+        assert_eq!(absent(), 2);
 
         // 頼まれたら取って、差分を取り直す。
         repo.fetch_stacked_missing(&mut stacked).unwrap();

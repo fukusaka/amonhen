@@ -1360,6 +1360,17 @@ bool amonhen_stacked_fetch_missing(const AmonhenRepo *repo_ptr,
                                    AmonhenStacked *stacked);
 
 /**
+ * `stacked` の、中身が手元になかったファイルのうち、その後ほかの画面で取って手元にそろったものの差分を取る（取り
+ * には行かない。すべてのファイルから変更に戻ったとき）。表示は `amonhen_stacked_view` で作り直す。裏のスレッドで
+ * 呼ぶ。読めなければ false（`amonhen_last_error`）。
+ *
+ * # Safety
+ * `repo` と `stacked` は有効で、`stacked` をほかのスレッドで同時に使っていないこと。
+ */
+bool amonhen_stacked_refresh_missing(const AmonhenRepo *repo_ptr,
+                                     AmonhenStacked *stacked);
+
+/**
  * `file` 番目のファイルが生成物か（最初は畳む）。`.gitattributes` の `linguist-generated`、なければ lock ファイルなど。
  *
  * # Safety

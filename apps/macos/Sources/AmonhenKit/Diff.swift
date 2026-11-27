@@ -114,6 +114,14 @@ public final class StackedDiff: @unchecked Sendable {
         cachedTotals = nil
     }
 
+    /// 中身が手元になかったファイルのうち、その後ほかの画面で取ってそろったものの差分を取る（取りには行かない）。
+    /// 表示は `view(collapsed:)` で作り直す。裏のスレッドで呼び、終わるまで `view` を呼ばないこと。
+    public func refreshMissing(in repository: Repository) throws {
+        guard amonhen_stacked_refresh_missing(repository.raw, raw) else { throw AmonhenError.last() }
+        cachedHeaders = nil
+        cachedTotals = nil
+    }
+
     /// `file` 番目のファイルが生成物か（最初は畳む）。`.gitattributes` の `linguist-generated`、なければ lock ファイルなど。
     public func isGenerated(_ file: Int) -> Bool { amonhen_stacked_generated(raw, UInt32(file)) }
 

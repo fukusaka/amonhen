@@ -2388,6 +2388,30 @@ pub unsafe extern "C" fn amonhen_stacked_fetch_missing(
     }
 }
 
+/// `stacked` の、中身が手元になかったファイルのうち、その後ほかの画面で取って手元にそろったものの差分を取る（取り
+/// には行かない。すべてのファイルから変更に戻ったとき）。表示は `amonhen_stacked_view` で作り直す。裏のスレッドで
+/// 呼ぶ。読めなければ false（`amonhen_last_error`）。
+///
+/// # Safety
+/// `repo` と `stacked` は有効で、`stacked` をほかのスレッドで同時に使っていないこと。
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn amonhen_stacked_refresh_missing(
+    repo_ptr: *const AmonhenRepo,
+    stacked: *mut AmonhenStacked,
+) -> bool {
+    let Some(s) = (unsafe { stacked.cast::<amonhen_core::diff::StackedDiff>().as_mut() }) else {
+        set_error("NULL was passed as stacked");
+        return false;
+    };
+    match repo!(repo_ptr).refresh_stacked_missing(s) {
+        Ok(()) => true,
+        Err(e) => {
+            set_error(e);
+            false
+        }
+    }
+}
+
 /// `file` 番目のファイルが生成物か（最初は畳む）。`.gitattributes` の `linguist-generated`、なければ lock ファイルなど。
 ///
 /// # Safety

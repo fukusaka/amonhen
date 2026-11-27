@@ -3238,8 +3238,11 @@ extension CommitDetailViewController {
         }
         let text = NSMutableAttributedString(
             string: L("%ld files", stacked.count) + "  ", attributes: [.foregroundColor: NSColor.secondaryLabelColor])
-        text.append(NSAttributedString(string: "+\(added)", attributes: [.foregroundColor: NSColor.systemGreen]))
-        text.append(NSAttributedString(string: " −\(removed)", attributes: [.foregroundColor: NSColor.systemRed]))
+        // 中身が手元にないファイルがあれば、行数は数えられないので出さない（0 と見誤らないように）。
+        if stacked.missingFiles == 0 {
+            text.append(NSAttributedString(string: "+\(added)", attributes: [.foregroundColor: NSColor.systemGreen]))
+            text.append(NSAttributedString(string: " −\(removed)", attributes: [.foregroundColor: NSColor.systemRed]))
+        }
         text.addAttribute(.font, value: NSFont.monospacedDigitSystemFont(ofSize: NSFont.smallSystemFontSize, weight: .regular),
                           range: NSRange(location: 0, length: text.length))
         barTotals.attributedStringValue = text
@@ -3470,8 +3473,26 @@ extension CommitDetailViewController {
         } else {
             diffView.replacement = nil
         }
-        // 差分の「取ってくる」の帯は変更の側だけ（すべてのファイルでは、開いたファイルごとに聞く）。
-        if on { diffView.noticeBar = nil } else { updateMissing() }
+        // 差分の「取ってくる」の帯は変更の側だけ（すべてのファイルでは、開いたファイルごとに聞く）。すべての
+        // ファイルで取った中身があれば、変更に戻ったときにそのファイルの差分を取る（取りには行かない）。
+        if on {
+            diffView.noticeBar = nil
+        } else if let stacked, !missingFiles.isEmpty {
+            let repository = self.repository, request = self.request
+            Task {
+                let refreshed = await Task.detached(priority: .userInitiated) {
+                    (try? stacked.refreshMissing(in: repository)) != nil
+                }.value
+                guard request == self.request, stacked === self.stacked, viewSwitch.selectedSegment == 0 else { return }
+                if refreshed {
+                    updateBarTotals()
+                    reshowStacked(keepScroll: true)
+                }
+                updateMissing()
+            }
+        } else {
+            updateMissing()
+        }
         updateBar()
     }
 
