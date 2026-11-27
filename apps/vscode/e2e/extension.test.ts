@@ -208,14 +208,19 @@ function recordSpawns(): void {
   }
 }
 
-async function showView(command: 'amonhen.showWorkingCopy' | 'amonhen.showHistory' | 'amonhen.showReflog' | 'amonhen.showDaemon') {
-  const start = Date.now();
-  await vscode.commands.executeCommand(command);
-  const panel = await until('メインビュー', () => api.panel());
+/** メインビューのシートに、試験の答え（sheetAnswer）で答える。出したシートは sheets に残す */
+function answerSheets(panel: NonNullable<ReturnType<Api['panel']>>): void {
   panel.answerSheet ??= (sheet, open) => {
     sheets.push(sheet);
     return sheetAnswer(sheet, open);
   };
+}
+
+async function showView(command: 'amonhen.showWorkingCopy' | 'amonhen.showHistory' | 'amonhen.showReflog' | 'amonhen.showDaemon') {
+  const start = Date.now();
+  await vscode.commands.executeCommand(command);
+  const panel = await until('メインビュー', () => api.panel());
+  answerSheets(panel);
   // Webview に送るメッセージを記録する（コントローラーは panel.post を呼ぶたびに引く）
   if (!Object.hasOwn(panel, 'post')) {
     const post = panel.post.bind(panel);
@@ -4173,15 +4178,25 @@ suite('Amon Hen in VSCode', () => {
     const start = git('rev-parse', 'HEAD').trim();
     const parents = () => git('rev-list', '--parents', '-n', '1', 'HEAD').trim().split(' ').length - 1;
     const node = (b: string) => ({ kind: 'branch', ref: { name: `refs/heads/${b}` } });
-    const merge = (b: string, mode: string) =>
-      withWindow(
-        {
-          showQuickPick: async (items: readonly (vscode.QuickPickItem & { mode?: string })[]) => items.find((i) => i.mode === mode),
-          showInformationMessage: async () => undefined,
-          showWarningMessage: async () => undefined,
-        },
-        async () => vscode.commands.executeCommand('amonhen.nav.merge', node(b)),
+    // 取り込み方は、メインビューの準備ができていればシートで、なければ QuickPick で聞かれる。止まったときに Working
+    // Copy へ切り替えてメインビューが開くので、どちらになるかは準備の速さで変わる。シートの選択肢は QuickPick と同じ順
+    const modes = ['git', 'fastForwardOnly', 'noFastForward', 'squash'];
+    const merge = (b: string, mode: string) => {
+      const panel = api.panel();
+      if (panel) answerSheets(panel);
+      return withSheets(
+        () => ({ index: 0, choice: modes.indexOf(mode) }),
+        () =>
+          withWindow(
+            {
+              showQuickPick: async (items: readonly (vscode.QuickPickItem & { mode?: string })[]) => items.find((i) => i.mode === mode),
+              showInformationMessage: async () => undefined,
+              showWarningMessage: async () => undefined,
+            },
+            async () => vscode.commands.executeCommand('amonhen.nav.merge', node(b)),
+          ),
       );
+    };
     git('switch', '-q', '-c', 'mm-topic');
     writeFileSync(join(root, 'mm.txt'), 'topic\n');
     git('add', 'mm.txt');
@@ -4215,7 +4230,10 @@ suite('Amon Hen in VSCode', () => {
       await vscode.commands.executeCommand('amonhen.abortSequence');
       await until('Abort でマージエディタを閉じる', () => mergeEditorTabs('mm.txt').length === 0, undefined, lastErrors);
       await repo.refresh();
+      // 止まったときに開いたメインビューの準備を待ち、2 回目はシートで取り込み方を選ぶ（準備の速さで変わらないように）
+      await until('メインビューの準備', () => api.panel()?.canAsk);
       await merge('mm-topic', 'squash');
+      assert.ok(sheets.some((s) => s.title === 'Merge mm-topic into main?'), 'シートで取り込み方を聞く');
       await until('もう一度 Squash の途中', async () => (await repo.backend.sequenceInProgress()) === 'squash', undefined, lastErrors);
       await until('マージエディタ（2 回目）', () => mergeEditorTabs('mm.txt').length > 0, undefined, lastErrors);
       await vscode.window.tabGroups.close(mergeEditorTabs());
