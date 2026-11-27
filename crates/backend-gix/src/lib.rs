@@ -801,6 +801,20 @@ impl GitBackend for GixBackend {
         self.git()?.fetch_missing(&remote, &missing)
     }
 
+    fn missing_blobs(&self, ids: &[Oid]) -> Result<Vec<Oid>> {
+        let repo = self.repo.to_thread_local();
+        if ids.is_empty() || promisor_remote(&repo).is_none() {
+            return Ok(Vec::new());
+        }
+        let mut seen = amonhen_model::OidSet::default();
+        Ok(ids
+            .iter()
+            .filter(|id| seen.insert(**id))
+            .filter(|id| !repo.has_object(gix::ObjectId::from_bytes_or_panic(&id.0)))
+            .copied()
+            .collect())
+    }
+
     fn contents_to_fetch(
         &self,
         tips: &[Oid],

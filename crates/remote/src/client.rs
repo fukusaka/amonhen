@@ -489,6 +489,13 @@ impl GitBackend for RemoteBackend {
         self.conn.call(&Request::PrefetchBlobs(ids.to_vec()))
     }
 
+    fn missing_blobs(&self, ids: &[Oid]) -> Result<Vec<Oid>> {
+        if ids.is_empty() {
+            return Ok(Vec::new());
+        }
+        self.conn.call(&Request::MissingBlobs(ids.to_vec()))
+    }
+
     fn contents_to_fetch(
         &self,
         tips: &[Oid],

@@ -1000,10 +1000,14 @@ impl Repository {
         let mut diff = match self.change_diffs(std::slice::from_ref(change))? {
             Some(mut diffs) if diffs.len() == 1 => diffs.remove(0),
             _ => {
+                self.refuse_missing(&self.missing_of(change)?)?;
                 let attrs = self.diff_attributes(std::slice::from_ref(&change.path.as_str()));
                 self.change_diff(change, &attrs[0], diff::Whitespace::Exact)?
             }
         };
+        if !diff.missing.is_empty() {
+            return Err(amonhen_model::MissingContents { ids: diff.missing }.into());
+        }
         if (context != 3 || whitespace != diff::Whitespace::Exact) && !diff.binary {
             let attrs = self.diff_attributes(std::slice::from_ref(&change.path.as_str()));
             let funcname = crate::funcname::FuncName::new(attrs[0].funcname.as_ref());
@@ -1020,9 +1024,56 @@ impl Repository {
         Ok(DiffView::new(&diff, profile).with_path(&change.path))
     }
 
-    /// blob の中身（画像の比較など）。
+    /// blob の中身（画像の比較など）。partial clone で手元になければ取りに行かず、`MissingContents` で断る。
     pub fn blob(&self, id: &Oid) -> Result<Arc<Vec<u8>>> {
+        self.refuse_missing(&self.backend.missing_blobs(std::slice::from_ref(id))?)?;
         self.backend.blob(id)
+    }
+
+    /// 足りない中身があれば `MissingContents` で断る（読む画面は、利用者が頼むまで取りに行かない）。
+    fn refuse_missing(&self, missing: &[Oid]) -> Result<()> {
+        if missing.is_empty() {
+            return Ok(());
+        }
+        Err(amonhen_model::MissingContents {
+            ids: missing.to_vec(),
+        }
+        .into())
+    }
+
+    /// 変更 `change` の前後の中身のうち、partial clone で手元にないもの（サブモジュールは中身を読まない）。
+    fn missing_of(&self, change: &FileChange) -> Result<Vec<Oid>> {
+        if change.submodule {
+            return Ok(Vec::new());
+        }
+        let ids: Vec<Oid> = [change.old_id, change.new_id]
+            .into_iter()
+            .flatten()
+            .collect();
+        self.backend.missing_blobs(&ids)
+    }
+
+    /// partial clone で取りに行かなかった中身を、利用者が頼んだので取ってくる（`ids` をまとめて 1 回で）。
+    pub fn fetch_contents(&self, ids: &[Oid]) -> Result<()> {
+        self.backend.prefetch_blobs(ids)
+    }
+
+    /// `stacked` の、partial clone で手元になかったファイルの中身を取ってきて、それらの差分を取る（利用者が
+    /// 「取ってくる」を押したとき）。ファイルの多いコミットでまだ開いていないファイルは、取らずに開いたときに取る。
+    pub fn fetch_stacked_missing(&self, stacked: &mut diff::StackedDiff) -> Result<()> {
+        let ids = stacked.missing_ids();
+        if ids.is_empty() {
+            return Ok(());
+        }
+        self.backend.prefetch_blobs(&ids)?;
+        for file in 0..stacked.files.len() {
+            if stacked.files[file].1.missing.is_empty() {
+                continue;
+            }
+            stacked.files[file].1.missing.clear();
+            self.set_stacked_context(stacked, file, 3)?;
+        }
+        Ok(())
     }
 
     /// `stacked_diff` が、すべてのファイルの差分を先に取るのはこの数まで（多ければ開いたときに取る）。
@@ -1044,6 +1095,12 @@ impl Repository {
         let attrs = self.diff_attributes(&[path]);
         let whitespace = d.whitespace;
         if let Some(change) = d.pending.take() {
+            // partial clone で中身が手元になければ、取りに行かずに印を付ける（利用者が頼んだら取る）。
+            let missing = self.missing_of(&change)?;
+            if !missing.is_empty() {
+                *d = diff::missing_file(*change, missing, whitespace);
+                return Ok(());
+            }
             match self.change_diff(&change, &attrs[0], whitespace) {
                 Ok(loaded) => *d = loaded,
                 Err(e) => {
@@ -1055,7 +1112,7 @@ impl Repository {
                 return Ok(());
             }
         }
-        if d.binary {
+        if d.binary || !d.missing.is_empty() {
             return Ok(());
         }
         let funcname = crate::funcname::FuncName::new(attrs[0].funcname.as_ref());
@@ -1093,7 +1150,7 @@ impl Repository {
         {
             return Err(tr!("{path} isn’t a file", path = path).into());
         }
-        self.backend.blob(&entry.oid)
+        self.blob(&entry.oid)
     }
 
     /// コミット `commit` の `path` の Android の VectorDrawable（中身 `xml`）を絵にする（History の「すべての
@@ -1184,32 +1241,58 @@ impl Repository {
         }
         if let Some(diffs) = self.change_diffs(changes)? {
             // daemon は空白を無視せずに取る。無視するなら、もらった中身でここで取り直す。
-            let diffs = if whitespace == diff::Whitespace::Exact {
-                diffs
+            let paths: Vec<&str> = changes.iter().map(|c| c.path.as_str()).collect();
+            let attrs = if whitespace == diff::Whitespace::Exact {
+                Vec::new()
             } else {
-                let paths: Vec<&str> = changes.iter().map(|c| c.path.as_str()).collect();
-                let attrs = self.diff_attributes(&paths);
-                diffs
-                    .into_iter()
-                    .zip(&attrs)
-                    .map(|(d, a)| Self::rediff(d, a, whitespace))
-                    .collect()
+                self.diff_attributes(&paths)
             };
+            let diffs = diffs
+                .into_iter()
+                .zip(changes)
+                .enumerate()
+                .map(|(i, (d, c))| {
+                    // 手元になかった中身は、頼まれたら取り直せるよう変更を持っておく。
+                    if !d.missing.is_empty() {
+                        return diff::missing_file(c.clone(), d.missing, whitespace);
+                    }
+                    match attrs.get(i) {
+                        Some(a) => Self::rediff(d, a, whitespace),
+                        None => d,
+                    }
+                });
             let files = changes.iter().map(|c| c.path.clone()).zip(diffs).collect();
             return Ok(diff::StackedDiff { files });
         }
-        // partial clone では、足りない blob を先にまとめて取ってくる（1 つずつ取りに行かない）。
+        // partial clone で手元にない中身は取りに行かない（利用者が頼んだら取る、`fetch_stacked_missing`）。
+        // 足りないファイルは差分を取らずに印を付け、ほかのファイルの差分は出す。
         let ids: Vec<Oid> = changes
             .iter()
             .filter(|c| !c.submodule)
             .flat_map(|c| [c.old_id, c.new_id])
             .flatten()
             .collect();
-        self.backend.prefetch_blobs(&ids)?;
+        let missing: amonhen_model::OidSet =
+            self.backend.missing_blobs(&ids)?.into_iter().collect();
         let paths: Vec<&str> = changes.iter().map(|c| c.path.as_str()).collect();
         let attrs = self.diff_attributes(&paths);
         let items: Vec<_> = changes.iter().zip(&attrs).collect();
         let one = |&(c, a): &(&FileChange, &amonhen_model::DiffAttributes)| {
+            let absent: Vec<Oid> = if c.submodule {
+                Vec::new()
+            } else {
+                [c.old_id, c.new_id]
+                    .into_iter()
+                    .flatten()
+                    .filter(|id| missing.contains(id))
+                    .collect()
+            };
+            if !absent.is_empty() {
+                return Ok((
+                    c.path.clone(),
+                    diff::missing_file(c.clone(), absent, whitespace),
+                ));
+            }
             Ok((c.path.clone(), self.change_diff(c, a, whitespace)?))
         };
         // ファイルごとの差分は独立しているので、多ければ分けて並列に取る（コミットを選んでから表示までの時間）。
@@ -2800,6 +2883,89 @@ mod tests {
             [1, 2]
         );
         assert_eq!(need("contents:two path:b.txt"), None);
+    }
+
+    #[test]
+    fn leaves_missing_contents_unfetched_until_asked() {
+        let tmp = tempfile::tempdir().unwrap();
+        let src = tmp.path().join("src");
+        std::fs::create_dir(&src).unwrap();
+        git(&src, &["init", "-q"]);
+        git(&src, &["symbolic-ref", "HEAD", "refs/heads/main"]);
+        for text in ["one", "two", "three"] {
+            std::fs::write(src.join("a.txt"), format!("a {text}\n")).unwrap();
+            std::fs::write(src.join("b.txt"), format!("b {text}\n")).unwrap();
+            git(&src, &["add", "."]);
+            git(&src, &["commit", "-q", "-m", text]);
+        }
+        git(&src, &["config", "uploadpack.allowFilter", "true"]);
+        git(&src, &["config", "uploadpack.allowAnySHA1InWant", "true"]);
+        let path = src.to_str().unwrap().replace('\\', "/");
+        let url = if path.starts_with('/') {
+            format!("file://{path}")
+        } else {
+            format!("file:///{path}")
+        };
+        git(
+            tmp.path(),
+            &["clone", "-q", "--filter=blob:none", &url, "partial"],
+        );
+        let dir = tmp.path().join("partial");
+        let repo = Repository::new(GixBackend::open(&dir).unwrap());
+        let resolve = |rev: &str| {
+            let out = Command::new("git")
+                .args(["rev-parse", rev])
+                .current_dir(&dir)
+                .output()
+                .unwrap();
+            Oid::from_hex(String::from_utf8_lossy(&out.stdout).trim()).unwrap()
+        };
+        // 取り出した HEAD（three）のほかは、中身が手元にない。
+        let two = resolve("HEAD~1");
+        let changes = repo.commit_changes(&two).unwrap();
+        let ids: Vec<Oid> = changes
+            .iter()
+            .flat_map(|c| [c.old_id, c.new_id])
+            .flatten()
+            .collect();
+        let absent = || repo.backend.missing_blobs(&ids).unwrap().len();
+        assert_eq!(absent(), 4);
+
+        // 差分は取りに行かず、ファイルに印を付ける。
+        let mut stacked = repo.stacked_diff(&changes).unwrap();
+        assert_eq!(stacked.missing_files(), 2);
+        assert_eq!(stacked.missing_ids().len(), 4);
+        let view = stacked.view(&[false, false], &FrontendProfile::MACOS);
+        let headers: Vec<_> = view
+            .rows
+            .iter()
+            .filter(|r| r.kind == DiffRow::FILE)
+            .collect();
+        assert_eq!(headers.len(), 2);
+        assert!(headers.iter().all(|r| r.flags & DiffRow::MISSING != 0));
+        // ファイルの中身を読む画面も、取りに行かずに断る。
+        let error = repo.file_at(&two, "a.txt").unwrap_err();
+        let missing = amonhen_model::MissingContents::of(&*error).unwrap();
+        assert_eq!(missing.ids.len(), 1);
+        let json: serde_json::Value = serde_json::from_str(&repo.run_json(&format!(
+            r#"{{"op":"markdownBlocks","oid":"{two}","path":"a.txt"}}"#
+        )))
+        .unwrap();
+        assert_eq!(json["errorKind"], "missingContents", "{json}");
+        assert_eq!(json["info"]["missing"].as_array().unwrap().len(), 1);
+        assert_eq!(absent(), 4);
+
+        // 頼まれたら取って、差分を取り直す。
+        repo.fetch_stacked_missing(&mut stacked).unwrap();
+        assert_eq!(stacked.missing_files(), 0);
+        assert!(
+            stacked
+                .files
+                .iter()
+                .all(|(_, d)| d.added == 1 && d.removed == 1)
+        );
+        assert_eq!(absent(), 0);
+        assert_eq!(&**repo.file_at(&two, "a.txt").unwrap(), b"a two\n");
     }
 
     #[test]

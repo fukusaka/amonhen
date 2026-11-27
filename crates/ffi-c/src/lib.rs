@@ -124,17 +124,34 @@ pub struct AmonhenChunkView {
 
 thread_local! {
     static LAST_ERROR: RefCell<CString> = RefCell::new(CString::default());
+    /// 最後の失敗が partial clone の手元にない中身（`MissingContents`）なら、その中身の ID。
+    static LAST_MISSING: RefCell<Vec<amonhen_model::Oid>> = const { RefCell::new(Vec::new()) };
 }
 
-fn set_error(e: impl std::fmt::Display) {
+fn set_error<E: std::fmt::Display + 'static>(e: E) {
     let message = CString::new(e.to_string().replace('\0', " ")).unwrap_or_default();
+    let any: &dyn std::any::Any = &e;
+    let missing = any
+        .downcast_ref::<amonhen_model::Error>()
+        .and_then(|e| amonhen_model::MissingContents::of(&**e))
+        .map(|m| m.ids.clone())
+        .unwrap_or_default();
     LAST_ERROR.with(|last| *last.borrow_mut() = message);
+    LAST_MISSING.with(|last| *last.borrow_mut() = missing);
 }
 
 /// このスレッドで最後に失敗した関数の理由（UTF-8）。次に失敗するまで有効。
 #[unsafe(no_mangle)]
 pub extern "C" fn amonhen_last_error() -> *const c_char {
     LAST_ERROR.with(|last| last.borrow().as_ptr())
+}
+
+/// このスレッドで最後に失敗した関数が、partial clone で中身が手元になくて断ったのなら、その中身の数（読む画面は
+/// 取りに行かない。FE は「取ってくる」を出し、押されたら `amonhen_fetch_last_missing` で取ってから読み直す）。
+/// ほかの理由の失敗なら 0。
+#[unsafe(no_mangle)]
+pub extern "C" fn amonhen_last_missing_count() -> u32 {
+    LAST_MISSING.with(|last| last.borrow().len() as u32)
 }
 
 /// 引数に NULL を渡されたときに返すもの（失敗を表す値。ビューは何もない空のもの）。
@@ -2298,6 +2315,57 @@ pub unsafe extern "C" fn amonhen_stacked_count(stacked: *const AmonhenStacked) -
     handle!(stacked, amonhen_core::diff::StackedDiff)
         .files
         .len() as u32
+}
+
+/// このスレッドで最後に失敗した関数が手元になかった中身を、取ってくる（まとめて 1 回で。裏のスレッドで、失敗を
+/// 受けたのと同じスレッドで呼ぶ）。取れなければ false（`amonhen_last_error`）。
+///
+/// # Safety
+/// `repo` は有効であること。
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn amonhen_fetch_last_missing(repo_ptr: *const AmonhenRepo) -> bool {
+    let ids = LAST_MISSING.with(|last| last.borrow().clone());
+    match repo!(repo_ptr).fetch_contents(&ids) {
+        Ok(()) => true,
+        Err(e) => {
+            set_error(e);
+            false
+        }
+    }
+}
+
+/// partial clone で中身が手元になく、差分を取っていないファイルの数（見出しの `MISSING`。FE は「取ってくる」の
+/// 帯を出す）。
+///
+/// # Safety
+/// `stacked` は有効であること。
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn amonhen_stacked_missing(stacked: *const AmonhenStacked) -> u32 {
+    handle!(stacked, amonhen_core::diff::StackedDiff).missing_files() as u32
+}
+
+/// `stacked` の手元になかった中身を取ってきて、それらのファイルの差分を取る（利用者が「取ってくる」を押した
+/// とき。まとめて 1 回で取る）。表示は `amonhen_stacked_view` で作り直す。裏のスレッドで呼ぶ。取れなければ false
+/// （`amonhen_last_error`）。
+///
+/// # Safety
+/// `repo` と `stacked` は有効で、`stacked` をほかのスレッドで同時に使っていないこと。
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn amonhen_stacked_fetch_missing(
+    repo_ptr: *const AmonhenRepo,
+    stacked: *mut AmonhenStacked,
+) -> bool {
+    let Some(s) = (unsafe { stacked.cast::<amonhen_core::diff::StackedDiff>().as_mut() }) else {
+        set_error("NULL was passed as stacked");
+        return false;
+    };
+    match repo!(repo_ptr).fetch_stacked_missing(s) {
+        Ok(()) => true,
+        Err(e) => {
+            set_error(e);
+            false
+        }
+    }
 }
 
 /// `file` 番目のファイルが生成物か（最初は畳む）。`.gitattributes` の `linguist-generated`、なければ lock ファイルなど。

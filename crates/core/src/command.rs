@@ -280,6 +280,11 @@ pub enum Command {
     /// `git fetch --refetch <remote>`。git 2.36 から）。Fetch と同じく動かし、Undo には記録しない。取れなければ
     /// filter の設定を戻す。partial clone でなければ断る。
     FetchAllContents,
+    /// partial clone で読む画面が取りに行かなかった中身（失敗の `info.missing`、`errorKind` は
+    /// `missingContents`）を、利用者が頼んだので取ってくる（まとめて 1 回で）。Undo には記録しない。
+    FetchContents {
+        ids: Vec<String>,
+    },
     /// 今のブランチに上流を取り込む（Undo できる）。
     Pull {
         #[serde(default)]
@@ -3475,7 +3480,18 @@ impl Repository {
         let response = match serde_json::from_str::<Command>(json) {
             Ok(command) => match self.run_tracked(command, op_name(json)) {
                 Ok(r) => r,
-                Err(e) => Response::failed(e.to_string()),
+                Err(e) => match amonhen_model::MissingContents::of(&*e) {
+                    // partial clone で手元にない中身: 取りに行かずに断り、何を取ればよいかを渡す。
+                    Some(missing) => Response {
+                        error: Some(e.to_string()),
+                        error_kind: Some(crate::failure::MISSING_CONTENTS),
+                        info: Some(serde_json::json!({
+                            "missing": missing.ids.iter().map(Oid::to_string).collect::<Vec<_>>(),
+                        })),
+                        ..Default::default()
+                    },
+                    None => Response::failed(e.to_string()),
+                },
             },
             Err(e) => Response {
                 error: Some(tr!("Can’t read the command: {e}", e = e)),
@@ -4125,6 +4141,11 @@ impl Repository {
             }
             Command::FetchAllContents => {
                 self.fetch_all_contents(ops)?;
+                ok()
+            }
+            Command::FetchContents { ids } => {
+                let ids = ids.iter().map(|id| oid(id)).collect::<Result<Vec<_>>>()?;
+                self.fetch_contents(&ids)?;
                 ok()
             }
             Command::Pull { mode } => {

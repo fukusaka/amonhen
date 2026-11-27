@@ -683,13 +683,22 @@ impl Session {
                     "binary": d.binary,
                     // 生成物（`linguist-generated`、なければ lock ファイルなど）。FE は最初は畳む。
                     "generated": stacked.generated(i),
+                    // partial clone で中身が手元になく、差分を取っていない（FE は「取ってくる」を出す）。
+                    "missing": !d.missing.is_empty(),
                 })
             })
             .collect();
         let changes: Vec<Value> = changes.iter().flatten().map(change_json).collect();
+        // partial clone で手元にない中身（取るなら fetchContents にこれを渡し、差分を取り直す）。
+        let missing: Vec<String> = stacked
+            .missing_ids()
+            .iter()
+            .map(|id| id.to_string())
+            .collect();
         let reply = diff_records(&view).finish(json!({
             "files": files,
             "changes": changes,
+            "missing": missing,
             "selection": selection,
             "rows": view.rows.len(),
             "view": self.id(),
