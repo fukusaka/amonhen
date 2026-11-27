@@ -168,6 +168,8 @@ impl Popover {
     /// 次にできることのボタン（`accent` なら強調する）。押したら閉じて `f`。
     fn button_styled(&self, label: &str, accent: bool, f: impl Fn() + 'static) {
         let b = gtk::Button::with_label(label);
+        // macOS 版の小さなボタン（controlSize small）。
+        b.add_css_class("small-push");
         if accent {
             b.add_css_class("suggested-action");
         }

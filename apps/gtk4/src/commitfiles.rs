@@ -461,6 +461,9 @@ impl CommitDiff {
         changes.set_active(true);
         let view_switch = gtk::Box::new(gtk::Orientation::Horizontal, 0);
         view_switch.add_css_class("linked");
+        // macOS 版の小さなセグメント（Working Copy の「変更｜すべてのファイル」と同じ大きさ）。
+        view_switch.add_css_class("small-pushes");
+        view_switch.set_valign(gtk::Align::Center);
         view_switch.append(&changes);
         view_switch.append(&all_files);
         let totals = gtk::Label::new(None);
@@ -487,6 +490,8 @@ impl CommitDiff {
         }
         let tree_switch = gtk::Box::new(gtk::Orientation::Horizontal, 0);
         tree_switch.add_css_class("linked");
+        tree_switch.add_css_class("small-pushes");
+        tree_switch.set_valign(gtk::Align::Center);
         tree_switch.append(&list);
         tree_switch.append(&tree);
         let (folders, folders_icon) =

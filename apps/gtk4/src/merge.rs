@@ -801,6 +801,23 @@ impl Editor {
         };
         popout.set_tooltip_text(Some(&tr!("Open in a Separate Window")));
         popout.set_visible(false);
+        // 帯のボタンはどれも小さく（macOS 版の controlSize small）。
+        for button in [
+            &previous,
+            &next,
+            &magic,
+            &ai_resolve,
+            &ai_explain,
+            &save,
+            &resolve,
+            &popout,
+        ]
+        .into_iter()
+        .chain(accept_buttons.iter().map(|(b, _)| b))
+        {
+            button.add_css_class("small-push");
+            button.set_valign(gtk::Align::Center);
+        }
 
         // 操作の帯は 1 段（macOS 版と同じ並び）: 位置・∧ ∨・Magic Merge・AI・知らせ・Accept…・Base、右に
         // 別の窓・Save・Save & Mark Resolved。狭いときは、ボタンの名前を切り詰めずに、軽いボタンから隠す

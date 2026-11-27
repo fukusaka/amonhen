@@ -572,6 +572,8 @@ impl Browser {
         path_bar.append(&path_label);
         let svg_switch = gtk::Box::new(gtk::Orientation::Horizontal, 0);
         svg_switch.add_css_class("linked");
+        svg_switch.add_css_class("small-pushes");
+        svg_switch.set_valign(gtk::Align::Center);
         svg_switch.set_visible(false);
         let mut svg_buttons: Vec<(SvgView, gtk::ToggleButton)> = Vec::new();
         for view in SvgView::ALL {
@@ -585,6 +587,8 @@ impl Browser {
         }
         let markdown_switch = gtk::Box::new(gtk::Orientation::Horizontal, 0);
         markdown_switch.add_css_class("linked");
+        markdown_switch.add_css_class("small-pushes");
+        markdown_switch.set_valign(gtk::Align::Center);
         markdown_switch.set_visible(false);
         let markdown_buttons = [
             (tr!("Preview"), tr!("Show the Markdown formatted")),
@@ -599,6 +603,8 @@ impl Browser {
         markdown_buttons[1].set_group(Some(&markdown_buttons[0]));
         let drawable_switch = gtk::Box::new(gtk::Orientation::Horizontal, 0);
         drawable_switch.add_css_class("linked");
+        drawable_switch.add_css_class("small-pushes");
+        drawable_switch.set_valign(gtk::Align::Center);
         drawable_switch.set_visible(false);
         let drawable_buttons = [
             (tr!("Picture"), tr!("Draw the VectorDrawable")),
@@ -1032,6 +1038,8 @@ impl Browser {
     fn renderer_switch(self: &Rc<Self>) -> gtk::Widget {
         let switch = gtk::Box::new(gtk::Orientation::Horizontal, 0);
         switch.add_css_class("linked");
+        switch.add_css_class("small-pushes");
+        switch.set_valign(gtk::Align::Center);
         let mut first: Option<gtk::ToggleButton> = None;
         for (target, title) in RENDERERS {
             let button = gtk::ToggleButton::with_label(title);

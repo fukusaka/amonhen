@@ -412,6 +412,9 @@ impl Shaper {
     pub fn new(view: &HistoryView, search: Rc<Search>, pending: Rc<Cell<u32>>) -> Rc<Self> {
         view.set_display(display());
         let scope_bar = gtk::DropDown::from_strings(&[]);
+        // macOS 版の小さなポップアップ（controlSize small）。
+        scope_bar.add_css_class("small-push");
+        scope_bar.set_valign(gtk::Align::Center);
         scope_bar.set_margin_start(4);
         let shaper = Rc::new(Self {
             view: view.clone(),
