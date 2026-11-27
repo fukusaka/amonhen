@@ -17,6 +17,7 @@ becomes the GitHub Release notes.
   Graphviz. Outside clusters, the tail stays on the left.
 - DOT crossing reduction keeps the later of two orders with the same crossings, which matches Graphviz's order more
   often.
+- DOT diagrams start from the order Graphviz uses, which depends on the order nodes are declared in.
 
 #### Fixed
 
