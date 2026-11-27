@@ -3,7 +3,9 @@
 //! codicon と同じように描かせる（テーマのアイコンの色・ハイコントラスト・選んだ行の色に従う）。
 //!
 //! 字は 16px の 1em に、太さ 1px の線を輪郭に直したもの（線は 1 倍の画面の画素に合わせてから直す）。字の番号は
-//! `ICONS` の並び（名前の順）で U+E000 から。example の `vscode` と、作ったものが古くないかのテストが使う。
+//! 名前ごとに表（[`TABLE_PATH`]）で決めておき、形を足しても前からの字の番号は変わらない。足した形には、表の最後の
+//! 番号の次を振る。使わなくなった名前の行も残し、その番号は使い回さない。example の `vscode` と、作ったものが古くない
+//! かのテストが使う。
 
 use amonhen_icons::{ICONS, Icon, Op};
 use kurbo::{BezPath, Cap, Circle, CubicBez, Join, PathEl, Point, Shape, Stroke, StrokeOpts};
@@ -16,6 +18,64 @@ const SIZE: f64 = 16.0;
 pub const FIRST: u32 = 0xE000;
 /// `package.json` から見たフォントの場所。
 pub const FONT_PATH: &str = "media/amonhen-icons.ttf";
+/// 字の番号の表（crate から見た場所）。1 行に「番号（16 進）、タブ、名前」。
+pub const TABLE_PATH: &str = "tools/vscode-codepoints.tsv";
+
+/// 字の番号の表（番号の順）。
+pub type Table = Vec<(u32, String)>;
+
+/// 表を読む。
+pub fn parse(text: &str) -> Table {
+    let mut table: Table = text
+        .lines()
+        .filter(|l| !l.is_empty() && !l.starts_with('#'))
+        .map(|l| {
+            let (code, name) = l.split_once('\t').expect("code<TAB>name");
+            let code = u32::from_str_radix(code, 16).expect("hex code");
+            (code, name.to_string())
+        })
+        .collect();
+    table.sort();
+    table
+}
+
+/// 表を書く。
+pub fn format(table: &Table) -> String {
+    let mut out = String::from(
+        "# VSCode 拡張のアイコンのフォントの字の番号（cargo run -p amonhen-icons --example vscode で足す）。\n\
+         # 番号は変えない。使わなくなった名前の行も消さない（番号を使い回さない）。\n",
+    );
+    for (code, name) in table {
+        out.push_str(&format!("{code:X}\t{name}\n"));
+    }
+    out
+}
+
+/// 表に、まだ番号のない形（`ICONS` にあって表にない名前）を、最後の番号の次から足したもの。
+pub fn assigned(table: &Table) -> Table {
+    let mut table = table.clone();
+    let mut next = table.iter().map(|(c, _)| c + 1).max().unwrap_or(FIRST);
+    for (name, _) in ICONS {
+        if !table.iter().any(|(_, n)| n == name) {
+            table.push((next, name.to_string()));
+            next += 1;
+        }
+    }
+    table
+}
+
+/// 表の行のうち、今の形があるもの（番号の順。n 番目がフォントの n + 1 番の字）。
+fn glyphs(table: &Table) -> Vec<(u32, &'static str, &'static Icon)> {
+    table
+        .iter()
+        .filter_map(|(code, name)| {
+            ICONS
+                .iter()
+                .find(|(n, _)| n == name)
+                .map(|(n, icon)| (*code, *n, icon))
+        })
+        .collect()
+}
 
 /// 線を塗りの輪郭に（px の単位、y は下向き）。
 fn outline(icon: &Icon) -> BezPath {
@@ -186,9 +246,10 @@ fn checksum(data: &[u8]) -> u32 {
     })
 }
 
-/// フォント（TrueType）。0 番の字は空、`ICONS` の n 番目は U+E000+n。
-pub fn font() -> Vec<u8> {
-    let count = ICONS.len() as u16 + 1;
+/// フォント（TrueType）。0 番の字は空、表の形のある行が番号の順に 1 番から。
+pub fn font(table: &Table) -> Vec<u8> {
+    let glyphs = glyphs(table);
+    let count = glyphs.len() as u16 + 1;
     let em = EM as u16;
     let mut glyf = Vec::new();
     // loca は字ごとの始まりと、最後の終わり。0 番（.notdef）は空。
@@ -196,7 +257,7 @@ pub fn font() -> Vec<u8> {
     put32(&mut loca, 0);
     put32(&mut loca, 0);
     let (mut max_points, mut max_contours) = (0, 0);
-    for (_, icon) in ICONS {
+    for (_, _, icon) in &glyphs {
         let c = contours(&outline(icon));
         max_points = c.iter().map(Vec::len).sum::<usize>().max(max_points);
         max_contours = c.len().max(max_contours);
@@ -241,14 +302,15 @@ pub fn font() -> Vec<u8> {
     for v in [0, 0, 2, 0, 0, 0, 0, 0, 0, 0, 0] {
         put16(&mut maxp, v);
     }
-    let last = (FIRST + ICONS.len() as u32 - 1) as u16;
+    let first = glyphs.first().map_or(FIRST, |g| g.0) as u16;
+    let last = glyphs.last().map_or(FIRST, |g| g.0) as u16;
     let mut os2 = Vec::new();
     for v in [4, em, 400, 5, 0] {
         put16(&mut os2, v); // version、xAvgCharWidth、usWeightClass、usWidthClass、fsType
     }
     os2.extend([0; 20 + 2 + 10 + 16]); // 上付き・下付き・取り消し線、sFamilyClass、panose、ulUnicodeRange
     os2.extend(*b"AMHN");
-    for v in [0x0040, FIRST as u16, last, em, 0, 0, em, 0] {
+    for v in [0x0040, first, last, em, 0, 0, em, 0] {
         put16(&mut os2, v); // fsSelection、最初と最後の字、typo の上・下・行間、win の上・下
     }
     put32(&mut os2, 1); // ulCodePageRange1（Latin 1）
@@ -256,14 +318,20 @@ pub fn font() -> Vec<u8> {
     for v in [0, 0, 0, 0, 0] {
         put16(&mut os2, v);
     }
-    // cmap: 形式 4、U+E000 から続く 1 つの範囲と、最後の 0xFFFF。
+    // cmap: 形式 4。最初から最後の番号までの 1 つの範囲（使わなくなった番号は 0 番の字）を字の番号の列で引き、
+    // 最後に 0xFFFF の範囲。
     let mut sub = Vec::new();
-    for v in [4, 0, 0, 4, 4, 1, 0, last, 0xFFFF, 0, FIRST as u16, 0xFFFF] {
-        put16(&mut sub, v);
+    for v in [
+        4, 0, 0, 4, 4, 1, 0, last, 0xFFFF, 0, first, 0xFFFF, 0, 1, 4, 0,
+    ] {
+        put16(&mut sub, v); // 形式・長さ・言語・範囲の数×2 など、終わり、0、始まり、idDelta、idRangeOffset
     }
-    put16(&mut sub, 1u16.wrapping_sub(FIRST as u16)); // idDelta: U+E000 → 1 番の字
-    for v in [1, 0, 0] {
-        put16(&mut sub, v);
+    for code in first..=last {
+        let id = glyphs
+            .iter()
+            .position(|g| g.0 == code as u32)
+            .map_or(0, |n| n + 1);
+        put16(&mut sub, id as u16);
     }
     let len = sub.len() as u16;
     sub[2..4].copy_from_slice(&len.to_be_bytes());
@@ -341,15 +409,15 @@ pub fn font() -> Vec<u8> {
     out
 }
 
-/// `package.json` の `contributes.icons`（`"icons": {` から対の `}` まで、2 段の字下げ）。
-pub fn contributions() -> String {
+/// `package.json` の `contributes.icons`（`"icons": {` から対の `}` まで、2 段の字下げ。`ICONS` の順）。
+pub fn contributions(table: &Table) -> String {
+    let glyphs = glyphs(table);
     let rows: Vec<String> = ICONS
         .iter()
-        .enumerate()
-        .map(|(n, (name, _))| {
+        .filter_map(|(name, _)| glyphs.iter().find(|g| g.1 == *name))
+        .map(|(code, name, _)| {
             format!(
-                "      \"amonhen-{name}\": {{\n        \"description\": \"Amon Hen: {name}\",\n        \"default\": {{ \"fontPath\": \"{FONT_PATH}\", \"fontCharacter\": \"\\\\{:X}\" }}\n      }}",
-                FIRST + n as u32
+                "      \"amonhen-{name}\": {{\n        \"description\": \"Amon Hen: {name}\",\n        \"default\": {{ \"fontPath\": \"{FONT_PATH}\", \"fontCharacter\": \"\\\\{code:X}\" }}\n      }}"
             )
         })
         .collect();
@@ -357,7 +425,7 @@ pub fn contributions() -> String {
 }
 
 /// `package.json` の中の `contributes.icons` を、今の形からのものに置き換える。
-pub fn with_contributions(package: &str) -> String {
+pub fn with_contributions(package: &str, table: &Table) -> String {
     const KEY: &str = "\n    \"icons\": {";
     let start = package
         .find(KEY)
@@ -382,7 +450,7 @@ pub fn with_contributions(package: &str) -> String {
     format!(
         "{}{}{}",
         &package[..start],
-        contributions(),
+        contributions(table),
         &package[end..]
     )
 }
