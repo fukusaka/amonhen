@@ -1732,6 +1732,20 @@ fn dot_equal_crossings_keep_the_later_order_as_in_graphviz() {
     );
 }
 
+/// Diskless の図: Failed から戻る線は、Graphviz と同じくいちばん右を通る。
+#[test]
+fn dot_diskless_runs_the_edge_back_on_the_right_as_in_graphviz() {
+    let svg = render(DISKLESS).unwrap().svg;
+    let xs: Vec<f64> = svg
+        .split("<text class=\"dot-edge-label\"")
+        .skip(1)
+        .map(|t| attr_num(t, "x"))
+        .collect();
+    // ラベルは辺を書いた順: 最後は Failed -> Diskless
+    let back = xs[xs.len() - 1];
+    assert!(xs[..xs.len() - 1].iter().all(|&x| x < back), "{xs:?}");
+}
+
 /// 辺のラベルは線のすぐ脇にある（Graphviz の絵と同じく、線はラベルの仮のノードの脇を通る）。
 #[test]
 fn dot_edge_labels_sit_beside_their_line() {
