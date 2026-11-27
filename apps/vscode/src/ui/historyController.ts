@@ -1008,8 +1008,17 @@ export class HistoryController implements vscode.Disposable {
     const repo = this.repo;
     const client = this.daemon?.client;
     if (!repo || !client) return;
+    // 変えた行の印と、消したファイルの前の版はコミットの詳細で決める。中身を取った後（覚えた差分を捨てた）や
+    // 詳細を覚えから追い出した後でも、読み直してから出す（なければ印のないただの中身になる）
+    if (!this.details.has(oid)) {
+      const details = await this.daemonDetails(client, oid).catch(() => undefined);
+      if (details) {
+        this.details.set(oid, details);
+        if (this.details.size > DETAILS_CACHE) this.details.delete(this.details.keys().next().value!);
+      }
+    }
     // 絵の手伝いは、要るときに 1 度だけ起動する（同じコミットのほかのファイルは、求められたら読んで渡す）
-    const at = this.details.get(oid)?.files.find((f) => f.path === path)?.status === 'D' ? this.details.get(oid)?.parents[0] : oid;
+    const at =this.details.get(oid)?.files.find((f) => f.path === path)?.status === 'D' ? this.details.get(oid)?.parents[0] : oid;
     let helper: Promise<RenderSession | undefined> | undefined;
     const render = async (op: string, fields: Record<string, unknown>): Promise<Record<string, unknown>> => {
       helper ??= this.startRender(client, repo, at ?? oid);
