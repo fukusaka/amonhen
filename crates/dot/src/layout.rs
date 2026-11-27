@@ -140,6 +140,10 @@ const SHORT_WEIGHT: f64 = 4.0;
 const FLAT_CYCLE_EDGES: usize = 4096;
 /// 並べ替えで、交差が減らない回がこれだけ続けばやめる。
 const MINCROSS_STALE: usize = 12;
+
+/// 混ぜた初めの並びからの並べ替えの回数と、それを行う図の大きさ（区間の数）の上限。
+const RANDOM_STARTS: usize = 16;
+const RANDOM_START_SEGS: usize = 200;
 /// 隣どうしの入れ替えを使う、ランクの間の線の切れ端の数の上限（大きな図の時間のため）。
 const TRANSPOSE_SEGS: usize = 1500;
 
@@ -1573,13 +1577,37 @@ pub fn layout(
     let first_layers = ord.layers.clone();
     // 上からの初めの並び、下からの初めの並び、辺の順の上からの初めの並びの 3 回。どれも、中央値で上下に並べ替えて
     // 入れ替え（1 回おきに交差の同じ入れ替えも）、減らなければいちばん良い並びに戻して続け、MINCROSS_STALE 回続けて
-    // 減らなければやめる。3 回のうち交差の少ないほう（同じなら先のほう）
+    // 減らなければやめる。小さな図（区間が RANDOM_START_SEGS まで）では、さらに決まった種で混ぜた初めの並びから
+    // RANDOM_STARTS 回（3 つの初めの並びだけでは、長い辺ごと動かさないと減らない並びに止まることがある）。いちばん
+    // 交差の少ないもの（同じなら先のもの）
     let mut best = ord.layers.clone();
     let mut best_count = ord.crossings();
     let transpose = segs.len() <= TRANSPOSE_SEGS;
-    for start in 0..3 {
+    let extra = if segs.len() <= RANDOM_START_SEGS {
+        RANDOM_STARTS
+    } else {
+        0
+    };
+    for start in 0..3 + extra {
         if best_count == 0 {
             break;
+        }
+        if start >= 3 {
+            // 決まった種の xorshift で、ランクの中の初めの並びを混ぜる（毎回同じ結果）
+            let mut x: u64 =
+                0x9e37_79b9_7f4a_7c15 ^ (start as u64).wrapping_mul(0xbf58_476d_1ce4_e5b9);
+            for v in val.iter_mut() {
+                x ^= x << 13;
+                x ^= x >> 7;
+                x ^= x << 17;
+                *v = (x % 1_000_000) as f64;
+            }
+            ord.layers = first_layers.clone();
+            ord.refresh();
+            ord.global_keys();
+            for r in 0..ord.layers.len() {
+                ord.sort_layer(r, &val);
+            }
         }
         if start == 1 {
             dfs_order(false, true, &mut val);
@@ -1599,7 +1627,7 @@ pub fn layout(
             }
             // 1 回目と同じ初めの並び（辺を宣言の順に書いた図）なら、同じ結果になるので省く
             if ord.layers == first_layers {
-                break;
+                continue;
             }
         }
         let mut here = ord.crossings();
