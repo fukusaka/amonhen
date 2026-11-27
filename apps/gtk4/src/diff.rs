@@ -1603,17 +1603,19 @@ impl DiffWidget {
     }
 
     fn file_menu(&self, x: f64, y: f64) {
-        let (view, f, rows_f) = {
+        let (view, f, rows_f, marks) = {
             let st = self.state();
             (
                 st.view.clone(),
                 st.on_file_menu.clone(),
                 st.on_row_menu.clone(),
+                st.marks,
             )
         };
         let index = self.row_at(y);
+        // 行を選ぶ差分（Working Copy）では、見出しの上でなければ行のメニュー（いくつかのファイルを並べても）。
         if let (Some(view), Some(rows_f), Some(index)) = (&view, rows_f, index)
-            && view.file_rows.is_empty()
+            && (view.file_rows.is_empty() || (marks && self.header_at(y as f32).is_none()))
         {
             rows_f(index, x, y);
             return;
@@ -1761,7 +1763,7 @@ impl DiffWidget {
     }
 
     /// ファイルの見出しの行。
-    fn file_rows(&self) -> Vec<u32> {
+    pub fn file_rows(&self) -> Vec<u32> {
         self.state()
             .view
             .as_ref()
@@ -2152,6 +2154,21 @@ impl DiffWidget {
                 return;
             }
             self.begin_text_selection(x, y, shift, clicks);
+            return;
+        }
+        // いくつかのファイルを並べた Working Copy の差分: 見出しを押すとそのファイルを畳む・開く、右端の ⋯ は
+        // そのファイルのメニュー。
+        if !view.file_rows.is_empty()
+            && let Some(file) = self.header_at(y)
+        {
+            if x > self.width() as f32 - MORE_WIDTH {
+                self.file_menu(x as f64, y as f64);
+                return;
+            }
+            let f = self.state().on_toggle_file.clone();
+            if let Some(f) = f {
+                f(file);
+            }
             return;
         }
         let Some(index) = self.row_at(y as f64) else {
@@ -3483,6 +3500,13 @@ impl DiffWidget {
         st.gap_openings = openings;
         st.split_side = split_side;
         st.stage_bar = stage_bar;
+    }
+
+    /// いくつかのファイルを並べた Working Copy の差分の、見出しの飾りと畳んだファイル（`show_working` の後に）。
+    pub fn set_working_files(&self, decor: Decor, collapsed: Vec<bool>) {
+        self.replace_decor(decor);
+        self.state().collapsed = collapsed;
+        self.queue_draw();
     }
 
     pub fn connect_set_gap(&self, f: impl Fn(u32, Option<(u32, u32)>) + 'static) {

@@ -106,6 +106,30 @@ impl Layout {
 /// 追加と削除の行数（バイナリなどで数えられなければ None）。
 type LineCounts = (Option<u64>, Option<u64>);
 
+/// 一覧で 2 つ以上選んだときに並べている差分（選んだファイルのパス、並べた差分、畳んだファイル、ファイルごとの
+/// 隙間の番号の始まり: ファイルの番号・並べた差分での最初の番号・数）。
+struct Multi {
+    paths: Vec<String>,
+    diffs: Arc<Vec<WorkingDiff>>,
+    collapsed: HashSet<String>,
+    offsets: Vec<(usize, u32, u32)>,
+}
+
+/// 並べた差分のファイルの見出しの印（A・D・M・R）。
+fn header_mark(entry: &StatusEntry) -> &'static str {
+    let state = if entry.worktree != b'.' {
+        entry.worktree
+    } else {
+        entry.index
+    };
+    match state {
+        b'?' | b'A' => "A",
+        b'D' => "D",
+        b'R' => "R",
+        _ => "M",
+    }
+}
+
 /// 隙間の番号 → 上・下から見せる行数。
 type GapOpenings = HashMap<u32, (u32, u32)>;
 
@@ -209,6 +233,8 @@ struct Inner {
     sections_button: gtk::ToggleButton,
     /// 一覧の行の `entries` の番号ごとの節（節分けでないときはすべて None）。
     entry_sections: RefCell<Vec<Option<Side>>>,
+    /// 一覧で 2 つ以上選んだときに並べている差分。
+    multi: RefCell<Option<Multi>>,
     /// ファイルと見る側ごとの、変更のない所（隙間）の開き方（隙間の番号 → 上・下から見せる行数）。覚えない。
     open_gaps: RefCell<HashMap<(Side, String), GapOpenings>>,
     /// ファイル全体を表示（変更のない所をすべて開く・閉じる）。
@@ -537,6 +563,11 @@ impl WorkingCopy {
         )));
         all_side.set_group(Some(&worktree_side));
         worktree_side.set_active(true);
+        // macOS 版の小さいセグメントと同じ大きさ（`small-push`）。
+        for b in [&worktree_side, &staged_side, &all_side] {
+            b.add_css_class("small-push");
+            b.set_valign(gtk::Align::Center);
+        }
         let sides = gtk::Box::new(gtk::Orientation::Horizontal, 0);
         sides.add_css_class("linked");
         sides.append(&worktree_side);
@@ -675,6 +706,7 @@ impl WorkingCopy {
             sections_button: sections_button.clone(),
             entry_sections: RefCell::default(),
             open_gaps: RefCell::default(),
+            multi: RefCell::default(),
             whole_file: whole_file.clone(),
             split_stats: RefCell::default(),
             conflict_buttons,
@@ -1065,6 +1097,29 @@ impl Inner {
         let weak = Rc::downgrade(this);
         this.diff.connect_set_gap(move |gap, opening| {
             let Some(this) = weak.upgrade() else { return };
+            // 並べた差分: 隙間の番号をファイルとその中の番号に直す。
+            let target = this.multi.borrow().as_ref().and_then(|m| {
+                let &(file, first, _) =
+                    m.offsets.iter().rev().find(|(_, first, _)| *first <= gap)?;
+                Some((m.diffs.get(file)?.entry.path.clone(), gap - first))
+            });
+            if let Some((path, local)) = target {
+                {
+                    let mut gaps = this.open_gaps.borrow_mut();
+                    let map = gaps.entry((this.side.get(), path)).or_default();
+                    match opening {
+                        Some(o) => {
+                            map.insert(local, o);
+                        }
+                        None => {
+                            map.remove(&local);
+                        }
+                    }
+                }
+                let chosen = this.chosen_entries();
+                Inner::show_multi(&this, chosen, true);
+                return;
+            }
             let Some(entry) = this.selected_entry() else {
                 return;
             };
@@ -1083,6 +1138,56 @@ impl Inner {
                 }
             }
             Inner::load_diff(&this, entry, true);
+        });
+        // 並べた差分の見出し: 押すとそのファイルを畳む・開く、⋯ でそのファイルの Stage・Unstage・Discard…。
+        let weak = Rc::downgrade(this);
+        this.diff.connect_toggle_file(move |file| {
+            let Some(this) = weak.upgrade() else { return };
+            {
+                let mut multi = this.multi.borrow_mut();
+                let Some(m) = multi.as_mut() else { return };
+                let Some(path) = m.diffs.get(file).map(|d| d.entry.path.clone()) else {
+                    return;
+                };
+                if !m.collapsed.remove(&path) {
+                    m.collapsed.insert(path);
+                }
+            }
+            Inner::show_multi_view(&this, true);
+        });
+        let weak = Rc::downgrade(this);
+        this.diff.connect_file_menu(move |file, _, x, y| {
+            let Some(this) = weak.upgrade() else { return };
+            let entry = file.and_then(|f| {
+                let multi = this.multi.borrow();
+                let path = multi.as_ref()?.diffs.get(f)?.entry.path.clone();
+                this.all_entries
+                    .borrow()
+                    .iter()
+                    .find(|e| e.path == path)
+                    .cloned()
+            });
+            let Some(entry) = entry else { return };
+            let unstage = entry.is_staged() && !entry.is_unstaged();
+            let mut items = Vec::new();
+            let (w, e) = (Rc::downgrade(&this), entry.clone());
+            items.push(crate::menu::action(
+                if unstage { "Unstage" } else { "Stage" },
+                move || {
+                    if let Some(this) = w.upgrade() {
+                        Inner::toggle_entry(&this, &e);
+                    }
+                },
+            ));
+            if entry.is_unstaged() {
+                let (w, e) = (Rc::downgrade(&this), entry.clone());
+                items.push(crate::menu::action("Discard…", move || {
+                    if let Some(this) = w.upgrade() {
+                        Inner::discard_file(&this, &e);
+                    }
+                }));
+            }
+            crate::menu::popup(&this.diff, x, y, items);
         });
         // 行・hunk の Discard（hunk の見出し・右クリック）: 確かめずに捨てる（Undo で戻せる。macOS 版と同じ）。
         let weak = Rc::downgrade(this);
@@ -1640,6 +1745,8 @@ impl Inner {
 
     /// 絞り込みに合うファイルで一覧を作り直し、選んでいたファイルを選び直す（なければ最初のもの）。
     fn rebuild_list(this: &Rc<Self>) {
+        // いくつか選んで並べていたか（選び直しの途中で 1 ファイルの読み込みが消すので、先に覚える）。
+        let was_multi = this.multi.borrow().is_some();
         // 前後の空白は除いて比べる（macOS 版と同じ）。
         let filter = this.filter.text().trim().to_lowercase();
         let filtered: Vec<StatusEntry> = this
@@ -1863,6 +1970,13 @@ impl Inner {
             this.selection.select_item(row as u32, false);
         }
         this.rebuilding.set(false);
+        // いくつか選んでいれば、並べた差分のまま読み直す。
+        if was_multi {
+            let chosen = this.chosen_entries();
+            if chosen.len() >= 2 {
+                Inner::show_multi(this, chosen, true);
+            }
+        }
         this.update_buttons();
     }
 
@@ -1897,6 +2011,12 @@ impl Inner {
         let Some(row) = focused.or_else(first) else {
             return;
         };
+        // 2 つ以上選んだら、選んだファイルの差分を並べる（macOS 版と同じ）。
+        let chosen = this.chosen_entries();
+        if chosen.len() >= 2 {
+            Inner::show_multi(this, chosen, false);
+            return;
+        }
         let index = this.row_entries.borrow().get(row).copied().flatten();
         let entry = index.and_then(|i| this.entries.borrow().get(i).cloned());
         // 節の行を選んだら、見る側をその節に合わせる（替えたら同じファイルでも読み直す）。
@@ -2760,6 +2880,12 @@ impl Inner {
             this.selection.select_item(row as u32, true);
             this.rebuilding.set(false);
         }
+        if this.multi.borrow().is_some() {
+            let chosen = this.chosen_entries();
+            if chosen.len() >= 2 {
+                return Inner::show_multi(this, chosen, false);
+            }
+        }
         if let Some(entry) = this.selected_entry() {
             Inner::load_diff(this, entry, false);
         }
@@ -2797,6 +2923,216 @@ impl Inner {
             i += step;
         }
         this.list.error_bell();
+    }
+
+    /// 一覧で選んでいるファイル（行の順。ディレクトリの行とコンフリクトは除く）。
+    fn chosen_entries(&self) -> Vec<StatusEntry> {
+        let rows = self.row_entries.borrow();
+        let entries = self.entries.borrow();
+        let mut seen = HashSet::new();
+        self.selected_positions()
+            .into_iter()
+            .filter_map(|p| rows.get(p).copied().flatten())
+            .filter_map(|i| entries.get(i).cloned())
+            .filter(|e| e.kind != StatusKind::Unmerged && seen.insert(e.path.clone()))
+            .collect()
+    }
+
+    /// 選んだいくつかのファイルの差分を、見出しでつないで並べる（上から Files to open together の数まで）。
+    /// 見る側（Unstaged・Staged・All）は 1 ファイルのときと同じ。その側に変更のないファイルは並べない（macOS 版と同じ）。
+    fn show_multi(this: &Rc<Self>, chosen: Vec<StatusEntry>, keep: bool) {
+        let Some(repo) = this.repo() else { return };
+        let side = this.side.get();
+        let whitespace = this.whitespace.whitespace();
+        let candidates: Vec<StatusEntry> = chosen
+            .iter()
+            .filter(|e| match side {
+                Side::Unstaged => e.is_unstaged(),
+                Side::Staged => e.is_staged(),
+                Side::All => true,
+            })
+            .cloned()
+            .collect();
+        let shown: Vec<StatusEntry> = candidates
+            .iter()
+            .take(crate::settings::diff_open_files())
+            .cloned()
+            .collect();
+        let paths: Vec<String> = chosen.iter().map(|e| e.path.clone()).collect();
+        let collapsed_paths = match this.multi.borrow().as_ref() {
+            Some(m) if m.paths == paths => m.collapsed.clone(),
+            _ => HashSet::new(),
+        };
+        let mut title = tr!("{count} files", count = chosen.len());
+        if candidates.len() > shown.len() {
+            title += &format!("  {}", tr!("(showing the first {n})", n = shown.len()));
+        }
+        this.path.set_text(&title);
+        this.unembed();
+        this.conflict_buttons.set_visible(false);
+        this.show_line_endings(None);
+        this.sides.set_visible(true);
+        this.whole_file.set_visible(false);
+        this.selected.replace(None);
+        this.current.replace(None);
+        let generation = this.generation.get() + 1;
+        this.generation.set(generation);
+        if shown.is_empty() {
+            this.multi.replace(Some(Multi {
+                paths,
+                diffs: Arc::new(Vec::new()),
+                collapsed: collapsed_paths,
+                offsets: Vec::new(),
+            }));
+            this.diff.show_message(&if side == Side::Staged {
+                tr!("No staged changes in these files")
+            } else {
+                tr!("No unstaged changes in these files")
+            });
+            this.update_buttons();
+            return;
+        }
+        let openings: Vec<Vec<amonhen_core::diff::GapOpen>> = shown
+            .iter()
+            .map(|e| {
+                this.open_gaps
+                    .borrow()
+                    .get(&(side, e.path.clone()))
+                    .map(|m| {
+                        m.iter()
+                            .map(|(&gap, &(top, bottom))| amonhen_core::diff::GapOpen {
+                                gap,
+                                top,
+                                bottom,
+                            })
+                            .collect()
+                    })
+                    .unwrap_or_default()
+            })
+            .collect();
+        this.pending.set(this.pending.get() + 1);
+        let weak = Rc::downgrade(this);
+        glib::spawn_future_local(async move {
+            let diffs = gio::spawn_blocking(move || {
+                let profile = FrontendProfile::GTK;
+                shown
+                    .iter()
+                    .zip(&openings)
+                    .filter_map(|(e, open)| match side {
+                        Side::All => (whitespace == Whitespace::Exact)
+                            .then(|| {
+                                repo.working_diff_combined_context(e, 3, Some(open), &profile)
+                                    .ok()
+                                    .flatten()
+                            })
+                            .flatten(),
+                        side => repo
+                            .working_diff_context(
+                                e,
+                                side == Side::Staged,
+                                3,
+                                Some(open),
+                                whitespace,
+                                &profile,
+                            )
+                            .ok(),
+                    })
+                    .collect::<Vec<WorkingDiff>>()
+            })
+            .await;
+            let Some(this) = weak.upgrade() else { return };
+            this.pending.set(this.pending.get() - 1);
+            let Ok(diffs) = diffs else { return };
+            if this.generation.get() != generation {
+                return;
+            }
+            this.multi.replace(Some(Multi {
+                paths,
+                diffs: Arc::new(diffs),
+                collapsed: collapsed_paths,
+                offsets: Vec::new(),
+            }));
+            Inner::show_multi_view(&this, keep);
+        });
+    }
+
+    /// 並べた差分を、畳んだファイルを除いてつないで出す（読み直さない）。
+    fn show_multi_view(this: &Rc<Self>, keep: bool) {
+        let side = this.side.get();
+        let (diffs, collapsed) = {
+            let multi = this.multi.borrow();
+            let Some(m) = multi.as_ref() else { return };
+            let collapsed: Vec<bool> = m
+                .diffs
+                .iter()
+                .map(|d| m.collapsed.contains(&d.entry.path))
+                .collect();
+            (m.diffs.clone(), collapsed)
+        };
+        let refs: Vec<&WorkingDiff> = diffs.iter().collect();
+        let view = WorkingDiff::stacked_view(&refs, &collapsed, &FrontendProfile::GTK);
+        // 隙間の番号は、並べた差分の頭から数える（畳んだファイルには隙間の行がない）。ファイルごとに直す。
+        let mut offsets: Vec<(usize, u32, u32)> = Vec::new();
+        let mut next = 0u32;
+        let mut openings: GapOpenings = HashMap::new();
+        for (i, d) in diffs.iter().enumerate() {
+            if collapsed[i] || d.file.binary {
+                continue;
+            }
+            let count = d
+                .file
+                .lines
+                .iter()
+                .filter(|l| l.kind == DiffRow::HUNK)
+                .count() as u32;
+            if let Some(own) = this.open_gaps.borrow().get(&(side, d.entry.path.clone())) {
+                for (&gap, &o) in own {
+                    if gap < count {
+                        openings.insert(next + gap, o);
+                    }
+                }
+            }
+            offsets.push((i, next, count));
+            next += count;
+        }
+        if let Some(m) = this.multi.borrow_mut().as_mut() {
+            m.offsets = offsets;
+        }
+        let checks = side == Side::All;
+        let split = (!checks).then_some(side == Side::Staged);
+        this.diff
+            .set_folds(true, openings, split, crate::settings::line_stage_bar());
+        this.diff.show_working(View::new(view), keep, checks);
+        let marks: HashMap<usize, &'static str> = diffs
+            .iter()
+            .enumerate()
+            .map(|(i, d)| (i, header_mark(&d.entry)))
+            .collect();
+        this.diff.set_working_files(
+            crate::diff::Decor {
+                marks,
+                ..Default::default()
+            },
+            collapsed,
+        );
+        this.update_buttons();
+    }
+
+    /// 並べた差分の `rows` を、ファイルごとの差分の行に分ける（ファイルの番号 → その中の行）。
+    fn split_multi_rows(&self, rows: &[usize]) -> Vec<(usize, Vec<usize>)> {
+        let file_rows = self.diff.file_rows();
+        let mut out: Vec<(usize, Vec<usize>)> = Vec::new();
+        for &row in rows {
+            let Some(file) = file_rows.iter().rposition(|&f| (f as usize) < row) else {
+                continue;
+            };
+            let local = row - file_rows[file] as usize - 1;
+            match out.iter_mut().find(|(f, _)| *f == file) {
+                Some((_, list)) => list.push(local),
+                None => out.push((file, vec![local])),
+            }
+        }
+        out
     }
 
     fn selected_entry(&self) -> Option<StatusEntry> {
@@ -2837,6 +3173,7 @@ impl Inner {
     fn read_diff(this: &Rc<Self>, entry: StatusEntry, same: bool, only_changed: bool) {
         let Some(repo) = this.repo() else { return };
         let whitespace = this.whitespace.whitespace();
+        this.multi.replace(None);
         let side = this.side.get();
         let opened: Vec<amonhen_core::diff::GapOpen> = this
             .open_gaps
@@ -2996,6 +3333,28 @@ impl Inner {
 
     /// 選んだ行（`rows`）を含める・外す。`stage` が None なら、すべて含めていれば外し、そうでなければ含める。
     fn set_rows(this: &Rc<Self>, rows: Vec<usize>, stage: Option<bool>) {
+        let multi = this.multi.borrow().as_ref().map(|m| m.diffs.clone());
+        if let Some(diffs) = multi {
+            if !this.exact() {
+                this.diff.error_bell();
+                return;
+            }
+            let parts = this.split_multi_rows(&rows);
+            Inner::run(this, move |repo| {
+                for (file, rows) in &parts {
+                    let Some(w) = diffs.get(*file) else { continue };
+                    match &w.combined {
+                        Some(staged) => {
+                            let stage = stage.unwrap_or_else(|| !rows.iter().all(|&r| staged[r]));
+                            repo.set_rows_staged(w, rows, stage)?
+                        }
+                        None => repo.stage_rows(w, rows)?,
+                    }
+                }
+                Ok(())
+            });
+            return;
+        }
         let Some(current) = this.current.borrow().clone() else {
             return;
         };
@@ -3051,6 +3410,23 @@ impl Inner {
 
     /// 差分の `rows` 行目の変更を作業ツリーから捨てる（hunk の見出し・右クリック）。
     fn discard_rows(this: &Rc<Self>, rows: Vec<usize>) {
+        let multi = this.multi.borrow().as_ref().map(|m| m.diffs.clone());
+        if let Some(diffs) = multi {
+            if !this.exact() || this.side.get() == Side::Staged {
+                this.diff.error_bell();
+                return;
+            }
+            let parts = this.split_multi_rows(&rows);
+            Inner::perform(this, move |repo| {
+                for (file, rows) in &parts {
+                    if let Some(w) = diffs.get(*file) {
+                        repo.discard_rows(w, rows)?;
+                    }
+                }
+                Ok(())
+            });
+            return;
+        }
         let Some(current) = this.current.borrow().clone() else {
             return;
         };
