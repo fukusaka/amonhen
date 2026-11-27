@@ -534,8 +534,11 @@ pub struct Tooltip {
 
 impl Tooltip {
     /// Creates a text tooltip with top placement.
+    ///
+    /// The text wraps: the ToolTip is at most 320 wide, and a TextBlock that doesn't wrap is cut to one line
+    /// (a plain string set by WinUI's own template wraps).
     pub fn text(value: impl Into<String>) -> Self {
-        Self::rich(TextBlock::new().text(value))
+        Self::rich(TextBlock::new().text(value).text_wrapping(TextWrapping::Wrap))
     }
 
     /// Creates a rich-content tooltip with top placement.
