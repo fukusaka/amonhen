@@ -1746,6 +1746,25 @@ fn dot_diskless_runs_the_edge_back_on_the_right_as_in_graphviz() {
     assert!(xs[..xs.len() - 1].iter().all(|&x| x < back), "{xs:?}");
 }
 
+/// 初めの並びはノードを宣言した順に左右される（Graphviz と同じく、宣言の早いノードから向きを問わずたどった順で、入る辺の
+/// ないノードから歩き始める）。
+#[test]
+fn dot_declaration_order_decides_the_first_order_as_in_graphviz() {
+    let order = |src: &str| x_order(&render(src).unwrap().svg, &["a", "e"]);
+    assert_eq!(order("digraph { r -> a -> b; e -> b }"), ["a", "e"]);
+    assert_eq!(order("digraph { a; r -> a -> b; e -> b }"), ["e", "a"]);
+    assert_eq!(order("digraph { e; r -> a -> b; e -> b }"), ["e", "a"]);
+    assert_eq!(order("digraph { b; r -> a -> b; e -> b }"), ["a", "e"]);
+    assert_eq!(
+        order("digraph { subgraph cluster0 { a -> b } r -> a; e -> b }"),
+        ["e", "a"]
+    );
+    assert_eq!(
+        order("digraph { r -> a; subgraph cluster0 { a -> b } e -> b }"),
+        ["a", "e"]
+    );
+}
+
 /// 辺のラベルは線のすぐ脇にある（Graphviz の絵と同じく、線はラベルの仮のノードの脇を通る）。
 #[test]
 fn dot_edge_labels_sit_beside_their_line() {
