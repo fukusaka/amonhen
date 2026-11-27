@@ -269,6 +269,12 @@ struct Inner {
     expand: RefCell<Option<gtk::ToggleButton>>,
     /// sparse checkout なら、その様子（取り出していないフォルダのファイルは、ディスクにないので開けない）。
     sparse: RefCell<Option<crate::repoform::Sparse>>,
+    /// partial clone か（すべてのファイルでファイルを開く前に、中身が手元にあるかを確かめる）。
+    partial: Cell<bool>,
+    /// 差分の側の列（上に「取ってくる」の帯を置く）。
+    diff_column: gtk::Box,
+    /// 「取ってくる」の帯と、それを出した差分の元・中身が手元にないファイルの数（なければ None）。
+    missing_band: RefCell<Option<MissingBand>>,
     find: FindBar,
     /// 出しているコミットのファイルごとの行数（`commit_extras` の `stats`。パス → 追加・削除、両方 None は
     /// バイナリ）。まだ差分を取っていないファイルの見出しと合計に使う（macOS 版と同じ）。
@@ -281,6 +287,13 @@ struct Inner {
     on_whitespace: RefCell<Option<Rc<dyn Fn()>>>,
     /// 空白の扱いを変えて読み直した差分に戻す、開き方。
     restore: RefCell<Option<Restore>>,
+}
+
+/// 差分の上の「取ってくる」の帯（`Inner::update_missing`）。
+struct MissingBand {
+    source: Arc<Source>,
+    count: usize,
+    widget: gtk::Widget,
 }
 
 /// ファイルごとの行数（パス → 追加・削除。両方 None はバイナリ）。
@@ -547,6 +560,9 @@ impl CommitDiff {
             view_options: RefCell::default(),
             expand: RefCell::default(),
             sparse: RefCell::default(),
+            partial: Cell::new(false),
+            diff_column,
+            missing_band: RefCell::default(),
             find: FindBar {
                 bar: find_bar,
                 entry,
@@ -590,6 +606,7 @@ impl CommitDiff {
         inner.generation.set(inner.generation.get() + 1);
         *inner.st.borrow_mut() = St::default();
         Inner::drop_browser(inner);
+        Inner::update_missing(inner);
         inner.diff.clear();
         Inner::sync_switches(inner);
         Inner::update_bar(inner);
@@ -646,6 +663,14 @@ impl CommitDiff {
     /// sparse checkout の様子（ファイルのメニューで、取り出していないフォルダのファイルを開けないわけを添える）。
     pub fn set_sparse(&self, sparse: Option<crate::repoform::Sparse>) {
         self.inner.sparse.replace(sparse);
+    }
+
+    /// partial clone か（すべてのファイルでファイルを開く前に、中身が手元にあるかを確かめる）。
+    pub fn set_partial(&self, partial: bool) {
+        self.inner.partial.set(partial);
+        if let Some(browser) = self.inner.browser.borrow().as_ref() {
+            browser.set_partial(partial);
+        }
     }
 
     /// 変更ファイルの右クリックのメニューに足す項目（Blame・File History など）を作る
@@ -889,6 +914,7 @@ impl Inner {
         let decor = Inner::decor(this, &HashSet::new(), HashMap::new());
         this.diff
             .show_stacked(source, view, vec![true; count], decor, false);
+        Inner::update_missing(this);
         Inner::sync_switches(this);
         Inner::update_bar(this);
         // 確認用（`--find-diff`）。
@@ -1077,7 +1103,9 @@ impl Inner {
                 decor.marks.insert(file, kind_mark(change.kind));
             }
             let path = Inner::path(&st, file);
-            if imagediff::is_image(&path) && !imagediff::is_svg(&path) {
+            if st.infos.get(file).is_some_and(|i| i.missing) {
+                decor.notes.insert(file, tr!("Not here yet"));
+            } else if imagediff::is_image(&path) && !imagediff::is_svg(&path) {
                 decor.notes.insert(file, tr!("Image"));
             }
         }
@@ -1118,9 +1146,11 @@ impl Inner {
                 .iter()
                 .copied()
                 .filter(|&f| {
+                    // 中身が手元にない画像は、絵の欄を作らない（帯で取ってくるまで）。
                     imagediff::is_image(&Inner::path(&st, f))
                         && !st.svg_text.contains(&f)
                         && !hidden.contains(&f)
+                        && !st.infos.get(f).is_some_and(|i| i.missing)
                 })
                 .collect();
             let collapsed: Vec<bool> = (0..count)
@@ -1183,7 +1213,14 @@ impl Inner {
             if this.generation.get() != generation {
                 return;
             }
+            // 開いたときに中身が手元にないと分かった画像も、絵の欄を作らない。
+            let infos = view.file_infos();
+            let mut panel_files = panel_files;
+            panel_files.retain(|&f| !infos.get(f).is_some_and(|i| i.missing));
             for (file, old, new) in blobs {
+                if !panel_files.contains(&file) {
+                    continue;
+                }
                 let panel = Inner::image_panel(
                     &this,
                     file,
@@ -1192,17 +1229,20 @@ impl Inner {
                 );
                 this.st.borrow_mut().panels.insert(file, panel);
             }
-            this.st.borrow_mut().infos = view.file_infos();
+            this.st.borrow_mut().infos = infos;
             let panels: HashMap<usize, gtk::Widget> = this
                 .st
                 .borrow()
                 .panels
                 .iter()
+                .filter(|(f, _)| panel_files.contains(f))
                 .map(|(f, w)| (*f, w.clone()))
                 .collect();
             let decor = Inner::decor(&this, &panel_files, panels);
             this.diff
                 .show_stacked(source, view, collapsed, decor, keep_scroll);
+            // 開いたファイルの中身が手元になかった（partial clone）なら、取りに行かずに帯で聞く。
+            Inner::update_missing(&this);
             Inner::update_bar(&this);
             if failed {
                 this.diff.error_bell();
@@ -1211,6 +1251,63 @@ impl Inner {
                 then(&this);
             }
         });
+    }
+
+    /// partial clone で中身が手元になく、差分を取っていないファイルがあれば、差分の上に「取ってくる」の帯を出す
+    /// （なければ消す。数が同じなら、取っている途中の帯をそのまま残す）。
+    fn update_missing(this: &Rc<Self>) {
+        let (count, source) = {
+            let st = this.st.borrow();
+            (
+                st.infos.iter().filter(|i| i.missing).count(),
+                st.source.clone(),
+            )
+        };
+        if this.missing_band.borrow().as_ref().is_some_and(|b| {
+            b.count == count && source.as_ref().is_some_and(|s| Arc::ptr_eq(s, &b.source))
+        }) {
+            return;
+        }
+        if let Some(band) = this.missing_band.take() {
+            this.diff_column.remove(&band.widget);
+        }
+        let Some(source) = source.filter(|s| count > 0 && s.repo.is_some()) else {
+            return;
+        };
+        let s = source.clone();
+        let fetch: crate::missingband::Fetch = Arc::new(move || {
+            let Some(repo) = &s.repo else { return Ok(()) };
+            // 取っている間は差分を止めない（取り終えてから、そのファイルの差分を取る）。
+            let ids = s.lock().missing_ids();
+            repo.fetch_contents(&ids).map_err(|e| e.to_string())?;
+            repo.fetch_stacked_missing(&mut s.lock())
+                .map_err(|e| e.to_string())
+        });
+        let weak = Rc::downgrade(this);
+        let shown = source.clone();
+        let widget = crate::missingband::files(count, fetch, move || {
+            let Some(this) = weak.upgrade() else { return };
+            // 別のコミットを出していれば何もしない。
+            if !this
+                .st
+                .borrow()
+                .source
+                .as_ref()
+                .is_some_and(|s| Arc::ptr_eq(s, &source))
+            {
+                return;
+            }
+            if let Some(band) = this.missing_band.take() {
+                this.diff_column.remove(&band.widget);
+            }
+            Inner::reshow(&this, true, Vec::new(), None);
+        });
+        this.diff_column.prepend(&widget);
+        this.missing_band.replace(Some(MissingBand {
+            source: shown,
+            count,
+            widget,
+        }));
     }
 
     /// 画像の比べる欄。
@@ -1460,9 +1557,16 @@ impl Inner {
                 removed += info.removed;
             }
         }
+        let files = glib::markup_escape_text(&tr!("{count} files", count = st.names.len()));
+        // 中身が手元にないファイルがあれば、行数は数えられないので出さない（0 と見誤らないように）。
+        if st.infos.iter().any(|i| i.missing) {
+            this.bar
+                .totals
+                .set_markup(&format!("<span alpha=\"55%\">{files}</span>"));
+            return;
+        }
         this.bar.totals.set_markup(&format!(
-            "<span alpha=\"55%\">{}</span>  <span foreground=\"#2ec27e\">+{added}</span> <span foreground=\"#e01b24\">−{removed}</span>",
-            glib::markup_escape_text(&tr!("{count} files", count = st.names.len()))
+            "<span alpha=\"55%\">{files}</span>  <span foreground=\"#2ec27e\">+{added}</span> <span foreground=\"#e01b24\">−{removed}</span>"
         ));
     }
 
@@ -1484,6 +1588,7 @@ impl Inner {
                 let browser =
                     Browser::new(repo, commit, changes, !file_tree(), this.pending.clone());
                 browser.set_github(this.github.borrow().clone());
+                browser.set_partial(this.partial.get());
                 let weak = Rc::downgrade(this);
                 browser.connect_show_change(move |file| {
                     let Some(this) = weak.upgrade() else { return };
@@ -1510,9 +1615,49 @@ impl Inner {
         } else {
             this.pages.set_visible_child_name("changes");
         }
-        this.st.borrow_mut().files_mode = on;
+        let was_files = std::mem::replace(&mut this.st.borrow_mut().files_mode, on);
         Inner::sync_switches(this);
         Inner::update_bar(this);
+        if was_files && !on {
+            Inner::refresh_missing(this);
+        }
+    }
+
+    /// すべてのファイルから変更に戻った: その間に中身が届いたファイル（すべてのファイルで取ったもの）の差分を取り、
+    /// 帯・合計・見出しを出し直す（取りには行かない）。
+    fn refresh_missing(this: &Rc<Self>) {
+        let source = {
+            let st = this.st.borrow();
+            st.source
+                .clone()
+                .filter(|s| s.repo.is_some() && st.infos.iter().any(|i| i.missing))
+        };
+        let Some(source) = source else { return };
+        let s = source.clone();
+        let weak = Rc::downgrade(this);
+        glib::spawn_future_local(async move {
+            let refreshed = gio::spawn_blocking(move || {
+                let repo = s.repo.as_ref()?;
+                repo.refresh_stacked_missing(&mut s.lock()).ok()
+            })
+            .await
+            .ok()
+            .flatten()
+            .is_some();
+            let Some(this) = weak.upgrade() else { return };
+            {
+                let st = this.st.borrow();
+                if st.files_mode || !st.source.as_ref().is_some_and(|s| Arc::ptr_eq(s, &source)) {
+                    return;
+                }
+            }
+            if refreshed {
+                // 出し直しの終わりで、印・帯・合計も直す。
+                Inner::reshow(&this, true, Vec::new(), None);
+            } else {
+                Inner::update_missing(&this);
+            }
+        });
     }
 
     /// その時点のファイルを開く（見出しの ⋯・行の右クリック）。

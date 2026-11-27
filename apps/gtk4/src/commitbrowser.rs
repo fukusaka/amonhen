@@ -384,6 +384,10 @@ pub struct Browser {
     pending: Rc<Cell<u32>>,
     on_show_change: RefCell<Option<OnFile>>,
     on_folders_change: RefCell<Option<Rc<dyn Fn()>>>,
+    /// partial clone か（ファイルを開く前に、中身が手元にあるかを確かめる）。
+    partial: Cell<bool>,
+    /// パスの帯の下に置く「取ってくる」の帯の置き場（中身が手元にないファイルを開いたときだけ）。
+    notice: gtk::Box,
 }
 
 impl Browser {
@@ -594,8 +598,10 @@ impl Browser {
         pages.set_vexpand(true);
         pages.add_named(&tree_scroll, Some("tree"));
         pages.add_named(&contents, Some("file"));
+        let notice = gtk::Box::new(gtk::Orientation::Vertical, 0);
         let root = gtk::Box::new(gtk::Orientation::Vertical, 0);
         root.append(&path_bar);
+        root.append(&notice);
         root.append(&pages);
 
         let flat_store = gio::ListStore::new::<glib::BoxedAnyObject>();
@@ -634,6 +640,8 @@ impl Browser {
             pending,
             on_show_change: RefCell::default(),
             on_folders_change: RefCell::default(),
+            partial: Cell::new(false),
+            notice,
         });
         this.expand_changed();
         this.set_flat(flat);
@@ -883,6 +891,18 @@ impl Browser {
         }
     }
 
+    /// partial clone か（ファイルを開く前に、中身が手元にあるかを確かめる）。
+    pub fn set_partial(&self, partial: bool) {
+        self.partial.set(partial);
+    }
+
+    /// 「取ってくる」の帯を消す。
+    fn clear_notice(&self) {
+        while let Some(child) = self.notice.first_child() {
+            self.notice.remove(&child);
+        }
+    }
+
     /// Markdown の #123・@user・コミットの ID をリンクにする先（GitHub の remote のときだけ）。
     pub fn set_github(&self, url: Option<String>) {
         self.github.replace(url);
@@ -891,6 +911,7 @@ impl Browser {
     fn back_to_tree(&self) {
         self.open_path.replace(None);
         self.clear_image();
+        self.clear_notice();
         self.request.set(self.request.get() + 1);
         self.path_bar.set_visible(false);
         self.pages.set_visible_child_name("tree");
@@ -1106,6 +1127,67 @@ impl Browser {
         self.pages.set_visible_child_name("file");
         let request = self.request.get() + 1;
         self.request.set(request);
+        self.clear_notice();
+        // partial clone で中身が手元になければ、取りに行かずに「取ってくる」の帯で聞く（押したときだけ取る）。
+        if self.partial.get() {
+            for switch in [
+                &self.svg_switch,
+                &self.markdown_switch,
+                &self.drawable_switch,
+            ] {
+                switch.set_visible(false);
+            }
+            self.contents.set_visible_child_name("text");
+            self.content.show_message(&tr!("Loading the diff…"));
+            let (repo, commit, p) = (self.tree.repo.clone(), self.tree.commit, path.to_owned());
+            self.pending.set(self.pending.get() + 1);
+            let weak = Rc::downgrade(self);
+            glib::spawn_future_local(async move {
+                let (r, c, q) = (repo.clone(), commit, p.clone());
+                let missing =
+                    gio::spawn_blocking(move || r.file_missing(&c, &q).unwrap_or_default())
+                        .await
+                        .unwrap_or_default();
+                let Some(this) = weak.upgrade() else { return };
+                this.pending.set(this.pending.get() - 1);
+                if this.request.get() != request {
+                    return;
+                }
+                if missing.is_empty() {
+                    return this.open_contents(&p, line, change, request);
+                }
+                this.content
+                    .show_message(&tr!("This file’s contents aren’t here yet."));
+                let fetch: crate::missingband::Fetch =
+                    Arc::new(move || repo.fetch_contents(&missing).map_err(|e| e.to_string()));
+                let weak = Rc::downgrade(&this);
+                let band = crate::missingband::band(
+                    &tr!("This file’s contents aren’t here yet (partial clone)."),
+                    fetch,
+                    move || {
+                        let Some(this) = weak.upgrade() else { return };
+                        if this.request.get() != request {
+                            return;
+                        }
+                        this.clear_notice();
+                        this.open_contents(&p, line, change.clone(), request);
+                    },
+                );
+                this.notice.append(&band);
+            });
+            return;
+        }
+        self.open_contents(path, line, change, request);
+    }
+
+    /// `open` の、中身を読んで出す分（partial clone なら中身が手元にあると確かめた後）。
+    fn open_contents(
+        self: &Rc<Self>,
+        path: &str,
+        line: Option<u32>,
+        change: Option<FileChange>,
+        request: u64,
+    ) {
         let repo = self.tree.repo.clone();
         self.pending.set(self.pending.get() + 1);
         let weak = Rc::downgrade(self);

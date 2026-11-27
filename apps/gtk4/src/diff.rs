@@ -260,7 +260,7 @@ impl View {
         std::str::from_utf8(self.view.strings.bytes(row.text)).unwrap_or("")
     }
 
-    /// ファイルごとの行数・バイナリか・まだ差分を取っていないか（見出しの行から。ファイルの順）。
+    /// ファイルごとの行数・バイナリか・まだ差分を取っていないか・中身が手元にないか（見出しの行から。ファイルの順）。
     pub fn file_infos(&self) -> Vec<FileInfo> {
         self.file_rows
             .iter()
@@ -271,6 +271,7 @@ impl View {
                     removed: row.old_no,
                     binary: row.flags & DiffRow::BINARY != 0,
                     pending: row.flags & DiffRow::PENDING != 0,
+                    missing: row.flags & DiffRow::MISSING != 0,
                 }
             })
             .collect()
@@ -291,6 +292,8 @@ pub struct FileInfo {
     pub binary: bool,
     /// まだ差分を取っていない（ファイルの多いコミット。行数は 0）。
     pub pending: bool,
+    /// partial clone で中身が手元になく、差分を取っていない（帯で取ってくるまで。行数は 0）。
+    pub missing: bool,
 }
 
 /// 差分の元（コミットの全ファイルの差分）。ファイルを畳む・開く・前後を広げるたびに、ここから表示を作り直す。
@@ -323,7 +326,8 @@ impl Source {
         self.lock().files.iter().map(|(p, _)| p.clone()).collect()
     }
 
-    /// 全ファイルの差分で `f` を呼ぶ（まだ取っていないファイルは、写しの中で取る）。裏のスレッドで呼ぶ。
+    /// 全ファイルの差分で `f` を呼ぶ（まだ取っていないファイルは、写しの中で取る。partial clone で中身が手元に
+    /// ないファイルは取りに行かず、差分のないまま）。裏のスレッドで呼ぶ。
     pub fn with_all<R>(&self, f: impl FnOnce(&StackedDiff) -> R) -> R {
         let stacked = self.lock();
         if stacked.files.iter().all(|(_, d)| d.pending.is_none()) {
