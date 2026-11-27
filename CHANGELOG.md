@@ -7,6 +7,12 @@ becomes the GitHub Release notes.
 
 ## App and engine
 
+### Unreleased
+
+#### Fixed
+
+- On macOS 26, a tinted toolbar's buttons take the tint too, instead of showing dark glass on the color.
+
 ### [0.2.16] - 2026-11-27
 
 DOT diagrams follow Graphviz far more closely: shape sizes, curves, ports, self-loops, cycles through clusters and

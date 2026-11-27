@@ -265,6 +265,7 @@ final class BackdropHostController: NSViewController {
     /// ボタンが中身の左上に重なる）。
     var insetsContent = false
     private var loadedImage: (path: String, image: NSImage?)?
+    private var observesToolbar = false
 
     init(content: NSViewController) {
         self.content = content
@@ -289,7 +290,36 @@ final class BackdropHostController: NSViewController {
 
     override func viewDidAppear() {
         super.viewDidAppear()
-        if let window = view.window { Backdrop.setBlur(window: window, radius: settings.blurRadius) }
+        if let window = view.window {
+            Backdrop.setBlur(window: window, radius: settings.blurRadius)
+            tintToolbarItems(window.toolbar?.items ?? [])
+        }
+        // ツールバーは中身の後で付き、項目は後から足されもする（カスタマイズ）ので、足されるたびに色を付ける。
+        if !observesToolbar {
+            observesToolbar = true
+            NotificationCenter.default.addObserver(
+                self, selector: #selector(toolbarWillAddItem(_:)), name: NSToolbar.willAddItemNotification, object: nil)
+        }
+    }
+
+    @objc private func toolbarWillAddItem(_ note: Notification) {
+        guard let toolbar = note.object as? NSToolbar, toolbar === view.window?.toolbar,
+              let item = note.userInfo?["item"] as? NSToolbarItem else { return }
+        tintToolbarItems([item])
+    }
+
+    /// ツールバーの色を、ボタンのガラスにも付ける（macOS 26 だけ）。色の帯は中身の上に重ねるので、macOS 26 の
+    /// ツールバーのガラスは帯の色を拾わずに暗く描かれ、ボタンだけ色が抜けて見える（macOS 27 は帯の色が乗る）。
+    /// 項目を prominent にして、帯と同じ色と濃さをガラスに付ける。
+    private func tintToolbarItems(_ items: [NSToolbarItem]) {
+        guard #available(macOS 26, *) else { return }
+        if #available(macOS 27, *) { return }
+        let tint = settings.toolbarColor.flatMap(NSColor.init(hex:))?.withAlphaComponent(settings.toolbarOpacity)
+        let spaces: [NSToolbarItem.Identifier] = [.space, .flexibleSpace, .sidebarTrackingSeparator]
+        for item in items where !spaces.contains(item.itemIdentifier) {
+            item.style = tint == nil ? .plain : .prominent
+            item.backgroundTintColor = tint
+        }
     }
 
     /// ツールバーの色を重ねる帯の高さ（ツールバーの高さ）。
@@ -324,6 +354,7 @@ final class BackdropHostController: NSViewController {
         let tint = settings.toolbarColor.flatMap(NSColor.init(hex:))
         band.isHidden = tint == nil
         band.color = tint?.withAlphaComponent(settings.toolbarOpacity) ?? .clear
+        tintToolbarItems(window.toolbar?.items ?? [])
         view.needsLayout = true
         layoutContent()
     }
