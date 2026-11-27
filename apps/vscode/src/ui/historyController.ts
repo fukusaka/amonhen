@@ -492,6 +492,9 @@ export class HistoryController implements vscode.Disposable {
       case 'fetchContents':
         await this.fetchContents(message.oid, message.path);
         break;
+      case 'reloadDiff':
+        await this.reloadDiff(message.oid).catch(showError);
+        break;
       case 'fetchForm': {
         const command = { more: 'amonhen.fetchMoreHistory', all: 'amonhen.fetchAllHistory', contents: 'amonhen.fetchAllContents' };
         await vscode.commands.executeCommand(command[message.what]);
@@ -895,24 +898,35 @@ export class HistoryController implements vscode.Disposable {
         if (fetched['ok'] !== true) throw new Error(String(fetched['error'] ?? 'Can’t fetch the contents'));
       }
       if (path === undefined) await this.reloadDiff(key);
+      // すべてのファイルで取った: 差分に中身のないファイルがあったなら、覚えた差分を捨てる（次に差分を出すときに
+      // 読み直し、届いた中身のファイルの差分を出す。変更に戻ったときは Webview が `reloadDiff` で頼む）
+      else if (this.missing.has(key)) this.forgetDiff(key);
       reply();
     } catch (err) {
       reply(errorMessage(err));
     }
   }
 
-  /** 中身を取った後で、コミット（か選択）の差分を読み直して送る（開いていたファイルは Webview が開いたままにする） */
+  /**
+   * 中身を取った後で、コミット（か選択）の差分を読み直して送る（開いていたファイルは Webview が開いたままにする）。
+   * コアは差分を求め直すだけで、取りには行かない
+   */
   private async reloadDiff(key: string): Promise<void> {
-    this.missing.delete(key);
-    for (const k of [...this.sentDiffs]) if (k.startsWith(`${key}:`)) this.sentDiffs.delete(k);
+    this.forgetDiff(key);
     const selection = this.selection;
     if (selection?.key === key) {
       await this.sendSelection(selection.token, selection.rows, selection.pair);
       return;
     }
+    if (!selection && this.selectedOid === key) await this.sendDetails(key);
+  }
+
+  /** コミット（か選択の key）の、覚えた詳細・差分を捨てる（次に出すときに読み直す） */
+  private forgetDiff(key: string): void {
+    this.missing.delete(key);
+    for (const k of [...this.sentDiffs]) if (k.startsWith(`${key}:`)) this.sentDiffs.delete(k);
     this.details.delete(key);
     for (const k of [...this.diffs.keys()]) if (k.startsWith(`${key}:`)) this.diffs.delete(k);
-    if (!selection && this.selectedOid === key) await this.sendDetails(key);
   }
 
   /**

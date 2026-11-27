@@ -406,4 +406,9 @@ export type HistoryWebviewMessage =
    * partial clone で手元にない中身を取ってくる（「取ってくる」の帯のボタン。押したときだけ）。`oid` はコミット（か
    * 選択の key）で、その差分のファイルの分。`path` があれば「すべてのファイル」のそのファイルの分
    */
-  | { type: 'fetchContents'; oid: string; path?: string };
+  | { type: 'fetchContents'; oid: string; path?: string }
+  /**
+   * 差分を読み直す（中身は取らない）。すべてのファイルで中身を取った後で変更に戻ったとき、中身が手元になかった
+   * ファイルの差分を出すため。`oid` はコミット（か選択の key）
+   */
+  | { type: 'reloadDiff'; oid: string };

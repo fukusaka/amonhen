@@ -248,6 +248,8 @@ export function createDetailsPane(onParent?: (oid: string) => void, images = fal
   let imagesFor = false;
   /** 変更（差分を並べる）か、すべてのファイル（その時点の木と中身）か。コミットを替えても保つ */
   let page: 'changes' | 'all' = 'changes';
+  /** すべてのファイルで、出しているコミットの中身を取った（変更に戻ったら差分を読み直す） */
+  let contentsArrived = false;
   /** 出している「すべてのファイル」（1 つのコミットで、エンジンがあるときだけ作る） */
   let allFiles: AllFiles | undefined;
   /** 出しているコミットの変わったファイル（「すべてのファイル」の木の印） */
@@ -548,9 +550,9 @@ export function createDetailsPane(onParent?: (oid: string) => void, images = fal
     }
     const total = el('span', 'files-total', `${files.length} file${files.length === 1 ? '' : 's'}`);
     // 中身が手元にないファイルは、行数を数えていない（取ってくるまで合計に入れない）
-    const counted = files.filter((f) => !f.missing);
-    if (counted.every((f) => f.counts)) {
-      total.append(' ', countsLabel(counted.reduce((sum, f) => ({ added: sum.added + f.counts!.added, removed: sum.removed + f.counts!.removed }), { added: 0, removed: 0 })));
+    // 中身が手元にないファイルがある間は、行数を数えきれないので、ファイルの数だけ（0 と読めてしまう。アプリと同じ）
+    if (!files.some((f) => f.missing) && files.every((f) => f.counts)) {
+      total.append(' ', countsLabel(files.reduce((sum, f) => ({ added: sum.added + f.counts!.added, removed: sum.removed + f.counts!.removed }), { added: 0, removed: 0 })));
     }
     const spacer = el('span', 'spacer');
     const items: Node[] = canAll ? [pages, total, spacer, switcher] : [total, spacer, switcher];
@@ -782,6 +784,7 @@ export function createDetailsPane(onParent?: (oid: string) => void, images = fal
     }
     changedFiles = items.map((f) => ({ path: f.path, ...(f.status ? { status: f.status } : {}) }));
     allFiles = undefined;
+    contentsArrived = false;
     const missing = items.filter((f) => f.missing).length;
     const key = oid;
     band =
@@ -798,6 +801,12 @@ export function createDetailsPane(onParent?: (oid: string) => void, images = fal
     page = next;
     showPage();
     renderBar();
+    // すべてのファイルで中身を取った後で変更に戻った: 中身のないファイルがあったなら差分を読み直す（届いた中身の
+    // ファイルの差分を出し、帯の数を減らす。開いていたファイルと位置は保つ）
+    if (next === 'changes' && contentsArrived && band && shownOid !== undefined) {
+      contentsArrived = false;
+      post({ type: 'reloadDiff', oid: shownOid });
+    }
   }
 
   /** 今のページを欄に出す（すべてのファイルは、初めて開くときに作る） */
@@ -1106,6 +1115,7 @@ export function createDetailsPane(onParent?: (oid: string) => void, images = fal
     if (oid !== shownOid) return;
     if (path !== undefined) {
       allFiles?.contentsFetched(path, error);
+      if (error === undefined) contentsArrived = true;
       return;
     }
     // 取れたときは、拡張ホストが詳細（か選んだ行の差分）を送り直して帯を作り直す
