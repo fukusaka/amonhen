@@ -1691,11 +1691,78 @@ pub fn layout(
     }
     ord.layers = best;
     ord.refresh();
-    // 左右の向き: 並べ替えは左右を写した並びにも行き着く（交差の数は同じ）。Graphviz の絵と同じく、最初の並び（上からの
-    // 深さ優先）と同じ向きのほうにする。同じランクの辺やポートがあれば写すと交差が変わるので、増えないときだけ
+    // つながっていない部分は、ランクの行の中でまとめて並べる（Graphviz と同じく部分ごとに配置する。宣言の早いノードを
+    // 含む部分が左）。部分どうしをつなぐ辺はないので、交差は増えない（部分をまたぐ交差は消える）。クラスタは 1 つの
+    // 部分にまとめる
+    let comp: Vec<usize> = {
+        let mut uf: Vec<usize> = (0..total).collect();
+        fn find(uf: &mut [usize], mut v: usize) -> usize {
+            while uf[v] != v {
+                uf[v] = uf[uf[v]];
+                v = uf[v];
+            }
+            v
+        }
+        let join = |uf: &mut Vec<usize>, a: usize, b: usize| {
+            let (x, y) = (find(uf, a), find(uf, b));
+            if x != y {
+                uf[x.max(y)] = x.min(y);
+            }
+        };
+        for sg in segs.iter() {
+            join(&mut uf, sg.upper, sg.lower);
+        }
+        for &(t, h) in &flat_edges {
+            join(&mut uf, t, h);
+        }
+        let mut top_member: Vec<Option<usize>> = vec![None; k];
+        for (v, nd) in nodes.iter().enumerate() {
+            let mut c = nd.cluster;
+            let mut top = None;
+            let mut hops = 0;
+            while let Some(ci) = c {
+                top = Some(ci);
+                c = parent[ci];
+                hops += 1;
+                if hops > k {
+                    break;
+                }
+            }
+            if let Some(t) = top {
+                match top_member[t] {
+                    Some(u) => join(&mut uf, u, v),
+                    None => top_member[t] = Some(v),
+                }
+            }
+        }
+        // 部分の順: 中のノードのいちばん早い宣言の順
+        let mut first_seq: Vec<usize> = vec![usize::MAX; total];
+        for (v, nd) in nodes.iter().enumerate() {
+            let r = find(&mut uf, v);
+            first_seq[r] = first_seq[r].min(nd.seq);
+        }
+        (0..total)
+            .map(|v| {
+                let r = find(&mut uf, v);
+                first_seq[r]
+            })
+            .collect()
+    };
+    let several = {
+        let mut seen = std::collections::HashSet::new();
+        comp.iter().any(|&c| seen.insert(c) && seen.len() > 1)
+    };
+    if several {
+        for row in &mut ord.layers {
+            row.sort_by_key(|&v| comp[v]);
+        }
+        ord.refresh();
+    }
+    // 左右の向き: 並べ替えは左右を写した並びにも行き着く（交差の数は同じ）。Graphviz の絵と同じく、部分ごとに、最初の
+    // 並び（上からの深さ優先）と同じ向きのほうにする。同じランクの辺があれば写さず、ポートがあれば交差が増えないときだけ
     if !opt.ordering_out {
-        // 最初の並びと同じ順の本物のノードの組の数と、逆の組の数
-        let (mut same, mut opposite) = (0usize, 0usize);
+        // 部分ごとの、最初の並びと同じ順の本物のノードの組の数と、逆の組の数
+        let mut tally: std::collections::BTreeMap<usize, (usize, usize)> = Default::default();
         for row in &ord.layers {
             if row.len() > MIRROR_ROW {
                 continue;
@@ -1703,23 +1770,42 @@ pub fn layout(
             let real: Vec<usize> = row.iter().copied().filter(|&v| nodes[v].real).collect();
             for i in 0..real.len() {
                 for j in i + 1..real.len() {
+                    if comp[real[i]] != comp[real[j]] {
+                        continue;
+                    }
+                    let t = tally.entry(comp[real[i]]).or_insert((0, 0));
                     if first[real[i]] < first[real[j]] {
-                        same += 1;
+                        t.0 += 1;
                     } else {
-                        opposite += 1;
+                        t.1 += 1;
                     }
                 }
             }
         }
-        if opposite > same {
+        for (c, (same, opposite)) in tally {
+            if opposite <= same {
+                continue;
+            }
+            let flat = ord
+                .layers
+                .iter()
+                .enumerate()
+                .any(|(r, row)| ord.has_flat[r] && row.iter().any(|&v| comp[v] == c));
+            if flat {
+                continue;
+            }
             let kept = ord.layers.clone();
             let count = ord.crossings();
             for row in &mut ord.layers {
-                row.reverse();
+                // その部分の場所だけを逆の順に埋め直す
+                let slots: Vec<usize> = (0..row.len()).filter(|&i| comp[row[i]] == c).collect();
+                let vals: Vec<usize> = slots.iter().rev().map(|&i| row[i]).collect();
+                for (i, v) in slots.into_iter().zip(vals) {
+                    row[i] = v;
+                }
             }
             ord.refresh();
-            let flat_ok = (0..ord.layers.len()).all(|r| !ord.has_flat[r]);
-            if !flat_ok || ord.crossings() > count {
+            if ord.crossings() > count {
                 ord.layers = kept;
                 ord.refresh();
             }

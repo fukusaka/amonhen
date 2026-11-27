@@ -1512,11 +1512,8 @@ fn polylines_cross(a: &[(f64, f64)], b: &[(f64, f64)]) -> bool {
     })
 }
 
-/// 小さな図では、並べ替えが長い辺ごと動かさないと減らない並びに止まらず、Graphviz と同じく交差 1 つまで減る。
-/// ラベルのある線の隣の線はラベルの脇で横切らず、同じ向きからノードに着く線は外形の手前で合わさらない。
-#[test]
-fn dot_small_graphs_cross_as_little_as_graphviz() {
-    let src = "digraph disk_states {
+/// 状態の図（6 つの状態と 14 本の辺、すべてにラベル）。
+const DISKLESS: &str = "digraph disk_states {
         Diskless -> Inconsistent [ label = \"ioctl_set_disk()\" ]
         Diskless -> Consistent [ label = \"ioctl_set_disk()\" ]
         Diskless -> Outdated [ label = \"ioctl_set_disk()\" ]
@@ -1532,6 +1529,56 @@ fn dot_small_graphs_cross_as_little_as_graphviz() {
         Inconsistent -> Failed [ label = \"io completion error\" ]
         Failed -> Diskless [ label = \"sending notify to peer\" ]
     }";
+
+/// ノードの左から右の名前の並び（中心の x の順）。
+fn x_order(svg: &str, names: &[&str]) -> Vec<String> {
+    let mut xs: Vec<(f64, String)> = names
+        .iter()
+        .map(|n| (attr_num(part(svg, n), "cx"), n.to_string()))
+        .collect();
+    xs.sort_by(|a, b| a.0.total_cmp(&b.0));
+    xs.into_iter().map(|(_, n)| n).collect()
+}
+
+/// つながっていない部分は、ランクの行の中でまとまって並ぶ（宣言の早いノードを含む部分が左。Graphviz の絵と同じ）。
+/// 無関係な部分を足しても、ほかの部分の並びと向きは変わらない。
+#[test]
+fn dot_disconnected_parts_are_placed_apart() {
+    let order = |src: &str, names: &[&str]| x_order(&render(src).unwrap().svg, names);
+    assert_eq!(order("digraph { c -> d; a -> b }", &["a", "c"]), ["c", "a"]);
+    assert_eq!(
+        order(
+            "digraph { a -> b; c -> d; a2 -> b2; c -> d2 }",
+            &["b", "d", "d2", "b2"]
+        ),
+        ["b", "d", "d2", "b2"]
+    );
+    let names = [
+        "Diskless",
+        "Consistent",
+        "Outdated",
+        "Inconsistent",
+        "UpToDate",
+        "Failed",
+    ];
+    let alone = order(DISKLESS, &names);
+    let with = order(&DISKLESS.replacen('{', "{ zz_a -> zz_b;", 1), &names);
+    assert_eq!(alone, with);
+    let with = order(
+        &format!(
+            "{} zz_c -> zz_d }}",
+            DISKLESS.trim_end().trim_end_matches('}')
+        ),
+        &names,
+    );
+    assert_eq!(alone, with);
+}
+
+/// 小さな図では、並べ替えが長い辺ごと動かさないと減らない並びに止まらず、Graphviz と同じく交差 1 つまで減る。
+/// ラベルのある線の隣の線はラベルの脇で横切らず、同じ向きからノードに着く線は外形の手前で合わさらない。
+#[test]
+fn dot_small_graphs_cross_as_little_as_graphviz() {
+    let src = DISKLESS;
     let svg = render(src).unwrap().svg;
     let lines: Vec<Vec<(f64, f64)>> = edge_cubics(&svg).iter().map(|c| edge_samples(c)).collect();
     let mut crossings = 0;

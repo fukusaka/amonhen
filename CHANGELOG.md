@@ -106,6 +106,7 @@ draw icons shared by every front end.
 - DOT diagrams: nodes of a rank start in the order they are declared, as in Graphviz, rather than the order of the edges.
 - DOT diagrams: the dot layout keeps the left-to-right orientation of its first order, so it no longer comes out mirrored from Graphviz's.
 - DOT diagrams: small dot graphs cross fewer edges: ordering tries more starting orders, lines next to a label no longer cut across its line, and lines reaching a node from the same direction arrive apart.
+- DOT diagrams: unconnected parts of a dot graph are placed side by side in declaration order, as in Graphviz, so adding one part no longer reorders or flips another.
 - DOT diagrams: an edge to a subgraph that names a node twice (`a -> {b c b}`) draws one edge to it, as Graphviz
   does, not two.
 - DOT diagrams: polygons with `distortion` or `skew` keep the size of the plain polygon and widen only as much as
