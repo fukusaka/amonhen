@@ -422,17 +422,31 @@ impl WorkingCopy {
         list_area.set_child(Some(&list_scrolled));
         list_area.add_overlay(&empty);
 
-        // 左の列は上下 2 段: 上にコミットの入力、下にファイルの一覧。間の仕切りをドラッグするとメッセージの欄の
-        // 高さが変わり、位置は覚えておく。窓の高さが変わったときは、ファイルの一覧の側が伸び縮みする（macOS 版と同じ）。
+        // 右の列は上下 2 段: 上にコミットの入力、下に差分。間の仕切りをドラッグするとメッセージの欄の高さが変わり、
+        // 位置は覚えておく。窓の高さが変わったときは、差分の側が伸び縮みする（macOS 版と同じ）。件名の左のボタンで、
+        // 件名の 1 行に畳める（数と Commit はその行に移る）。
+        let collapse = gtk::Button::from_icon_name("pan-down-symbolic");
+        collapse.add_css_class("flat");
+        collapse.set_valign(gtk::Align::Center);
+        let subject_row = gtk::Box::new(gtk::Orientation::Horizontal, 4);
+        subject.set_hexpand(true);
+        subject_row.append(&collapse);
+        subject_row.append(&subject);
         let message_part = gtk::Box::new(gtk::Orientation::Vertical, 8);
         message_part.set_margin_top(10);
         message_part.set_margin_bottom(6);
-        message_part.append(&subject);
+        message_part.set_margin_start(10);
+        message_part.set_margin_end(10);
+        message_part.append(&subject_row);
         message_part.append(&body_box);
         message_part.append(&commit_row);
         message_part.append(&message);
+        // 左の列: 変更のあるファイルの一覧（上から下まで。macOS 版と同じ）。
         let files_part = gtk::Box::new(gtk::Orientation::Vertical, 8);
-        files_part.set_margin_top(6);
+        files_part.set_margin_top(10);
+        files_part.set_margin_bottom(10);
+        files_part.set_margin_start(10);
+        files_part.set_margin_end(10);
         list_scrolled.set_min_content_height(100);
         files_part.append(&list_header);
         // sparse checkout なら、一覧の上にそう出す（取り出していないフォルダのファイルは変更に出ない。macOS 版と同じ）。
@@ -461,15 +475,7 @@ impl WorkingCopy {
         files_part.append(&sparse_note);
         files_part.append(&filter);
         files_part.append(&list_area);
-        let left = gtk::Paned::new(gtk::Orientation::Vertical);
-        left.set_margin_start(10);
-        left.set_margin_end(10);
-        left.set_start_child(Some(&message_part));
-        left.set_end_child(Some(&files_part));
-        left.set_resize_start_child(false);
-        left.set_shrink_start_child(false);
-        left.set_shrink_end_child(false);
-        remember_message_height(&left);
+        let left = files_part;
 
         // 右: 操作のボタンと差分。
         let path = gtk::Label::new(None);
@@ -536,6 +542,29 @@ impl WorkingCopy {
         right_stack.add_named(&diff_area, Some("diff"));
         right_stack.add_named(&merge_holder, Some("merge"));
         right.append(&right_stack);
+        let message_split = gtk::Paned::new(gtk::Orientation::Vertical);
+        message_split.set_start_child(Some(&message_part));
+        message_split.set_end_child(Some(&right));
+        message_split.set_resize_start_child(false);
+        message_split.set_shrink_start_child(false);
+        message_split.set_shrink_end_child(false);
+        let collapsed = Rc::new(Cell::new(crate::settings::bool(COMMIT_COLLAPSED)));
+        remember_message_height(&message_split, collapsed.clone());
+        let commit_collapse = CommitCollapse {
+            button: collapse.clone(),
+            subject_row,
+            commit_row: commit_row.clone(),
+            body_box: body_box.clone(),
+            summary_count: summary_count.clone(),
+            after_count: aids.insert.clone(),
+            commit_group: commit_group.clone(),
+            split: message_split.clone(),
+            collapsed,
+        };
+        commit_collapse.apply();
+        let c = commit_collapse.clone();
+        collapse.connect_clicked(move |_| c.toggle());
+        let right = message_split;
 
         let root = gtk::Paned::new(gtk::Orientation::Horizontal);
         root.set_start_child(Some(&left));
@@ -3520,12 +3549,82 @@ impl Inner {
 
 /// コミットの入力とファイルの一覧の間の仕切りの位置（上の段の高さ）を覚える設定の鍵。
 const MESSAGE_HEIGHT: &str = "workingCopyMessageHeight";
+/// コミットの入力を件名の 1 行に畳んでいるか（macOS 版と同じキー）。
+const COMMIT_COLLAPSED: &str = "workingCopyCommitCollapsed";
 
 /// 仕切りを覚えた位置に置き、動かしたら覚える（ドラッグの間は書かず、止まってから）。覚えた位置がなければ、
 /// メッセージの欄を最小より少し広めに（macOS 版と同じく 60 pt ほど。Description が 150 ほどの高さになる）。
-fn remember_message_height(paned: &gtk::Paned) {
+/// コミットの入力を件名の 1 行に畳む（覚える）。畳むと本文とボタンの行を隠し、件名の文字数・Commit を件名の行に
+/// 移す。仕切りは件名の行の高さまで上げ、開いたら覚えた高さに戻す（macOS 版と同じ）。
+#[derive(Clone)]
+struct CommitCollapse {
+    button: gtk::Button,
+    subject_row: gtk::Box,
+    commit_row: gtk::Box,
+    body_box: gtk::Overlay,
+    summary_count: gtk::Label,
+    /// ボタンの行で、件名の文字数のすぐ前の部品（戻すときの場所）。
+    after_count: gtk::Button,
+    commit_group: gtk::Box,
+    split: gtk::Paned,
+    collapsed: Rc<Cell<bool>>,
+}
+
+impl CommitCollapse {
+    fn toggle(&self) {
+        self.collapsed.set(!self.collapsed.get());
+        crate::settings::set_bool(COMMIT_COLLAPSED, self.collapsed.get());
+        self.apply();
+    }
+
+    fn apply(&self) {
+        let collapsed = self.collapsed.get();
+        let in_subject =
+            self.summary_count.parent().as_ref() == Some(self.subject_row.upcast_ref());
+        if collapsed && !in_subject {
+            self.commit_row.remove(&self.summary_count);
+            self.commit_row.remove(&self.commit_group);
+            self.summary_count.set_hexpand(false);
+            self.subject_row.append(&self.summary_count);
+            self.subject_row.append(&self.commit_group);
+        } else if !collapsed && in_subject {
+            self.subject_row.remove(&self.summary_count);
+            self.subject_row.remove(&self.commit_group);
+            self.summary_count.set_hexpand(true);
+            self.commit_row
+                .insert_child_after(&self.summary_count, Some(&self.after_count));
+            self.commit_row.append(&self.commit_group);
+        }
+        self.body_box.set_visible(!collapsed);
+        self.commit_row.set_visible(!collapsed);
+        self.button.set_icon_name(if collapsed {
+            "pan-end-symbolic"
+        } else {
+            "pan-down-symbolic"
+        });
+        self.button.set_tooltip_text(Some(&if collapsed {
+            tr!("Show the description and the commit options")
+        } else {
+            tr!("Collapse to the summary line")
+        }));
+        if collapsed {
+            // 件名の行の高さまで上げる（縮められない分は Paned が止める）。
+            self.split.set_position(0);
+        } else if let Some(height) =
+            crate::settings::string(MESSAGE_HEIGHT).and_then(|s| s.parse::<i32>().ok())
+        {
+            self.split.set_position(height);
+        }
+    }
+}
+
+fn remember_message_height(paned: &gtk::Paned, collapsed: Rc<Cell<bool>>) {
     let placing = Rc::new(Cell::new(false));
-    if let Some(height) = crate::settings::string(MESSAGE_HEIGHT).and_then(|s| s.parse().ok()) {
+    if collapsed.get() {
+        // 畳んでいれば、`CommitCollapse::apply` が置く。
+    } else if let Some(height) =
+        crate::settings::string(MESSAGE_HEIGHT).and_then(|s| s.parse().ok())
+    {
         paned.set_position(height);
     } else {
         let placing = placing.clone();
@@ -3547,8 +3646,8 @@ fn remember_message_height(paned: &gtk::Paned) {
     }
     let pending: Rc<RefCell<Option<glib::SourceId>>> = Rc::default();
     paned.connect_position_notify(move |paned| {
-        // 自分で置いたとき・まだ大きさが決まっていないときは覚えない。
-        if !paned.is_mapped() || placing.get() {
+        // 自分で置いたとき・まだ大きさが決まっていないとき・畳んでいるときは覚えない。
+        if !paned.is_mapped() || placing.get() || collapsed.get() {
             return;
         }
         if let Some(id) = pending.borrow_mut().take() {
