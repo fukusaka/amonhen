@@ -470,6 +470,9 @@ impl WorkingCopy {
             icon.set(kind, false);
             let button = gtk::ToggleButton::new();
             button.set_child(Some(&icon));
+            // 変更｜すべてのファイルと同じ高さに（macOS 版の小さなセグメント）。
+            button.add_css_class("small-push");
+            button.set_valign(gtk::Align::Center);
             button.set_tooltip_text(Some(&amonhen_model::i18n::translate(tip)));
             if let Some(first) = layout_buttons.first() {
                 button.set_group(Some(&first.0));
@@ -583,6 +586,11 @@ impl WorkingCopy {
         path.set_ellipsize(gtk::pango::EllipsizeMode::Middle);
         let lines = gtk::Button::with_label("Stage Lines");
         let discard = gtk::Button::with_label("Discard File");
+        // 見る側の切り替えと同じ小さなボタン（macOS 版の controlSize small）。
+        for b in [&lines, &discard] {
+            b.add_css_class("small-push");
+            b.set_valign(gtk::Align::Center);
+        }
         let worktree_side = gtk::ToggleButton::with_label("Unstaged");
         worktree_side.set_tooltip_text(Some(&tr!(
             "Changes in the working tree that are not staged yet"
