@@ -120,6 +120,9 @@ pub struct Portal {
 /// 辺の仮のノードの列（上から下、両端を含む）、逆向きか、ラベルの仮のノード。
 type Chain = (Vec<usize>, bool, Option<usize>);
 
+/// 辺のラベルの仮のノードの中心（線の通る所）からラベルの箱までの間（Graphviz の絵と同じく、文字が線のすぐ脇に来る）。
+pub const LABEL_GAP: f64 = 2.0;
+
 /// ラベルの仮のノードの所で、線がラベルの脇から離れてよい幅。
 const LABEL_SLACK: f64 = 2.0;
 
@@ -1348,9 +1351,9 @@ pub fn layout(
                 (true, Some((lw, lh))) => {
                     label_node = Some(v);
                     if opt.label_left {
-                        (lw + 6.0, 2.0, lh)
+                        (lw + LABEL_GAP, 2.0, lh)
                     } else {
-                        (2.0, lw + 6.0, lh)
+                        (2.0, lw + LABEL_GAP, lh)
                     }
                 }
                 _ => (half_sep / 2.0, half_sep / 2.0, 0.0),
@@ -2026,7 +2029,10 @@ pub fn layout(
         let label = match (label_node, e.label) {
             (Some(v), Some((lw, _))) => {
                 let side = if opt.label_left { -1.0 } else { 1.0 };
-                Some((xs[*v] + side * (6.0 + lw / 2.0), rank_y[nodes[*v].rank]))
+                Some((
+                    xs[*v] + side * (LABEL_GAP + lw / 2.0),
+                    rank_y[nodes[*v].rank],
+                ))
             }
             (None, Some(_)) => {
                 let (p, q) = (pts[0], pts[last]);
