@@ -802,5 +802,85 @@
 			<string>%ld files</string>
 		</dict>
 	</dict>
+	<key>%ld unchanged lines</key>
+	<dict>
+		<key>NSStringLocalizedFormatKey</key>
+		<string>%#@n0@</string>
+		<key>n0</key>
+		<dict>
+			<key>NSStringFormatSpecTypeKey</key>
+			<string>NSStringPluralRuleType</string>
+			<key>NSStringFormatValueTypeKey</key>
+			<string>ld</string>
+			<key>one</key>
+			<string>%ld unchanged line</string>
+			<key>other</key>
+			<string>%ld unchanged lines</string>
+		</dict>
+	</dict>
+	<key>%ld unchanged lines shown</key>
+	<dict>
+		<key>NSStringLocalizedFormatKey</key>
+		<string>%#@n0@ shown</string>
+		<key>n0</key>
+		<dict>
+			<key>NSStringFormatSpecTypeKey</key>
+			<string>NSStringPluralRuleType</string>
+			<key>NSStringFormatValueTypeKey</key>
+			<string>ld</string>
+			<key>one</key>
+			<string>%ld unchanged line</string>
+			<key>other</key>
+			<string>%ld unchanged lines</string>
+		</dict>
+	</dict>
+	<key>%ld lines</key>
+	<dict>
+		<key>NSStringLocalizedFormatKey</key>
+		<string>%#@n0@</string>
+		<key>n0</key>
+		<dict>
+			<key>NSStringFormatSpecTypeKey</key>
+			<string>NSStringPluralRuleType</string>
+			<key>NSStringFormatValueTypeKey</key>
+			<string>ld</string>
+			<key>one</key>
+			<string>%ld line</string>
+			<key>other</key>
+			<string>%ld lines</string>
+		</dict>
+	</dict>
+	<key>%ld lines selected</key>
+	<dict>
+		<key>NSStringLocalizedFormatKey</key>
+		<string>%#@n0@ selected</string>
+		<key>n0</key>
+		<dict>
+			<key>NSStringFormatSpecTypeKey</key>
+			<string>NSStringPluralRuleType</string>
+			<key>NSStringFormatValueTypeKey</key>
+			<string>ld</string>
+			<key>one</key>
+			<string>%ld line</string>
+			<key>other</key>
+			<string>%ld lines</string>
+		</dict>
+	</dict>
+	<key>%ld Selected Lines</key>
+	<dict>
+		<key>NSStringLocalizedFormatKey</key>
+		<string>%#@n0@</string>
+		<key>n0</key>
+		<dict>
+			<key>NSStringFormatSpecTypeKey</key>
+			<string>NSStringPluralRuleType</string>
+			<key>NSStringFormatValueTypeKey</key>
+			<string>ld</string>
+			<key>one</key>
+			<string>%ld Selected Line</string>
+			<key>other</key>
+			<string>%ld Selected Lines</string>
+		</dict>
+	</dict>
 </dict>
 </plist>
