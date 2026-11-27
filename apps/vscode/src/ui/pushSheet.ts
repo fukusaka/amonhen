@@ -11,7 +11,7 @@ import { moveDrawing, type MovePreview } from '../history/drawing.ts';
 import { pushTarget, shortName } from '../state/operations.ts';
 import type { Repository } from '../state/repository.ts';
 import { pushWarnings } from '../sync/pushPlan.ts';
-import { openCommitChanges, openRangeChanges } from './commitChanges.ts';
+import { openCommitChangesAsking, openRangeChanges } from './commitChanges.ts';
 import type { SheetList } from '../view/protocol.ts';
 import { runAction } from './dragDrop.ts';
 import { MainPanel } from './mainPanel.ts';
@@ -108,7 +108,7 @@ export async function pushWithSheet(repo: Repository, request: PushRequest, publ
           ...commits.slice(0, LISTED).map((c) => ({
             label: `$(git-commit) ${c.subject}`,
             description: `${c.oid.slice(0, 8)} · ${c.author}`,
-            open: () => openCommitChanges(repo, c),
+            open: () => openCommitChangesAsking(repo, c, async () => MainPanel.active?.history.contentsFetched(c.oid)),
           })),
           ...(commits.length > LISTED ? [{ label: `… and ${count(commits.length - LISTED)} more` }] : []),
         ];
@@ -178,7 +178,8 @@ export async function pushWithSheet(repo: Repository, request: PushRequest, publ
     const list = (listTitle: string, commits: readonly Commit[], tone?: 'red'): SheetList | undefined => {
       if (commits.length === 0) return undefined;
       const items = commits.slice(0, LISTED).map((c) => {
-        opens.push(() => openCommitChanges(repo, c));
+        // partial clone で中身が手元になければ、開く前に聞く（取ってきたら History の差分も読み直す）
+        opens.push(() => openCommitChangesAsking(repo, c, async () => MainPanel.active?.history.contentsFetched(c.oid)));
         return { label: c.subject, description: `${c.oid.slice(0, 8)} · ${c.author}`, open: true };
       });
       // 送る変更すべて（先頭の行）

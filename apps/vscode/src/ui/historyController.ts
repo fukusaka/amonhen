@@ -12,7 +12,7 @@ import { contentsToFetch, searchesContents, searchHistory } from '../daemon/sear
 import { computeDiff, type DiffLine, type FileDiff } from '../diff/fileDiff.ts';
 import { parseCommitObject } from '../git/commitObject.ts';
 import { signatureExplanation, signatureLabel, signatureStatus, type SignatureCheck } from '../git/signature.ts';
-import type { Commit } from '../git/log.ts';
+import type { Commit, FileChange } from '../git/log.ts';
 import { GraphBuilder } from '../history/graph.ts';
 import type {
   CommitDetails,
@@ -59,7 +59,7 @@ import {
 import { editableChain, refLabels, worktreeLabels } from '../history/rows.ts';
 import { scopeRefs } from '../history/scope.ts';
 import type { Repository, Section } from '../state/repository.ts';
-import { openCommitChanges, openCommitFile } from './commitChanges.ts';
+import { askBeforeOpen, openCommitChanges, openCommitFile } from './commitChanges.ts';
 import { gitUri } from './uri.ts';
 import { repositorySlug } from '../git/github.ts';
 import { isVectorDrawable } from '../history/vectorDrawable.ts';
@@ -417,13 +417,20 @@ export class HistoryController implements vscode.Disposable {
         break;
       case 'openTreeFile':
         if (this.repo) {
+          const root = this.repo.root;
           // 行があればその行を選んで開く（差分の行の右クリック。「すべてのファイル」がないとき）
           const line = message.line ? Math.max(0, message.line - 1) : undefined;
           const options: vscode.TextDocumentShowOptions | undefined =
             line === undefined ? undefined : { selection: new vscode.Range(line, 0, line, 0) };
-          await vscode.commands
-            .executeCommand('vscode.open', gitUri(this.repo.root, message.path, 'rev', message.oid), options)
-            .then(undefined, showError);
+          // partial clone で中身が手元になければ、開く前に通知で聞く
+          await this.openAsking(
+            message.oid,
+            (client) => this.contentsMissing(client, message.oid, message.path),
+            () => `The contents of ${basename(message.path)} aren’t here yet (partial clone).`,
+            async () => {
+              await vscode.commands.executeCommand('vscode.open', gitUri(root, message.path, 'rev', message.oid), options);
+            },
+          ).catch(showError);
         }
         break;
       case 'commitImage':
@@ -439,7 +446,15 @@ export class HistoryController implements vscode.Disposable {
         const details = this.details.get(message.oid);
         const file = details?.files.find((f) => f.path === message.path);
         if (this.repo && details && file) {
-          await openCommitFile(this.repo, details.oid, details.parents[0], file).catch(showError);
+          const repo = this.repo;
+          // partial clone で中身が手元になければ、開く（git が取りに行く）前に通知で聞く。変えたファイルなら、
+          // fileContentsMissing は前（最初の親、rename なら前のパス）と後の両方を見る
+          await this.openAsking(
+            message.oid,
+            (client) => this.contentsMissing(client, details.oid, file.path),
+            () => `The contents of ${basename(file.path)} aren’t here yet (partial clone).`,
+            () => openCommitFile(repo, details.oid, details.parents[0], file),
+          ).catch(showError);
         }
         break;
       }
@@ -457,7 +472,29 @@ export class HistoryController implements vscode.Disposable {
             subject: details.message.split('\n', 1)[0] ?? '',
           });
         if (this.repo && commit) {
-          await openCommitChanges(this.repo, commit).catch(showError);
+          const repo = this.repo;
+          // partial clone なら、変わったファイルと手元にない中身をエンジンで読む（git の rename の検出も中身を取りに
+          // 行くので、git では読まない）。なければ通知で聞く
+          let known: FileChange[] | undefined;
+          let files = 0;
+          await this.openAsking(
+            message.oid,
+            async (client) => {
+              const cached = this.details.get(message.oid);
+              if (cached) {
+                known = cached.files;
+                const missing = this.missing.get(message.oid);
+                files = missing?.paths.size ?? 0;
+                return missing?.ids ?? [];
+              }
+              const reply = await client.call({ op: 'commitDiff', id: message.oid, ...this.whitespaceArg() });
+              known = commitFiles(reply);
+              files = ((reply.json['files'] as { missing?: boolean }[] | undefined) ?? []).filter((f) => f.missing).length;
+              return Array.isArray(reply.json['missing']) ? (reply.json['missing'] as string[]) : [];
+            },
+            () => `The contents of ${files} file${files === 1 ? '' : 's'} aren’t here yet (partial clone).`,
+            () => openCommitChanges(repo, commit, known),
+          ).catch(showError);
         }
         break;
       }
@@ -905,6 +942,34 @@ export class HistoryController implements vscode.Disposable {
     } catch (err) {
       reply(errorMessage(err));
     }
+  }
+
+  /**
+   * エディタで開く（`open`）。partial clone なら先に `need` で手元にない中身を確かめ、あれば開かずに（git が勝手に
+   * 取りに行くので）通知で聞く（`notice` が文）。「Fetch and Open」を押したときだけ取ってから開き、差分に中身のない
+   * ファイルがあれば読み直す。通知を閉じれば何もしない。partial clone でなければ、確かめずにそのまま開く
+   */
+  private async openAsking(
+    key: string,
+    need: (client: DaemonClient) => Promise<string[]>,
+    notice: () => string,
+    open: () => Promise<void>,
+  ): Promise<void> {
+    const client = await this.engine();
+    const ids = client && (await this.isPartialClone(client)) ? await need(client) : [];
+    if (!client || ids.length === 0) {
+      await open();
+      return;
+    }
+    askBeforeOpen(client, ids, notice(), open, () => this.contentsFetched(key));
+  }
+
+  /**
+   * ほかの画面（Push・Pull のシートなど）でコミット `key` の中身を取った: 差分に中身のないファイルがあったなら読み
+   * 直す（届いたファイルの差分を出し、帯の数を減らす）
+   */
+  async contentsFetched(key: string): Promise<void> {
+    if (this.missing.has(key)) await this.reloadDiff(key);
   }
 
   /**

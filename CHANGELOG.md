@@ -1470,6 +1470,11 @@ First release.
   themselves. A band says how many files' contents aren't here yet, and Fetch Contents gets just those (with the
   engine; the git execution layer still fetches as git does).
 
+#### Fixed
+
+- In a partial clone, opening a commit's files in VSCode's editors (Open, Open All, the Pull and Push sheets) no
+  longer fetches missing contents silently: a notification asks first, and Fetch and Open gets just those.
+
 ### [0.2.10] - 2026-11-27
 
 The extension follows the app much more closely: History's menus, labels and activity strip, the commit details' tags,

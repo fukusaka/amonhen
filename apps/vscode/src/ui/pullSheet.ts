@@ -22,7 +22,7 @@ import {
 } from '../sync/pullPlan.ts';
 import { mergeDrawing, moveDrawing, rebaseDrawing, type MergePreview, type MovePreview } from '../history/drawing.ts';
 import type { SheetList } from '../view/protocol.ts';
-import { openCommitChanges } from './commitChanges.ts';
+import { openCommitChangesAsking } from './commitChanges.ts';
 import { runAction } from './dragDrop.ts';
 import { MainPanel } from './mainPanel.ts';
 import { showError } from './stageCommands.ts';
@@ -201,7 +201,11 @@ async function askInSheet(panel: MainPanel, repo: Repository, i: SheetInput): Pr
   const lists = [list('Commits to pull', i.incoming), list(`Commits only in ${i.head}`, i.outgoing)];
   const answer = await panel.ask(
     { title: i.title, lines: [], choices, choice: i.firstMode, lists: lists.filter((l) => l !== undefined), buttons: ['Pull'] },
-    (item) => void (opens[item] && openCommitChanges(repo, opens[item]).catch(showError)),
+    // partial clone で中身が手元になければ、開く前に聞く（取ってきたら History の差分も読み直す）
+    (item) => {
+      const c = opens[item];
+      if (c) void openCommitChangesAsking(repo, c, async () => MainPanel.active?.history.contentsFetched(c.oid)).catch(showError);
+    },
   );
   return answer && PULL_MODES[answer.choice];
 }
