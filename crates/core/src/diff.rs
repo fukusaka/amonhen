@@ -227,6 +227,32 @@ pub fn file_diff_ws(
     funcname: &FuncName,
     whitespace: Whitespace,
 ) -> FileDiff {
+    file_diff_folded(old, new, context, None, funcname, whitespace)
+}
+
+/// 変更のない所（隙間）の開き方: `gap` 番目の隙間を、上（前の変更に続く所）から `top` 行、下（次の変更の手前）
+/// から `bottom` 行だけ見せる。足して隙間の行数以上なら、すべて見せる。
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub struct GapOpen {
+    pub gap: u32,
+    pub top: u32,
+    pub bottom: u32,
+}
+
+/// `file_diff_ws` の、変更のない所（隙間）を少しずつ開いたり閉じたりできるもの（Working Copy）。隙間はファイルの
+/// 頭・hunk の間・ファイルの末尾の変わっていない行で、1 行以上あるものを頭から 0, 1, … と数える（隙間の行の順）。
+/// ファイルの頭から変わっているときも、最初の hunk の見出しとして 0 行の隙間の行を置く（隙間 0）。`open` が `Some` なら、hunk の見出しの行は置かず、1 行以上ある隙間ごとに隙間の行（`HUNK`）を
+/// 1 つ置く。隙間の行の `old_no` は隠している行数、`new_no` は見せている行数、文字は次の hunk の関数名（なければ
+/// 空）。`open` で開いた分は、上の分を隙間の行の前に、下の分を後に、変わっていない行として並べる。`open` が
+/// `None` なら `file_diff_ws` と同じ。
+pub fn file_diff_folded(
+    old: impl Into<Blob>,
+    new: impl Into<Blob>,
+    context: u32,
+    open: Option<&[GapOpen]>,
+    funcname: &FuncName,
+    whitespace: Whitespace,
+) -> FileDiff {
     let (old, new) = (old.into(), new.into());
     let mut diff = FileDiff {
         old: old.clone(),
@@ -289,7 +315,51 @@ pub fn file_diff_ws(
     let n_old = old_lines.len() as u32;
     let mut searched_down_to = 0u32;
     let mut last_func: Option<String> = None;
-    for group in groups {
+    let folded = open.is_some();
+    let open = open.unwrap_or(&[]);
+    // 前の hunk の終わり（変更前・変更後の行）。隙間はそこから次の hunk の始まりまで。
+    let (mut prev_old, mut prev_new) = (0u32, 0u32);
+    let groups_count = groups.len();
+    // 変わっていない行を、変更前の `o` 行目（変更後は `n` 行目）から `count` 行並べる。
+    let context_lines = |diff: &mut FileDiff, o: u32, n: u32, count: u32| {
+        for i in 0..count {
+            diff.lines.push(Line {
+                kind: DiffRow::CONTEXT,
+                old_no: o + i + 1,
+                new_no: n + i + 1,
+                source: Source::New,
+                range: new_lines[(n + i) as usize].clone(),
+            });
+        }
+    };
+    // 隙間の行（変更前の `o` 行目から `len` 行の隙間。開いた分は前後に並べる）。
+    let mut gap = 0u32;
+    // `header` なら、0 行でも置く（ファイルの頭から変わっている hunk の見出し）。
+    let mut gap_row =
+        |diff: &mut FileDiff, o: u32, n: u32, len: u32, func: Option<&str>, header: bool| {
+            if len == 0 && !header {
+                return;
+            }
+            let (top, bottom) = open
+                .iter()
+                .find(|g| g.gap == gap)
+                .map_or((0, 0), |g| (g.top, g.bottom));
+            let top = top.min(len);
+            let bottom = bottom.min(len - top);
+            context_lines(diff, o, n, top);
+            let text_start = diff.headers.len() as u32;
+            diff.headers += func.unwrap_or("");
+            diff.lines.push(Line {
+                kind: DiffRow::HUNK,
+                old_no: len - top - bottom,
+                new_no: top + bottom,
+                source: Source::Header,
+                range: text_start..diff.headers.len() as u32,
+            });
+            context_lines(diff, o + len - bottom, n + len - bottom, bottom);
+            gap += 1;
+        };
+    for (index, group) in groups.into_iter().enumerate() {
         let first = &group[0];
         let last = group.last().unwrap();
         let start_old = first.before.start.saturating_sub(context);
@@ -298,17 +368,6 @@ pub fn file_diff_ws(
         let start_new = first.after.start - (first.before.start - start_old);
         let end_new = last.after.end + (end_old - last.before.end);
 
-        let header_start = diff.headers.len() as u32;
-        let count = |start: u32, end: u32| match end - start {
-            1 => format!("{}", start + 1),
-            0 => format!("{start},0"),
-            n => format!("{},{n}", start + 1),
-        };
-        diff.headers += &format!(
-            "@@ -{} +{} @@",
-            count(start_old, end_old),
-            count(start_new, end_new)
-        );
         // 関数名: hunk の手前の行を上へたどる（git と同じく変更前の側）。前の hunk でたどった所より上は、前の
         // 答えをそのまま使う。
         let mut at = start_old;
@@ -325,35 +384,44 @@ pub fn file_diff_ws(
         };
         searched_down_to = start_old;
         last_func = found.clone();
-        if let Some(f) = found {
-            diff.headers.push(' ');
-            diff.headers += &f;
-        }
-        diff.lines.push(Line {
-            kind: DiffRow::HUNK,
-            old_no: 0,
-            new_no: 0,
-            source: Source::Header,
-            range: header_start..diff.headers.len() as u32,
-        });
 
-        let mut o = start_old;
-        let mut n = start_new;
-        let context_until = |diff: &mut FileDiff, o: &mut u32, n: &mut u32, until_old: u32| {
-            while *o < until_old {
-                diff.lines.push(Line {
-                    kind: DiffRow::CONTEXT,
-                    old_no: *o + 1,
-                    new_no: *n + 1,
-                    source: Source::New,
-                    range: new_lines[*n as usize].clone(),
-                });
-                *o += 1;
-                *n += 1;
+        if folded {
+            gap_row(
+                &mut diff,
+                prev_old,
+                prev_new,
+                start_old - prev_old,
+                found.as_deref(),
+                index == 0,
+            );
+        } else {
+            let header_start = diff.headers.len() as u32;
+            let count = |start: u32, end: u32| match end - start {
+                1 => format!("{}", start + 1),
+                0 => format!("{start},0"),
+                n => format!("{},{n}", start + 1),
+            };
+            diff.headers += &format!(
+                "@@ -{} +{} @@",
+                count(start_old, end_old),
+                count(start_new, end_new)
+            );
+            if let Some(f) = found {
+                diff.headers.push(' ');
+                diff.headers += &f;
             }
-        };
+            diff.lines.push(Line {
+                kind: DiffRow::HUNK,
+                old_no: 0,
+                new_no: 0,
+                source: Source::Header,
+                range: header_start..diff.headers.len() as u32,
+            });
+        }
+
+        let (mut o, mut n) = (start_old, start_new);
         for h in &group {
-            context_until(&mut diff, &mut o, &mut n, h.before.start);
+            context_lines(&mut diff, o, n, h.before.start - o);
             for r in h.before.clone() {
                 diff.lines.push(Line {
                     kind: DiffRow::REMOVED,
@@ -375,8 +443,13 @@ pub fn file_diff_ws(
             o = h.before.end;
             n = h.after.end;
         }
-        context_until(&mut diff, &mut o, &mut n, end_old);
-        debug_assert_eq!(n, end_new);
+        context_lines(&mut diff, o, n, end_old - o);
+        debug_assert_eq!(n + end_old - o, end_new);
+        (prev_old, prev_new) = (end_old, end_new);
+        // 末尾の隙間（変わっていない残りの行）。
+        if folded && index + 1 == groups_count {
+            gap_row(&mut diff, end_old, end_new, n_old - end_old, None, false);
+        }
     }
     diff
 }
@@ -1139,6 +1212,94 @@ mod tests {
             Arc::new(new.as_bytes().to_vec()),
             context,
         )
+    }
+
+    fn folded(old: &str, new: &str, context: u32, open: &[GapOpen]) -> FileDiff {
+        file_diff_folded(
+            Arc::new(old.as_bytes().to_vec()),
+            Arc::new(new.as_bytes().to_vec()),
+            context,
+            Some(open),
+            &FuncName::Default,
+            Whitespace::Exact,
+        )
+    }
+
+    /// 行を短く: 変わっていない行は変更後の行番号、`+`・`-` は追加・削除、`~隠す/見せる:関数名` は隙間の行。
+    fn tokens(d: &FileDiff) -> String {
+        d.lines
+            .iter()
+            .map(|l| match l.kind {
+                DiffRow::HUNK => format!(
+                    "~{}/{}:{}",
+                    l.old_no,
+                    l.new_no,
+                    String::from_utf8_lossy(d.text(l))
+                ),
+                DiffRow::ADDED => format!("+{}", l.new_no),
+                DiffRow::REMOVED => format!("-{}", l.old_no),
+                _ => format!("{}", l.new_no),
+            })
+            .collect::<Vec<_>>()
+            .join(" ")
+    }
+
+    #[test]
+    fn folds_unchanged_gaps_and_opens_them_a_part_at_a_time() {
+        let line = |i: u32, changed: bool| match (i, changed) {
+            (9, _) => "nine:\n".to_string(),
+            (5, true) => " five\n".to_string(),
+            (15, true) => " fifteen\n".to_string(),
+            _ => format!(" {i}\n"),
+        };
+        let old: String = (1..=20).map(|i| line(i, false)).collect();
+        let new: String = (1..=20).map(|i| line(i, true)).collect();
+        let gap = |gap, top, bottom| GapOpen { gap, top, bottom };
+        // 閉じたまま: 頭の隙間 1 行（1）、間の隙間 3 行（9..11、関数名は 9 行目）、末尾の隙間 2 行（19・20）。
+        // hunk の見出しの行は置かない。
+        let closed = folded(&old, &new, 3, &[]);
+        assert_eq!(
+            tokens(&closed),
+            "~1/0: 2 3 4 -5 +5 6 7 8 ~3/0:nine: 12 13 14 -15 +15 16 17 18 ~2/0:"
+        );
+        // 間の隙間を上下 1 行ずつ、末尾を上から 1 行、頭をすべて開く。
+        let opened = folded(
+            &old,
+            &new,
+            3,
+            &[gap(1, 1, 1), gap(2, 1, 0), gap(0, 0, u32::MAX)],
+        );
+        assert_eq!(
+            tokens(&opened),
+            "~0/1: 1 2 3 4 -5 +5 6 7 8 9 ~1/2:nine: 11 12 13 14 -15 +15 16 17 18 19 ~1/1:"
+        );
+        // 開いた差分の行でも、選んだ変更だけを当てられる。
+        let row = opened
+            .lines
+            .iter()
+            .position(|l| l.kind == DiffRow::ADDED && l.new_no == 15)
+            .unwrap();
+        let removed = row - 1;
+        let applied = apply_selection(&opened, |r| r == row || r == removed);
+        let expected: String = (1..=20).map(|i| line(i, i == 15)).collect();
+        assert_eq!(applied, expected.as_bytes());
+        // ファイルの頭から変わっていれば、最初の hunk の見出しとして 0 行の隙間の行を置く。
+        let top = new.replacen(" 1\n", " one\n", 1);
+        let at_top = folded(&old, &top, 3, &[]);
+        assert!(
+            tokens(&at_top).starts_with("~0/0: -1 +1 2 3 4 -5 +5"),
+            "{}",
+            tokens(&at_top)
+        );
+        // 開かないときは、今までの差分と同じ（見出しの行があり、隙間の行はない）。
+        let plain = diff(&old, &new, 3);
+        assert!(render(&plain).starts_with("@@ -2,7 +2,7 @@\n"));
+        assert!(
+            plain
+                .lines
+                .iter()
+                .all(|l| l.kind != DiffRow::HUNK || (l.old_no, l.new_no) == (0, 0))
+        );
     }
 
     #[test]

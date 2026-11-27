@@ -11214,7 +11214,7 @@ mod tests {
             .unwrap()
             .unwrap();
         let whole = repo
-            .working_diff_combined_context(entry, u32::MAX, &FrontendProfile::MACOS)
+            .working_diff_combined_context(entry, u32::MAX, None, &FrontendProfile::MACOS)
             .unwrap()
             .unwrap();
         let unchanged = |d: &crate::WorkingDiff| {
@@ -11231,6 +11231,7 @@ mod tests {
                 entry,
                 false,
                 u32::MAX,
+                None,
                 crate::diff::Whitespace::Exact,
                 &FrontendProfile::MACOS,
             )

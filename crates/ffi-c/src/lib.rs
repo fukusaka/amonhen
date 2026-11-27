@@ -2562,10 +2562,13 @@ pub unsafe extern "C" fn amonhen_status_view(status: *const AmonhenStatus) -> Am
 
 /// `status` の `index` 番目のファイルの差分。`staged` なら HEAD と index、そうでなければ index と作業ツリー
 /// （`amonhen_working_diff_free` で解放する）。`whitespace` は `amonhen_file_diff_context` と同じで、無視した差分は
-/// 行ごとの stage・破棄に使えない。`context` は前後の行数（`u32::MAX` ならファイル全体）。
+/// 行ごとの stage・破棄に使えない。`context` は前後の行数（`u32::MAX` ならファイル全体）。`open` が NULL でなければ、
+/// 変更のない所を少しずつ開いたり閉じたりできる形にする。`open` は `open_count` 組の「隙間の番号・上から見せる
+/// 行数・下から見せる行数」（hunk の見出しの行は置かず、隙間ごとに隙間の行を置く。`old_no` が隠している行数、
+/// `new_no` が見せている行数、文字は関数名）。
 ///
 /// # Safety
-/// `repo` と `status` は有効であること。
+/// `repo` と `status` は有効であること。`open` は NULL か、`open_count * 3` 個の値を読めること。
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn amonhen_working_diff(
     repo_ptr: *const AmonhenRepo,
@@ -2573,6 +2576,8 @@ pub unsafe extern "C" fn amonhen_working_diff(
     index: u32,
     staged: bool,
     context: u32,
+    open: *const u32,
+    open_count: u32,
     whitespace: u8,
     encoding: AmonhenEncoding,
 ) -> *mut AmonhenWorkingDiff {
@@ -2586,6 +2591,7 @@ pub unsafe extern "C" fn amonhen_working_diff(
         entry,
         staged,
         context,
+        unsafe { open_gaps(open, open_count) }.as_deref(),
         whitespace,
         &profile(encoding),
     ) {
@@ -2600,16 +2606,18 @@ pub unsafe extern "C" fn amonhen_working_diff(
 /// `status` の `index` 番目のファイルの、HEAD と作業ツリーの差分。変更の行ごとに、index に入っているかを
 /// `DiffRow` の `flags`（`STAGED`）で示す（`amonhen_working_diff_free` で解放する）。index がその形で表せない
 /// ファイルでは、`amonhen_last_error` を空にして NULL を返す（FE は `amonhen_working_diff` で 2 つに分けて見せる）。
-/// `context` は前後の行数（`u32::MAX` ならファイル全体）。
+/// `context` は前後の行数（`u32::MAX` ならファイル全体）。`open` と `open_count` は `amonhen_working_diff` と同じ。
 ///
 /// # Safety
-/// `repo` と `status` は有効であること。
+/// `repo` と `status` は有効であること。`open` は NULL か、`open_count * 3` 個の値を読めること。
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn amonhen_working_diff_combined(
     repo_ptr: *const AmonhenRepo,
     status: *const AmonhenStatus,
     index: u32,
     context: u32,
+    open: *const u32,
+    open_count: u32,
     encoding: AmonhenEncoding,
 ) -> *mut AmonhenWorkingDiff {
     let s = handle!(status, StatusHandle);
@@ -2617,7 +2625,12 @@ pub unsafe extern "C" fn amonhen_working_diff_combined(
         set_error(tr!("File index out of range"));
         return std::ptr::null_mut();
     };
-    match repo!(repo_ptr).working_diff_combined_context(entry, context, &profile(encoding)) {
+    match repo!(repo_ptr).working_diff_combined_context(
+        entry,
+        context,
+        unsafe { open_gaps(open, open_count) }.as_deref(),
+        &profile(encoding),
+    ) {
         Ok(Some(d)) => Box::into_raw(Box::new(d)).cast(),
         Ok(None) => {
             set_error("");
@@ -2628,6 +2641,27 @@ pub unsafe extern "C" fn amonhen_working_diff_combined(
             std::ptr::null_mut()
         }
     }
+}
+
+/// 開く隙間（NULL なら畳まない）。
+///
+/// # Safety
+/// `open` は NULL か、`count * 3` 個の値を読めること。
+unsafe fn open_gaps(open: *const u32, count: u32) -> Option<Vec<amonhen_core::diff::GapOpen>> {
+    if open.is_null() {
+        return None;
+    }
+    if count == 0 {
+        return Some(Vec::new());
+    }
+    let raw = unsafe { std::slice::from_raw_parts(open, count as usize * 3) };
+    Some(
+        raw.as_chunks::<3>()
+            .0
+            .iter()
+            .map(|&[gap, top, bottom]| amonhen_core::diff::GapOpen { gap, top, bottom })
+            .collect(),
+    )
 }
 
 /// Working Copy の差分の、前（`after` が false）か後の中身（`amonhen_blob_free` で解放する。画像の比較など）。

@@ -58,14 +58,31 @@ public final class WorkingStatus: @unchecked Sendable {
         amonhen_status_release(raw)
     }
 
+    /// 開く隙間を C に渡す（nil なら NULL: 畳まない。空でも NULL でないポインタを渡す）。
+    private func withGaps<R>(_ gaps: [Int: GapOpening]?, _ body: (UnsafePointer<UInt32>?, UInt32) -> R) -> R {
+        guard let gaps else { return body(nil, 0) }
+        var values: [UInt32] = []
+        for (gap, opening) in gaps.sorted(by: { $0.key < $1.key }) {
+            values += [UInt32(gap), opening.top, opening.bottom]
+        }
+        if values.isEmpty { values = [UInt32.max] }
+        return values.withUnsafeBufferPointer { body($0.baseAddress, UInt32(gaps.count)) }
+    }
+
     /// `item` の差分。`staged` なら HEAD と index、そうでなければ index と作業ツリー。空白を無視した差分は、行ごとの
-    /// stage・破棄に使えない。`context` は前後の行数（`.max` ならファイル全体）。裏のスレッドで呼ぶ。
+    /// stage・破棄に使えない。`context` は前後の行数（`.max` ならファイル全体）。`openGaps` があれば、変更のない所
+    /// （隙間）を少しずつ開いたり閉じたりできる形にする（hunk の見出しの行の代わりに隙間の行。`old_no` が隠して
+    /// いる行数、`new_no` が見せている行数、文字は関数名）。キーは隙間の番号（頭から 0, 1, …）。裏のスレッドで呼ぶ。
     public func diff(
-        of item: StatusItem, staged: Bool, context: UInt32 = 3, whitespace: DiffWhitespace = .exact
+        of item: StatusItem, staged: Bool, context: UInt32 = 3, openGaps: [Int: GapOpening]? = nil,
+        whitespace: DiffWhitespace = .exact
     ) throws -> WorkingFileDiff {
-        guard let raw = amonhen_working_diff(
-            repository.raw, raw, UInt32(item.index), staged, context, whitespace.rawValue,
-            UInt8(AmonhenEncoding_Utf16.rawValue))
+        let raw = withGaps(openGaps) { open, count in
+            amonhen_working_diff(
+                repository.raw, self.raw, UInt32(item.index), staged, context, open, count, whitespace.rawValue,
+                UInt8(AmonhenEncoding_Utf16.rawValue))
+        }
+        guard let raw
         else { throw AmonhenError.last() }
         return WorkingFileDiff(raw: raw, status: self, item: item, staged: staged)
     }
@@ -74,9 +91,12 @@ public final class WorkingStatus: @unchecked Sendable {
     /// わかる。index がその形で表せないファイル（作業ツリーで書き戻した変更が index にだけあるなど）・
     /// サブモジュール・バイナリ・コンフリクトでは nil。`context` は前後の行数（`.max` ならファイル全体）。
     /// 裏のスレッドで呼ぶ。
-    public func combinedDiff(of item: StatusItem, context: UInt32 = 3) throws -> WorkingFileDiff? {
-        guard let raw = amonhen_working_diff_combined(
-            repository.raw, raw, UInt32(item.index), context, UInt8(AmonhenEncoding_Utf16.rawValue))
+    public func combinedDiff(of item: StatusItem, context: UInt32 = 3, openGaps: [Int: GapOpening]? = nil) throws -> WorkingFileDiff? {
+        let raw = withGaps(openGaps) { open, count in
+            amonhen_working_diff_combined(
+                repository.raw, self.raw, UInt32(item.index), context, open, count, UInt8(AmonhenEncoding_Utf16.rawValue))
+        }
+        guard let raw
         else {
             // 理由が空の NULL は「表せない」。
             let error = AmonhenError.last()
@@ -84,6 +104,17 @@ public final class WorkingStatus: @unchecked Sendable {
             throw error
         }
         return WorkingFileDiff(raw: raw, status: self, item: item, staged: false, combined: true)
+    }
+}
+
+/// 変更のない所（隙間）の開き方: 上（前の変更に続く所）から `top` 行、下（次の変更の手前）から `bottom` 行を
+/// 見せる。足して隙間の行数以上なら、すべて見せる。
+public struct GapOpening: Hashable, Sendable {
+    public var top: UInt32
+    public var bottom: UInt32
+    public init(top: UInt32 = 0, bottom: UInt32 = 0) {
+        self.top = top
+        self.bottom = bottom
     }
 }
 

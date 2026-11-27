@@ -229,6 +229,16 @@ public class FileDiff: @unchecked Sendable {
         withText(row: row) { $0 as String }
     }
 
+    /// hunk の見出しの行の数（変更のない所を開閉できる差分では、隙間の数）。
+    public var hunkCount: Int {
+        withRows { $0.reduce(0) { $0 + ($1.kind == UInt8(AmonhenDiffRow_HUNK) ? 1 : 0) } }
+    }
+
+    /// 変更のない所を開閉できる差分で、まだ隠している行のある隙間の数。
+    public var foldedGapCount: Int {
+        withRows { $0.reduce(0) { $0 + ($1.kind == UInt8(AmonhenDiffRow_HUNK) && $1.old_no > 0 ? 1 : 0) } }
+    }
+
     /// 同じ中身の差分か（行の種類・印・行番号・文字列が同じ）。読み直したとき、出し直すかを決める。
     public func hasSameRows(as other: FileDiff) -> Bool {
         guard rowCount == other.rowCount, isBinary == other.isBinary else { return false }
