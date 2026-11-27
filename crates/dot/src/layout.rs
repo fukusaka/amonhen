@@ -123,6 +123,9 @@ type Chain = (Vec<usize>, bool, Option<usize>);
 /// ラベルの仮のノードの所で、線がラベルの脇から離れてよい幅。
 const LABEL_SLACK: f64 = 2.0;
 
+/// 左右の向きを決めるときに数える行の大きさの上限（組の数が行の大きさの 2 乗で増えるため）。
+const MIRROR_ROW: usize = 2000;
+
 /// 仮のノードの上限。
 const MAX_DUMMIES: usize = 12_000;
 /// 直角の線の段の間の下限（ランクの間を広げる上限を超えても保つ）。
@@ -1502,9 +1505,32 @@ pub fn layout(
     let mut val = vec![0f64; total];
     // 深さ優先の初めの並び（Gansner ほか 1993 §3 の init_order）: `top` なら小さいランクのノードから出る辺を、
     // そうでなければ大きいランクのノードから入る辺をたどり、訪ねた順を各ランクの左からの順にする（木なら交差なし）
-    let dfs_order = |top: bool, val: &mut [f64]| {
+    let dfs_order = |top: bool, by_seq: bool, val: &mut [f64]| {
         let mut seen = vec![false; total];
         let mut next = 0f64;
+        // 辺は行き先のノードの作られた順にたどる（Graphviz の絵と同じく、書いた順ではなく宣言の順で並ぶ）。仮のノードは
+        // その先の本物のノードの順
+        let far = |mut w: usize| -> usize {
+            while !nodes[w].real {
+                let list = if top { &nodes[w].down } else { &nodes[w].up };
+                let Some(&s) = list.first() else { break };
+                w = if top { segs[s].lower } else { segs[s].upper };
+            }
+            w
+        };
+        let next_of: Vec<Vec<usize>> = (0..total)
+            .map(|v| {
+                let list = if top { &nodes[v].down } else { &nodes[v].up };
+                let mut ws: Vec<usize> = list
+                    .iter()
+                    .map(|&s| if top { segs[s].lower } else { segs[s].upper })
+                    .collect();
+                if by_seq {
+                    ws.sort_by_key(|&w| nodes[far(w)].seq);
+                }
+                ws
+            })
+            .collect();
         let mut starts: Vec<usize> = (0..total).collect();
         if top {
             starts.sort_by_key(|&v| (nodes[v].rank, nodes[v].seq, v));
@@ -1520,10 +1546,9 @@ pub fn layout(
             val[s0] = next;
             next += 1.0;
             while let Some(&mut (v, ref mut k)) = stack.last_mut() {
-                let list = if top { &nodes[v].down } else { &nodes[v].up };
+                let list = &next_of[v];
                 if *k < list.len() {
-                    let seg = &segs[list[*k]];
-                    let w = if top { seg.lower } else { seg.upper };
+                    let w = list[*k];
                     *k += 1;
                     if !seen[w] {
                         seen[w] = true;
@@ -1537,25 +1562,41 @@ pub fn layout(
             }
         }
     };
-    dfs_order(true, &mut val);
+    dfs_order(true, true, &mut val);
     for r in 0..ord.layers.len() {
         ord.sort_layer(r, &val);
     }
-    // 上からの初めの並びと、下からの初めの並びの 2 回。どちらも、中央値で上下に並べ替えて入れ替え（1 回おきに
-    // 交差の同じ入れ替えも）、減らなければいちばん良い並びに戻して続け、MINCROSS_STALE 回続けて減らなければ
-    // やめる。2 回のうち交差の少ないほう
+    let first = val.clone();
+    let first_layers = ord.layers.clone();
+    // 上からの初めの並び、下からの初めの並び、辺の順の上からの初めの並びの 3 回。どれも、中央値で上下に並べ替えて
+    // 入れ替え（1 回おきに交差の同じ入れ替えも）、減らなければいちばん良い並びに戻して続け、MINCROSS_STALE 回続けて
+    // 減らなければやめる。3 回のうち交差の少ないほう（同じなら先のほう）
     let mut best = ord.layers.clone();
     let mut best_count = ord.crossings();
     let transpose = segs.len() <= TRANSPOSE_SEGS;
-    for start in 0..2 {
+    for start in 0..3 {
         if best_count == 0 {
             break;
         }
         if start == 1 {
-            dfs_order(false, &mut val);
+            dfs_order(false, true, &mut val);
             ord.global_keys();
             for r in (0..ord.layers.len()).rev() {
                 ord.sort_layer(r, &val);
+            }
+        }
+        if start == 2 {
+            // 3 回目は辺を書いた順にたどる上からの並び（宣言の順からでは届かない少ない交差の並びがある）
+            dfs_order(true, false, &mut val);
+            ord.layers = first_layers.clone();
+            ord.refresh();
+            ord.global_keys();
+            for r in 0..ord.layers.len() {
+                ord.sort_layer(r, &val);
+            }
+            // 1 回目と同じ初めの並び（辺を宣言の順に書いた図）なら、同じ結果になるので省く
+            if ord.layers == first_layers {
+                break;
             }
         }
         let mut here = ord.crossings();
@@ -1594,6 +1635,40 @@ pub fn layout(
     }
     ord.layers = best;
     ord.refresh();
+    // 左右の向き: 並べ替えは左右を写した並びにも行き着く（交差の数は同じ）。Graphviz の絵と同じく、最初の並び（上からの
+    // 深さ優先）と同じ向きのほうにする。同じランクの辺やポートがあれば写すと交差が変わるので、増えないときだけ
+    if !opt.ordering_out {
+        // 最初の並びと同じ順の本物のノードの組の数と、逆の組の数
+        let (mut same, mut opposite) = (0usize, 0usize);
+        for row in &ord.layers {
+            if row.len() > MIRROR_ROW {
+                continue;
+            }
+            let real: Vec<usize> = row.iter().copied().filter(|&v| nodes[v].real).collect();
+            for i in 0..real.len() {
+                for j in i + 1..real.len() {
+                    if first[real[i]] < first[real[j]] {
+                        same += 1;
+                    } else {
+                        opposite += 1;
+                    }
+                }
+            }
+        }
+        if opposite > same {
+            let kept = ord.layers.clone();
+            let count = ord.crossings();
+            for row in &mut ord.layers {
+                row.reverse();
+            }
+            ord.refresh();
+            let flat_ok = (0..ord.layers.len()).all(|r| !ord.has_flat[r]);
+            if !flat_ok || ord.crossings() > count {
+                ord.layers = kept;
+                ord.refresh();
+            }
+        }
+    }
     // 同じランクの辺は尾を左に（並べ替えの中で守っている。念のため）
     for r in 0..ord.layers.len() {
         ord.keep_flat_order(r);
