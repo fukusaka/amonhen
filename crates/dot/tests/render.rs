@@ -1590,6 +1590,15 @@ fn dot_self_loops_are_flat_rings_beside_the_node() {
         assert!(p[0].1 < cy && p[p.len() - 1].1 > cy, "{i} {svg}");
     }
 
+    // 隣のランクがあれば、輪は隣のランクの中心までの距離の半分を高さとして測る（ここでは 18＋36＋18 の半分）
+    let svg = render("digraph { a [shape=box]; a -> a; a -> b }")
+        .unwrap()
+        .svg;
+    let cy = attr_num(part(&svg, "a"), "y") + 18.0;
+    let p = edge_samples(&edge_cubics(&svg)[0]);
+    let tall = p.iter().map(|q| (q.1 - cy).abs()).fold(0.0, f64::max);
+    assert!((tall - 36.0 * 0.385).abs() < 0.5, "{tall} {svg}");
+
     let svg = render("digraph { rankdir=LR; a [shape=box]; a -> a }")
         .unwrap()
         .svg;

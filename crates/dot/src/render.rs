@@ -1817,7 +1817,21 @@ pub fn render(
                     let (hw, hh) = (ln.w / 2.0, ln.h / 2.0);
                     let out = if dir.sideways() { -1.0 } else { 1.0 };
                     let reach = loop_reach[ei].max(1.0);
-                    let most = hh * 0.385 * i / n;
+                    // 隣のランクがあれば、輪はその中心までの距離の半分まで高くなる（Graphviz の絵で、ノードの高さと
+                    // ranksep を変えて測った）
+                    let r = lay.ranks[e.tail];
+                    let gap = (!free)
+                        .then(|| {
+                            lay.ranks
+                                .iter()
+                                .zip(&lay.nodes)
+                                .filter(|(q, _)| (**q - r).abs() == 1)
+                                .map(|(_, p)| (p.1 - c.1).abs())
+                                .fold(f64::INFINITY, f64::min)
+                        })
+                        .filter(|g| g.is_finite())
+                        .unwrap_or(0.0);
+                    let most = hh.max(gap / 2.0) * 0.385 * i / n;
                     // 両端が同じ点の 3 次曲線: 横は制御点までの 3/4、縦は制御点までの 0.2887 倍（3·t(1−t)(1−2t) の最大）
                     let x = out * (hw + reach) * 4.0 / 3.0;
                     let y = most / 0.2887;
