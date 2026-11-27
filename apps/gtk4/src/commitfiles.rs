@@ -1557,9 +1557,16 @@ impl Inner {
                 removed += info.removed;
             }
         }
+        let files = glib::markup_escape_text(&tr!("{count} files", count = st.names.len()));
+        // 中身が手元にないファイルがあれば、行数は数えられないので出さない（0 と見誤らないように）。
+        if st.infos.iter().any(|i| i.missing) {
+            this.bar
+                .totals
+                .set_markup(&format!("<span alpha=\"55%\">{files}</span>"));
+            return;
+        }
         this.bar.totals.set_markup(&format!(
-            "<span alpha=\"55%\">{}</span>  <span foreground=\"#2ec27e\">+{added}</span> <span foreground=\"#e01b24\">−{removed}</span>",
-            glib::markup_escape_text(&tr!("{count} files", count = st.names.len()))
+            "<span alpha=\"55%\">{files}</span>  <span foreground=\"#2ec27e\">+{added}</span> <span foreground=\"#e01b24\">−{removed}</span>"
         ));
     }
 
@@ -1608,9 +1615,49 @@ impl Inner {
         } else {
             this.pages.set_visible_child_name("changes");
         }
-        this.st.borrow_mut().files_mode = on;
+        let was_files = std::mem::replace(&mut this.st.borrow_mut().files_mode, on);
         Inner::sync_switches(this);
         Inner::update_bar(this);
+        if was_files && !on {
+            Inner::refresh_missing(this);
+        }
+    }
+
+    /// すべてのファイルから変更に戻った: その間に中身が届いたファイル（すべてのファイルで取ったもの）の差分を取り、
+    /// 帯・合計・見出しを出し直す（取りには行かない）。
+    fn refresh_missing(this: &Rc<Self>) {
+        let source = {
+            let st = this.st.borrow();
+            st.source
+                .clone()
+                .filter(|s| s.repo.is_some() && st.infos.iter().any(|i| i.missing))
+        };
+        let Some(source) = source else { return };
+        let s = source.clone();
+        let weak = Rc::downgrade(this);
+        glib::spawn_future_local(async move {
+            let refreshed = gio::spawn_blocking(move || {
+                let repo = s.repo.as_ref()?;
+                repo.refresh_stacked_missing(&mut s.lock()).ok()
+            })
+            .await
+            .ok()
+            .flatten()
+            .is_some();
+            let Some(this) = weak.upgrade() else { return };
+            {
+                let st = this.st.borrow();
+                if st.files_mode || !st.source.as_ref().is_some_and(|s| Arc::ptr_eq(s, &source)) {
+                    return;
+                }
+            }
+            if refreshed {
+                // 出し直しの終わりで、印・帯・合計も直す。
+                Inner::reshow(&this, true, Vec::new(), None);
+            } else {
+                Inner::update_missing(&this);
+            }
+        });
     }
 
     /// その時点のファイルを開く（見出しの ⋯・行の右クリック）。
