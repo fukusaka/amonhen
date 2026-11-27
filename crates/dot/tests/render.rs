@@ -1537,6 +1537,30 @@ fn dot_edges_between_the_same_two_nodes_are_drawn_apart() {
     assert!((middle(0) - middle(1)).abs() > 8.0, "{svg}");
 }
 
+/// 仮のノードを通る長い辺の束は、仮のノードの列を 1 本だけ持ち、真ん中の線から左右に同じだけ離れる（Graphviz の
+/// 絵と同じく、線の間は `nodesep` の 3/4 ほど。Gansner ほか 1993 §5.1.1）。
+#[test]
+fn dot_long_edges_between_the_same_two_nodes_share_one_path() {
+    for src in [
+        "digraph { a -> c -> b; a -> b; a -> b; a -> b }",
+        "digraph { a -> c -> b; a -> b; b -> a; a -> b }",
+    ] {
+        let svg = render(src).unwrap().svg;
+        let lines = edge_cubics(&svg);
+        let mut mids: Vec<f64> = lines[2..]
+            .iter()
+            .map(|c| {
+                let p = edge_samples(c);
+                p[p.len() / 2].0
+            })
+            .collect();
+        mids.sort_by(f64::total_cmp);
+        let (g0, g1) = (mids[1] - mids[0], mids[2] - mids[1]);
+        assert!((g0 - g1).abs() < 1.0, "{mids:?} {svg}");
+        assert!(g0 > 9.0 && g0 < 16.0, "{mids:?} {svg}");
+    }
+}
+
 /// ポートのない自分への辺は、ノードの脇に出る平たい輪（Graphviz の絵と同じ）: i 本目は脇から `nodesep` の i 倍まで
 /// 出て、いちばん外の輪の高さはノードの高さの約 1/3、内側ほど低い。ノードの中は通らない。横向きの配置では絵の上。
 #[test]

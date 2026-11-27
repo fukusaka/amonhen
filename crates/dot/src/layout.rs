@@ -38,6 +38,9 @@ pub struct Edge {
     pub head_off: f64,
     /// 見えない辺（配置には効くが、同じランクの弧の段や空きは取らない）。
     pub invisible: bool,
+    /// 同じ 2 つのノードを結ぶほかの辺と束ねてよい（ラベル・ポートのない見える辺）。束ねた長い辺は仮のノードの列を
+    /// 1 本だけ持ち、その仮のノードは束の幅だけ広い（Gansner ほか 1993 §5.1.1）。
+    pub bundle: bool,
 }
 
 #[derive(Clone, Debug)]
@@ -1257,6 +1260,17 @@ pub fn layout(
     let mut loops = vec![0usize; n];
     let mut flat_pairs: std::collections::HashMap<(usize, usize), usize> = Default::default();
     let mut flat_edges: Vec<(usize, usize)> = Vec::new();
+    // 区間の重み（Gansner ほか 1993 §4.2 の Ω: 本物どうし 1、片方が仮 2、仮どうし 8）
+    let omega = |upper: bool, lower: bool| match (upper, lower) {
+        (true, true) => 1.0,
+        (false, false) => 8.0,
+        _ => 2.0,
+    };
+    // 束ねた長い辺: 上下の端 → 列を作った辺、その区間、束の本数
+    let mut merged: std::collections::HashMap<(usize, usize), (usize, Vec<usize>, usize)> =
+        Default::default();
+    // 辺ごとの、仮のノードの列を共にする束の本数（1 なら束ねていない）
+    let mut bundled = vec![1usize; input_edges.len()];
     for (ei, e) in input_edges.iter().enumerate() {
         if e.tail >= n || e.head >= n {
             continue;
@@ -1305,6 +1319,21 @@ pub fn layout(
             Some(_) if rb - ra >= 2 => Some(ra + (rb - ra) / 2),
             _ => None,
         };
+        if e.bundle
+            && let Some((first, segs_of, count)) = merged.get_mut(&(a, b))
+        {
+            *count += 1;
+            for &s in segs_of.iter() {
+                let omega = omega(nodes[segs[s].upper].real, nodes[segs[s].lower].real);
+                segs[s].weight += e.weight.clamp(0.0, 1000.0) * omega;
+            }
+            let chain = chains[*first]
+                .as_ref()
+                .map(|c| c.0.clone())
+                .unwrap_or_default();
+            chains[ei] = Some((chain, rev, None));
+            continue;
+        }
         let mut chain = vec![a];
         let mut label_node = None;
         for r in ra + 1..rb {
@@ -1336,11 +1365,7 @@ pub fn layout(
         chain.push(b);
         for w in chain.windows(2) {
             let (u, v) = (w[0], w[1]);
-            let omega = match (nodes[u].real, nodes[v].real) {
-                (true, true) => 1.0,
-                (false, false) => 8.0,
-                _ => 2.0,
-            };
+            let omega = omega(nodes[u].real, nodes[v].real);
             let s = segs.len();
             segs.push(Segment {
                 upper: u,
@@ -1352,7 +1377,31 @@ pub fn layout(
             nodes[u].down.push(s);
             nodes[v].up.push(s);
         }
+        if e.bundle && rb - ra > 1 {
+            let first_seg = segs.len() - (chain.len() - 1);
+            merged.insert((a, b), (ei, (first_seg..segs.len()).collect(), 1));
+        }
         chains[ei] = Some((chain, rev, label_node));
+    }
+    // 束の仮のノードを束の幅だけ広げる（線の間は nodesep の 3/4）
+    for (first, _, count) in merged.values() {
+        if *count < 2 {
+            continue;
+        }
+        let half = (*count - 1) as f64 * 0.75 * opt.nodesep / 2.0;
+        let chain = &chains[*first].as_ref().unwrap().0;
+        for &v in &chain[1..chain.len() - 1] {
+            nodes[v].left += half;
+            nodes[v].right += half;
+        }
+        for (ei, c) in chains.iter().enumerate() {
+            if let Some(c) = c
+                && c.0.len() > 2
+                && c.0[1] == chain[1]
+            {
+                bundled[ei] = *count;
+            }
+        }
     }
 
     // クラスタのランクの幅と、間の空いたランクの詰め物
@@ -1823,6 +1872,12 @@ pub fn layout(
                 } else {
                     hi = xs[v] + 1.0;
                 }
+            }
+            // 束の真ん中の線は、束の幅の半分だけ内側を通る（左右の線が隣に寄らない）
+            if bundled[ei] > 1 {
+                let w = (bundled[ei] - 1) as f64 * 0.75 * opt.nodesep / 2.0;
+                lo = (lo + w).min(xs[v]);
+                hi = (hi - w).max(xs[v]);
             }
 
             // 関の高さ: 左右の隣の本物のノード（避ける箱と同じく 4 広げる）とラベルの分。どちらもなければ行の中心だけ
@@ -2723,6 +2778,7 @@ mod tests {
             tail_off: 0.0,
             head_off: 0.0,
             invisible: false,
+            bundle: false,
         }
     }
 

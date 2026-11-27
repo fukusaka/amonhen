@@ -755,6 +755,14 @@ pub fn render(
             tail_off: off(e.tail, tail_port),
             head_off: off(e.head, head_port),
             invisible: has(&styles(a.get("style")), "invis"),
+            bundle: !(free || ortho)
+                && e.tail != e.head
+                && size.is_none()
+                && !has(&styles(a.get("style")), "invis")
+                && [tail_port, head_port]
+                    .into_iter()
+                    .flatten()
+                    .all(|p| p.trim().is_empty()),
         });
         eviews.push(EdgeView {
             label,
@@ -1577,13 +1585,7 @@ pub fn render(
                         (Some((m, _)), _) => from_final(m),
                         _ => pts[pts.len() - 1],
                     };
-                    if bundle[ei].is_some() && pts.len() > 2 {
-                        let last = pts.len() - 1;
-                        pts[0] = start;
-                        pts[last] = end;
-                    } else {
-                        pts = spline::shortest(start, end, gates);
-                    }
+                    pts = spline::shortest(start, end, gates);
                     obstacles.avoid(&mut pts, &edge_skip(ei), false);
                 } else if !(straight || curved || right_angles.is_some()) {
                     // dot 以外は点の間を直線として避け、あとでなめらかにつなぐ
@@ -1621,6 +1623,19 @@ pub fn render(
                         }
                         curve::smooth(&lp)
                     }
+                } else if let Some(d) = bundle[ei].filter(|_| fitted) {
+                    // 束ねた長い辺（仮のノードの列を共にする）: 真ん中の線を引き、点を横にずらす。両端は半分だけずらして
+                    // ノードの外形で切る（Graphviz と同じく、束の矢印が 1 か所に重ならない）
+                    let mut path = spline::fit(&lp, gates);
+                    let last = path.len() - 1;
+                    for (i, seg) in path.iter_mut().enumerate() {
+                        let Cubic(p, c1, c2, q) = seg;
+                        c1.0 += d;
+                        c2.0 += d;
+                        p.0 += if i > 0 { d } else { d / 2.0 };
+                        q.0 += if i < last { d } else { d / 2.0 };
+                    }
+                    path
                 } else if fitted {
                     spline::fit(&lp, gates)
                 } else {
