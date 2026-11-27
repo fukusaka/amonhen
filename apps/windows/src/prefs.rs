@@ -18,6 +18,10 @@ pub const USE_FSMONITOR: &str = "useFSMonitor";
 pub const AUTO_FETCH_MINUTES: &str = "autoFetchMinutes";
 /// Working Copy の一覧の見せ方（`list`・`tree`・`flat`）。
 pub const WORKING_COPY_LAYOUT: &str = "workingCopyLayout";
+/// コミットの入力を件名の 1 行に畳んでいるか（macOS 版・GTK4 版と同じ鍵）。
+pub const WORKING_COPY_COMMIT_COLLAPSED: &str = "workingCopyCommitCollapsed";
+/// 一覧を Staged・Unstaged の節に分けるか（macOS 版・GTK4 版と同じ鍵）。
+pub const WORKING_COPY_SECTIONS: &str = "workingCopySections";
 /// File History に merge コミットも出す（既定は出さない）。
 pub const FILE_HISTORY_MERGES: &str = "fileHistoryMerges";
 /// 開いたリポジトリを Repositories のブックマークに入れる（既定は入れる。GTK4 版・macOS 版と同じ鍵）。

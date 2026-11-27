@@ -5,6 +5,8 @@
 
 use amonhen_core::StatusSnapshot;
 use amonhen_model::{StatusEntry, StatusKind, tr};
+
+use crate::data::WorkingSide;
 use windows_reactor::*;
 
 /// 画面の中身を作るのに要るもの。
@@ -62,8 +64,13 @@ impl Layout {
     }
 }
 
-/// 一覧の 1 行: ディレクトリ（木のときだけ）か、ファイル。
+/// 一覧の 1 行: 節の見出し（節分けのときだけ）、ディレクトリ（木のときだけ）か、ファイル。
 pub enum Row<'a> {
+    /// 節の見出し（Staged・Unstaged、コンフリクトは None）と、その節のファイルのパス。
+    Section {
+        side: Option<WorkingSide>,
+        paths: Vec<String>,
+    },
     Dir {
         name: String,
         path: String,
@@ -78,7 +85,49 @@ pub enum Row<'a> {
     File {
         entry: &'a StatusEntry,
         depth: usize,
+        /// 節分けのときの節（Staged・Unstaged）。
+        section: Option<WorkingSide>,
     },
+}
+
+/// 一覧の行。`sections` なら git status のように、コンフリクト・Staged・Unstaged の節に分ける（一部だけ stage
+/// したファイルは両方。macOS 版・GTK4 版と同じ）。
+pub fn list_rows<'a>(
+    entries: &[&'a StatusEntry],
+    layout: Layout,
+    collapsed: &std::collections::HashSet<String>,
+    sections: bool,
+) -> Vec<Row<'a>> {
+    if !sections {
+        return rows(entries, layout, collapsed);
+    }
+    let mut out = Vec::new();
+    for side in [None, Some(WorkingSide::Staged), Some(WorkingSide::Unstaged)] {
+        let part: Vec<&'a StatusEntry> = entries
+            .iter()
+            .copied()
+            .filter(|e| match side {
+                None => e.kind == StatusKind::Unmerged,
+                Some(_) if e.kind == StatusKind::Unmerged => false,
+                Some(WorkingSide::Staged) => e.is_staged(),
+                Some(_) => e.is_unstaged(),
+            })
+            .collect();
+        if side.is_none() && part.is_empty() {
+            continue;
+        }
+        out.push(Row::Section {
+            side,
+            paths: part.iter().map(|e| e.path.clone()).collect(),
+        });
+        for mut row in rows(&part, layout, collapsed) {
+            if let Row::File { section, .. } = &mut row {
+                *section = side;
+            }
+            out.push(row);
+        }
+    }
+    out
 }
 
 /// 一覧の行（`entries` は絞り込んだもの）。木では、ディレクトリの行と、その中のファイル（コンフリクトを先に）。
@@ -91,7 +140,11 @@ pub fn rows<'a>(
     if layout != Layout::Tree {
         return entries
             .iter()
-            .map(|e| Row::File { entry: e, depth: 0 })
+            .map(|e| Row::File {
+                entry: e,
+                depth: 0,
+                section: None,
+            })
             .collect();
     }
     #[derive(Default)]
@@ -155,7 +208,11 @@ pub fn rows<'a>(
             if e.kind != StatusKind::Unmerged {
                 inside_all.push(e);
             }
-            out.push(Row::File { entry: e, depth });
+            out.push(Row::File {
+                entry: e,
+                depth,
+                section: None,
+            });
         }
         inside_all
     }
@@ -166,6 +223,7 @@ pub fn rows<'a>(
     out.retain_mut(|row| {
         let depth = match row {
             Row::Dir { depth, .. } | Row::File { depth, .. } => *depth,
+            Row::Section { .. } => return true,
         };
         if folded_at.is_some_and(|d| depth > d) {
             return false;
@@ -372,10 +430,8 @@ pub struct Input<'a> {
     pub stats: &'a std::collections::HashMap<String, (Option<u64>, Option<u64>)>,
     /// 木で畳んでいるディレクトリ。
     pub collapsed: &'a std::collections::HashSet<String>,
-    /// 一覧の見せ方と、切り替えのボタンを押した回数（押すたびにボタンを作り直し、押したままのボタンを
-    /// もう一度押しても外れないようにする）。
+    /// 一覧の見せ方。
     pub layout: Layout,
-    pub layout_clicks: u64,
     /// 一覧を包む Grid（Space・Delete のキーを付ける）。
     pub list_host: &'a ElementRef<Grid>,
     /// 最近のコミットの（メッセージ, 作者, メール）。新しい順。
@@ -394,7 +450,15 @@ pub struct Input<'a> {
     pub hovered: Option<&'a str>,
     /// `#` を打った直後の、開いている Issue・PR の候補（番号とタイトル。出していなければ空）。
     pub issues: &'a [(u64, String)],
+    /// コミットの入力を件名の 1 行に畳んでいるか（macOS 版・GTK4 版と同じ）。
+    pub commit_collapsed: bool,
+    /// 一覧を Staged・Unstaged の節に分けるか、と節ごとの行数（Staged, Unstaged。パスごと。読めていなければ None）。
+    pub sections: bool,
+    pub split_stats: Option<&'a (LineStats, LineStats)>,
 }
+
+/// パスごとの行数（追加, 削除。バイナリは None）。
+pub type LineStats = std::collections::HashMap<String, (Option<u64>, Option<u64>)>;
 
 /// 画面が受ける操作。
 pub struct Callbacks<'a> {
@@ -410,7 +474,11 @@ pub struct Callbacks<'a> {
     pub selected: Callback<Option<usize>>,
     pub filter: Callback<String>,
     /// 一覧の見せ方を替える。
-    pub layout: Box<dyn Fn(Layout) -> Callback<bool> + 'a>,
+    pub layout: Box<dyn Fn(Layout) -> Callback<()> + 'a>,
+    /// 節分けを切り替える。
+    pub sections: Callback<()>,
+    /// 節の見出しの Stage All（true）・Unstage All（false）: その節のファイル。
+    pub section_all: Box<dyn Fn(Vec<String>, bool) -> Callback<()> + 'a>,
     /// ディレクトリの中のファイルをまとめて含める（true）・外す（false）。
     pub stage_all: Box<dyn Fn(Vec<String>, bool) -> Callback<bool> + 'a>,
     /// 最近のメッセージ・「+」のメニューで選んだ項目のキー。
@@ -425,6 +493,15 @@ pub struct Callbacks<'a> {
     /// `#` の候補のメニュー（項目のキーは `issue:番号`）と、それを持つ見えない部品（`#` を打った所に開く）。
     pub issue_menu: Callback<String>,
     pub issue_host: &'a ElementRef<Grid>,
+    /// コミットの入力を件名の 1 行に畳む・開く。
+    pub collapse: Callback<()>,
+}
+
+/// Working Copy の 2 つの部分: まん中の列のファイルの一覧と、右の列の上のコミットの入力（macOS 版・GTK4 版と
+/// 同じく、一覧は縦いっぱい、コミットの入力は差分の上）。
+pub struct Parts {
+    pub list: View,
+    pub message: View,
 }
 
 /// 一覧の 1 行の印（M・A・D・R・?・U）。作業ツリー側に変更があればそちら、なければ index 側。
@@ -449,7 +526,19 @@ pub fn included(entry: &StatusEntry) -> bool {
     entry.is_staged() && !entry.is_unstaged()
 }
 
-pub fn view(input: Input, callbacks: Callbacks) -> View {
+/// 一覧の行の高さ（WinUI の一覧の行の最小は 40 で、macOS 版の 1 行のほぼ倍。詰める）。
+const ROW_HEIGHT: f64 = 26.0;
+
+/// 詰めたチェックボックス（WinUI のチェックボックスは最小の幅 120・高さ 32 で、名前が右へ押し出され、行も
+/// 高くなる。チェックの四角だけの大きさに）。
+fn compact(check: CheckBox) -> CheckBox {
+    check
+        .min_width(0.0)
+        .min_height(0.0)
+        .margin(Thickness::new(0.0, 0.0, 6.0, 0.0))
+}
+
+pub fn view(input: Input, callbacks: Callbacks) -> Parts {
     let all: &[StatusEntry] = input.status.map_or(&[], |s| &s.status.entries);
     let staged = all.iter().filter(|e| e.is_staged()).count();
     let entries = visible(all, input.filter);
@@ -483,34 +572,27 @@ pub fn view(input: Input, callbacks: Callbacks) -> View {
     .tooltip(tr!(
         "Length of the summary (yellow over 50, orange over 72)"
     ));
-    let summary = Grid::new()
-        .columns([
-            GridLength::Star(1.0),
-            GridLength::Auto,
-            GridLength::Auto,
-            GridLength::Auto,
-        ])
-        .children((
-            TextBox::new()
-                .element_ref(callbacks.summary_box)
-                .text(input.summary)
-                .placeholder_text("Summary")
-                .grid_column(0)
-                .on_text_changed(callbacks.summary),
-            count,
-            menu_button(
-                "🕘",
-                tr!("Recent commit messages"),
-                recent_menu(input.recent),
-                2,
-            ),
-            menu_button(
-                "+",
-                tr!("Insert a Conventional Commits type, Co-authored-by or Signed-off-by"),
-                insert_menu(input.recent),
-                3,
-            ),
-        ));
+    // 畳む・開くボタン（件名の左。macOS 版・GTK4 版と同じ）。
+    let collapsed = input.commit_collapsed;
+    let collapse = Button::new()
+        .style(ButtonStyle::Subtle)
+        .grid_column(0)
+        .margin(Thickness::new(0.0, 0.0, 4.0, 0.0))
+        .vertical_alignment(VerticalAlignment::Center)
+        .on_click(callbacks.collapse)
+        .content(TextBlock::new().text(if collapsed { "▸" } else { "▾" }))
+        .tooltip(if collapsed {
+            tr!("Show the description and the commit options")
+        } else {
+            tr!("Collapse to the summary line")
+        });
+    let summary_box = TextBox::new()
+        .element_ref(callbacks.summary_box)
+        .text(input.summary)
+        .placeholder_text("Summary")
+        .grid_column(1)
+        .on_text_changed(callbacks.summary);
+    let count = Border::new().grid_column(2).content(count);
     // `#` を打った直後の候補（macOS 版・GTK4 版と同じく、`#` の下に開くメニュー。開くのは app.rs が、欄の字の
     // 矩形の所に）。選ぶと `#番号` を入れる。
     let items: Vec<MenuItem> = input
@@ -528,21 +610,6 @@ pub fn view(input: Input, callbacks: Callbacks) -> View {
         .horizontal_alignment(HorizontalAlignment::Left)
         .vertical_alignment(VerticalAlignment::Top)
         .menu(Menu::new(items, callbacks.issue_menu.clone()));
-    let message = StackPanel::new().spacing(6.0).grid_row(1).children((
-        summary,
-        issues,
-        Grid::new().children((
-            TextBox::new()
-                .element_ref(callbacks.description_box)
-                .text(input.description)
-                .placeholder_text(tr!("Description (optional)"))
-                .accepts_return(true)
-                .text_wrapping(TextWrapping::Wrap)
-                .height(80.0)
-                .on_text_changed(callbacks.description),
-            description_guide(),
-        )),
-    ));
     // Amend なら含めるファイルがなくても押せる（メッセージだけ直す。macOS 版と同じ）。
     // 見出しのチェック: すべて（コンフリクト以外）を含める・外す。一部だけなら薄く（GTK4 版の一覧の見出し）。
     let checkable: Vec<&StatusEntry> = all
@@ -551,7 +618,7 @@ pub fn view(input: Input, callbacks: Callbacks) -> View {
         .collect();
     let all_in = !checkable.is_empty() && checkable.iter().all(|e| included(e));
     let some_in = checkable.iter().any(|e| e.is_staged());
-    let header_check = CheckBox::new()
+    let header_check = compact(CheckBox::new())
         .is_checked(some_in)
         .is_enabled(!checkable.is_empty())
         .on_is_checked_changed((callbacks.stage_all)(
@@ -595,58 +662,116 @@ pub fn view(input: Input, callbacks: Callbacks) -> View {
         (false, 1) => "Commit 1 File".to_owned(),
         (false, n) => format!("Commit {n} Files"),
     };
-    let commit = Grid::new()
-        .columns([
-            GridLength::Star(1.0),
-            GridLength::Auto,
-            GridLength::Auto,
-            GridLength::Auto,
-        ])
-        .margin(Thickness::new(0.0, 8.0, 0.0, 8.0))
-        .grid_row(2)
-        .children((
-            StackPanel::new()
-                .orientation(Orientation::Horizontal)
-                .grid_column(0)
-                .children((
-                    header_check,
-                    TextBlock::new()
-                        .text(format!("{staged} / {}", all.len()))
-                        .vertical_alignment(VerticalAlignment::Center)
-                        .tooltip(tr!("Files in the next commit / changed files")),
-                )),
-            CheckBox::new()
-                .is_checked(input.amend)
-                .on_is_checked_changed(callbacks.amend)
-                .grid_column(1)
-                .content(TextBlock::new().text("Amend")),
-            crate::tip::holder(
-                Button::new()
-                    .is_enabled(can_commit)
-                    .on_click(callbacks.commit)
-                    .content(TextBlock::new().text(label)),
-                commit_tip,
-                2,
-            ),
+    // Commit と ▾（畳んでいれば件名の行の右端、開いていれば Amend の行の右端）。
+    let commit_button = |column: i32| -> View {
+        crate::tip::holder(
             Button::new()
-                .margin(Thickness::new(2.0, 0.0, 0.0, 0.0))
-                .grid_column(3)
-                .content(TextBlock::new().text("▾"))
-                .tooltip(tr!("Commit and Push (Ctrl+Shift+Return), Amend"))
-                .menu(Menu::new(
-                    commit_menu(input.recent, can_commit),
-                    callbacks.message_menu.clone(),
+                .is_enabled(can_commit)
+                .on_click(callbacks.commit.clone())
+                .content(TextBlock::new().text(label.clone())),
+            commit_tip.clone(),
+            column,
+        )
+    };
+    let commit_more = |column: i32| -> View {
+        Button::new()
+            .margin(Thickness::new(2.0, 0.0, 0.0, 0.0))
+            .grid_column(column)
+            .content(TextBlock::new().text("▾"))
+            .tooltip(tr!("Commit and Push (Ctrl+Shift+Return), Amend"))
+            .menu(Menu::new(
+                commit_menu(input.recent, can_commit),
+                callbacks.message_menu.clone(),
+            ))
+    };
+    let summary: View = if collapsed {
+        Grid::new()
+            .columns([
+                GridLength::Auto,
+                GridLength::Star(1.0),
+                GridLength::Auto,
+                GridLength::Auto,
+                GridLength::Auto,
+            ])
+            .children((
+                collapse,
+                summary_box,
+                count,
+                View::fragment((
+                    Border::new()
+                        .grid_column(3)
+                        .margin(Thickness::new(6.0, 0.0, 0.0, 0.0))
+                        .content(commit_button(0)),
+                    commit_more(4),
                 )),
+            ))
+    } else {
+        Grid::new()
+            .columns([
+                GridLength::Auto,
+                GridLength::Star(1.0),
+                GridLength::Auto,
+                GridLength::Auto,
+                GridLength::Auto,
+            ])
+            .children((
+                collapse,
+                summary_box,
+                count,
+                menu_button(
+                    "🕘",
+                    tr!("Recent commit messages"),
+                    recent_menu(input.recent),
+                    3,
+                ),
+                menu_button(
+                    "+",
+                    tr!("Insert a Conventional Commits type, Co-authored-by or Signed-off-by"),
+                    insert_menu(input.recent),
+                    4,
+                ),
+            ))
+    };
+    let commit: View = if collapsed {
+        View::empty()
+    } else {
+        Grid::new()
+            .columns([
+                GridLength::Star(1.0),
+                GridLength::Auto,
+                GridLength::Auto,
+                GridLength::Auto,
+            ])
+            .margin(Thickness::new(0.0, 6.0, 0.0, 0.0))
+            .grid_row(2)
+            .children((
+                CheckBox::new()
+                    .is_checked(input.amend)
+                    .on_is_checked_changed(callbacks.amend)
+                    .grid_column(1)
+                    .content(TextBlock::new().text("Amend")),
+                commit_button(2),
+                commit_more(3),
+            ))
+    };
+    // 一覧の上の行: すべてを含めるチェックと「含めた数 / 変更の数」（macOS 版の一覧の上の行）。
+    let include = StackPanel::new()
+        .orientation(Orientation::Horizontal)
+        .grid_column(0)
+        .vertical_alignment(VerticalAlignment::Center)
+        .children((
+            header_check,
+            TextBlock::new()
+                .text(format!("{staged} / {}", all.len()))
+                .vertical_alignment(VerticalAlignment::Center)
+                .tooltip(tr!("Files in the next commit / changed files")),
         ));
     // 絞り込みと、一覧の見せ方の切り替え（GTK4 版の一覧の上の 3 つのボタン）。
-    let layout_button = |layout: Layout, title: &str, tip: String, column: i32| -> View {
-        ToggleButton::new()
-            .is_checked(input.layout == layout)
-            .on_is_checked_changed((callbacks.layout)(layout))
-            .margin(Thickness::new(4.0, 0.0, 0.0, 0.0))
-            .grid_column(column)
-            .content(TextBlock::new().text(title))
-            .tooltip(tip)
+    let layout_button = |layout: Layout, title: &str, tip: String| -> View {
+        crate::small::toggle(title, input.layout == layout, |b| {
+            b.on_click((callbacks.layout)(layout))
+        })
+        .tooltip(tip)
     };
     let sparse_note: View = match input.sparse {
         Some(note) => TextBlock::new()
@@ -658,7 +783,13 @@ pub fn view(input: Input, callbacks: Callbacks) -> View {
             .into(),
         None => View::empty(),
     };
-    let filter_row = Grid::new()
+    let filter_row = TextBox::new()
+        .text(input.filter)
+        .placeholder_text(tr!("Filter"))
+        .margin(Thickness::new(0.0, 0.0, 0.0, 6.0))
+        .on_text_changed(callbacks.filter);
+    // 一覧の上の行: 含めるチェックと数、右端に見せ方の切り替え（macOS 版の一覧の上の行）。
+    let header = Grid::new()
         .columns([
             GridLength::Star(1.0),
             GridLength::Auto,
@@ -666,35 +797,85 @@ pub fn view(input: Input, callbacks: Callbacks) -> View {
             GridLength::Auto,
         ])
         .margin(Thickness::new(0.0, 0.0, 0.0, 6.0))
+        .grid_row(0)
         .children((
-            TextBox::new()
-                .text(input.filter)
-                .placeholder_text(tr!("Filter"))
-                .grid_column(0)
-                .on_text_changed(callbacks.filter),
-            View::keyed_fragment([(
-                input.layout_clicks,
-                View::fragment((
-                    layout_button(Layout::List, "☰", tr!("Show files as a list of paths"), 1),
-                    layout_button(Layout::Tree, "🗀", tr!("Show files as a directory tree"), 2),
+            include,
+            // 節分けの切り替えと、見せ方の切り替え（macOS 版の一覧の上の行の右端）。
+            StackPanel::new()
+                .grid_column(1)
+                .orientation(Orientation::Horizontal)
+                .spacing(2.0)
+                .vertical_alignment(VerticalAlignment::Center)
+                .children((
+                    crate::small::toggle("⊟", input.sections, |b| {
+                        b.margin(Thickness::new(0.0, 0.0, 6.0, 0.0))
+                            .on_click(callbacks.sections.clone())
+                    })
+                    .tooltip(tr!(
+                            "Split the list into Staged and Unstaged, like git status (a partly staged file is in both)"
+                        )),
+                    layout_button(Layout::List, "☰", tr!("Show files as a list of paths")),
+                    layout_button(Layout::Tree, "🗀", tr!("Show files as a directory tree")),
                     layout_button(
                         Layout::Flat,
                         "🗎",
                         tr!("Show the file name first and the parent directory dimmed"),
-                        3,
                     ),
                 )),
-            )]),
         ));
     // sparse checkout の注記は、絞り込みの欄の上。
     let filter = StackPanel::new()
-        .grid_row(3)
+        .grid_row(1)
         .children((sparse_note, filter_row));
     let indent = |depth: usize| Thickness::new(18.0 * depth as f64, 0.0, 0.0, 0.0);
-    let rows = rows(&entries, input.layout, input.collapsed)
+    let rows = list_rows(&entries, input.layout, input.collapsed, input.sections)
         .into_iter()
         .map(|row| {
-            let (entry, depth) = match row {
+            let (entry, depth, section) = match row {
+                // 節の見出し: 名前と数、右端に Stage All・Unstage All（GTK4 版と同じ）。
+                Row::Section { side, paths } => {
+                    let name = match side {
+                        Some(WorkingSide::Staged) => "Staged",
+                        Some(_) => "Unstaged",
+                        None => "Unmerged",
+                    };
+                    let action: View = match side {
+                        Some(side) if !paths.is_empty() => {
+                            let stage = side != WorkingSide::Staged;
+                            crate::small::button(
+                                if stage { "Stage All" } else { "Unstage All" },
+                                |b| {
+                                    b.grid_column(2)
+                                        .on_click((callbacks.section_all)(paths.clone(), stage))
+                                },
+                            )
+                        }
+                        _ => View::empty(),
+                    };
+                    let row = Grid::new()
+                        .columns([GridLength::Auto, GridLength::Star(1.0), GridLength::Auto])
+                        .children((
+                            TextBlock::new()
+                                .text(name)
+                                .font_weight(FontWeight::SEMI_BOLD)
+                                .vertical_alignment(VerticalAlignment::Center),
+                            TextBlock::new()
+                                .text(paths.len().to_string())
+                                .opacity(0.6)
+                                .margin(Thickness::new(8.0, 0.0, 0.0, 0.0))
+                                .vertical_alignment(VerticalAlignment::Center)
+                                .grid_column(1),
+                            action,
+                        ));
+                    let key = format!("section:{side:?}");
+                    return (
+                        key.clone(),
+                        ListViewItem::new()
+                            .tag(key)
+                            .min_height(ROW_HEIGHT)
+                            .content(row),
+                    );
+                }
                 Row::Dir {
                     name,
                     path,
@@ -705,7 +886,7 @@ pub fn view(input: Input, callbacks: Callbacks) -> View {
                     some,
                 } => {
                     // 一部だけ含めているディレクトリは ▣（どちらでもない状態。状態が変わるたびに作り直す）。
-                    let check = CheckBox::new()
+                    let check = compact(CheckBox::new())
                         .is_checked(some)
                         .is_enabled(!files.is_empty())
                         .on_is_checked_changed((callbacks.stage_all)(files, !all));
@@ -732,9 +913,19 @@ pub fn view(input: Input, callbacks: Callbacks) -> View {
                                 .grid_column(1),
                         ));
                     let key = format!("dir:{path}");
-                    return (key.clone(), ListViewItem::new().tag(key).content(row));
+                    return (
+                        key.clone(),
+                        ListViewItem::new()
+                            .tag(key)
+                            .min_height(ROW_HEIGHT)
+                            .content(row),
+                    );
                 }
-                Row::File { entry, depth } => (entry, depth),
+                Row::File {
+                    entry,
+                    depth,
+                    section,
+                } => (entry, depth, section),
             };
             let (parent, file) = entry.path.rsplit_once('/').unwrap_or(("", &entry.path));
             let shown = match input.layout {
@@ -748,40 +939,43 @@ pub fn view(input: Input, callbacks: Callbacks) -> View {
                 _ => format!("{}  {shown}", mark(entry)),
             };
             // 行数（+ 追加 − 削除。0 の側は出さない。行数のないバイナリは薄く「bin」。GTK4 版の `fill_counts`）。
-            let counts =
-                input
-                    .stats
-                    .get(&entry.path)
-                    .map_or_else(View::empty, |&(added, removed)| {
-                        let count =
-                            |n: Option<u64>, mark: &str, color: Color, column: i32| -> View {
-                                match n.filter(|&n| n > 0) {
-                                    Some(n) => TextBlock::new()
-                                        .text(format!("{mark}{n}"))
-                                        .font_size(11.0)
-                                        .foreground(Brush::Solid(color))
-                                        .vertical_alignment(VerticalAlignment::Center)
-                                        .margin(Thickness::new(6.0, 0.0, 0.0, 0.0))
-                                        .grid_column(column)
-                                        .into(),
-                                    None => View::empty(),
-                                }
-                            };
-                        if added.is_none() && removed.is_none() {
-                            return TextBlock::new()
-                                .text("bin")
+            // 節の行は、その節の側の行数（Staged なら index の変更、Unstaged なら作業ツリーの変更）。
+            let stats = match (section, input.split_stats) {
+                (Some(WorkingSide::Staged), Some((staged, _))) => staged,
+                (Some(_), Some((_, unstaged))) => unstaged,
+                _ => input.stats,
+            };
+            let counts = stats
+                .get(&entry.path)
+                .map_or_else(View::empty, |&(added, removed)| {
+                    let count = |n: Option<u64>, mark: &str, color: Color, column: i32| -> View {
+                        match n.filter(|&n| n > 0) {
+                            Some(n) => TextBlock::new()
+                                .text(format!("{mark}{n}"))
                                 .font_size(11.0)
-                                .opacity(0.5)
+                                .foreground(Brush::Solid(color))
                                 .vertical_alignment(VerticalAlignment::Center)
                                 .margin(Thickness::new(6.0, 0.0, 0.0, 0.0))
-                                .grid_column(2)
-                                .into();
+                                .grid_column(column)
+                                .into(),
+                            None => View::empty(),
                         }
-                        View::fragment((
-                            count(added, "+", Color::rgb(0x1a, 0x7f, 0x37), 2),
-                            count(removed, "−", Color::rgb(0xcf, 0x22, 0x2e), 3),
-                        ))
-                    });
+                    };
+                    if added.is_none() && removed.is_none() {
+                        return TextBlock::new()
+                            .text("bin")
+                            .font_size(11.0)
+                            .opacity(0.5)
+                            .vertical_alignment(VerticalAlignment::Center)
+                            .margin(Thickness::new(6.0, 0.0, 0.0, 0.0))
+                            .grid_column(2)
+                            .into();
+                    }
+                    View::fragment((
+                        count(added, "+", Color::rgb(0x1a, 0x7f, 0x37), 2),
+                        count(removed, "−", Color::rgb(0xcf, 0x22, 0x2e), 3),
+                    ))
+                });
             // File Name: 親のディレクトリを、名前の後ろに薄く。
             let name: View = if input.layout == Layout::Flat && !parent.is_empty() {
                 StackPanel::new()
@@ -807,14 +1001,14 @@ pub fn view(input: Input, callbacks: Callbacks) -> View {
             // 変更を捨てるボタン（マウスを載せたときだけ。GTK4 版・macOS 版の行の ↶）。
             let can_discard = entry.kind != StatusKind::Unmerged && entry.is_unstaged();
             let discard: View = if can_discard && input.hovered == Some(entry.path.as_str()) {
-                Button::new()
-                    .grid_column(4)
-                    .margin(Thickness::new(6.0, 0.0, 0.0, 0.0))
-                    .on_click((callbacks.discard)(entry.path.clone()))
-                    .content(TextBlock::new().text("↶"))
-                    .tooltip(tr!(
-                        "Discard the working tree changes (return to the content of the index)"
-                    ))
+                crate::small::button("↶", |b| {
+                    b.grid_column(4)
+                        .margin(Thickness::new(6.0, 0.0, 0.0, 0.0))
+                        .on_click((callbacks.discard)(entry.path.clone()))
+                })
+                .tooltip(tr!(
+                    "Discard the working tree changes (return to the content of the index)"
+                ))
             } else {
                 View::empty()
             };
@@ -828,8 +1022,13 @@ pub fn view(input: Input, callbacks: Callbacks) -> View {
                 ])
                 .margin(indent(depth))
                 .children((
-                    CheckBox::new()
-                        .is_checked(included(entry))
+                    // 節の行のチェックは、その節にいるか（Staged は付いていて外すと unstage、Unstaged は付いて
+                    // いなくて付けると stage。GTK4 版と同じ）。
+                    compact(CheckBox::new())
+                        .is_checked(match section {
+                            Some(side) => side == WorkingSide::Staged,
+                            None => included(entry),
+                        })
                         .on_is_checked_changed((callbacks.stage)(entry.path.clone()))
                         .grid_column(0),
                     name,
@@ -886,9 +1085,17 @@ pub fn view(input: Input, callbacks: Callbacks) -> View {
             } else {
                 row.menu(Menu::new(items, (callbacks.file_menu)(entry.path.clone())))
             };
+            // 一部だけ stage したファイルは両方の節に出るので、鍵に節を足す。
+            let key = match section {
+                Some(side) => format!("{side:?}:{}", entry.path),
+                None => entry.path.clone(),
+            };
             (
-                entry.path.clone(),
-                ListViewItem::new().tag(entry.path.clone()).content(row),
+                key.clone(),
+                ListViewItem::new()
+                    .tag(key)
+                    .min_height(ROW_HEIGHT)
+                    .content(row),
             )
         });
     let list = ListView::new()
@@ -900,26 +1107,49 @@ pub fn view(input: Input, callbacks: Callbacks) -> View {
     let generation = input.status.map_or(0, |s| s.generation);
     let list = Grid::new()
         .element_ref(input.list_host)
-        .grid_row(4)
+        .grid_row(2)
         .children((View::keyed_fragment([(
             format!(
-                "{generation}:{}:{}:{}",
+                "{generation}:{}:{}:{}:{}",
                 input.filter,
                 input.layout.name(),
-                input.collapsed.len()
+                input.collapsed.len(),
+                input.sections
             ),
             list,
         )]),));
-    Grid::new()
-        .rows([
-            GridLength::Auto,
-            GridLength::Auto,
-            GridLength::Auto,
-            GridLength::Auto,
-            GridLength::Star(1.0),
-        ])
+    let list = Grid::new()
+        .rows([GridLength::Auto, GridLength::Auto, GridLength::Star(1.0)])
         .margin(Thickness::new(14.0, 10.0, 14.0, 0.0))
-        .children((message, commit, filter, list))
+        .children((header, filter, list));
+    // 右の列の上: 件名、本文（畳んでいれば出さない）、Amend と Commit の行。
+    let description: View = if collapsed {
+        View::empty()
+    } else {
+        Grid::new()
+            .grid_row(1)
+            .margin(Thickness::new(0.0, 6.0, 0.0, 0.0))
+            .children((
+                TextBox::new()
+                    .element_ref(callbacks.description_box)
+                    .text(input.description)
+                    .placeholder_text(tr!("Description (optional)"))
+                    .accepts_return(true)
+                    .text_wrapping(TextWrapping::Wrap)
+                    .height(80.0)
+                    .on_text_changed(callbacks.description),
+                description_guide(),
+            ))
+    };
+    let message = Grid::new()
+        .rows([GridLength::Auto, GridLength::Auto, GridLength::Auto])
+        .margin(Thickness::new(10.0, 8.0, 10.0, 6.0))
+        .children((
+            StackPanel::new().grid_row(0).children((summary, issues)),
+            description,
+            commit,
+        ));
+    Parts { list, message }
 }
 
 /// 途中の操作の帯（窓の下のステータスバーの上。macOS 版・GTK4 版のステータスバーの行と同じく、どの画面でも

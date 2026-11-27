@@ -48,6 +48,7 @@ mod session;
 mod settingsview;
 mod sidebar;
 mod signature;
+mod small;
 mod sshhosts;
 mod stashes;
 mod tabs;
