@@ -3,7 +3,7 @@ import { readFile } from 'node:fs/promises';
 import { homedir } from 'node:os';
 import { basename } from 'node:path';
 import * as vscode from 'vscode';
-import { daemonLanguage, type DaemonClient } from '../daemon/client.ts';
+import { daemonLanguage, type DaemonClient, type Reply } from '../daemon/client.ts';
 import { daemonFor, renderPath } from '../daemon/connection.ts';
 import { RenderSession } from '../daemon/render.ts';
 import { applySyntax, commitFiles, splitCommitDiff, textSyntaxByLine } from '../daemon/diff.ts';
@@ -220,6 +220,13 @@ export class HistoryController implements vscode.Disposable {
   private readonly diffs = new Map<string, FileDiff>();
   /** Webview に送ったコミットの差分（`<oid か選択の key>:<path>`）。構文の色が後から届いたら、これだけ送り直す */
   private readonly sentDiffs = new Set<string>();
+  /**
+   * partial clone で中身が手元になく、差分を取っていないファイル（`<oid か選択の key>` → 取る中身の ID とファイルの
+   * パス）。読む画面は勝手に取りに行かず、「取ってくる」の帯で押されたときだけ取る（覚えない。次のコミットではまた聞く）
+   */
+  private readonly missing = new Map<string, { ids: string[]; paths: Set<string> }>();
+  /** partial clone か（リポジトリの形を読むまでは undefined。「すべてのファイル」でファイルを開く前に確かめる） */
+  private partialClone: boolean | undefined;
   /** 行の署名の印（null は署名なし）。コミットは変わらないので、読み直しても覚えておく */
   private readonly signatures = new Map<string, SignatureView | null>();
   /** 詳細の残り（署名・子のコミット）。子は増えるので、History を読み直したら捨てる */
@@ -317,6 +324,8 @@ export class HistoryController implements vscode.Disposable {
     this.repo = repo;
     this.repoListener = repo?.onDidChange((changed) => this.onRepositoryChange(changed));
     this.details.clear();
+    this.missing.clear();
+    this.partialClone = undefined;
     void this.reset();
   }
 
@@ -480,6 +489,12 @@ export class HistoryController implements vscode.Disposable {
       case 'toggleFold':
         await this.toggleFold(message.oid).catch(showError);
         break;
+      case 'fetchContents':
+        await this.fetchContents(message.oid, message.path);
+        break;
+      case 'reloadDiff':
+        await this.reloadDiff(message.oid).catch(showError);
+        break;
       case 'fetchForm': {
         const command = { more: 'amonhen.fetchMoreHistory', all: 'amonhen.fetchAllHistory', contents: 'amonhen.fetchAllContents' };
         await vscode.commands.executeCommand(command[message.what]);
@@ -510,6 +525,7 @@ export class HistoryController implements vscode.Disposable {
       const index = new Map<number, DiffLine>();
       current.diffs = splitCommitDiff(diff, index);
       this.rememberOrder(current.key, diff.json['files']);
+      this.rememberMissing(current.key, diff);
       void this.loadSyntax(daemon.client, diff.json['view'], index, current.key, current.diffs);
       const selection = diff.json['selection'] as { kind: SelectionView['kind'] };
       const commits = readRows(listed).map((r) => ({ row: r.row, oid: r.oid, subject: r.subject, author: r.author }));
@@ -629,6 +645,7 @@ export class HistoryController implements vscode.Disposable {
     const reply = (await daemon.client.call({ op: 'run', command: { op: 'repositoryForm' } })).json;
     if (generation !== this.generation || reply['ok'] !== true) return;
     const partial = (reply['info'] as { partial?: { remote: string; filter: string } | null } | undefined)?.partial;
+    this.partialClone = !!partial;
     // 一致だけの History（検索）のときは、帯も境目も出さない
     const shallow = daemon.boundary !== undefined && !this.base;
     this.post({ type: 'form', shallow, boundary: shallow ? daemon.boundary! : [], ...(partial ? { partial } : {}) });
@@ -810,6 +827,7 @@ export class HistoryController implements vscode.Disposable {
     const index = new Map<number, DiffLine>();
     const split = splitCommitDiff(diff, index);
     this.rememberOrder(oid, diff.json['files']);
+    const missingFiles = this.rememberMissing(oid, diff);
     for (const [path, d] of split) {
       this.diffs.set(`${oid}:${path}`, d);
     }
@@ -826,7 +844,89 @@ export class HistoryController implements vscode.Disposable {
       recordedCommitter: person(i['recordedCommitter']),
       message: String(i['message']),
       files: commitFiles(diff),
+      ...(missingFiles.length > 0 ? { missingFiles } : {}),
     };
+  }
+
+  /**
+   * `commitDiff` の答えの、partial clone で中身が手元になく差分を取っていないファイルと、取る中身の ID を覚える。
+   * そのファイルのパスを返す
+   */
+  private rememberMissing(key: string, diff: Reply): string[] {
+    const ids = Array.isArray(diff.json['missing']) ? (diff.json['missing'] as string[]) : [];
+    const paths = ((diff.json['files'] as { path: string; missing?: boolean }[] | undefined) ?? []).filter((f) => f.missing).map((f) => f.path);
+    this.missing.delete(key);
+    if (ids.length === 0 || paths.length === 0) return [];
+    this.missing.set(key, { ids, paths: new Set(paths) });
+    while (this.missing.size > DETAILS_CACHE) this.missing.delete(this.missing.keys().next().value!);
+    return paths;
+  }
+
+  /** partial clone か（リポジトリの形を読んでいなければ読む） */
+  private async isPartialClone(client: DaemonClient): Promise<boolean> {
+    if (this.partialClone === undefined) {
+      const reply = (await client.call({ op: 'run', command: { op: 'repositoryForm' } })).json;
+      if (reply['ok'] !== true) return false;
+      this.partialClone = !!(reply['info'] as { partial?: unknown } | undefined)?.partial;
+    }
+    return this.partialClone;
+  }
+
+  /** コミット `oid` のファイル `path` を見せるのに要る中身のうち、partial clone で手元にないもの（取りには行かない） */
+  private async contentsMissing(client: DaemonClient, oid: string, path: string): Promise<string[]> {
+    if (!(await this.isPartialClone(client))) return [];
+    const reply = (await client.call({ op: 'run', command: { op: 'fileContentsMissing', oid, path } })).json;
+    // 古いエンジンは知らない（そのときは今までどおり読む）
+    if (reply['ok'] !== true) return [];
+    const missing = (reply['info'] as { missing?: string[] } | undefined)?.missing;
+    return Array.isArray(missing) ? missing : [];
+  }
+
+  /**
+   * 「取ってくる」の帯が押された: 手元にない中身を（まとめて 1 回で）取り、差分なら読み直して送り直す。`path` があれば
+   * 「すべてのファイル」のそのファイルの分（取れたら Webview が求め直す）
+   */
+  private async fetchContents(key: string, path?: string): Promise<void> {
+    const reply = (error?: string) =>
+      this.post({ type: 'contentsFetched', oid: key, ...(path !== undefined ? { path } : {}), ...(error !== undefined ? { error } : {}) });
+    try {
+      const client = await this.engine();
+      if (!client) throw new Error('The Amon Hen engine isn’t running');
+      const ids = path !== undefined ? await this.contentsMissing(client, key, path) : (this.missing.get(key)?.ids ?? []);
+      if (ids.length > 0) {
+        const fetched = (await client.call({ op: 'run', command: { op: 'fetchContents', ids } })).json;
+        if (fetched['ok'] !== true) throw new Error(String(fetched['error'] ?? 'Can’t fetch the contents'));
+      }
+      if (path === undefined) await this.reloadDiff(key);
+      // すべてのファイルで取った: 差分に中身のないファイルがあったなら、覚えた差分を捨てる（次に差分を出すときに
+      // 読み直し、届いた中身のファイルの差分を出す。変更に戻ったときは Webview が `reloadDiff` で頼む）
+      else if (this.missing.has(key)) this.forgetDiff(key);
+      reply();
+    } catch (err) {
+      reply(errorMessage(err));
+    }
+  }
+
+  /**
+   * 中身を取った後で、コミット（か選択）の差分を読み直して送る（開いていたファイルは Webview が開いたままにする）。
+   * コアは差分を求め直すだけで、取りには行かない
+   */
+  private async reloadDiff(key: string): Promise<void> {
+    this.forgetDiff(key);
+    const selection = this.selection;
+    if (selection?.key === key) {
+      await this.sendSelection(selection.token, selection.rows, selection.pair);
+      return;
+    }
+    if (!selection && this.selectedOid === key) await this.sendDetails(key);
+  }
+
+  /** コミット（か選択の key）の、覚えた詳細・差分を捨てる（次に出すときに読み直す） */
+  private forgetDiff(key: string): void {
+    this.missing.delete(key);
+    for (const k of [...this.sentDiffs]) if (k.startsWith(`${key}:`)) this.sentDiffs.delete(k);
+    this.details.delete(key);
+    for (const k of [...this.diffs.keys()]) if (k.startsWith(`${key}:`)) this.diffs.delete(k);
   }
 
   /**
@@ -859,6 +959,11 @@ export class HistoryController implements vscode.Disposable {
    * すぎるものは送らない（Remote-SSH では postMessage が SSH を通る）
    */
   private async sendCommitImage(oid: string, path: string): Promise<void> {
+    // partial clone で中身が手元になければ、git で読む（取りに行く）前に断る（「取ってくる」の帯で取るまで）
+    if (this.missing.get(oid)?.paths.has(path)) {
+      this.post({ type: 'commitImage', oid, path, error: 'This file’s contents aren’t here yet.' });
+      return;
+    }
     const repo = this.repo;
     const details = this.details.get(oid);
     const file = details?.files.find((f) => f.path === path);
@@ -903,8 +1008,17 @@ export class HistoryController implements vscode.Disposable {
     const repo = this.repo;
     const client = this.daemon?.client;
     if (!repo || !client) return;
+    // 変えた行の印と、消したファイルの前の版はコミットの詳細で決める。中身を取った後（覚えた差分を捨てた）や
+    // 詳細を覚えから追い出した後でも、読み直してから出す（なければ印のないただの中身になる）
+    if (!this.details.has(oid)) {
+      const details = await this.daemonDetails(client, oid).catch(() => undefined);
+      if (details) {
+        this.details.set(oid, details);
+        if (this.details.size > DETAILS_CACHE) this.details.delete(this.details.keys().next().value!);
+      }
+    }
     // 絵の手伝いは、要るときに 1 度だけ起動する（同じコミットのほかのファイルは、求められたら読んで渡す）
-    const at = this.details.get(oid)?.files.find((f) => f.path === path)?.status === 'D' ? this.details.get(oid)?.parents[0] : oid;
+    const at =this.details.get(oid)?.files.find((f) => f.path === path)?.status === 'D' ? this.details.get(oid)?.parents[0] : oid;
     let helper: Promise<RenderSession | undefined> | undefined;
     const render = async (op: string, fields: Record<string, unknown>): Promise<Record<string, unknown>> => {
       helper ??= this.startRender(client, repo, at ?? oid);
@@ -952,6 +1066,8 @@ export class HistoryController implements vscode.Disposable {
       program,
       {
         read: async (file) => {
+          // partial clone で中身が手元にないファイルは、取りに行かずに読めないものとする
+          if ((await this.contentsMissing(client, oid, file).catch(() => [])).length > 0) return undefined;
           const data = (await repo.backend.object(`${oid}:${file}`))?.data;
           return data && data.length <= MAX_IMAGE_BYTES ? data : undefined;
         },
@@ -979,6 +1095,11 @@ export class HistoryController implements vscode.Disposable {
     // このコミットで消したファイルは、前の版を出す（「このコミットで消した」と添える。アプリと同じ）
     const deleted = change?.status === 'D';
     const send = (view: FileView) => this.post({ type: 'treeFile', oid, path, view: deleted ? { ...view, deleted: true } : view });
+    // partial clone で中身が手元になければ、git で読む（取りに行く）前に「取ってくる」の帯で聞く（押したときだけ取る）
+    if ((await this.contentsMissing(client, oid, path)).length > 0) {
+      send({ kind: 'missing' });
+      return;
+    }
     const data = (await repo.backend.object(`${oid}${deleted ? '^' : ''}:${path}`))?.data;
     if (!data) {
       send({ kind: 'error', message: `${path} isn’t in this commit` });
@@ -1016,7 +1137,7 @@ export class HistoryController implements vscode.Disposable {
           const themeError = settings.themeError ?? drawn.themeError;
           if (themeError && hasDiagrams(blocks)) this.warnTheme(themeError);
         }
-        view.markdown = await this.colorCode(client, await this.inlineImages(repo, at, path, blocks));
+        view.markdown = await this.colorCode(client, await this.inlineImages(repo, client, at, path, blocks));
         view.mathScale = settings.mathScale;
       }
     }
@@ -1048,7 +1169,7 @@ export class HistoryController implements vscode.Disposable {
    * Markdown のブロックの、コミットの中の絵（相対パス）を data URL に置き換える（外からは読まない。大きすぎるもの・
    * 読めないものはそのまま）
    */
-  private async inlineImages(repo: Repository, oid: string, path: string, blocks: unknown[]): Promise<unknown[]> {
+  private async inlineImages(repo: Repository, client: DaemonClient, oid: string, path: string, blocks: unknown[]): Promise<unknown[]> {
     const dir = path.includes('/') ? path.slice(0, path.lastIndexOf('/') + 1) : '';
     let budget = MAX_IMAGE_BYTES;
     const visit = async (value: unknown): Promise<void> => {
@@ -1063,7 +1184,9 @@ export class HistoryController implements vscode.Disposable {
         const image = run[key];
         if (typeof image !== 'string' || /^[a-z][a-z0-9+.-]*:|^\/\//i.test(image)) continue;
         const target = normalizePath(image.startsWith('/') ? image.slice(1) : `${dir}${image}`.split(/[?#]/)[0]!);
-        const data = target ? (await repo.backend.object(`${oid}:${target}`).catch(() => undefined))?.data : undefined;
+        // partial clone で中身が手元にない絵は、取りに行かずにそのまま（読めないものと同じ）
+        const here = target ? (await this.contentsMissing(client, oid, target).catch(() => [])).length === 0 : false;
+        const data = target && here ? (await repo.backend.object(`${oid}:${target}`).catch(() => undefined))?.data : undefined;
         if (data && data.length <= budget && /\.(png|jpe?g|gif|webp|bmp|ico|avif|svg)$/i.test(target!)) {
           budget -= data.length;
           run[key] = `data:${imageType(target!)};base64,${data.toString('base64')}`;
@@ -1163,6 +1286,7 @@ export class HistoryController implements vscode.Disposable {
     this.details.clear();
     this.diffs.clear();
     this.sentDiffs.clear();
+    this.missing.clear();
     const selection = this.selection;
     if (selection) {
       await this.sendSelection(selection.token, selection.rows, selection.pair);
@@ -1207,6 +1331,8 @@ export class HistoryController implements vscode.Disposable {
     }
     const key = `${oid}:${path}`;
     let diff = this.diffs.get(key);
+    // partial clone で中身が手元にないファイルは、git で読む（取りに行く）代わりに空の差分（Webview が帯で聞く）
+    if (!diff && this.missing.get(oid)?.paths.has(path)) diff = { path, version: 'missing', hunks: [] };
     if (!diff) {
       const parent = details.parents[0];
       const object = async (rev: string) => (await repo.backend.object(rev))?.data;

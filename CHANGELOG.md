@@ -1450,6 +1450,9 @@ First release.
 
 - The sidebar's icons are an icon font, so they take the theme's icon color, high contrast and the selected row's
   color like VSCode's own icons.
+- In a partial clone, the main view's commit diffs and All Files no longer fetch missing file contents by
+  themselves. A band says how many files' contents aren't here yet, and Fetch Contents gets just those (with the
+  engine; the git execution layer still fetches as git does).
 
 ### [0.2.10] - 2026-11-27
 

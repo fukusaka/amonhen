@@ -1072,6 +1072,9 @@ export function createHistoryView(): View {
       case 'commitImage':
         details.showImage(message.oid, message.path, message.before, message.after, message.error);
         return;
+      case 'contentsFetched':
+        details.contentsFetched(message.oid, message.path, message.error);
+        return;
       case 'editMode':
         root.classList.add('editing');
         editMode.open(message.rows, message.original, message.editMessageAt);
