@@ -1811,20 +1811,22 @@ impl Renderer {
             (row.new_no, row.old_no)
         };
         let path = String::from_utf8_lossy(commit.view.strings.bytes(row.text));
-        // 画像は行の数の代わりに「画像」（macOS 版の `fileNotes`）。
-        let counts: Vec<(String, D2D1_COLOR_F)> =
-            if commit.stacked.is_some() && crate::imagediff::is_image(&path) {
-                vec![(amonhen_model::tr!("Image"), secondary())]
-            } else if row.flags & DiffRow::BINARY != 0 {
-                vec![(amonhen_model::tr!("Binary"), secondary())]
-            } else if added == 0 && removed == 0 {
-                Vec::new()
-            } else {
-                vec![
-                    (format!("+{added}"), ADDED_TEXT),
-                    (format!("−{removed}"), REMOVED_TEXT),
-                ]
-            };
+        // partial clone で中身が手元にないファイルは「まだ手元にない」、画像は行の数の代わりに「画像」（macOS 版の
+        // `fileNotes`）。
+        let counts: Vec<(String, D2D1_COLOR_F)> = if row.flags & DiffRow::MISSING != 0 {
+            vec![(amonhen_model::tr!("Not here yet"), secondary())]
+        } else if commit.stacked.is_some() && crate::imagediff::is_image(&path) {
+            vec![(amonhen_model::tr!("Image"), secondary())]
+        } else if row.flags & DiffRow::BINARY != 0 {
+            vec![(amonhen_model::tr!("Binary"), secondary())]
+        } else if added == 0 && removed == 0 {
+            Vec::new()
+        } else {
+            vec![
+                (format!("+{added}"), ADDED_TEXT),
+                (format!("−{removed}"), REMOVED_TEXT),
+            ]
+        };
         let format = self.file_format.clone();
         let mut placed = Vec::new();
         for (text, color) in counts.iter().rev() {

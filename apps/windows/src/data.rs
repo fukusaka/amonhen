@@ -815,6 +815,57 @@ impl CommitShown {
         }
     }
 
+    /// 「取ってくる」や、ほかの画面で取った中身で取り直したファイルの差分（`files`。ファイルの番号と差分）を
+    /// 入れる。まだ手元になかったファイルだけを入れ替える（まだ足りないものは、足りない中身を狭めた印のまま）。
+    /// 差分を取れたもののうち、広げた前後・ファイル全体にしていたものはその形で取り直す。変えたら true。
+    fn take_fetched(
+        &mut self,
+        files: Vec<(usize, amonhen_core::diff::FileDiff)>,
+        repo: Option<&Repository>,
+    ) -> bool {
+        if Arc::get_mut(&mut self.stacked).is_none() {
+            // 構文の色を求めている裏の仕事が持っているので、写してから変える。
+            self.stacked = Arc::new(StackedDiff {
+                files: self.stacked.files.clone(),
+            });
+        }
+        let Some(stacked) = Arc::get_mut(&mut self.stacked) else {
+            return false;
+        };
+        let mut taken = Vec::new();
+        let mut changed = false;
+        for (file, diff) in files {
+            let Some((_, old)) = stacked.files.get_mut(file) else {
+                continue;
+            };
+            if old.missing.is_empty() {
+                continue;
+            }
+            *old = diff;
+            changed = true;
+            if !old.missing.is_empty() {
+                continue;
+            }
+            if let Some(mark) = self.file_marks.get_mut(file) {
+                *mark = change_mark(old);
+            }
+            taken.push(file);
+        }
+        if let Some(repo) = repo {
+            for file in &taken {
+                let context = if self.whole.contains(file) {
+                    Some(u32::MAX)
+                } else {
+                    self.contexts.get(file).copied()
+                };
+                if let Some(context) = context {
+                    self.load(repo, *file, context);
+                }
+            }
+        }
+        changed
+    }
+
     /// `file` 番目のファイルをファイル全体で見せているか（見出しの ⋯ の Show Whole File）。
     pub fn shows_whole(&self, file: usize) -> bool {
         self.whole.contains(&file)
@@ -882,8 +933,12 @@ impl CommitShown {
             .files
             .iter()
             .enumerate()
-            .filter(|&(i, (path, _))| {
-                !collapsed[i] && crate::imagediff::is_picture(path) && !self.svg_text.contains(&i)
+            // 中身が手元にない画像は、比べる欄を作らない（帯で取ってくるまで。macOS 版と同じ）。
+            .filter(|&(i, (path, diff))| {
+                !collapsed[i]
+                    && crate::imagediff::is_picture(path)
+                    && !self.svg_text.contains(&i)
+                    && diff.missing.is_empty()
             })
             .map(|(i, _)| i)
             .collect();
@@ -958,6 +1013,16 @@ impl CommitShown {
 
 /// ファイルの変更の種類の印（前の中身がなければ足した A、後の中身がなければ消した D、ほかは変えた M）。
 pub fn change_mark(diff: &amonhen_core::diff::FileDiff) -> char {
+    // partial clone で中身が手元にないファイルは、中身がないので変更の種類から（macOS 版と同じく変更の一覧の種類）。
+    if !diff.missing.is_empty()
+        && let Some(change) = &diff.pending
+    {
+        return match change.kind {
+            amonhen_model::ChangeKind::Added => 'A',
+            amonhen_model::ChangeKind::Deleted => 'D',
+            _ => 'M',
+        };
+    }
     if diff.old.is_empty() && !diff.new.is_empty() {
         'A'
     } else if diff.new.is_empty() && !diff.old.is_empty() {
@@ -1149,6 +1214,27 @@ enum Event {
     Signatures(u64, Vec<(amonhen_model::Oid, Signature)>),
     /// History の行のチャンク（History の世代、チャンクの番号、読めた行か読めない理由）。
     Chunk(u64, u32, Result<Chunk, String>),
+    /// すべてのファイルで開いたファイル（`want_file_at` の番号）の中身が、partial clone で手元にない（その中身）。
+    FileMissing(u64, Vec<amonhen_model::Oid>),
+    /// すべてのファイルで開いたファイルの、手元になかった中身を取ってきた（`want_file_at` の番号、失敗の文）。
+    FileFetched(u64, Result<(), String>),
+    /// コミットの差分の、手元になかった中身を取ってきた・その後そろったものの差分を取った（差分の番号、取ってこずに
+    /// 見直しただけか、取り直したファイルの番号と差分）。
+    StackedFetched(
+        u64,
+        bool,
+        Result<Vec<(usize, amonhen_core::diff::FileDiff)>, String>,
+    ),
+    Failed(String),
+}
+
+/// partial clone で手元にない中身を取ってくる様子（「取ってくる」の帯）。
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
+pub enum Fetch {
+    #[default]
+    Idle,
+    Fetching,
+    /// 取れなかった（その理由。帯のボタンはまた押せる）。
     Failed(String),
 }
 
@@ -1166,6 +1252,21 @@ pub struct Data {
     pub file_view: Option<Box<FileShown>>,
     file_wanted: Option<String>,
     pub file_view_changed: bool,
+    /// `want_file_at` の番号（読み直すたびに増やす。古い答えを捨てる）と、そのコミット・変更（取ってきた後に
+    /// 読み直す）。
+    file_seq: u64,
+    file_request: Option<(amonhen_model::Oid, Option<amonhen_model::FileChange>)>,
+    /// partial clone か（すべてのファイルで開く前に、中身が手元にあるかを確かめる。窓がリポジトリの形から渡す）。
+    pub partial: bool,
+    /// すべてのファイルで開いたファイルの、partial clone で手元にない中身（帯で取ってくるまで）と、取ってくる様子。
+    pub file_missing: Option<Vec<amonhen_model::Oid>>,
+    pub file_fetch: Fetch,
+    /// コミットの差分の、手元にない中身を取ってくる様子。
+    pub commit_fetch: Fetch,
+    /// 「取ってくる」の帯の様子が変わった（帯を出し直す。見たら `false` に戻す）。
+    pub missing_changed: bool,
+    /// 取ってきた中身でコミットの差分を作り直した（同じ所のまま描き直す。見たら `false` に戻す）。
+    pub commit_refetched: bool,
     /// 差分の欄に、すべてのファイルで開いたファイルを出しているか。
     pub show_file: bool,
     /// 長い行を折り返すときの、差分の欄の幅と等幅の字の幅（DIP。折り返さないなら None）。
@@ -1597,6 +1698,14 @@ impl Data {
             mobile_renderer: amonhen_core::svglint::Target::Android,
             restore: None,
             commit_reloaded: false,
+            file_seq: 0,
+            file_request: None,
+            partial: false,
+            file_missing: None,
+            file_fetch: Fetch::Idle,
+            commit_fetch: Fetch::Idle,
+            missing_changed: false,
+            commit_refetched: false,
             syntax_changed: false,
             extras_changed: false,
             history_changed: false,
@@ -2055,6 +2164,8 @@ impl Data {
                             shown.set_extras(extras);
                         }
                         self.commit = Some(shown);
+                        // 次のコミットではまた聞く（覚えない。macOS 版と同じ）。
+                        self.commit_fetch = Fetch::Idle;
                         self.apply_wrap();
                         changed = true;
                         // 空白の扱いを変えて読み直した: 開いていたファイル・広げた前後・ファイル全体・畳んだ
@@ -2166,6 +2277,50 @@ impl Data {
                         changed = true;
                     }
                 }
+                Event::FileMissing(seq, ids) => {
+                    if seq == self.file_seq {
+                        self.file_missing = Some(ids);
+                        self.file_view_changed = true;
+                        self.missing_changed = true;
+                        changed = true;
+                    }
+                }
+                Event::FileFetched(seq, result) => {
+                    if seq == self.file_seq {
+                        match result {
+                            // 取れたら、そのファイルを読み直して出す。
+                            Ok(()) => {
+                                if let (Some((commit, change)), Some(path)) =
+                                    (self.file_request.clone(), self.file_wanted.clone())
+                                {
+                                    self.want_file_at(commit, change, Some(path));
+                                }
+                            }
+                            Err(e) => self.file_fetch = Fetch::Failed(e),
+                        }
+                        self.missing_changed = true;
+                        changed = true;
+                    }
+                }
+                Event::StackedFetched(id, refresh, result) => {
+                    if self.commit.as_ref().is_some_and(|c| c.id == id) {
+                        match result {
+                            Ok(files) => {
+                                if !refresh {
+                                    self.commit_fetch = Fetch::Idle;
+                                }
+                                let repo = self.repo.clone();
+                                self.relayout(|commit| commit.take_fetched(files, repo.as_deref()));
+                                self.commit_refetched = true;
+                            }
+                            // 見直しに失敗しても、帯はそのまま（押せば取ってくる）。
+                            Err(e) if refresh => eprintln!("手元にそろった中身を見直せない: {e}"),
+                            Err(e) => self.commit_fetch = Fetch::Failed(e),
+                        }
+                        self.missing_changed = true;
+                        changed = true;
+                    }
+                }
                 Event::Failed(e) => return Err(e),
             }
         }
@@ -2256,10 +2411,17 @@ impl Data {
         self.file_view = None;
         self.file_view_changed = true;
         self.file_wanted = path.clone();
+        self.file_seq += 1;
+        self.file_request = path.as_ref().map(|_| (commit, change.clone()));
+        if self.file_missing.take().is_some() || self.file_fetch != Fetch::Idle {
+            self.missing_changed = true;
+        }
+        self.file_fetch = Fetch::Idle;
         let (Some(path), Some(repo)) = (path, self.repo.clone()) else {
             return;
         };
         let (tx, wake) = (self.tx.clone(), self.wake.clone());
+        let (seq, partial) = (self.file_seq, self.partial);
         let (svg_view, renderer) = (self.svg_view, self.mobile_renderer);
         // VectorDrawable の色は、暗い外観なら values-night などを先に引く
         let dark = crate::palette::dark();
@@ -2269,6 +2431,18 @@ impl Data {
         // gantt の日付を数える時間帯（Settings > Theme。macOS 版・GTK4 版と同じ）。
         let zone = crate::timezone::gantt_zone();
         std::thread::spawn(move || {
+            // partial clone で中身が手元になければ、取りに行かずに「取ってくる」の帯で聞く（押したときだけ取る。
+            // macOS 版の `CommitFilesBrowser.open`）。
+            if partial {
+                match repo.file_missing(&commit, &path) {
+                    Ok(ids) if !ids.is_empty() => {
+                        let _ = tx.send(Event::FileMissing(seq, ids));
+                        return wake();
+                    }
+                    Ok(_) => {}
+                    Err(e) => eprintln!("中身が手元にあるかを確かめられない（{path}）: {e}"),
+                }
+            }
             // 画像は、その時点の中身を絵で見せる（読めなければ、ほかのファイルと同じく）。SVG はテキストでも
             // 見られる。
             let svg = crate::imagediff::is_svg(&path);
@@ -2359,6 +2533,14 @@ impl Data {
             };
             let view = match view {
                 Ok(view) => view,
+                // 確かめた後に中身がなかった（partial clone）: 同じく帯で聞く。
+                Err(e) if amonhen_model::MissingContents::of(&*e).is_some() => {
+                    let ids = amonhen_model::MissingContents::of(&*e)
+                        .map(|m| m.ids.clone())
+                        .unwrap_or_default();
+                    let _ = tx.send(Event::FileMissing(seq, ids));
+                    return wake();
+                }
                 Err(e) => {
                     eprintln!("その時点のファイルを読めない（{path}）: {e}");
                     return;
@@ -2402,6 +2584,87 @@ impl Data {
         std::thread::spawn(move || {
             let diagrams = crate::markdownview::render_diagrams(&blocks, &colors);
             let _ = tx.send(Event::Diagrams(key, diagrams));
+            wake();
+        });
+    }
+
+    /// 出しているコミットの差分の、partial clone で中身が手元になく差分を取っていないファイルの数。
+    pub fn missing_files(&self) -> usize {
+        self.commit
+            .as_ref()
+            .map_or(0, |c| c.stacked.missing_files())
+    }
+
+    /// 帯の「取ってくる」（コミットの差分）: 手元になかった中身をまとめて 1 回で取り、それらのファイルの差分を
+    /// 取る（裏で。届いたら同じ所のまま出し直す）。
+    pub fn fetch_commit_missing(&mut self) {
+        if self.repo.is_none() || self.commit_fetch == Fetch::Fetching || self.missing_files() == 0
+        {
+            return;
+        }
+        self.commit_fetch = Fetch::Fetching;
+        self.missing_changed = true;
+        self.update_stacked_missing(false);
+    }
+
+    /// すべてのファイルから変更に戻った: 差分にまだ手元にないファイルがあれば、その後（すべてのファイルで）取って
+    /// そろったものの差分を裏で取る（取りには行かない。macOS 版の `setFilesMode`）。
+    pub fn refresh_commit_missing(&mut self) {
+        if self.commit_fetch == Fetch::Fetching || self.missing_files() == 0 {
+            return;
+        }
+        self.update_stacked_missing(true);
+    }
+
+    /// 出しているコミットの差分の、手元になかったファイルを裏で取り直す（`refresh` なら取ってこずに見直すだけ）。
+    /// 取っている間も今の差分を見せるので、写したものに取る（手元にない中身が変わったファイルだけを戻す）。
+    fn update_stacked_missing(&mut self, refresh: bool) {
+        let (Some(repo), Some(commit)) = (self.repo.clone(), self.commit.as_ref()) else {
+            return;
+        };
+        let mut stacked = StackedDiff {
+            files: commit.stacked.files.clone(),
+        };
+        let id = commit.id;
+        let (tx, wake) = (self.tx.clone(), self.wake.clone());
+        std::thread::spawn(move || {
+            let before: Vec<usize> = stacked.files.iter().map(|(_, d)| d.missing.len()).collect();
+            let done = if refresh {
+                repo.refresh_stacked_missing(&mut stacked)
+            } else {
+                repo.fetch_stacked_missing(&mut stacked)
+            };
+            let result = done
+                .map(|()| {
+                    stacked
+                        .files
+                        .into_iter()
+                        .enumerate()
+                        .filter(|(i, (_, d))| before[*i] > 0 && d.missing.len() != before[*i])
+                        .map(|(i, (_, d))| (i, d))
+                        .collect()
+                })
+                .map_err(|e| e.to_string());
+            let _ = tx.send(Event::StackedFetched(id, refresh, result));
+            wake();
+        });
+    }
+
+    /// 帯の「取ってくる」（すべてのファイルで開いたファイル）: 手元になかった中身をまとめて 1 回で取り、取れたら
+    /// そのファイルを読み直して出す（裏で）。
+    pub fn fetch_file_missing(&mut self) {
+        let (Some(repo), Some(ids)) = (self.repo.clone(), self.file_missing.clone()) else {
+            return;
+        };
+        if self.file_fetch == Fetch::Fetching {
+            return;
+        }
+        self.file_fetch = Fetch::Fetching;
+        self.missing_changed = true;
+        let (tx, wake, seq) = (self.tx.clone(), self.wake.clone(), self.file_seq);
+        std::thread::spawn(move || {
+            let result = repo.fetch_contents(&ids).map_err(|e| e.to_string());
+            let _ = tx.send(Event::FileFetched(seq, result));
             wake();
         });
     }
