@@ -25,6 +25,7 @@ becomes the GitHub Release notes.
 
 #### Fixed
 
+- On Windows, longer tooltips wrap instead of being cut to one line (Repository Settings, the git line and others).
 - On macOS 26, a tinted toolbar's buttons take the tint too, instead of showing dark glass on the color.
 
 ### [0.2.16] - 2026-11-27
