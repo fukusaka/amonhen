@@ -1321,6 +1321,8 @@ enum Message {
     WholeFile(bool),
     /// Settings > Diff & Merge の行の Stage の仕方を選んだ（0 は選んでから、1 は変更の帯）。
     SettingsLineStage(Option<usize>),
+    /// Settings > Diff & Merge の、先頭から開くファイルの数（選んだ番号）。
+    SettingsOpenFiles(Option<usize>),
     /// 行を捨て終えた（失敗ならそのわけ）。
     LinesDiscarded(Option<String>),
     /// 差分の代わりの一言が替わった（なければ None）。
@@ -9038,6 +9040,22 @@ impl Root {
                     self.with_history(|h| {
                         h.session.renderer.forget_diff();
                         h.diff.dirty = true;
+                    });
+                }
+            }
+            Message::SettingsOpenFiles(index) => {
+                let Some(&n) = index.and_then(|i| crate::prefs::DIFF_OPEN_FILES_CHOICES.get(i))
+                else {
+                    return;
+                };
+                // 次に開く差分から効く（開いている差分の畳み方は変えない。GTK4 版と同じ）。
+                if n != crate::prefs::diff_open_files()
+                    && let Err(e) =
+                        crate::prefs::set_string(crate::prefs::DIFF_OPEN_FILES, &n.to_string())
+                {
+                    self.dialog = Some(Dialog::Failed {
+                        title: tr!("Save"),
+                        message: e,
                     });
                 }
             }
@@ -17141,6 +17159,7 @@ impl Root {
                 math_scale: context.callback(Message::SettingsMathScale),
                 math_time_limit: context.callback(Message::SettingsMathTimeLimit),
                 line_stage: context.callback(Message::SettingsLineStage),
+                open_files: context.callback(Message::SettingsOpenFiles),
                 mermaid_button: Box::new(|key: String| {
                     context.callback(move |()| Message::SettingsMermaidButton(key.clone()))
                 }),

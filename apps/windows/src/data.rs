@@ -991,8 +991,14 @@ pub struct CommitShown {
 }
 
 impl CommitShown {
-    fn new(row: u32, info: serde_json::Value, stacked: Arc<StackedDiff>) -> Self {
-        // 最初はすべて畳んで、見出しだけを並べる（macOS 版・GTK4 版と同じ）。
+    fn new(
+        row: u32,
+        info: serde_json::Value,
+        stacked: Arc<StackedDiff>,
+        repo: &Repository,
+    ) -> Self {
+        // 先頭から Settings > Diff & Merge > Files to open together の数だけ開き、残りは畳んで見出しだけを並べる
+        // （macOS 版・GTK4 版と同じ。下で開く）。
         let collapsed = vec![true; stacked.files.len()];
         let file_marks = stacked.files.iter().map(|(_, d)| change_mark(d)).collect();
         let mut shown = Self {
@@ -1021,8 +1027,21 @@ impl CommitShown {
             },
             version: 0,
         };
-        // 最初の表示（構文の色は、読み込んだ所がこの版 0 の表示のものを送る。最初は隠すファイルがないので、
-        // 畳み方は `collapsed` のまま）。
+        // 生成物と、変更が多すぎるファイルは畳んだまま（macOS 版・GTK4 版と同じ）。まだ差分を取っていないファイルは
+        // ここで取る。
+        for file in 0..shown
+            .stacked
+            .files
+            .len()
+            .min(crate::prefs::diff_open_files())
+        {
+            shown.load_pending(repo, file);
+            let (added, removed) = shown.file_counts(file);
+            if !shown.stacked.generated(file) && added + removed <= EXPAND_ALL_LIMIT {
+                shown.collapsed[file] = false;
+            }
+        }
+        // 最初の表示（構文の色は、読み込んだ所がこの版 0 の表示のものを送る。`syntax_args`）。
         shown.rebuild_view();
         shown.version = 0;
         shown
@@ -1208,9 +1227,27 @@ impl CommitShown {
         (count, added, removed)
     }
 
-    /// 表示を作り直す（構文の色は捨てる）。色を付け直すための、全ファイルと畳んでいるかを返す。
-    fn rebuild_view(&mut self) -> (Arc<StackedDiff>, Vec<bool>) {
-        let stacked = self.stacked.clone();
+    /// 構文の色を求めるための、全ファイルと、今の表示で畳んでいるか（畳んだフォルダの中・比べる欄の画像も畳む）。
+    fn syntax_args(&self) -> (Arc<StackedDiff>, Vec<bool>) {
+        let (_, _, collapsed) = self.view_parts();
+        (self.stacked.clone(), collapsed)
+    }
+
+    /// 表示の木の形（木で見せるとき）、比べる欄を出す画像、表示で畳むファイル。
+    #[allow(clippy::type_complexity)]
+    fn view_parts(
+        &self,
+    ) -> (
+        Option<(
+            HashMap<usize, Vec<FolderLine>>,
+            Vec<u32>,
+            Vec<String>,
+            HashSet<usize>,
+        )>,
+        HashSet<usize>,
+        Vec<bool>,
+    ) {
+        let stacked = &self.stacked;
         // 木なら、畳んだフォルダの中のファイルも畳む（見出しごと隠す）。
         let layout = self.tree_on.then(|| {
             let paths: Vec<&str> = stacked.files.iter().map(|(p, _)| p.as_str()).collect();
@@ -1239,6 +1276,13 @@ impl CommitShown {
         for &file in &panels {
             collapsed[file] = true;
         }
+        (layout, panels, collapsed)
+    }
+
+    /// 表示を作り直す（構文の色は捨てる）。色を付け直すための、全ファイルと畳んでいるかを返す。
+    fn rebuild_view(&mut self) -> (Arc<StackedDiff>, Vec<bool>) {
+        let stacked = self.stacked.clone();
+        let (layout, panels, collapsed) = self.view_parts();
         self.diff = stacked.view(&collapsed, &PROFILE);
         self.index_highlights();
         let layout = layout.or_else(|| {
@@ -3052,7 +3096,7 @@ impl Data {
                 let stacked = repo
                     .stacked_diff_ws(&changes, whitespace)
                     .map_err(|e| e.to_string())?;
-                Ok(CommitShown::new(row, info, Arc::new(stacked)))
+                Ok(CommitShown::new(row, info, Arc::new(stacked), &repo))
             };
             let shown = match timed("Load diff", load) {
                 Ok(shown) => shown,
@@ -3062,7 +3106,7 @@ impl Data {
                 }
             };
             // 差分を先に出し、構文の色は後から（ファイル全体を解析するので時間がかかることがある）。
-            let (stacked, collapsed) = (shown.stacked.clone(), shown.collapsed.clone());
+            let (stacked, collapsed) = shown.syntax_args();
             let _ = tx.send(Event::Commit(generation, Box::new(shown)));
             wake();
             send_syntax(tx, wake, generation, row, 0, stacked, collapsed);
@@ -3105,7 +3149,7 @@ impl Data {
                 let stacked = repo
                     .stacked_diff_ws(&changes, whitespace)
                     .map_err(|e| e.to_string())?;
-                Ok(CommitShown::new(key, info, Arc::new(stacked)))
+                Ok(CommitShown::new(key, info, Arc::new(stacked), &repo))
             };
             let shown = match load() {
                 Ok(shown) => shown,
@@ -3114,7 +3158,7 @@ impl Data {
                     return wake();
                 }
             };
-            let (stacked, collapsed) = (shown.stacked.clone(), shown.collapsed.clone());
+            let (stacked, collapsed) = shown.syntax_args();
             let _ = tx.send(Event::Commit(generation, Box::new(shown)));
             wake();
             send_syntax(tx, wake, generation, key, 0, stacked, collapsed);
@@ -3147,7 +3191,7 @@ impl Data {
                 let stacked = repo
                     .stacked_diff_ws(&changes, whitespace)
                     .map_err(|e| e.to_string())?;
-                Ok(CommitShown::new(key, info, Arc::new(stacked)))
+                Ok(CommitShown::new(key, info, Arc::new(stacked), &repo))
             };
             let shown = match load() {
                 Ok(shown) => shown,
@@ -3156,7 +3200,7 @@ impl Data {
                     return wake();
                 }
             };
-            let (stacked, collapsed) = (shown.stacked.clone(), shown.collapsed.clone());
+            let (stacked, collapsed) = shown.syntax_args();
             let _ = tx.send(Event::Commit(generation, Box::new(shown)));
             wake();
             send_syntax(tx, wake, generation, key, 0, stacked, collapsed);
@@ -3202,7 +3246,7 @@ impl Data {
                     "kind": "range", "count": lines.len(), "lines": lines,
                     "title": title, "note": note,
                 }});
-                Ok(CommitShown::new(key, info, Arc::new(stacked)))
+                Ok(CommitShown::new(key, info, Arc::new(stacked), &repo))
             };
             let shown = match load() {
                 Ok(shown) => shown,
@@ -3211,7 +3255,7 @@ impl Data {
                     return wake();
                 }
             };
-            let (stacked, collapsed) = (shown.stacked.clone(), shown.collapsed.clone());
+            let (stacked, collapsed) = shown.syntax_args();
             let _ = tx.send(Event::Commit(generation, Box::new(shown)));
             wake();
             send_syntax(tx, wake, generation, key, 0, stacked, collapsed);
@@ -3259,7 +3303,7 @@ impl Data {
                 let info = serde_json::json!({ "selection": {
                     "kind": kind, "count": rows.len(), "lines": lines,
                 }});
-                Ok(CommitShown::new(key, info, Arc::new(stacked)))
+                Ok(CommitShown::new(key, info, Arc::new(stacked), &repo))
             };
             let shown = match load() {
                 Ok(shown) => shown,
@@ -3268,7 +3312,7 @@ impl Data {
                     return wake();
                 }
             };
-            let (stacked, collapsed) = (shown.stacked.clone(), shown.collapsed.clone());
+            let (stacked, collapsed) = shown.syntax_args();
             let _ = tx.send(Event::Commit(generation, Box::new(shown)));
             wake();
             send_syntax(tx, wake, generation, key, 0, stacked, collapsed);
