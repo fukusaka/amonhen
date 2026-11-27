@@ -1669,7 +1669,57 @@ pub fn layout(
     // クラスタに初めて着いたら、そのクラスタ（いちばん外の、まだ置いていないもの）の中をすべて先に置く（クラスタを
     // 1 つのまとまりとして並べる。Graphviz の絵と同じく、クラスタは先に着いた側へ寄る）。ランクを 1 つずつ下りる辺
     // だけなので、クラスタのない図では深さ優先と同じ並びになる
-    let first_order = |top: bool, by_seq: bool, val: &mut [f64]| {
+    // つながった部分を探す順（Graphviz の絵と同じ）: 宣言の早いノードから、辺の向きを問わず深さ優先にたどる（出る辺を
+    // 書いた順、次に入る辺を書いた順）。初めの並びは、この順で入る辺（同じランクの辺も）のないノードから歩き始める。
+    // ノードを宣言した順が並びを左右する（`a; r -> a -> b; e -> b` では e が a の左）
+    let mut has_in = vec![false; n];
+    for e in input_edges {
+        if e.tail != e.head && e.head < n {
+            has_in[e.head] = true;
+        }
+    }
+    let search_order: Vec<usize> = {
+        let mut out_adj: Vec<Vec<usize>> = vec![Vec::new(); n];
+        let mut in_adj: Vec<Vec<usize>> = vec![Vec::new(); n];
+        for e in input_edges {
+            if e.tail != e.head && e.tail < n && e.head < n {
+                out_adj[e.tail].push(e.head);
+                in_adj[e.head].push(e.tail);
+            }
+        }
+        let mut by_decl: Vec<usize> = (0..n).collect();
+        by_decl.sort_by_key(|&v| (nodes[v].seq, v));
+        let mut seen = vec![false; n];
+        let mut order = Vec::with_capacity(n);
+        for &s0 in &by_decl {
+            if seen[s0] {
+                continue;
+            }
+            seen[s0] = true;
+            order.push(s0);
+            let mut stack: Vec<(usize, usize)> = vec![(s0, 0)];
+            while let Some(&mut (v, ref mut i)) = stack.last_mut() {
+                let total_adj = out_adj[v].len() + in_adj[v].len();
+                if *i >= total_adj {
+                    stack.pop();
+                    continue;
+                }
+                let w = if *i < out_adj[v].len() {
+                    out_adj[v][*i]
+                } else {
+                    in_adj[v][*i - out_adj[v].len()]
+                };
+                *i += 1;
+                if !seen[w] {
+                    seen[w] = true;
+                    order.push(w);
+                    stack.push((w, 0));
+                }
+            }
+        }
+        order
+    };
+    let first_order = |top: bool, by_seq: bool, search: bool, val: &mut [f64]| {
         let mut seen = vec![false; total];
         let mut next = 0f64;
         // 辺は行き先のノードの作られた順にたどる（Graphviz の絵と同じく、書いた順ではなく宣言の順で並ぶ）。仮のノードは
@@ -1696,7 +1746,16 @@ pub fn layout(
             })
             .collect();
         let mut starts: Vec<usize> = (0..total).collect();
-        if top {
+        if search {
+            // 探した順の、入る辺のないノード。残りはランクの順
+            let mut pos = vec![usize::MAX; total];
+            for (i, &v) in search_order.iter().enumerate() {
+                if nodes[v].up.is_empty() && !has_in[v] {
+                    pos[v] = i;
+                }
+            }
+            starts.sort_by_key(|&v| (pos[v], nodes[v].rank, nodes[v].seq, v));
+        } else if top {
             starts.sort_by_key(|&v| (nodes[v].rank, nodes[v].seq, v));
         } else {
             starts.sort_by_key(|&v| (std::cmp::Reverse(nodes[v].rank), nodes[v].seq, v));
@@ -1797,13 +1856,18 @@ pub fn layout(
             }
         }
     };
-    first_order(true, true, &mut val);
+    // 向きの比べの手がかり: ランクの順に歩き始める初めの並び（交差がなければ、探した順の初めの並びがそのまま答え）
+    let mut first = vec![0f64; total];
+    first_order(true, true, false, &mut first);
+    first_order(true, true, true, &mut val);
     // クラスタの左右も初めの並びから（中のいちばん早いノードの順）
     ord.global_from(&val);
     for r in 0..ord.layers.len() {
         ord.sort_layer(r, &val);
     }
-    let first = val.clone();
+    if ord.crossings() == 0 {
+        first = val.clone();
+    }
     let first_layers = ord.layers.clone();
     // 上からの初めの並び、下からの初めの並び、辺の順の上からの初めの並びの 3 回。どれも、中央値で上下に並べ替えて
     // 入れ替え（1 回おきに交差の同じ入れ替えも）、増えればいちばん良い並びに戻して続け（同じなら後の並びを残す）、
@@ -1836,7 +1900,7 @@ pub fn layout(
             }
         }
         if start == 1 {
-            first_order(false, true, &mut val);
+            first_order(false, true, false, &mut val);
             ord.global_from(&val);
             for r in (0..ord.layers.len()).rev() {
                 ord.sort_layer(r, &val);
@@ -1844,7 +1908,7 @@ pub fn layout(
         }
         if start == 2 {
             // 3 回目は辺を書いた順にたどる上からの並び（宣言の順からでは届かない少ない交差の並びがある）
-            first_order(true, false, &mut val);
+            first_order(true, false, false, &mut val);
             ord.layers = first_layers.clone();
             ord.refresh();
             ord.global_from(&val);
