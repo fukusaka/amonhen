@@ -652,7 +652,21 @@ impl GitBackend for GixBackend {
         let opt = |id: gix::ObjectId| -> Result<Option<Oid>> { to_oid(id.as_ref()).map(Some) };
         let is_commit = |mode: gix::object::tree::EntryMode| mode.is_commit();
         let mut changes = Vec::new();
-        for change in repo.diff_tree_to_tree(old_tree.as_ref(), Some(&new_tree), None)? {
+        // 名前の変更を似ている度合いで見つけるには、消した・足したファイルの中身を読む。partial clone で中身が手元に
+        // なければ読めずに失敗するので、そのときは中身の同じ名前の変更だけを見つける（中身を取りには行かない）。
+        let diff = match repo.diff_tree_to_tree(old_tree.as_ref(), Some(&new_tree), None) {
+            Ok(diff) => diff,
+            Err(_) if promisor_remote(&repo).is_some() => {
+                let exact = gix::diff::Rewrites {
+                    percentage: None,
+                    ..Default::default()
+                };
+                let options = gix::diff::Options::default().with_rewrites(Some(exact));
+                repo.diff_tree_to_tree(old_tree.as_ref(), Some(&new_tree), options)?
+            }
+            Err(e) => return Err(e.into()),
+        };
+        for change in diff {
             let (mode, previous) = match &change {
                 C::Addition { entry_mode, .. } | C::Deletion { entry_mode, .. } => {
                     (*entry_mode, *entry_mode)

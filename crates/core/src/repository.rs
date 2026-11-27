@@ -3005,6 +3005,53 @@ mod tests {
     }
 
     #[test]
+    fn lists_a_renamed_and_edited_file_whose_contents_arent_here() {
+        let tmp = tempfile::tempdir().unwrap();
+        let src = tmp.path().join("src");
+        std::fs::create_dir(&src).unwrap();
+        git(&src, &["init", "-q"]);
+        git(&src, &["symbolic-ref", "HEAD", "refs/heads/main"]);
+        let lines: String = (1..=40).map(|i| format!("line {i}\n")).collect();
+        std::fs::write(src.join("old.txt"), &lines).unwrap();
+        git(&src, &["add", "."]);
+        git(&src, &["commit", "-q", "-m", "one"]);
+        git(&src, &["mv", "old.txt", "new.txt"]);
+        std::fs::write(src.join("new.txt"), format!("{lines}one more\n")).unwrap();
+        git(&src, &["add", "."]);
+        git(&src, &["commit", "-q", "-m", "rename"]);
+        std::fs::write(src.join("new.txt"), format!("{lines}changed\n")).unwrap();
+        git(&src, &["add", "."]);
+        git(&src, &["commit", "-q", "-m", "three"]);
+        git(&src, &["config", "uploadpack.allowFilter", "true"]);
+        git(&src, &["config", "uploadpack.allowAnySHA1InWant", "true"]);
+        let path = src.to_str().unwrap().replace('\\', "/");
+        let url = if path.starts_with('/') {
+            format!("file://{path}")
+        } else {
+            format!("file:///{path}")
+        };
+        git(
+            tmp.path(),
+            &["clone", "-q", "--filter=blob:none", &url, "partial"],
+        );
+        let dir = tmp.path().join("partial");
+        let repo = Repository::new(GixBackend::open(&dir).unwrap());
+        let out = Command::new("git")
+            .args(["rev-parse", "HEAD~1"])
+            .current_dir(&dir)
+            .output()
+            .unwrap();
+        let rename = Oid::from_hex(String::from_utf8_lossy(&out.stdout).trim()).unwrap();
+        // 名前の変更を似ている度合いで見つけるのに要る中身がなくても、一覧は出る（取りには行かない）。
+        let changes = repo.commit_changes(&rename).unwrap();
+        let mut paths: Vec<_> = changes.iter().map(|c| c.path.as_str()).collect();
+        paths.sort_unstable();
+        assert_eq!(paths, ["new.txt", "old.txt"]);
+        let stacked = repo.stacked_diff(&changes).unwrap();
+        assert_eq!(stacked.missing_files(), 2);
+    }
+
+    #[test]
     fn rebuilds_history_when_a_shallow_clone_gets_deeper() {
         let tmp = tempfile::tempdir().unwrap();
         let src = tmp.path().join("src");
