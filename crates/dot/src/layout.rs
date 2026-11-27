@@ -123,6 +123,9 @@ type Chain = (Vec<usize>, bool, Option<usize>);
 /// ラベルの仮のノードの所で、線がラベルの脇から離れてよい幅。
 const LABEL_SLACK: f64 = 2.0;
 
+/// 左右の向きを決めるときに数える行の大きさの上限（組の数が行の大きさの 2 乗で増えるため）。
+const MIRROR_ROW: usize = 2000;
+
 /// 仮のノードの上限。
 const MAX_DUMMIES: usize = 12_000;
 /// 直角の線の段の間の下限（ランクの間を広げる上限を超えても保つ）。
@@ -1561,6 +1564,7 @@ pub fn layout(
     for r in 0..ord.layers.len() {
         ord.sort_layer(r, &val);
     }
+    let first = val.clone();
     // 上からの初めの並びと、下からの初めの並びの 2 回。どちらも、中央値で上下に並べ替えて入れ替え（1 回おきに
     // 交差の同じ入れ替えも）、減らなければいちばん良い並びに戻して続け、MINCROSS_STALE 回続けて減らなければ
     // やめる。2 回のうち交差の少ないほう
@@ -1614,6 +1618,40 @@ pub fn layout(
     }
     ord.layers = best;
     ord.refresh();
+    // 左右の向き: 並べ替えは左右を写した並びにも行き着く（交差の数は同じ）。Graphviz の絵と同じく、最初の並び（上からの
+    // 深さ優先）と同じ向きのほうにする。同じランクの辺やポートがあれば写すと交差が変わるので、増えないときだけ
+    if !opt.ordering_out {
+        // 最初の並びと同じ順の本物のノードの組の数と、逆の組の数
+        let (mut same, mut opposite) = (0usize, 0usize);
+        for row in &ord.layers {
+            if row.len() > MIRROR_ROW {
+                continue;
+            }
+            let real: Vec<usize> = row.iter().copied().filter(|&v| nodes[v].real).collect();
+            for i in 0..real.len() {
+                for j in i + 1..real.len() {
+                    if first[real[i]] < first[real[j]] {
+                        same += 1;
+                    } else {
+                        opposite += 1;
+                    }
+                }
+            }
+        }
+        if opposite > same {
+            let kept = ord.layers.clone();
+            let count = ord.crossings();
+            for row in &mut ord.layers {
+                row.reverse();
+            }
+            ord.refresh();
+            let flat_ok = (0..ord.layers.len()).all(|r| !ord.has_flat[r]);
+            if !flat_ok || ord.crossings() > count {
+                ord.layers = kept;
+                ord.refresh();
+            }
+        }
+    }
     // 同じランクの辺は尾を左に（並べ替えの中で守っている。念のため）
     for r in 0..ord.layers.len() {
         ord.keep_flat_order(r);

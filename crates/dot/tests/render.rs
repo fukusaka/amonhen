@@ -1537,7 +1537,8 @@ fn dot_edges_between_the_same_two_nodes_are_drawn_apart() {
     assert!((middle(0) - middle(1)).abs() > 8.0, "{svg}");
 }
 
-/// 同じランクの並びは Graphviz の絵と同じ: 辺を書いた順ではなく、ノードの宣言の順。
+/// 同じランクの並びは Graphviz の絵と同じ: 辺を書いた順ではなく、ノードの宣言の順。並べ替えが左右を写した並びに
+/// 行き着いても、最初の並びの向きに戻す。
 #[test]
 fn dot_ranks_follow_the_declaration_order_as_in_graphviz() {
     let order = |src: &str, names: &[&str]| -> Vec<String> {
@@ -1560,6 +1561,11 @@ fn dot_ranks_follow_the_declaration_order_as_in_graphviz() {
         ),
         ["n", "f", "l", "j"]
     );
+    // クラスタのある図: 宣言の早い x の側が左（Graphviz と同じ向き）
+    let src = "digraph { subgraph cluster_0 { a -> b; a -> c } \
+               subgraph cluster_1 { x -> y; x -> z; y -> z; y -> q } top -> a; top -> y; y -> b }";
+    assert_eq!(order(src, &["x", "top"]), ["x", "top"]);
+    assert_eq!(order(src, &["y", "a"]), ["y", "a"]);
 }
 
 /// 辺のラベルは線のすぐ脇にある（Graphviz の絵と同じく、線はラベルの仮のノードの脇を通る）。
