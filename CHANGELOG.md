@@ -1422,6 +1422,13 @@ First release.
 
 ## VSCode extension
 
+### Unreleased
+
+#### Changed
+
+- The sidebar's icons are an icon font, so they take the theme's icon color, high contrast and the selected row's
+  color like VSCode's own icons.
+
 ### [0.2.10] - 2026-11-27
 
 The extension follows the app much more closely: History's menus, labels and activity strip, the commit details' tags,

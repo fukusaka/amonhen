@@ -94,11 +94,22 @@ function git(...args: string[]): string {
  */
 const WAIT = process.platform === 'win32' ? 40_000 : 20_000;
 
-/** 行のアイコンの名前: どの FE でも同じ形のアイコン（media/icons の SVG）ならその名前（`signed-green` など）、codicon ならその id。 */
+/**
+ * 行のアイコンの名前: どの FE でも同じ形のアイコン（フォントの `amonhen-<名前>`）ならその名前に色を添えたもの
+ * （`signed-green` など）、codicon ならその id。
+ */
 function iconName(item: vscode.TreeItem): string | undefined {
-  const icon = item.iconPath as vscode.ThemeIcon | { light?: vscode.Uri } | undefined;
-  if (icon && 'light' in icon && icon.light) return icon.light.path.split('/').pop()!.replace(/\.svg$/, '');
-  return (icon as vscode.ThemeIcon | undefined)?.id;
+  const icon = item.iconPath as vscode.ThemeIcon | undefined;
+  if (!icon?.id?.startsWith('amonhen-')) return icon?.id;
+  const colors: Record<string, string> = {
+    'charts.green': 'green',
+    'charts.yellow': 'yellow',
+    'charts.orange': 'orange',
+    'charts.red': 'red',
+    'list.warningForeground': 'warning',
+  };
+  const color = icon.color ? colors[icon.color.id] : undefined;
+  return icon.id.slice('amonhen-'.length) + (color ? `-${color}` : '');
 }
 
 /** fn が値を返すまで待つ。来なければ、seen（そこまでに来たもの）を添えて失敗する */
@@ -1167,7 +1178,7 @@ async function branchArrangeFlow(): Promise<void> {
     await until('並べ替え', () => JSON.stringify(shape().slice(0, 2)) === JSON.stringify(['arr-a', 'arr-b']));
     await vscode.commands.executeCommand('amonhen.branch.removeFromFavorites', node('arr-a'), [node('arr-a'), node('arr-b')]);
     assert.deepEqual([config('branch.arr-a.amonhenPinned'), config('branch.arr-b.amonhenPinned')], [undefined, undefined]);
-    // お気に入りでなくなったブランチは、どの FE でも同じ形の Branch（media/icons の SVG）
+    // お気に入りでなくなったブランチは、どの FE でも同じ形の Branch
     await until('お気に入りが消える', () => iconName(sidebar.getTreeItem(node('arr-a'))) === 'branch');
 
     // いくつも選んで merge すると 1 つのコミットになり（Undo 1 回で戻る）、まとめて消せる

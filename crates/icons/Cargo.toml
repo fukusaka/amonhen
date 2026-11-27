@@ -5,3 +5,8 @@ edition.workspace = true
 rust-version.workspace = true
 publish.workspace = true
 license.workspace = true
+
+[dev-dependencies]
+# VSCode のフォントを作るときだけ。どの OS でも同じバイトになるよう、sin・cos などは OS の数学ライブラリでなく libm で
+# 計算させる（std を外す）。
+kurbo = { version = "0.13", default-features = false, features = ["libm"] }

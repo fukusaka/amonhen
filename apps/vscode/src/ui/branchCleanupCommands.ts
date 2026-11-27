@@ -61,7 +61,7 @@ export function registerBranchCleanupCommands(manager: RepositoryManager): vscod
           items.push({
             label: b.name,
             description: b.pullRequest !== null ? `#${b.pullRequest}` : reason === 'gone' && b.upstream ? b.upstream : undefined,
-            iconPath: sharedIcon('branch') ?? new vscode.ThemeIcon('git-branch'),
+            iconPath: sharedIcon('branch'),
             picked: b.checked,
             branch: b,
           });

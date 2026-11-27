@@ -20,7 +20,7 @@ export function registerIgnoredCommands(manager: RepositoryManager): vscode.Disp
         return;
       }
       const picked = await vscode.window.showQuickPick(
-        paths.map((p) => ({ label: p, picked: true, iconPath: sharedIcon(p.endsWith('/') ? 'folder' : 'files') ?? new vscode.ThemeIcon(p.endsWith('/') ? 'folder' : 'file') })),
+        paths.map((p) => ({ label: p, picked: true, iconPath: sharedIcon(p.endsWith('/') ? 'folder' : 'files') })),
         { title: 'Delete Ignored Files', canPickMany: true, placeHolder: 'What git clean -X would delete (folders as one entry)' },
       );
       if (!picked || picked.length === 0) return;
