@@ -102,6 +102,18 @@ public final class StackedDiff: @unchecked Sendable {
         guard amonhen_stacked_set_context(repository.raw, raw, UInt32(file), context) else { throw AmonhenError.last() }
     }
 
+    /// partial clone で中身が手元になく、差分を取っていないファイルの数（見出しの `AmonhenDiffRow_MISSING`）。
+    public var missingFiles: Int { Int(amonhen_stacked_missing(raw)) }
+
+    /// 手元になかった中身を取ってきて、それらのファイルの差分を取る（利用者が「取ってくる」を押したとき）。表示は
+    /// `view(collapsed:)` で作り直す。裏のスレッドで呼び、終わるまで `view` を呼ばないこと。
+    public func fetchMissing(in repository: Repository) throws {
+        guard amonhen_stacked_fetch_missing(repository.raw, raw) else { throw AmonhenError.last() }
+        // 取ったファイルの行数が入ったので、合計を数え直す。
+        cachedHeaders = nil
+        cachedTotals = nil
+    }
+
     /// `file` 番目のファイルが生成物か（最初は畳む）。`.gitattributes` の `linguist-generated`、なければ lock ファイルなど。
     public func isGenerated(_ file: Int) -> Bool { amonhen_stacked_generated(raw, UInt32(file)) }
 
@@ -109,12 +121,24 @@ public final class StackedDiff: @unchecked Sendable {
     public private(set) lazy var names: [String] = (0..<headers.rowCount).map { headers.text(row: $0) }
 
     /// 全ファイルの追加と削除の行数の合計（バイナリのファイルは数えない）。
-    public private(set) lazy var totals: (added: Int, removed: Int) = headers.withRows { rows in
-        rows.reduce((0, 0)) { ($0.0 + Int($1.new_no), $0.1 + Int($1.old_no)) }
+    public var totals: (added: Int, removed: Int) {
+        if let cachedTotals { return cachedTotals }
+        let totals = headers.withRows { rows in
+            rows.reduce((0, 0)) { ($0.0 + Int($1.new_no), $0.1 + Int($1.old_no)) }
+        }
+        cachedTotals = totals
+        return totals
     }
+    private var cachedTotals: (added: Int, removed: Int)?
 
     /// すべて畳んだ表示（見出しの行だけ。`old_no` は削除、`new_no` は追加の行数）。
-    private lazy var headers = view(collapsed: [Bool](repeating: true, count: count))
+    private var headers: FileDiff {
+        if let cachedHeaders { return cachedHeaders }
+        let headers = view(collapsed: [Bool](repeating: true, count: count))
+        cachedHeaders = headers
+        return headers
+    }
+    private var cachedHeaders: FileDiff?
 
     /// 各ファイルの見出しの行（`AmonhenDiffRow_FILE`）に、畳まないファイルの差分の行を続けたもの。
     /// `collapsed[i]` が true のファイルは見出しだけ。
@@ -302,6 +326,27 @@ extension Repository {
         }
         guard let raw else { throw AmonhenError.last() }
         return FileDiff(raw: raw, owner: self, view: amonhen_diff_view(raw), free: { amonhen_diff_free($0) })
+    }
+
+    /// partial clone で読む画面が取りに行かなかった中身（`AmonhenError.missing`）を、利用者が頼んだので取ってくる
+    /// （まとめて 1 回で）。裏のスレッドで呼ぶ。
+    public func fetchContents(_ ids: Data) throws {
+        let ok = ids.withUnsafeBytes {
+            amonhen_fetch_contents(raw, $0.baseAddress?.assumingMemoryBound(to: UInt8.self), UInt32(ids.count / 20))
+        }
+        guard ok else { throw AmonhenError.last() }
+    }
+
+    /// コミット `commit`（40 桁）の `path` を見せるのに要る中身のうち、partial clone で手元にないもの（40 桁の ID。
+    /// 取りには行かない）。空なら見せられる。裏のスレッドで呼ぶ。
+    public func fileContentsMissing(commit: String, path: String) throws -> [String] {
+        struct Info: Decodable { let missing: [String] }
+        return try info(["op": "fileContentsMissing", "oid": commit, "path": path], as: Info.self).missing
+    }
+
+    /// `fileContentsMissing` の中身（40 桁の ID）を、利用者が頼んだので取ってくる。裏のスレッドで呼ぶ。
+    public func fetchContents(hex ids: [String]) throws {
+        try fetchContents(Data(ids.compactMap { Data(hex: $0) }.joined()))
     }
 
     /// blob `oid`（40 桁）の中身。読めなければ nil。裏のスレッドで呼ぶ。

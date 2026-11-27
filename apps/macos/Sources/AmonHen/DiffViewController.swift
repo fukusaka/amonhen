@@ -34,6 +34,16 @@ final class DiffViewController: NSViewController, NSSearchFieldDelegate {
     }
     private static let topBarHeight: CGFloat = 30
 
+    /// 上の帯の下に出す知らせの帯（partial clone で中身が手元にないときの「取ってくる」など）。nil なら出さない。
+    var noticeBar: NSView? {
+        didSet {
+            oldValue?.removeFromSuperview()
+            if let noticeBar { view.addSubview(noticeBar) }
+            layoutSubviews()
+        }
+    }
+    private static let noticeBarHeight: CGFloat = 32
+
     private let textView = GraphView()
     private var diff: FileDiff? {
         didSet { hunkCursor = nil }
@@ -508,6 +518,10 @@ final class DiffViewController: NSViewController, NSSearchFieldDelegate {
         if let topBar {
             top -= Self.topBarHeight
             topBar.frame = NSRect(x: 0, y: top, width: width, height: Self.topBarHeight)
+        }
+        if let noticeBar {
+            top -= Self.noticeBarHeight
+            noticeBar.frame = NSRect(x: 0, y: top, width: width, height: Self.noticeBarHeight)
         }
         scrollView.frame = NSRect(x: 0, y: 0, width: width, height: max(0, top))
         replacement?.frame = scrollView.frame
@@ -1956,7 +1970,9 @@ final class CommitDetailViewController: NSSplitViewController, NSTextViewDelegat
     /// コミットを選んでから最初のファイルの差分を出すまでを測る（`--measure-select`）。
     private var selectedAt: CFTimeInterval = 0
     /// 全ファイルを縦に並べた差分と、ファイルごとに畳んでいるか（コアに渡す形）。
-    private var stacked: StackedDiff?
+    private var stacked: StackedDiff? {
+        didSet { if stacked == nil { diffView.noticeBar = nil } }
+    }
     private var collapsed: [Bool] = []
     var onDiffShown: (() -> Void)?
     /// 親コミットのリンクを押したとき（40 桁の ID）。
@@ -1979,6 +1995,10 @@ final class CommitDetailViewController: NSSplitViewController, NSTextViewDelegat
 
     /// sparse checkout なら、その様子（取り出していないフォルダのファイルは、ディスクにないので開けない）。
     var sparse: RepositoryForm.Sparse?
+    /// partial clone か（すべてのファイルでファイルを開く前に、中身が手元にあるかを確かめる）。
+    var isPartialClone = false
+    /// partial clone で中身が手元になく、差分を取っていないファイル（帯で取ってくるまで）。
+    private var missingFiles: Set<Int> = []
 
     /// 表示中のコミットの親と子（キーボードで移るため）。子は詳細を読み終えるまで空。shallow clone の境界の
     /// コミットの親は取得していないので、移れない（空）。
@@ -3198,6 +3218,7 @@ extension CommitDetailViewController {
         }
         diffView.fileMarks = marks
         diffView.fileNotes = notes
+        updateMissing()
         updatePendingCounts()
         filesBrowser = nil
         setFilesMode(false)
@@ -3240,7 +3261,8 @@ extension CommitDetailViewController {
         let images = Set((0..<stacked.count).filter { ImageDiffPanel.isImage(path(of: $0)) })
         let tree = treeLayout(count: stacked.count)
         let hidden = tree?.hidden ?? []
-        let panelFiles = openFiles.intersection(images).subtracting(svgAsText).subtracting(hidden)
+        // 中身が手元にない画像は、絵の欄を作らない（帯で取ってくるまで）。
+        let panelFiles = openFiles.intersection(images).subtracting(svgAsText).subtracting(hidden).subtracting(missingFiles)
         collapsed = (0..<stacked.count).map { !openFiles.contains($0) || panelFiles.contains($0) || hidden.contains($0) }
         diffView.openOverride = panelFiles
         diffView.show(stacked.view(collapsed: collapsed), keepScroll: keepScroll)
@@ -3277,6 +3299,39 @@ extension CommitDetailViewController {
             }
         }
         updatePendingCounts()
+        // 開いたファイルの中身が手元になかった（partial clone）なら、取りに行かずに帯で聞く。
+        if !files.isEmpty { updateMissing() }
+    }
+
+    // MARK: - partial clone で手元にない中身
+
+    /// partial clone で中身が手元になく、差分を取っていないファイルに印を付け、「取ってくる」の帯を出す（なければ消す）。
+    fileprivate func updateMissing() {
+        guard let stacked else {
+            missingFiles = []
+            return diffView.noticeBar = nil
+        }
+        let missing = stacked.view(collapsed: [Bool](repeating: true, count: stacked.count)).withRows { rows in
+            rows.indices.filter { rows[$0].flags & UInt8(AmonhenDiffRow_MISSING) != 0 }
+        }
+        missingFiles = Set(missing)
+        var notes = diffView.fileNotes.filter { $0.value != Self.missingNote }
+        for file in missing { notes[file] = Self.missingNote }
+        diffView.fileNotes = notes
+        diffView.noticeBar = missing.isEmpty ? nil : missingBand(files: missing.count)
+    }
+
+    private static let missingNote = L("Not here yet")
+
+    /// 「N 個のファイルの中身がまだ手元にありません［取ってくる］」の帯。押したときだけ取り、そのファイルの差分を出し直す。
+    private func missingBand(files: Int) -> NSView {
+        let stacked = self.stacked, repository = self.repository, request = self.request
+        return MissingContentsBand(files: files, fetch: { try stacked?.fetchMissing(in: repository) }) { [weak self] in
+            guard let self, request == self.request, stacked === self.stacked else { return }
+            updateMissing()
+            updateBarTotals()
+            reshowStacked(keepScroll: true)
+        }
     }
 
     /// hunk の見出しの印: そのファイルの前後の行を 20 行ずつ広げる。
@@ -3408,12 +3463,15 @@ extension CommitDetailViewController {
                     diffView.scrollToFile(file)
                 }
                 browser.onFoldersChange = { [weak self] in self?.updateBar() }
+                browser.isPartialClone = isPartialClone
                 filesBrowser = browser
             }
             diffView.replacement = filesBrowser
         } else {
             diffView.replacement = nil
         }
+        // 差分の「取ってくる」の帯は変更の側だけ（すべてのファイルでは、開いたファイルごとに聞く）。
+        if on { diffView.noticeBar = nil } else { updateMissing() }
         updateBar()
     }
 

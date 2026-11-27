@@ -15,6 +15,9 @@ becomes the GitHub Release notes.
   whole cluster sits.
 - In DOT diagrams, a same-rank edge inside a cluster may point right to left when nodes outside pull it, as in
   Graphviz. Outside clusters, the tail stays on the left.
+- In a partial clone, History's diffs and All Files no longer fetch missing file contents by themselves. A band says
+  how many files' contents aren't here yet, and Fetch Contents gets just those. The CLI's `diff` and `show` still
+  fetch first, as git does.
 
 #### Fixed
 

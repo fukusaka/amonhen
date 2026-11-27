@@ -1036,6 +1036,9 @@ final class CommitFilesBrowser: NSView, NSOutlineViewDataSource, NSOutlineViewDe
 
     /// `path` の中身を出す（`line` があればその行へ）。変えたファイルは前後をファイル全体にした差分、変えていない
     /// ファイルはその時点の中身。
+    /// partial clone か（ファイルを開く前に、中身が手元にあるかを確かめる）。
+    var isPartialClone = false
+
     func open(path: String, line: Int?) {
         openPath = path
         let index = changedFiles[path]
@@ -1067,6 +1070,36 @@ final class CommitFilesBrowser: NSView, NSOutlineViewDataSource, NSOutlineViewDe
         let request = self.request
         binaryBox.isHidden = true
         removeImage()
+        content.noticeBar = nil
+        // partial clone で中身が手元になければ、取りに行かずに「取ってくる」の帯で聞く（押したときだけ取る）。
+        if isPartialClone {
+            let store = repository, commit = self.commit
+            content.view.isHidden = false
+            content.show(nil, message: L("Loading the diff…"))
+            Task {
+                let missing = await Task.detached(priority: .userInitiated) {
+                    (try? store.fileContentsMissing(commit: commit, path: path)) ?? []
+                }.value
+                guard request == self.request else { return }
+                if missing.isEmpty { return openContents(path: path, line: line, request: request) }
+                content.show(nil, message: L("This file’s contents aren’t here yet."))
+                content.noticeBar = MissingContentsBand(
+                    message: L("This file’s contents aren’t here yet (partial clone)."),
+                    fetch: { try store.fetchContents(hex: missing) }
+                ) { [weak self] in
+                    guard let self, request == self.request else { return }
+                    content.noticeBar = nil
+                    openContents(path: path, line: line, request: request)
+                }
+            }
+            return
+        }
+        openContents(path: path, line: line, request: request)
+    }
+
+    /// `open(path:line:)` の、中身を読んで出す分（partial clone なら中身が手元にあると確かめた後）。
+    private func openContents(path: String, line: Int?, request: Int) {
+        let index = changedFiles[path]
         let svg = ImageDiffPanel.isSVG(path)
         let markdown = MarkdownBlock.isMarkdown(path)
         drawableSwitch.isHidden = true

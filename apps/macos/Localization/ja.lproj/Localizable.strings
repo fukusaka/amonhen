@@ -2116,3 +2116,11 @@
 "Show Only Commit Details" = "コミット情報だけを表示";
 "Restore Commit Details" = "コミット情報を戻す";
 "Code" = "コード";
+"Not here yet" = "まだ手元にない";
+"The contents of %ld files aren’t here yet (partial clone)." = "partial clone なので、%ld 個のファイルの中身がまだ手元にありません。";
+"Fetch Contents" = "取ってくる";
+"Fetch just these contents from the remote, in one go, and show them." = "これらの中身だけをリモートからまとめて取ってきて、出します。";
+"Couldn’t fetch the contents: %@" = "中身を取ってこられませんでした: %@";
+"Fetching the contents…" = "中身を取ってきています…";
+"This file’s contents aren’t here yet." = "このファイルの中身はまだ手元にありません。";
+"This file’s contents aren’t here yet (partial clone)." = "partial clone なので、このファイルの中身がまだ手元にありません。";
