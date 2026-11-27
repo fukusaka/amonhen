@@ -3428,7 +3428,7 @@ fn history_marks(form: &crate::repoform::Form) -> Vec<Mark> {
         marks.push(Mark {
             icon: icon::Kind::CloudDown,
             tooltip: tr!(
-                "Partial clone: file contents are fetched when needed ({filter})",
+                "Partial clone: file contents are fetched when you ask for them or an operation needs them ({filter})",
                 filter = partial.filter.as_deref().unwrap_or("?")
             ),
             css: None,

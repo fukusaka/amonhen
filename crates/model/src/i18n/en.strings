@@ -59,3 +59,4 @@
 "The working tree matches the commit; the difference from now ({count} files) goes away (Undo brings it back)." = "The working tree matches the commit; the difference from now ({count} file) goes away (Undo brings it back).";
 "{count} files" = "{count} file";
 "{count} lines deleted here" = "{count} line deleted here";
+"The contents of {count} files aren’t here yet (partial clone)" = "The contents of {count} file aren’t here yet (partial clone)";

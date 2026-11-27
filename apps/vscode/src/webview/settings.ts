@@ -243,7 +243,7 @@ export function createSettingsView(): View {
       section(
         'Contents',
         actionRow(
-          `Contents fetched when needed${form.partial.filter ? ` (${form.partial.filter})` : ''}`,
+          `Contents fetched when asked${form.partial.filter ? ` (${form.partial.filter})` : ''}`,
           `Diffs, blame and contents: searches fetch what they need from ${form.partial.remote}.`,
           [button('Fetch All Contents…', { action: 'fetchContents' })],
           form.canFetchAllContents ? undefined : tooOld('2.36'),

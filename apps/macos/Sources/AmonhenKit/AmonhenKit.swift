@@ -14,6 +14,12 @@ public struct AmonhenError: LocalizedError, CustomStringConvertible {
     /// 失敗に関わるパス（ほかの worktree の場所、ロックファイル）。
     public var path: String?
 
+    /// partial clone で中身が手元になくて断ったなら、その中身（20 バイトずつ並べた ID。`kind` は
+    /// `missingContents`）。読む画面は「取ってくる」を出し、押されたら `Repository.fetchContents` に渡す。
+    public var missing = Data()
+    /// 手元になかった中身の数。
+    public var missingCount: Int { missing.count / 20 }
+
     public init(description: String, kind: String? = nil, path: String? = nil) {
         self.description = description
         self.kind = kind
@@ -21,7 +27,14 @@ public struct AmonhenError: LocalizedError, CustomStringConvertible {
     }
 
     static func last() -> AmonhenError {
-        AmonhenError(description: String(cString: amonhen_last_error()))
+        var error = AmonhenError(description: String(cString: amonhen_last_error()))
+        var count: UInt32 = 0
+        if let bytes = amonhen_last_missing(&count) {
+            error.missing = Data(bytes: bytes, count: Int(count) * 20)
+            error.kind = "missingContents"
+            amonhen_blob_free(bytes, UInt(count) * 20)
+        }
+        return error
     }
 }
 

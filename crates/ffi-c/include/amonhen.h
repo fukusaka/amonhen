@@ -374,6 +374,11 @@ typedef struct {
  * `flags`: ファイルの見出しで、まだ差分を取っていない（ファイルの多いコミット。開いたときに取る）。行数は 0。
  */
 #define AmonhenDiffRow_PENDING (1 << 3)
+/**
+ * `flags`: ファイルの見出しで、partial clone で中身が手元にない（取りに行っていない。利用者が頼んだら取る）。
+ * 行数は 0。
+ */
+#define AmonhenDiffRow_MISSING (1 << 4)
 
 /**
  * 差分の行の中で強調する範囲（単語単位の変更）。位置は FE の文字列の符号単位。
@@ -516,6 +521,17 @@ extern "C" {
  * このスレッドで最後に失敗した関数の理由（UTF-8）。次に失敗するまで有効。
  */
 const char *amonhen_last_error(void);
+
+/**
+ * このスレッドで最後に失敗した関数が、partial clone で中身が手元になくて断ったのなら、その中身の ID（20 バイトずつ
+ * 並べたもの。`amonhen_blob_free` で解放する）を返し、数を `count` に書く（読む画面は取りに行かない。FE は
+ * 「取ってくる」を出し、押されたら `amonhen_fetch_contents` で取ってから読み直す）。ほかの理由の失敗なら NULL で、
+ * `count` は 0。
+ *
+ * # Safety
+ * `count` は書ける領域であること（NULL でもよい）。
+ */
+uint8_t *amonhen_last_missing(uint32_t *count);
 
 /**
  * 手元のリポジトリの status で、git の fsmonitor（`git fsmonitor--daemon`）を使うか（macOS と Windows）。
@@ -1311,6 +1327,48 @@ AmonhenStacked *amonhen_selection_diff(const AmonhenRepo *repo_ptr,
  * `stacked` は有効であること。
  */
 uint32_t amonhen_stacked_count(const AmonhenStacked *stacked);
+
+/**
+ * partial clone で読む画面が取りに行かなかった中身（`amonhen_last_missing` の ID、`count` 個の 20 バイト）を、
+ * 利用者が頼んだので取ってくる（まとめて 1 回で）。裏のスレッドで呼ぶ。取れなければ false（`amonhen_last_error`）。
+ *
+ * # Safety
+ * `repo` は有効、`ids` は `count` × 20 バイトを読める領域であること（`count` が 0 なら NULL でもよい）。
+ */
+bool amonhen_fetch_contents(const AmonhenRepo *repo_ptr,
+                            const uint8_t *ids,
+                            uint32_t count);
+
+/**
+ * partial clone で中身が手元になく、差分を取っていないファイルの数（見出しの `MISSING`。FE は「取ってくる」の
+ * 帯を出す）。
+ *
+ * # Safety
+ * `stacked` は有効であること。
+ */
+uint32_t amonhen_stacked_missing(const AmonhenStacked *stacked);
+
+/**
+ * `stacked` の手元になかった中身を取ってきて、それらのファイルの差分を取る（利用者が「取ってくる」を押した
+ * とき。まとめて 1 回で取る）。表示は `amonhen_stacked_view` で作り直す。裏のスレッドで呼ぶ。取れなければ false
+ * （`amonhen_last_error`）。
+ *
+ * # Safety
+ * `repo` と `stacked` は有効で、`stacked` をほかのスレッドで同時に使っていないこと。
+ */
+bool amonhen_stacked_fetch_missing(const AmonhenRepo *repo_ptr,
+                                   AmonhenStacked *stacked);
+
+/**
+ * `stacked` の、中身が手元になかったファイルのうち、その後ほかの画面で取って手元にそろったものの差分を取る（取り
+ * には行かない。すべてのファイルから変更に戻ったとき）。表示は `amonhen_stacked_view` で作り直す。裏のスレッドで
+ * 呼ぶ。読めなければ false（`amonhen_last_error`）。
+ *
+ * # Safety
+ * `repo` と `stacked` は有効で、`stacked` をほかのスレッドで同時に使っていないこと。
+ */
+bool amonhen_stacked_refresh_missing(const AmonhenRepo *repo_ptr,
+                                     AmonhenStacked *stacked);
 
 /**
  * `file` 番目のファイルが生成物か（最初は畳む）。`.gitattributes` の `linguist-generated`、なければ lock ファイルなど。

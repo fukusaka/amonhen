@@ -802,5 +802,21 @@
 			<string>%ld files</string>
 		</dict>
 	</dict>
+	<key>The contents of %ld files aren’t here yet (partial clone).</key>
+	<dict>
+		<key>NSStringLocalizedFormatKey</key>
+		<string>The contents of %#@n0@ aren’t here yet (partial clone).</string>
+		<key>n0</key>
+		<dict>
+			<key>NSStringFormatSpecTypeKey</key>
+			<string>NSStringPluralRuleType</string>
+			<key>NSStringFormatValueTypeKey</key>
+			<string>ld</string>
+			<key>one</key>
+			<string>%ld file</string>
+			<key>other</key>
+			<string>%ld files</string>
+		</dict>
+	</dict>
 </dict>
 </plist>

@@ -34,6 +34,8 @@ pub const LOCAL_CHANGES: &str = "localChanges";
 pub const LOCKED: &str = "locked";
 /// 上流が決まっていない。
 pub const NO_UPSTREAM: &str = "noUpstream";
+/// partial clone で、読もうとした中身が手元にない（取りに行かずに断った。`info.missing` を取れば読める）。
+pub const MISSING_CONTENTS: &str = "missingContents";
 /// いくつものブランチを 1 つのコミットにまとめる merge（octopus）が、最後のもの以外でコンフリクトして断った。
 pub const OCTOPUS: &str = "octopus";
 

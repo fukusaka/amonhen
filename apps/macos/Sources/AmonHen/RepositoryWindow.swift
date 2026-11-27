@@ -1804,6 +1804,7 @@ final class RepositoryWindow: NSObject, NSWindowDelegate, NSMenuItemValidation, 
             slot.workingCopy.setSparse(form.sparse)
             history.isPartialClone = form.partial != nil
             detail.sparse = form.sparse
+            detail.isPartialClone = form.partial != nil
         }
     }
 

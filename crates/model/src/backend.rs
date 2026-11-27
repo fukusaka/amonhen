@@ -8,6 +8,31 @@ use crate::{
 pub type Error = Box<dyn std::error::Error + Send + Sync>;
 pub type Result<T, E = Error> = std::result::Result<T, E>;
 
+/// partial clone で、読もうとした中身（blob）が手元にない。読む画面は取りに行かずにこれで断り、FE は「取ってくる」を
+/// 出して、押されたら `ids` を取る（`GitBackend::prefetch_blobs`）。
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct MissingContents {
+    pub ids: Vec<Oid>,
+}
+
+impl MissingContents {
+    /// `error` がこれなら、その中身。
+    pub fn of<'a>(error: &'a (dyn std::error::Error + 'static)) -> Option<&'a Self> {
+        error.downcast_ref::<Self>()
+    }
+}
+
+impl std::fmt::Display for MissingContents {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str(&crate::tr!(
+            "The contents of {count} files aren’t here yet (partial clone)",
+            count = self.ids.len()
+        ))
+    }
+}
+
+impl std::error::Error for MissingContents {}
+
 /// 任せた処理（`GitBackend::delegate`）の答え。大きなバイト列（差分のファイルの中身）は `parts` に分け、手元の
 /// 共有の daemon からは共有メモリで受け取る（コピーしない）。
 #[derive(Default)]
@@ -113,6 +138,14 @@ pub trait GitBackend: Send + Sync {
     fn prefetch_blobs(&self, ids: &[Oid]) -> Result<()> {
         let _ = ids;
         Ok(())
+    }
+
+    /// `ids` の blob のうち、partial clone で手元にないもの（取りには行かない。重なりは 1 つにし、順は問わない）。
+    /// 読む画面は、これで足りないと分かれば取らずに断り、利用者が頼んだときだけ `prefetch_blobs` で取る。
+    /// partial clone でなければ空。
+    fn missing_blobs(&self, ids: &[Oid]) -> Result<Vec<Oid>> {
+        let _ = ids;
+        Ok(Vec::new())
     }
 
     /// partial clone で、`tips` から辿れる `scope` のコミットの差分に要る中身（変わったファイルの前後の blob）の

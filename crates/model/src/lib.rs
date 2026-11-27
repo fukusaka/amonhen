@@ -26,7 +26,8 @@ mod text;
 pub mod topo;
 
 pub use backend::{
-    ConnectionState, Delegated, Error, GitBackend, PreparedHistory, PreparedLayout, Result,
+    ConnectionState, Delegated, Error, GitBackend, MissingContents, PreparedHistory,
+    PreparedLayout, Result,
 };
 pub use bundle_file::{BundleInfo, parse_bundle_header};
 pub use change::{

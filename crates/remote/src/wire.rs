@@ -71,6 +71,8 @@ pub enum Request {
     Blob(Oid),
     /// → `()`（手元にない blob をまとめて取ってくる）
     PrefetchBlobs(Vec<Oid>),
+    /// → `Vec<Oid>`（手元にない blob。取りには行かない）
+    MissingBlobs(Vec<Oid>),
     /// → `ContentsToFetch`（取り消せる）
     ContentsToFetch {
         tips: Vec<Oid>,

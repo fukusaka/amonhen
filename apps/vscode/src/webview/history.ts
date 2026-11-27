@@ -1041,7 +1041,7 @@ export function createHistoryView(): View {
         shallowChip.hidden = !message.shallow;
         partialChip.hidden = !message.partial;
         if (message.partial) {
-          partialChip.title = `A partial clone (${message.partial.filter} from ${message.partial.remote}): contents are fetched when needed. Click to fetch all of them.`;
+          partialChip.title = `A partial clone (${message.partial.filter} from ${message.partial.remote}): contents are fetched when you ask for them or an operation needs them. Click to fetch all of them.`;
         }
         break;
       case 'signatures':

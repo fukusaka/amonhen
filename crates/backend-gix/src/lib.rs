@@ -652,7 +652,21 @@ impl GitBackend for GixBackend {
         let opt = |id: gix::ObjectId| -> Result<Option<Oid>> { to_oid(id.as_ref()).map(Some) };
         let is_commit = |mode: gix::object::tree::EntryMode| mode.is_commit();
         let mut changes = Vec::new();
-        for change in repo.diff_tree_to_tree(old_tree.as_ref(), Some(&new_tree), None)? {
+        // 名前の変更を似ている度合いで見つけるには、消した・足したファイルの中身を読む。partial clone で中身が手元に
+        // なければ読めずに失敗するので、そのときは中身の同じ名前の変更だけを見つける（中身を取りには行かない）。
+        let diff = match repo.diff_tree_to_tree(old_tree.as_ref(), Some(&new_tree), None) {
+            Ok(diff) => diff,
+            Err(_) if promisor_remote(&repo).is_some() => {
+                let exact = gix::diff::Rewrites {
+                    percentage: None,
+                    ..Default::default()
+                };
+                let options = gix::diff::Options::default().with_rewrites(Some(exact));
+                repo.diff_tree_to_tree(old_tree.as_ref(), Some(&new_tree), options)?
+            }
+            Err(e) => return Err(e.into()),
+        };
+        for change in diff {
             let (mode, previous) = match &change {
                 C::Addition { entry_mode, .. } | C::Deletion { entry_mode, .. } => {
                     (*entry_mode, *entry_mode)
@@ -801,6 +815,20 @@ impl GitBackend for GixBackend {
         self.git()?.fetch_missing(&remote, &missing)
     }
 
+    fn missing_blobs(&self, ids: &[Oid]) -> Result<Vec<Oid>> {
+        let repo = self.repo.to_thread_local();
+        if ids.is_empty() || promisor_remote(&repo).is_none() {
+            return Ok(Vec::new());
+        }
+        let mut seen = amonhen_model::OidSet::default();
+        Ok(ids
+            .iter()
+            .filter(|id| seen.insert(**id))
+            .filter(|id| !repo.has_object(gix::ObjectId::from_bytes_or_panic(&id.0)))
+            .copied()
+            .collect())
+    }
+
     fn contents_to_fetch(
         &self,
         tips: &[Oid],
@@ -861,7 +889,18 @@ impl GitBackend for GixBackend {
     }
 
     fn commit_extras(&self, commit: &Oid) -> Result<amonhen_model::CommitExtras> {
-        self.git()?.commit_extras(commit)
+        // partial clone で変わったファイルの中身が手元になければ、行数は数えない（git は数えるために取ってくる）。
+        let stats = promisor_remote(&self.repo.to_thread_local()).is_none() || {
+            let ids: Vec<Oid> = self
+                .commit_changes(commit)?
+                .iter()
+                .filter(|c| !c.submodule)
+                .flat_map(|c| [c.old_id, c.new_id])
+                .flatten()
+                .collect();
+            self.missing_blobs(&ids)?.is_empty()
+        };
+        self.git()?.commit_extras_with(commit, stats)
     }
 
     fn verify_signatures(&self, ids: &[Oid]) -> Result<Vec<amonhen_model::SignatureCheck>> {

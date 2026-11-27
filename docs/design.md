@@ -408,6 +408,22 @@ How these work as built:
 - CTLines are cached by "generation + line number", and scrolling, as in History, only changes a constant offset. As built, laid-out lines are kept per row of the diff shown (dropped when the diff or the screen's scale changes), and each frame writes the visible rows' glyph instances again, as History does.
 - File contents share the `Arc<[u8]>` decoded by gix across diff computation, highlighting and display.
 - Text selection, copy, search, the right-click menu and hunk / line-level staging are implemented by our own code.
+- **Partial clone: fetch only when asked.** A partial clone exists so that file contents stay on the remote until they
+  are wanted, so the screens that read contents never fetch on their own (git itself fetches whatever a command
+  touches, which made opening History fetch the parent's version of every file in the selected commit).
+  - The core checks what is missing first (`GitBackend::missing_blobs`, which only looks), and nothing is fetched until
+    the user asks. In a commit's diff, a file whose contents aren't here is left without a diff: its header carries
+    `DiffRow::MISSING` (no lines, no line counts) while the other files show as usual, and the file list and the
+    kind of change (M/A/D) come from the trees, which are here. The single-file reads (a file in All Files, its
+    preview, an image) refuse with `MissingContents` (`errorKind` `missingContents` with `info.missing` in JSON).
+  - The FE shows a band in place of the diff or the file, "The contents of N files aren't here yet", with Fetch; the
+    button fetches exactly those contents in one go (`fetch_stacked_missing`, `{"op":"fetchContents"}`) and shows
+    the diff again. It asks again for the next commit: fetching is never remembered as a choice, but what was fetched
+    stays, so the same commit doesn't ask twice. There is no setting.
+  - Only the reading screens are covered. Operations that write (cherry-pick, revert, rebase, merge and so on) need
+    the contents and leave fetching to git, as before; so does the VSCode extension's git execution layer (without the
+    engine). The CLI's `diff` and `show` fetch first, as `git diff` and `git show` do. Counting, then asking with a
+    sheet, stays for what can't be bounded beforehand (`contents:` search, archives, bundles).
 
 ## Window background and themes
 

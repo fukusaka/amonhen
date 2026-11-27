@@ -10,7 +10,7 @@ use serde_json::{Value, json};
 
 use amonhen_model::tr;
 
-use crate::{Args, Result, call, command, open_repository, term, usage};
+use crate::{Args, Result, call, command, commit_diff, open_repository, term, usage};
 
 /// 命令ごとに共通の引数（`-C`・`--json`・`--color`）と、残り。
 struct Common {
@@ -329,7 +329,7 @@ pub fn diff(args: &[String]) -> Result<ExitCode> {
             .map(|r| resolve(&*front, r))
             .collect::<Result<Vec<_>>>()?;
         let reply = match ids.as_slice() {
-            [one] => call(
+            [one] => commit_diff(
                 &*front,
                 json!({"op": "commitDiff", "id": one, "whitespace": ws}),
             )?,
@@ -348,7 +348,7 @@ pub fn diff(args: &[String]) -> Result<ExitCode> {
                         Ok(r)
                     }
                 };
-                call(
+                commit_diff(
                     &*front,
                     json!({"op": "commitDiff", "history": history, "rows": [row(from)?, row(to)?], "whitespace": ws}),
                 )?
@@ -466,7 +466,7 @@ pub fn show(args: &[String]) -> Result<ExitCode> {
         Value::Null
     };
     let no_patch = flag(&seen, "--no-patch");
-    let diff = call(
+    let diff = commit_diff(
         &*front,
         json!({"op": "commitDiff", "id": id, "whitespace": whitespace(&seen)}),
     )?;
