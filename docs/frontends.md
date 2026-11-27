@@ -238,8 +238,8 @@ The GTK4 app aims to behave like the macOS app. These are the only intended diff
 | Reason shown when Commit is disabled | ✓ | ✓ | ✓ | ✓ | n/a | ✓ | In the button's tooltip.<br>TUI: On the bottom line. |
 | Combined HEAD → working tree diff with line and hunk checks | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | macOS: The All side; a staged line has a filled bar instead of a check.<br>VSCode: With the engine; without it, line staging on separate unstaged and staged diffs.<br>CLI: `diff --combined`, `stage --rows`. |
 | Unstaged, Staged and All, one side for the Working Copy | ✓ | ✓ | ✓ | △ | ✓ | △ | VSCode: The Changes and Staged groups each show their own side.<br>CLI: `diff`, `diff --staged`, `diff --combined`.<br>TUI: `s` in the diff switches sides. |
-| Unchanged lines folded, opened 20 lines at a time or all | ✓ | ✓ | — | — | n/a | — |  |
-| Stage Hunk and Discard Hunk on the hunk header (Lines when selected), or the change bar, by a setting | ✓ | ✓ | — | — | n/a | — |  |
+| Unchanged lines folded, opened 20 lines at a time or all | ✓ | ✓ | ✓ | — | n/a | — |  |
+| Stage Hunk and Discard Hunk on the hunk header (Lines when selected), or the change bar, by a setting | ✓ | ✓ | ✓ | — | n/a | — |  |
 | Several selected files stacked in the diff | ✓ | ✓ | — | — | n/a | — | macOS, GTK4: Up to Files to open together (Settings > Diff & Merge). |
 | Range selection in the gutter, J/K and ⌥J/⌥K | ✓ | ✓ | ✓ | ✓ | n/a | ✓ | TUI: `v` starts a range; `[` `]` go to the hunk headers. |
 | Unstaged / Staged switch for files that can't be overlaid | ✓ | ✓ | ✓ | n/a | ✓ | ✓ | macOS, GTK4: Always there, with All.<br>VSCode: Always shown separately.<br>CLI: `diff --staged`.<br>TUI: The unstaged side first; `s` in the diff switches sides. |
