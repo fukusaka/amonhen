@@ -60,6 +60,8 @@ export interface CommitDetails {
   missingParents?: string[];
   /** 最初の親との差分 */
   files: FileChange[];
+  /** partial clone で中身が手元になく、差分を取っていないファイル（パス。「取ってくる」の帯で取るまで） */
+  missingFiles?: string[];
 }
 
 export interface Person {
@@ -157,6 +159,8 @@ export type FileView =
     }
   | { kind: 'image'; image: ImageBlob }
   | { kind: 'binary'; bytes: number }
+  /** partial clone で中身が手元にない（取りに行かずに「取ってくる」の帯で聞く） */
+  | { kind: 'missing' }
   | { kind: 'error'; message: string };
 
 /**
@@ -181,7 +185,8 @@ export interface SelectionView {
   /** 続いたコミット・離れた 2 つ・離れた 3 つ以上 */
   kind: 'range' | 'pair' | 'each';
   pair: PairMode;
-  files: { path: string; added: number; removed: number; binary: boolean }[];
+  /** `missing` は partial clone で中身が手元になく、差分を取っていないファイル */
+  files: { path: string; added: number; removed: number; binary: boolean; missing?: boolean }[];
   /** 選んだコミット（上から。多ければ先頭だけ） */
   commits: { row: number; oid: string; subject: string; author: string }[];
 }
@@ -251,6 +256,11 @@ export type HistoryHostMessage =
   | { type: 'openAtCommit'; oid: string; path: string; line?: number }
   /** コミットの中の 1 ファイルの差分（最初の親との差分） */
   | { type: 'commitDiff'; oid: string; path: string; diff: FileDiff }
+  /**
+   * partial clone で手元になかった中身を取り終えた（`fetchContents` の答え）。`path` があれば「すべてのファイル」の
+   * そのファイル。取れなければ `error`（差分なら、取れたときは詳細を送り直してある）
+   */
+  | { type: 'contentsFetched'; oid: string; path?: string; error?: string }
   /** `last` はまとめる範囲のいちばん新しいコミット（combine のとき。`oid` がいちばん古い） */
   | { type: 'editMessage'; oid: string; last?: string; kind: MessageEdit; title: string; message: string }
   /** 行の署名の印（届いた行の分。署名のないコミットは含まない）。`reset` なら前の印を捨ててから（検証の設定が変わった） */
@@ -391,4 +401,9 @@ export type HistoryWebviewMessage =
   /** HEAD・親・子のコミットに移る（`oid` は今選んでいるコミット） */
   | { type: 'goTo'; to: 'head' | 'parent' | 'child'; oid?: string }
   /** shallow clone の履歴を取り足す・すべて取る、partial clone の中身をすべて取る（帯と札のボタン） */
-  | { type: 'fetchForm'; what: 'more' | 'all' | 'contents' };
+  | { type: 'fetchForm'; what: 'more' | 'all' | 'contents' }
+  /**
+   * partial clone で手元にない中身を取ってくる（「取ってくる」の帯のボタン。押したときだけ）。`oid` はコミット（か
+   * 選択の key）で、その差分のファイルの分。`path` があれば「すべてのファイル」のそのファイルの分
+   */
+  | { type: 'fetchContents'; oid: string; path?: string };

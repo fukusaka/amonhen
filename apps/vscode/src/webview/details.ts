@@ -25,6 +25,7 @@ import { COLLAPSE_ABOVE, isGenerated, type LineCounts, lineCounts, renamedPath }
 import { renderDiffBody, whitespaceSelect, wrapButton } from './diffView.ts';
 import { isImagePath, renderImageDiff } from './imageDiff.ts';
 import { type AllFiles, createAllFiles } from './allFiles.ts';
+import { type MissingBand, missingBand, missingFilesText } from './missingBand.ts';
 import { signatureMark } from './signature.ts';
 import { linkPieces, splitTrailers } from '../history/messageParts.ts';
 
@@ -80,6 +81,8 @@ export interface DetailsPane {
   showSelection(state: SelectionState): void;
   /** 詳細の残り（署名・子のコミット）。出しているコミットのものなら足す */
   showExtras(extras: DetailsExtras): void;
+  /** partial clone で手元になかった中身を取り終えた（`path` があれば「すべてのファイル」のそのファイル） */
+  contentsFetched(oid: string, path: string | undefined, error: string | undefined): void;
   clear(): void;
   /** 次に届いた詳細を、同じコミットでも出し直す */
   forget(): void;
@@ -170,6 +173,8 @@ interface FileSection {
   heavy: boolean;
   /** 画像の比べる欄（求めたら置く） */
   image?: HTMLElement;
+  /** partial clone で中身が手元になく、差分を取っていない（「取ってくる」の帯で取るまで） */
+  missing?: boolean;
   /** SVG を文字の差分で見ている（Show as Text）。読んだ差分（絵と文字を行き来するため） */
   svgText?: boolean;
   diff?: FileDiff;
@@ -202,9 +207,12 @@ export function createDetailsPane(onParent?: (oid: string) => void, images = fal
   const divider = el('div', 'details-divider');
   /** 差分の上の帯（数・リストと木・すべて開く・畳む） */
   const bar = el('div', 'files-bar');
+  /** partial clone で中身が手元にないときの「取ってくる」の帯（差分の上の帯の下。変更の側だけ） */
+  const bandSlot = el('div', 'missing-band-slot');
+  let band: MissingBand | undefined;
   /** ファイルと差分の欄 */
   const scroller = el('div', 'details-body');
-  root.append(head, divider, bar, scroller);
+  root.append(head, divider, bar, bandSlot, scroller);
   attachRowSplitter(root, divider, head);
   let shownOid: string | undefined;
   /** 詳細に並べたファイル（並べた順） */
@@ -370,15 +378,19 @@ export function createDetailsPane(onParent?: (oid: string) => void, images = fal
   }
 
   function show(d: CommitDetails, focus?: string, next?: DiffChoices): void {
-    // 同じコミットを出し直す（空白を選び直した）なら、開いていたファイルは開いたまま
-    const reopen = d.oid === shownOid ? openPaths() : [];
+    // 同じコミットを出し直す（空白を選び直した・中身を取ってきた）なら、開いていたファイルは開いたまま、同じ位置に
+    const same = d.oid === shownOid;
+    const reopen = same ? openPaths() : [];
+    const top = same ? scroller.scrollTop : 0;
     shownOid = d.oid;
     choices = next;
     shownDetails = { d, ...(next ? { next } : {}) };
     shownExtras = undefined;
     renderHead(d);
-    fileSections(d.oid, d.files, true, d.oid);
+    const missing = new Set(d.missingFiles ?? []);
+    fileSections(d.oid, missing.size > 0 ? d.files.map((f) => (missing.has(f.path) ? { ...f, missing: true } : f)) : d.files, true, d.oid);
     reopenFiles(reopen);
+    if (same && top > 0) scroller.scrollTop = top;
     if (focus) {
       const file = sections.get(focus);
       if (file) {
@@ -535,8 +547,10 @@ export function createDetailsPane(onParent?: (oid: string) => void, images = fal
       return;
     }
     const total = el('span', 'files-total', `${files.length} file${files.length === 1 ? '' : 's'}`);
-    if (files.every((f) => f.counts)) {
-      total.append(' ', countsLabel(files.reduce((sum, f) => ({ added: sum.added + f.counts!.added, removed: sum.removed + f.counts!.removed }), { added: 0, removed: 0 })));
+    // 中身が手元にないファイルは、行数を数えていない（取ってくるまで合計に入れない）
+    const counted = files.filter((f) => !f.missing);
+    if (counted.every((f) => f.counts)) {
+      total.append(' ', countsLabel(counted.reduce((sum, f) => ({ added: sum.added + f.counts!.added, removed: sum.removed + f.counts!.removed }), { added: 0, removed: 0 })));
     }
     const spacer = el('span', 'spacer');
     const items: Node[] = canAll ? [pages, total, spacer, switcher] : [total, spacer, switcher];
@@ -672,7 +686,7 @@ export function createDetailsPane(onParent?: (oid: string) => void, images = fal
    */
   function fileSections(
     oid: string,
-    items: readonly { path: string; origPath?: string; status?: string; added?: number; removed?: number }[],
+    items: readonly { path: string; origPath?: string; status?: string; added?: number; removed?: number; missing?: boolean }[],
     single: boolean,
     allOid?: string,
   ): void {
@@ -743,7 +757,15 @@ export function createDetailsPane(onParent?: (oid: string) => void, images = fal
       const large = (f.added ?? 0) + (f.removed ?? 0) > COLLAPSE_ABOVE;
       const file: FileSection = { section, head, path: f.path, origPath: f.origPath, requested: false, chosen: false, heavy: isGenerated(f.path) || large };
       sections.set(f.path, file);
-      if (f.added !== undefined && f.removed !== undefined) setCounts(file, { added: f.added, removed: f.removed });
+      if (f.missing) {
+        // 中身が手元にない（行数も数えていない）: 行数の代わりに添え書き（アプリと同じ）
+        file.missing = true;
+        const note = el('span', 'missing-note', 'Not here yet');
+        note.title = 'This file’s contents aren’t here yet (partial clone).';
+        const before = head.querySelector('.head-button');
+        if (before) before.before(note);
+        else head.append(note);
+      } else if (f.added !== undefined && f.removed !== undefined) setCounts(file, { added: f.added, removed: f.removed });
       // 最初はすべて畳む（見出しが変わったファイルの一覧を兼ねる。アプリと同じ）
       setCollapsed(file, true);
 
@@ -760,6 +782,13 @@ export function createDetailsPane(onParent?: (oid: string) => void, images = fal
     }
     changedFiles = items.map((f) => ({ path: f.path, ...(f.status ? { status: f.status } : {}) }));
     allFiles = undefined;
+    const missing = items.filter((f) => f.missing).length;
+    const key = oid;
+    band =
+      missing > 0
+        ? missingBand(missingFilesText(missing), () => post({ type: 'fetchContents', oid: key }))
+        : undefined;
+    bandSlot.replaceChildren(...(band ? [band.root] : []));
     showPage();
     applyLayout();
   }
@@ -798,6 +827,8 @@ export function createDetailsPane(onParent?: (oid: string) => void, images = fal
       if (diffs) scroller.replaceChildren(diffs);
       root.classList.remove('all-files-page');
     }
+    // 差分の「取ってくる」の帯は変更の側だけ（すべてのファイルでは、開いたファイルごとに聞く。アプリと同じ）
+    bandSlot.hidden = !band || (page === 'all' && canAll());
   }
 
   /** 出しているコミットの、ファイルの差分を求める */
@@ -855,7 +886,9 @@ export function createDetailsPane(onParent?: (oid: string) => void, images = fal
   }
 
   function showSelection({ count, view, error, onPair, onCommit, choices: next }: SelectionState): void {
-    const reopen = view && view.key === shownOid ? openPaths() : [];
+    const same = view !== undefined && view.key === shownOid;
+    const reopen = same ? openPaths() : [];
+    const top = same ? scroller.scrollTop : 0;
     shownOid = view?.key;
     choices = view ? next : undefined;
     meta = undefined;
@@ -898,12 +931,18 @@ export function createDetailsPane(onParent?: (oid: string) => void, images = fal
     place(parts);
     fileSections(view.key, view.files, false);
     reopenFiles(reopen);
+    if (same && top > 0) scroller.scrollTop = top;
     if (view.files.length === 0) scroller.replaceChildren(el('div', 'empty', 'No changes'));
   }
 
   function showDiff(oid: string, path: string, diff: FileDiff): void {
     const file = sections.get(path);
     if (oid !== shownOid || !file) {
+      return;
+    }
+    if (file.missing) {
+      // 中身が手元にない: 取りに行かずに、帯で取ってくるまで待つ（画像も求めない）
+      file.section.replaceChildren(file.head, el('div', 'empty', 'This file’s contents aren’t here yet.'));
       return;
     }
     const all = contexts.get(path) === 'all';
@@ -1063,6 +1102,16 @@ export function createDetailsPane(onParent?: (oid: string) => void, images = fal
     }
   }
 
+  function contentsFetched(oid: string, path: string | undefined, error: string | undefined): void {
+    if (oid !== shownOid) return;
+    if (path !== undefined) {
+      allFiles?.contentsFetched(path, error);
+      return;
+    }
+    // 取れたときは、拡張ホストが詳細（か選んだ行の差分）を送り直して帯を作り直す
+    if (error !== undefined) band?.failed(error);
+  }
+
   function clear(): void {
     shownOid = undefined;
     meta = undefined;
@@ -1083,6 +1132,7 @@ export function createDetailsPane(onParent?: (oid: string) => void, images = fal
     showTreeEntries,
     showTreeFile,
     showExtras,
+    contentsFetched,
     clear,
     showSelection,
     forget() {
