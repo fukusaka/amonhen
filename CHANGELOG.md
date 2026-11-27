@@ -15,6 +15,8 @@ becomes the GitHub Release notes.
   whole cluster sits.
 - In DOT diagrams, a same-rank edge inside a cluster may point right to left when nodes outside pull it, as in
   Graphviz. Outside clusters, the tail stays on the left.
+- DOT crossing reduction keeps the later of two orders with the same crossings, which matches Graphviz's order more
+  often.
 
 #### Fixed
 

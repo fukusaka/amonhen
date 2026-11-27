@@ -1806,8 +1806,8 @@ pub fn layout(
     let first = val.clone();
     let first_layers = ord.layers.clone();
     // 上からの初めの並び、下からの初めの並び、辺の順の上からの初めの並びの 3 回。どれも、中央値で上下に並べ替えて
-    // 入れ替え（1 回おきに交差の同じ入れ替えも）、減らなければいちばん良い並びに戻して続け、MINCROSS_STALE 回続けて
-    // 減らなければやめる。小さな図（区間が RANDOM_START_SEGS まで）では、さらに決まった種で混ぜた初めの並びから
+    // 入れ替え（1 回おきに交差の同じ入れ替えも）、増えればいちばん良い並びに戻して続け（同じなら後の並びを残す）、
+    // MINCROSS_STALE 回続けて増えればやめる。小さな図（区間が RANDOM_START_SEGS まで）では、さらに決まった種で混ぜた初めの並びから
     // RANDOM_STARTS 回（3 つの初めの並びだけでは、長い辺ごと動かさないと減らない並びに止まることがある）。いちばん
     // 交差の少ないもの（同じなら先のもの）
     let mut best = ord.layers.clone();
@@ -1876,7 +1876,8 @@ pub fn layout(
                 ord.transpose(i % 2 == 1);
             }
             let c = ord.crossings();
-            if c < here {
+            // 同じ交差の数なら後の並びを採る（同じ値の順を逆にした回の並びも残る。Graphviz の絵に近い）
+            if c <= here {
                 here = c;
                 here_layers = ord.layers.clone();
                 stale = 0;
