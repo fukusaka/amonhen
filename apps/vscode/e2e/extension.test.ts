@@ -208,14 +208,19 @@ function recordSpawns(): void {
   }
 }
 
-async function showView(command: 'amonhen.showWorkingCopy' | 'amonhen.showHistory' | 'amonhen.showReflog' | 'amonhen.showDaemon') {
-  const start = Date.now();
-  await vscode.commands.executeCommand(command);
-  const panel = await until('メインビュー', () => api.panel());
+/** メインビューの確認のシートに、sheetAnswer で答える（拡張が自分でメインビューを開いたときも） */
+function answerSheets(panel: NonNullable<ReturnType<Api['panel']>>): void {
   panel.answerSheet ??= (sheet, open) => {
     sheets.push(sheet);
     return sheetAnswer(sheet, open);
   };
+}
+
+async function showView(command: 'amonhen.showWorkingCopy' | 'amonhen.showHistory' | 'amonhen.showReflog' | 'amonhen.showDaemon') {
+  const start = Date.now();
+  await vscode.commands.executeCommand(command);
+  const panel = await until('メインビュー', () => api.panel());
+  answerSheets(panel);
   // Webview に送るメッセージを記録する（コントローラーは panel.post を呼ぶたびに引く）
   if (!Object.hasOwn(panel, 'post')) {
     const post = panel.post.bind(panel);
@@ -4173,15 +4178,24 @@ suite('Amon Hen in VSCode', () => {
     const start = git('rev-parse', 'HEAD').trim();
     const parents = () => git('rev-list', '--parents', '-n', '1', 'HEAD').trim().split(' ').length - 1;
     const node = (b: string) => ({ kind: 'branch', ref: { name: `refs/heads/${b}` } });
-    const merge = (b: string, mode: string) =>
-      withWindow(
-        {
-          showQuickPick: async (items: readonly (vscode.QuickPickItem & { mode?: string })[]) => items.find((i) => i.mode === mode),
-          showInformationMessage: async () => undefined,
-          showWarningMessage: async () => undefined,
-        },
-        async () => vscode.commands.executeCommand('amonhen.nav.merge', node(b)),
+    // 取り込み方は、メインビューが開いていればシートで（コンフリクトで止まると拡張がメインビューを開く）、なければ Quick Pick で聞く
+    const labels: Record<string, string> = { noFastForward: 'Always Create a Merge Commit', squash: 'Squash into One Commit' };
+    const merge = (b: string, mode: string) => {
+      const panel = api.panel();
+      if (panel) answerSheets(panel);
+      return withSheets(
+        (sheet) => ({ index: 0, choice: sheet.choices?.findIndex((c) => c.label === labels[mode]) ?? -1 }),
+        () =>
+          withWindow(
+            {
+              showQuickPick: async (items: readonly (vscode.QuickPickItem & { mode?: string })[]) => items.find((i) => i.mode === mode),
+              showInformationMessage: async () => undefined,
+              showWarningMessage: async () => undefined,
+            },
+            async () => vscode.commands.executeCommand('amonhen.nav.merge', node(b)),
+          ),
       );
+    };
     git('switch', '-q', '-c', 'mm-topic');
     writeFileSync(join(root, 'mm.txt'), 'topic\n');
     git('add', 'mm.txt');
