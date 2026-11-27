@@ -1417,7 +1417,11 @@ First release.
 
 ## VSCode extension
 
-### Unreleased
+### [0.2.10] - 2026-11-27
+
+The extension follows the app much more closely: History's menus, labels and activity strip, the commit details' tags,
+links and view options, and the branch, stash and Working Copy operations. With the engine, All Files draws Mermaid and
+DOT diagrams, math and the HTML GitHub renders in Markdown.
 
 #### Added
 
