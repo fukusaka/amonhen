@@ -12,7 +12,7 @@ becomes the GitHub Release notes.
 #### Added
 
 - Working Copy's diff shows Unstaged, Staged or All, one side for the whole Working Copy, and the list can be split
-  into Staged and Unstaged sections like `git status` (macOS, GTK4).
+  into Staged and Unstaged sections like `git status` (macOS, GTK4, Windows).
 - Working Copy's All Files lists every file of the working tree, with the changes marked (macOS, GTK4).
 - Unchanged lines in a Working Copy diff fold into one row with the function name, opened 20 lines at a time or all
   (macOS, GTK4).
@@ -24,7 +24,8 @@ becomes the GitHub Release notes.
 #### Changed
 
 - Working Copy's file list takes the full height, and the commit message sits at the top right, above the diff; it
-  collapses to the summary line (macOS, GTK4).
+  collapses to the summary line (macOS, GTK4, Windows).
+- The Windows app's Working Copy list and bar buttons are compact, closer to macOS.
 - History shows a commit's first files open; Settings > Diff & Merge > Files to open together sets how many (macOS, GTK4).
 - In a partial clone, History's diffs and All Files no longer fetch missing file contents by themselves. A band says
   how many files' contents aren't here yet, and Fetch Contents gets just those. The CLI's `diff` and `show` still

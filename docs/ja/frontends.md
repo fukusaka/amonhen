@@ -222,12 +222,12 @@ GTK4 のアプリは macOS のアプリと同じふるまいをめざす。わ�
 | --- | :-: | :-: | :-: | :-: | :-: | :-: | --- |
 | 1 つのチェックボックスの一覧（☑ ▣ ☐、見出し・フォルダーのチェック） | ✓ | ✓ | ✓ | ✓ | n/a | ✓ | VSCode: Staged と Changes が別のグループ。<br>TUI: ファイルごとに `[x]` `[-]` `[ ]`。`+` ですべて stage（フォルダはない）。 |
 | List / Tree / File Name | ✓ | ✓ | ✓ | ✓ | n/a | ✓ | TUI: 一覧の `v` で順に切り替える。フォルダの行で中をまとめて stage し、Enter で畳む。 |
-| 一覧の Staged と Unstaged の節（1 つの一覧と切り替え） | ✓ | ✓ | — | ✓ | n/a | — | VSCode: いつも Staged と Changes が別のグループ。 |
+| 一覧の Staged と Unstaged の節（1 つの一覧と切り替え） | ✓ | ✓ | ✓ | ✓ | n/a | — | VSCode: いつも Staged と Changes が別のグループ。 |
 | 変更のあるファイルか、作業ツリーのすべてのファイルか | ✓ | ✓ | — | — | n/a | — |  |
 | パスで絞り込む | ✓ | ✓ | ✓ | ✓ | n/a | ✓ | TUI: 一覧の `/`。 |
 | 行ごとの +/− の数と、ホバーで Discard | ✓ | ✓ | ✓ | ✓ | △ | ✓ | VSCode: 行数はエンジンがあるときだけ。<br>CLI: `diff --stat`。<br>Windows: ↶ はマウスを最後に載せた行に残る。<br>TUI: 数は各行の右の端に。ホバーの ↶ か `d` で捨てる。 |
 | Space で切り替え、⌫ で捨てる | ✓ | ✓ | ✓ | ✓ | n/a | ✓ | VSCode: 選んだファイルすべてに効く（⌘・Ctrl クリック、Shift クリック、Shift+↑↓ でいくつも選べ、行のボタンと Stash… も選んだものに効く）。<br>TUI: Space と `d`。 |
-| 上のコミットの欄、50/72 の数と本文の目安の線 | ✓ | ✓ | ✓ | ✓ | n/a | ✓ | macOS, GTK4: 右上、差分の上。件名の 1 行に畳める。<br>VSCode: 列が 72 文字より狭いので、目安の線の代わりに、72 を超える本文の行の長さを出す。<br>TUI: 見出しに件名の行の文字数（50 を超えると黄色）。件名の 50 文字・本文の行の 72 文字を超えた分は黄色。 |
+| 上のコミットの欄、50/72 の数と本文の目安の線 | ✓ | ✓ | ✓ | ✓ | n/a | ✓ | macOS, GTK4, Windows: 右上、差分の上。件名の 1 行に畳める。<br>VSCode: 列が 72 文字より狭いので、目安の線の代わりに、72 を超える本文の行の長さを出す。<br>TUI: 見出しに件名の行の文字数（50 を超えると黄色）。件名の 50 文字・本文の行の 72 文字を超えた分は黄色。 |
 | リポジトリごとの下書き、テンプレートから始める | ✓ | ✓ | ✓ | ✓ | n/a | ✓ | VSCode: `commit.template` だけで、共有のテンプレートは使わない。<br>TUI: 下書きは `<git dir>/amonhen/commit-draft` に置く。テンプレートは `commit.template`（リポジトリ専用のものは SSH 先でも）で、共有のテンプレートは使わない。 |
 | 最近のメッセージ（⌥↑ / ⌥↓・一覧） | ✓ | ✓ | ✓ | ✓ | n/a | ✓ | TUI: メッセージの欄の Alt-↑ / Alt-↓。一覧は Working Copy の `R`。 |
 | Conventional の種類・Co-authored-by・Signed-off-by を入れる | ✓ | ✓ | ✓ | ✓ | n/a | ✓ | TUI: Working Copy の `I`。 |
@@ -237,7 +237,7 @@ GTK4 のアプリは macOS のアプリと同じふるまいをめざす。わ�
 | hooks の出力のシート | ✓ | ✓ | ✓ | ✓ | n/a | ✓ | TUI: 1 行目を一番下の行に出し、`!` で全部を枠に出す。 |
 | Commit が押せない理由を出す | ✓ | ✓ | ✓ | ✓ | n/a | ✓ | ボタンのツールチップに。<br>TUI: 一番下の行に。 |
 | HEAD → 作業ツリーの 1 つの差分と、行・hunk のチェック | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | macOS: All の側。stage 済みの行はチェックの代わりに塗った帯。<br>VSCode: エンジンがあれば。なければ別々の未ステージ・ステージ済みの差分で行をステージ。<br>CLI: `diff --combined`・`stage --rows`。 |
-| Unstaged・Staged・All（見る側は Working Copy で 1 つ） | ✓ | ✓ | — | △ | ✓ | △ | VSCode: Changes と Staged のグループが、それぞれの側を出す。<br>CLI: `diff`・`diff --staged`・`diff --combined`。<br>TUI: 差分の `s` で側を切り替える。 |
+| Unstaged・Staged・All（見る側は Working Copy で 1 つ） | ✓ | ✓ | ✓ | △ | ✓ | △ | VSCode: Changes と Staged のグループが、それぞれの側を出す。<br>CLI: `diff`・`diff --staged`・`diff --combined`。<br>TUI: 差分の `s` で側を切り替える。 |
 | 変更のない行を畳み、20 行ずつ・すべて開く | ✓ | ✓ | — | — | n/a | — |  |
 | hunk の見出しの Stage Hunk・Discard Hunk（選ぶと Lines）か変更の帯を、設定で選ぶ | ✓ | ✓ | — | — | n/a | — |  |
 | 選んだいくつかのファイルの差分を並べる | ✓ | ✓ | — | — | n/a | — | macOS, GTK4: 一度に開いて並べるファイル（Settings > 差分とマージ）の数まで。 |

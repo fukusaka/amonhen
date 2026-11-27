@@ -222,12 +222,12 @@ The GTK4 app aims to behave like the macOS app. These are the only intended diff
 | --- | :-: | :-: | :-: | :-: | :-: | :-: | --- |
 | One checkbox list (☑ ▣ ☐, header and folder checks) | ✓ | ✓ | ✓ | ✓ | n/a | ✓ | VSCode: Separate Staged and Changes groups.<br>TUI: `[x]` `[-]` `[ ]` per file; `+` stages every file (no folders). |
 | List / Tree / File Name | ✓ | ✓ | ✓ | ✓ | n/a | ✓ | TUI: `v` in the list cycles them; a folder row stages what is under it, Enter folds it. |
-| Staged and Unstaged sections in the list, switched with one list | ✓ | ✓ | — | ✓ | n/a | — | VSCode: Always separate Staged and Changes groups. |
+| Staged and Unstaged sections in the list, switched with one list | ✓ | ✓ | ✓ | ✓ | n/a | — | VSCode: Always separate Staged and Changes groups. |
 | Changes or every file of the working tree (All Files) | ✓ | ✓ | — | — | n/a | — |  |
 | Filter on paths | ✓ | ✓ | ✓ | ✓ | n/a | ✓ | TUI: `/` in the list. |
 | Per-row +/− counts and Discard on hover | ✓ | ✓ | ✓ | ✓ | △ | ✓ | VSCode: Counts need the engine.<br>CLI: `diff --stat`.<br>Windows: The ↶ stays on the last row the pointer was on.<br>TUI: The counts at the right of each row; ↶ on hover, or `d`, discards. |
 | Space toggles, ⌫ discards | ✓ | ✓ | ✓ | ✓ | n/a | ✓ | VSCode: On every selected file (⌘- or Ctrl-click, Shift-click or Shift+↑↓ select several; the row buttons and Stash… act on them too).<br>TUI: Space and `d`. |
-| Commit box on top with 50/72 counter and body guide | ✓ | ✓ | ✓ | ✓ | n/a | ✓ | macOS, GTK4: At the top right, above the diff, collapsible to the subject line.<br>VSCode: A description line over 72 is counted instead of a guide (the column is narrower than 72 characters).<br>TUI: Its heading counts the summary line (yellow past 50), and what goes past 50 in the summary or 72 in a body line is yellow. |
+| Commit box on top with 50/72 counter and body guide | ✓ | ✓ | ✓ | ✓ | n/a | ✓ | macOS, GTK4, Windows: At the top right, above the diff, collapsible to the subject line.<br>VSCode: A description line over 72 is counted instead of a guide (the column is narrower than 72 characters).<br>TUI: Its heading counts the summary line (yellow past 50), and what goes past 50 in the summary or 72 in a body line is yellow. |
 | Draft per repository, starting from the template | ✓ | ✓ | ✓ | ✓ | n/a | ✓ | VSCode: `commit.template` only, not the shared template library.<br>TUI: The draft is kept in `<git dir>/amonhen/commit-draft`; the template is `commit.template` (the repository's own one on SSH hosts too), not the shared library. |
 | Recent messages (⌥↑ / ⌥↓, list) | ✓ | ✓ | ✓ | ✓ | n/a | ✓ | TUI: Alt-↑ / Alt-↓ in the message field, `R` in the list for the list. |
 | Insert Conventional types, Co-authored-by, Signed-off-by | ✓ | ✓ | ✓ | ✓ | n/a | ✓ | TUI: `I` in the Working Copy. |
@@ -237,7 +237,7 @@ The GTK4 app aims to behave like the macOS app. These are the only intended diff
 | Hooks output sheet | ✓ | ✓ | ✓ | ✓ | n/a | ✓ | TUI: The first line on the bottom line, and `!` shows all of it in a box. |
 | Reason shown when Commit is disabled | ✓ | ✓ | ✓ | ✓ | n/a | ✓ | In the button's tooltip.<br>TUI: On the bottom line. |
 | Combined HEAD → working tree diff with line and hunk checks | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | macOS: The All side; a staged line has a filled bar instead of a check.<br>VSCode: With the engine; without it, line staging on separate unstaged and staged diffs.<br>CLI: `diff --combined`, `stage --rows`. |
-| Unstaged, Staged and All, one side for the Working Copy | ✓ | ✓ | — | △ | ✓ | △ | VSCode: The Changes and Staged groups each show their own side.<br>CLI: `diff`, `diff --staged`, `diff --combined`.<br>TUI: `s` in the diff switches sides. |
+| Unstaged, Staged and All, one side for the Working Copy | ✓ | ✓ | ✓ | △ | ✓ | △ | VSCode: The Changes and Staged groups each show their own side.<br>CLI: `diff`, `diff --staged`, `diff --combined`.<br>TUI: `s` in the diff switches sides. |
 | Unchanged lines folded, opened 20 lines at a time or all | ✓ | ✓ | — | — | n/a | — |  |
 | Stage Hunk and Discard Hunk on the hunk header (Lines when selected), or the change bar, by a setting | ✓ | ✓ | — | — | n/a | — |  |
 | Several selected files stacked in the diff | ✓ | ✓ | — | — | n/a | — | macOS, GTK4: Up to Files to open together (Settings > Diff & Merge). |
