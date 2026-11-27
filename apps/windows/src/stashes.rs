@@ -144,10 +144,9 @@ pub fn view(
     ];
     let [a, b, c, d] = buttons.map(|(key, title, tip)| {
         crate::tip::holder(
-            Button::new()
-                .is_enabled(enabled)
-                .on_click((callbacks.button)(key))
-                .content(TextBlock::new().text(title)),
+            crate::small::button(title, |b| {
+                b.is_enabled(enabled).on_click((callbacks.button)(key))
+            }),
             tip,
             0,
         )

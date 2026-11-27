@@ -361,7 +361,7 @@ pub fn path_bar(
     browser: &Browser,
     back: Callback<()>,
     show_change: Callback<()>,
-    markdown: Option<(bool, Callback<bool>, Callback<bool>)>,
+    markdown: Option<(bool, Callback<()>, Callback<()>)>,
     svg: View,
     preview: Callback<()>,
 ) -> View {
@@ -374,20 +374,14 @@ pub fn path_bar(
         .change_of(path)
         .is_some_and(|c| c.kind == ChangeKind::Deleted);
     let changed = browser.change_of(path).is_some();
-    // Markdown は、整形（プレビュー）とソース（テキスト）を切り替える。押して外したときはそのまま。
+    // Markdown は、整形（プレビュー）とソース（テキスト）を切り替える。今のものを押したときはそのまま。
     let switch: View = match markdown {
         Some((text, preview, source)) => StackPanel::new()
             .orientation(Orientation::Horizontal)
             .children((
-                ToggleButton::new()
-                    .is_checked(!text)
-                    .on_is_checked_changed(preview)
-                    .content(TextBlock::new().text(tr!("Preview")).font_size(12.0))
+                crate::small::toggle(tr!("Preview"), !text, |b| b.on_click(preview))
                     .tooltip(tr!("Show the Markdown formatted")),
-                ToggleButton::new()
-                    .is_checked(text)
-                    .on_is_checked_changed(source)
-                    .content(TextBlock::new().text(tr!("Text")).font_size(12.0))
+                crate::small::toggle(tr!("Text"), text, |b| b.on_click(source))
                     .tooltip(tr!("Show the Markdown source")),
             )),
         None => View::empty(),
@@ -403,12 +397,10 @@ pub fn path_bar(
         .column_spacing(8.0)
         .margin(Thickness::new(8.0, 3.0, 8.0, 3.0))
         .children((
-            Button::new()
-                .grid_column(0)
-                .style(ButtonStyle::Subtle)
-                .on_click(back)
-                .content(crate::icons::icon("back", 16.0))
-                .tooltip(tr!("Back to the files")),
+            crate::small::icon_button(crate::icons::icon("back", 16.0), |b| {
+                b.grid_column(0).style(ButtonStyle::Subtle).on_click(back)
+            })
+            .tooltip(tr!("Back to the files")),
             StackPanel::new()
                 .grid_column(1)
                 .orientation(Orientation::Horizontal)
@@ -448,19 +440,18 @@ pub fn path_bar(
                 .spacing(8.0)
                 .children((switch, svg)),
             if changed {
-                Button::new()
-                    .grid_column(3)
-                    .on_click(show_change)
-                    .content(TextBlock::new().text(tr!("Show This Change")))
+                crate::small::button(tr!("Show This Change"), |b| {
+                    b.grid_column(3).on_click(show_change)
+                })
             } else {
                 View::empty()
             },
             // アプリの外で見る（macOS 版の Quick Look、GTK4 版のプレビューのボタン。消したファイルは前の中身）。
-            Button::new()
-                .grid_column(4)
-                .style(ButtonStyle::Subtle)
-                .on_click(preview)
-                .content(crate::icons::icon("preview", 16.0))
-                .tooltip(tr!("Open this file at the commit in a preview")),
+            crate::small::icon_button(crate::icons::icon("preview", 16.0), |b| {
+                b.grid_column(4)
+                    .style(ButtonStyle::Subtle)
+                    .on_click(preview)
+            })
+            .tooltip(tr!("Open this file at the commit in a preview")),
         ))
 }

@@ -143,10 +143,7 @@ pub fn view(state: &State, callbacks: Callbacks) -> View {
                 .vertical_alignment(VerticalAlignment::Center)
                 .text_trimming(TextTrimming::CharacterEllipsis)
                 .grid_column(0),
-            Button::new()
-                .on_click(callbacks.close)
-                .grid_column(1)
-                .content(TextBlock::new().text(tr!("Close"))),
+            crate::small::button(tr!("Close"), |b| b.on_click(callbacks.close).grid_column(1)),
         ));
     let body: View = match &state.data {
         None => TextBlock::new()

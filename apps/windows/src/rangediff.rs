@@ -146,16 +146,16 @@ pub fn view(state: &State, callbacks: Callbacks) -> View {
                 .placeholder_text("A..B C..D")
                 .on_text_changed(callbacks.ranges)
                 .grid_column(0),
-            Button::new()
-                .on_click(callbacks.compare)
-                .margin(Thickness::new(6.0, 0.0, 0.0, 0.0))
-                .grid_column(1)
-                .content(TextBlock::new().text(tr!("Compare"))),
-            Button::new()
-                .on_click(callbacks.close)
-                .margin(Thickness::new(6.0, 0.0, 0.0, 0.0))
-                .grid_column(2)
-                .content(TextBlock::new().text(tr!("Close"))),
+            crate::small::button(tr!("Compare"), |b| {
+                b.on_click(callbacks.compare)
+                    .margin(Thickness::new(6.0, 0.0, 0.0, 0.0))
+                    .grid_column(1)
+            }),
+            crate::small::button(tr!("Close"), |b| {
+                b.on_click(callbacks.close)
+                    .margin(Thickness::new(6.0, 0.0, 0.0, 0.0))
+                    .grid_column(2)
+            }),
         ));
     let counts = match (&state.pairs, &state.error) {
         (_, Some(e)) => e.clone(),
@@ -191,7 +191,7 @@ pub fn view(state: &State, callbacks: Callbacks) -> View {
                         .vertical_alignment(VerticalAlignment::Center)
                         .text_wrapping(TextWrapping::Wrap)
                         .grid_column(0),
-                    CheckBox::new()
+                    crate::small::check(CheckBox::new())
                         .is_checked(state.changes_only)
                         .on_is_checked_changed(callbacks.changes_only)
                         .grid_column(1)

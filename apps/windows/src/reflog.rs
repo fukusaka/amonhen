@@ -97,10 +97,10 @@ pub fn view(
     let chosen = selected.and_then(|i| entries.get(i));
     let button = |title: &str, key: Option<String>, tip: String| {
         crate::tip::holder(
-            Button::new()
-                .is_enabled(key.is_some())
-                .on_click((callbacks.button)(key.unwrap_or_default()))
-                .content(TextBlock::new().text(title)),
+            crate::small::button(title, |b| {
+                b.is_enabled(key.is_some())
+                    .on_click((callbacks.button)(key.unwrap_or_default()))
+            }),
             tip,
             0,
         )
