@@ -807,6 +807,8 @@ struct Ordering<'a> {
     has_flat: Vec<bool>,
     /// 並べ替えで、同じ値の要素の順を逆にする（1 回おきの上り下りで。Gansner ほか 1993 §3）。
     flip: bool,
+    /// クラスタの中の同じランクの辺の左右を守らない（初めの並びだけで守る。Graphviz の絵と同じ）。
+    loose: bool,
 }
 
 impl Ordering<'_> {
@@ -1011,9 +1013,23 @@ impl Ordering<'_> {
             return;
         }
         let layer = std::mem::take(&mut self.layers[r]);
+        // 緩めるときは、クラスタの中の尾の辺を外す
+        let loose = self.loose;
+        let after: Vec<Vec<usize>> = layer
+            .iter()
+            .map(|&v| {
+                if loose && self.nodes[v].cluster.is_some() {
+                    Vec::new()
+                } else {
+                    self.after[v].clone()
+                }
+            })
+            .collect();
+        let idx: std::collections::HashMap<usize, usize> =
+            layer.iter().enumerate().map(|(i, &v)| (v, i)).collect();
         let mut need = std::collections::HashMap::<usize, usize>::new();
-        for &v in &layer {
-            for &h in &self.after[v] {
+        for list in &after {
+            for &h in list {
                 *need.entry(h).or_insert(0) += 1;
             }
         }
@@ -1042,7 +1058,7 @@ impl Ordering<'_> {
                 continue;
             }
             out.push(v);
-            for &h in &self.after[v] {
+            for &h in &after[idx[&v]] {
                 if let Some(c) = need.get_mut(&h) {
                     *c -= 1;
                     if *c == 0 && !done.contains(&h) {
@@ -1221,7 +1237,9 @@ impl Ordering<'_> {
                 let len = self.layers[r].len();
                 for i in 0..len.saturating_sub(1) {
                     let (u, v) = (self.layers[r][i], self.layers[r][i + 1]);
-                    if self.nodes[u].cluster != self.nodes[v].cluster || self.after[u].contains(&v)
+                    let loose = self.loose && self.nodes[u].cluster.is_some();
+                    if self.nodes[u].cluster != self.nodes[v].cluster
+                        || (!loose && self.after[u].contains(&v))
                     {
                         continue;
                     }
@@ -1598,6 +1616,7 @@ pub fn layout(
         after: vec![Vec::new(); total],
         has_flat: vec![false; max_rank + 1],
         flip: false,
+        loose: false,
     };
     // 輪になる辺は、先に書いた辺を守って外す（Graphviz の文書どおり、輪は深さ優先で切る）
     for &(t, h) in &flat_edges {
@@ -1840,6 +1859,9 @@ pub fn layout(
         let mut here = ord.crossings();
         let mut here_layers = ord.layers.clone();
         let mut stale = 0;
+        // 並べ替えの間は、クラスタの中の同じランクの辺の左右を守らない（初めの並びでは守る。Graphviz の絵と同じく、
+        // クラスタの外のノードに引かれて右から左になりうる。クラスタの外の辺はいつも尾が左）
+        ord.loose = true;
         for i in 0..opt.sweeps {
             if here == 0 {
                 break;
@@ -1867,6 +1889,7 @@ pub fn layout(
                 ord.refresh();
             }
         }
+        ord.loose = false;
         if here < best_count {
             best_count = here;
             best = here_layers;
@@ -1994,10 +2017,12 @@ pub fn layout(
             }
         }
     }
-    // 同じランクの辺は尾を左に（並べ替えの中で守っている。念のため）
+    // 同じランクの辺は尾を左に（並べ替えの中で守っている。念のため。クラスタの中は並べ替えのとおり）
+    ord.loose = true;
     for r in 0..ord.layers.len() {
         ord.keep_flat_order(r);
     }
+    ord.loose = false;
     // ordering=out: 同じ尾の頭を辺の順に
     if opt.ordering_out {
         for v in 0..n {

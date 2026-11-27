@@ -13,6 +13,8 @@ becomes the GitHub Release notes.
 
 - DOT diagrams order clusters as Graphviz does: a cluster is placed whole when first reached, and sorts by where the
   whole cluster sits.
+- In DOT diagrams, a same-rank edge inside a cluster may point right to left when nodes outside pull it, as in
+  Graphviz. Outside clusters, the tail stays on the left.
 
 #### Fixed
 

@@ -1689,6 +1689,20 @@ fn dot_clusters_are_ordered_as_in_graphviz() {
     );
 }
 
+/// 同じランクの辺: クラスタの外では尾がいつも左。クラスタの中では、外のノードに引かれると右から左にもなる
+/// （Graphviz の絵と同じ）。
+#[test]
+fn dot_flat_edges_in_clusters_may_point_left_as_in_graphviz() {
+    let order = |src: &str, names: &[&str]| x_order(&render(src).unwrap().svg, names);
+    let src = "digraph { x -> b; subgraph cluster0 { r -> a; r -> b; {rank=same; a -> b} } }";
+    assert_eq!(order(src, &["x", "r"]), ["x", "r"]);
+    assert_eq!(order(src, &["a", "b"]), ["b", "a"]);
+    let src = "digraph { x -> b; r -> a; r -> b; {rank=same; a -> b} }";
+    assert_eq!(order(src, &["a", "b"]), ["a", "b"]);
+    let src = "digraph { subgraph cluster0 { r -> a; r -> b; {rank=same; b -> a} } }";
+    assert_eq!(order(src, &["a", "b"]), ["b", "a"]);
+}
+
 /// 辺のラベルは線のすぐ脇にある（Graphviz の絵と同じく、線はラベルの仮のノードの脇を通る）。
 #[test]
 fn dot_edge_labels_sit_beside_their_line() {
