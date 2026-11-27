@@ -1505,7 +1505,7 @@ pub fn layout(
     let mut val = vec![0f64; total];
     // 深さ優先の初めの並び（Gansner ほか 1993 §3 の init_order）: `top` なら小さいランクのノードから出る辺を、
     // そうでなければ大きいランクのノードから入る辺をたどり、訪ねた順を各ランクの左からの順にする（木なら交差なし）
-    let dfs_order = |top: bool, val: &mut [f64]| {
+    let dfs_order = |top: bool, by_seq: bool, val: &mut [f64]| {
         let mut seen = vec![false; total];
         let mut next = 0f64;
         // 辺は行き先のノードの作られた順にたどる（Graphviz の絵と同じく、書いた順ではなく宣言の順で並ぶ）。仮のノードは
@@ -1525,7 +1525,9 @@ pub fn layout(
                     .iter()
                     .map(|&s| if top { segs[s].lower } else { segs[s].upper })
                     .collect();
-                ws.sort_by_key(|&w| nodes[far(w)].seq);
+                if by_seq {
+                    ws.sort_by_key(|&w| nodes[far(w)].seq);
+                }
                 ws
             })
             .collect();
@@ -1560,26 +1562,41 @@ pub fn layout(
             }
         }
     };
-    dfs_order(true, &mut val);
+    dfs_order(true, true, &mut val);
     for r in 0..ord.layers.len() {
         ord.sort_layer(r, &val);
     }
     let first = val.clone();
-    // 上からの初めの並びと、下からの初めの並びの 2 回。どちらも、中央値で上下に並べ替えて入れ替え（1 回おきに
-    // 交差の同じ入れ替えも）、減らなければいちばん良い並びに戻して続け、MINCROSS_STALE 回続けて減らなければ
-    // やめる。2 回のうち交差の少ないほう
+    let first_layers = ord.layers.clone();
+    // 上からの初めの並び、下からの初めの並び、辺の順の上からの初めの並びの 3 回。どれも、中央値で上下に並べ替えて
+    // 入れ替え（1 回おきに交差の同じ入れ替えも）、減らなければいちばん良い並びに戻して続け、MINCROSS_STALE 回続けて
+    // 減らなければやめる。3 回のうち交差の少ないほう（同じなら先のほう）
     let mut best = ord.layers.clone();
     let mut best_count = ord.crossings();
     let transpose = segs.len() <= TRANSPOSE_SEGS;
-    for start in 0..2 {
+    for start in 0..3 {
         if best_count == 0 {
             break;
         }
         if start == 1 {
-            dfs_order(false, &mut val);
+            dfs_order(false, true, &mut val);
             ord.global_keys();
             for r in (0..ord.layers.len()).rev() {
                 ord.sort_layer(r, &val);
+            }
+        }
+        if start == 2 {
+            // 3 回目は辺を書いた順にたどる上からの並び（宣言の順からでは届かない少ない交差の並びがある）
+            dfs_order(true, false, &mut val);
+            ord.layers = first_layers.clone();
+            ord.refresh();
+            ord.global_keys();
+            for r in 0..ord.layers.len() {
+                ord.sort_layer(r, &val);
+            }
+            // 1 回目と同じ初めの並び（辺を宣言の順に書いた図）なら、同じ結果になるので省く
+            if ord.layers == first_layers {
+                break;
             }
         }
         let mut here = ord.crossings();
