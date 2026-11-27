@@ -7,7 +7,11 @@ becomes the GitHub Release notes.
 
 ## App and engine
 
-### Unreleased
+### [0.2.16] - 2026-11-27
+
+DOT diagrams follow Graphviz far more closely: shape sizes, curves, ports, self-loops, cycles through clusters and
+the order of nodes. Markdown finds math by GitHub's rules, diagrams take Mermaid's colors, and the toolbar and sidebar
+draw icons shared by every front end.
 
 #### Added
 
