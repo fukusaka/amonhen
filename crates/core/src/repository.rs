@@ -1053,6 +1053,37 @@ impl Repository {
         self.backend.missing_blobs(&ids)
     }
 
+    /// コミット `commit` の `path` を見せる（History の「すべてのファイル」）のに要る中身のうち、partial clone で手元に
+    /// ないもの（取りには行かない）。そのコミットで変わったファイルなら前後の版、変わっていなければその版。フォルダ・
+    /// submodule・ないパスなら空。
+    pub fn file_missing(&self, commit: &Oid, path: &str) -> Result<Vec<Oid>> {
+        let path = path.trim_matches('/');
+        if let Some(change) = self
+            .backend
+            .commit_changes(commit)?
+            .into_iter()
+            .find(|c| c.path == path)
+        {
+            return self.missing_of(&change);
+        }
+        let (folder, name) = path.rsplit_once('/').unwrap_or(("", path));
+        let Some(entry) = self
+            .backend
+            .tree_entries(commit, folder)?
+            .into_iter()
+            .find(|e| e.name == name)
+        else {
+            return Ok(Vec::new());
+        };
+        if matches!(
+            entry.kind,
+            amonhen_model::TreeEntryKind::Folder | amonhen_model::TreeEntryKind::Submodule
+        ) {
+            return Ok(Vec::new());
+        }
+        self.backend.missing_blobs(&[entry.oid])
+    }
+
     /// partial clone で取りに行かなかった中身を、利用者が頼んだので取ってくる（`ids` をまとめて 1 回で）。
     pub fn fetch_contents(&self, ids: &[Oid]) -> Result<()> {
         self.backend.prefetch_blobs(ids)
@@ -2953,6 +2984,11 @@ mod tests {
         .unwrap();
         assert_eq!(json["errorKind"], "missingContents", "{json}");
         assert_eq!(json["info"]["missing"].as_array().unwrap().len(), 1);
+        // 見せる前に、何が足りないかを数えられる（変わったファイルは前後の版）。
+        assert_eq!(repo.file_missing(&two, "a.txt").unwrap().len(), 2);
+        // HEAD でも変わったファイルなら、1 つ前の版が手元にない。
+        let head = resolve("HEAD");
+        assert_eq!(repo.file_missing(&head, "a.txt").unwrap().len(), 1);
         assert_eq!(absent(), 4);
 
         // 頼まれたら取って、差分を取り直す。

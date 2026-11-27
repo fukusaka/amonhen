@@ -146,12 +146,22 @@ pub extern "C" fn amonhen_last_error() -> *const c_char {
     LAST_ERROR.with(|last| last.borrow().as_ptr())
 }
 
-/// このスレッドで最後に失敗した関数が、partial clone で中身が手元になくて断ったのなら、その中身の数（読む画面は
-/// 取りに行かない。FE は「取ってくる」を出し、押されたら `amonhen_fetch_last_missing` で取ってから読み直す）。
-/// ほかの理由の失敗なら 0。
+/// このスレッドで最後に失敗した関数が、partial clone で中身が手元になくて断ったのなら、その中身の ID（20 バイトずつ
+/// 並べたもの。`amonhen_blob_free` で解放する）を返し、数を `count` に書く（読む画面は取りに行かない。FE は
+/// 「取ってくる」を出し、押されたら `amonhen_fetch_contents` で取ってから読み直す）。ほかの理由の失敗なら NULL で、
+/// `count` は 0。
+///
+/// # Safety
+/// `count` は書ける領域であること（NULL でもよい）。
 #[unsafe(no_mangle)]
-pub extern "C" fn amonhen_last_missing_count() -> u32 {
-    LAST_MISSING.with(|last| last.borrow().len() as u32)
+pub unsafe extern "C" fn amonhen_last_missing(count: *mut u32) -> *mut u8 {
+    let ids = LAST_MISSING.with(|last| last.borrow().clone());
+    unsafe { put(count, ids.len() as u32) };
+    if ids.is_empty() {
+        return std::ptr::null_mut();
+    }
+    let bytes: Vec<u8> = ids.iter().flat_map(|id| id.0).collect();
+    blob_out(&bytes, std::ptr::null_mut())
 }
 
 /// 引数に NULL を渡されたときに返すもの（失敗を表す値。ビューは何もない空のもの）。
@@ -2317,14 +2327,24 @@ pub unsafe extern "C" fn amonhen_stacked_count(stacked: *const AmonhenStacked) -
         .len() as u32
 }
 
-/// このスレッドで最後に失敗した関数が手元になかった中身を、取ってくる（まとめて 1 回で。裏のスレッドで、失敗を
-/// 受けたのと同じスレッドで呼ぶ）。取れなければ false（`amonhen_last_error`）。
+/// partial clone で読む画面が取りに行かなかった中身（`amonhen_last_missing` の ID、`count` 個の 20 バイト）を、
+/// 利用者が頼んだので取ってくる（まとめて 1 回で）。裏のスレッドで呼ぶ。取れなければ false（`amonhen_last_error`）。
 ///
 /// # Safety
-/// `repo` は有効であること。
+/// `repo` は有効、`ids` は `count` × 20 バイトを読める領域であること（`count` が 0 なら NULL でもよい）。
 #[unsafe(no_mangle)]
-pub unsafe extern "C" fn amonhen_fetch_last_missing(repo_ptr: *const AmonhenRepo) -> bool {
-    let ids = LAST_MISSING.with(|last| last.borrow().clone());
+pub unsafe extern "C" fn amonhen_fetch_contents(
+    repo_ptr: *const AmonhenRepo,
+    ids: *const u8,
+    count: u32,
+) -> bool {
+    let bytes = array!(ids, count as usize * 20);
+    let ids: Vec<amonhen_model::Oid> = bytes
+        .as_chunks::<20>()
+        .0
+        .iter()
+        .map(|c| amonhen_model::Oid(*c))
+        .collect();
     match repo!(repo_ptr).fetch_contents(&ids) {
         Ok(()) => true,
         Err(e) => {

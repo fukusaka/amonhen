@@ -875,7 +875,18 @@ impl GitBackend for GixBackend {
     }
 
     fn commit_extras(&self, commit: &Oid) -> Result<amonhen_model::CommitExtras> {
-        self.git()?.commit_extras(commit)
+        // partial clone で変わったファイルの中身が手元になければ、行数は数えない（git は数えるために取ってくる）。
+        let stats = promisor_remote(&self.repo.to_thread_local()).is_none() || {
+            let ids: Vec<Oid> = self
+                .commit_changes(commit)?
+                .iter()
+                .filter(|c| !c.submodule)
+                .flat_map(|c| [c.old_id, c.new_id])
+                .flatten()
+                .collect();
+            self.missing_blobs(&ids)?.is_empty()
+        };
+        self.git()?.commit_extras_with(commit, stats)
     }
 
     fn verify_signatures(&self, ids: &[Oid]) -> Result<Vec<amonhen_model::SignatureCheck>> {

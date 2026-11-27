@@ -523,11 +523,15 @@ extern "C" {
 const char *amonhen_last_error(void);
 
 /**
- * このスレッドで最後に失敗した関数が、partial clone で中身が手元になくて断ったのなら、その中身の数（読む画面は
- * 取りに行かない。FE は「取ってくる」を出し、押されたら `amonhen_fetch_last_missing` で取ってから読み直す）。
- * ほかの理由の失敗なら 0。
+ * このスレッドで最後に失敗した関数が、partial clone で中身が手元になくて断ったのなら、その中身の ID（20 バイトずつ
+ * 並べたもの。`amonhen_blob_free` で解放する）を返し、数を `count` に書く（読む画面は取りに行かない。FE は
+ * 「取ってくる」を出し、押されたら `amonhen_fetch_contents` で取ってから読み直す）。ほかの理由の失敗なら NULL で、
+ * `count` は 0。
+ *
+ * # Safety
+ * `count` は書ける領域であること（NULL でもよい）。
  */
-uint32_t amonhen_last_missing_count(void);
+uint8_t *amonhen_last_missing(uint32_t *count);
 
 /**
  * 手元のリポジトリの status で、git の fsmonitor（`git fsmonitor--daemon`）を使うか（macOS と Windows）。
@@ -1325,13 +1329,15 @@ AmonhenStacked *amonhen_selection_diff(const AmonhenRepo *repo_ptr,
 uint32_t amonhen_stacked_count(const AmonhenStacked *stacked);
 
 /**
- * このスレッドで最後に失敗した関数が手元になかった中身を、取ってくる（まとめて 1 回で。裏のスレッドで、失敗を
- * 受けたのと同じスレッドで呼ぶ）。取れなければ false（`amonhen_last_error`）。
+ * partial clone で読む画面が取りに行かなかった中身（`amonhen_last_missing` の ID、`count` 個の 20 バイト）を、
+ * 利用者が頼んだので取ってくる（まとめて 1 回で）。裏のスレッドで呼ぶ。取れなければ false（`amonhen_last_error`）。
  *
  * # Safety
- * `repo` は有効であること。
+ * `repo` は有効、`ids` は `count` × 20 バイトを読める領域であること（`count` が 0 なら NULL でもよい）。
  */
-bool amonhen_fetch_last_missing(const AmonhenRepo *repo_ptr);
+bool amonhen_fetch_contents(const AmonhenRepo *repo_ptr,
+                            const uint8_t *ids,
+                            uint32_t count);
 
 /**
  * partial clone で中身が手元になく、差分を取っていないファイルの数（見出しの `MISSING`。FE は「取ってくる」の

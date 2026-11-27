@@ -727,6 +727,13 @@ pub enum Command {
         #[serde(default)]
         path: String,
     },
+    /// コミット `oid` のファイル `path` を見せるのに要る中身のうち、partial clone で手元にないもの（`info.missing`、
+    /// 取りには行かない）。History の「すべてのファイル」は、空でなければ中身もプレビューも出さずに「取ってくる」を
+    /// 出し、押されたら `fetchContents` で取る。
+    FileContentsMissing {
+        oid: String,
+        path: String,
+    },
     /// コミット `oid` の Markdown のファイル `path` を、FE が組み立てて見せるブロックの並びにしたもの（`info.blocks`:
     /// `markdown::Block` の配列）。`github`（`https://github.com/owner/repo`）があれば `#123`・`@user`・コミットの ID も
     /// リンクにする。History の「すべてのファイル」の整形した表示。
@@ -5214,6 +5221,16 @@ impl Repository {
                 Ok(Response {
                     ok: true,
                     info: Some(serde_json::json!({ "entries": entries })),
+                    ..Default::default()
+                })
+            }
+            Command::FileContentsMissing { oid: o, path } => {
+                let missing = self.file_missing(&oid(&o)?, &path)?;
+                Ok(Response {
+                    ok: true,
+                    info: Some(serde_json::json!({
+                        "missing": missing.iter().map(Oid::to_string).collect::<Vec<_>>(),
+                    })),
                     ..Default::default()
                 })
             }
