@@ -9,6 +9,7 @@ import { el, post } from './api.ts';
 import { renderCode } from './diffView.ts';
 import { checkerToggle, renderImageDiff } from './imageDiff.ts';
 import { findAll, findCountText } from './textFind.ts';
+import { type MissingBand, missingBand } from './missingBand.ts';
 import { resolvePath } from '../history/repoPath.ts';
 import { hexColor } from '../history/cssColor.ts';
 
@@ -26,6 +27,8 @@ export interface AllFiles {
   setTree(tree: boolean): void;
   /** `path` の中身を出し、`line` があればその行へ（差分の行の右クリックの Open File at This Commit。アプリと同じ） */
   open(path: string, line?: number): void;
+  /** partial clone で手元になかった `path` の中身を取り終えた（取れたら求め直す。取れなければ `error` を帯に） */
+  contentsFetched(path: string, error: string | undefined): void;
 }
 
 /** すべてのファイルの持ち主から */
@@ -71,6 +74,8 @@ export function createAllFiles(oid: string, changes: readonly ChangedFile[], opt
   let pendingLine: { path: string; line: number } | undefined;
   /** 開いているファイルの絵（図・数式・VectorDrawable）が、画面の色で描いたものか（テーマが変わったら求め直す） */
   let themed = false;
+  /** 開いているファイルの中身が手元にない（partial clone）ときの「取ってくる」の帯 */
+  let band: MissingBand | undefined;
   // テーマ・図と数式の設定が変わったら、画面の色と設定で描いた絵を描き直す（アプリと同じ）
   const redraw = () => {
     if (!root.isConnected) {
@@ -222,6 +227,7 @@ export function createAllFiles(oid: string, changes: readonly ChangedFile[], opt
 
   function showFile(path: string, view: FileView & FileViewNote): void {
     if (path !== selected) return;
+    band = undefined;
     themed = view.kind === 'text' && (view.drawable !== undefined || (view.markdown !== undefined && hasPictures(view.markdown)));
     if (view.kind === 'text' && view.mathScale) mathScale = view.mathScale;
     const head = el('div', 'file-pane-head');
@@ -235,7 +241,7 @@ export function createAllFiles(oid: string, changes: readonly ChangedFile[], opt
       change.addEventListener('click', () => options.onShowChange?.(path));
       tools.append(change);
     }
-    if (view.kind !== 'error' && view.kind !== 'binary') {
+    if (view.kind !== 'error' && view.kind !== 'binary' && view.kind !== 'missing') {
       const open = el('button', 'bar-button', 'Open in Editor');
       open.title = 'Open the file at this commit in VSCode';
       open.addEventListener('click', () => post({ type: 'openTreeFile', oid, path }));
@@ -247,6 +253,12 @@ export function createAllFiles(oid: string, changes: readonly ChangedFile[], opt
     switch (view.kind) {
       case 'error':
         body.append(el('div', 'empty', view.message));
+        return;
+      case 'missing':
+        // partial clone で中身が手元にない: 中身もプレビューも出さず、帯で聞く（押したときだけ取る。アプリと同じ）
+        band = missingBand('This file’s contents aren’t here yet (partial clone).', () => post({ type: 'fetchContents', oid, path }));
+        head.after(band.root);
+        body.append(el('div', 'empty', 'This file’s contents aren’t here yet.'));
         return;
       case 'binary': {
         body.append(el('div', 'empty', `Binary file · ${sizeText(view.bytes)}`));
@@ -333,7 +345,13 @@ export function createAllFiles(oid: string, changes: readonly ChangedFile[], opt
     rebuild();
   }
 
-  return { root, showEntries, showFile, setTree, open };
+  function contentsFetched(path: string, error: string | undefined): void {
+    if (path !== selected) return;
+    if (error !== undefined) band?.failed(error);
+    else requestFile(path);
+  }
+
+  return { root, showEntries, showFile, setTree, open, contentsFetched };
 }
 
 /** 縦に送れるいちばん近い祖先 */

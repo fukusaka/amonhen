@@ -53,6 +53,9 @@ pub(crate) struct DiffMeta {
     added: u32,
     removed: u32,
     generated: Option<bool>,
+    /// partial clone で手元にない中身（あれば差分は取っていない）。
+    #[serde(default)]
+    missing: Vec<amonhen_model::Oid>,
 }
 
 impl From<&FileDiff> for DiffMeta {
@@ -77,6 +80,7 @@ impl From<&FileDiff> for DiffMeta {
             added: d.added,
             removed: d.removed,
             generated: d.generated,
+            missing: d.missing.clone(),
         }
     }
 }
@@ -111,6 +115,7 @@ impl DiffMeta {
             removed: self.removed,
             generated: self.generated,
             pending: None,
+            missing: self.missing,
             whitespace: crate::diff::Whitespace::Exact,
         }
     }

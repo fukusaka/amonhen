@@ -25,12 +25,17 @@ becomes the GitHub Release notes.
 - Working Copy's file list takes the full height, and the commit message sits at the top right, above the diff; it
   collapses to the summary line (macOS).
 - History shows a commit's first files open; Settings > Diff & Merge > Files to open together sets how many (macOS).
+- In a partial clone, History's diffs and All Files no longer fetch missing file contents by themselves. A band says
+  how many files' contents aren't here yet, and Fetch Contents gets just those. The CLI's `diff` and `show` still
+  fetch first, as git does.
 - DOT diagrams order clusters as Graphviz does: a cluster is placed whole when first reached, and sorts by where the
   whole cluster sits.
 - In DOT diagrams, a same-rank edge inside a cluster may point right to left when nodes outside pull it, as in
   Graphviz. Outside clusters, the tail stays on the left.
 - DOT crossing reduction keeps the later of two orders with the same crossings, which matches Graphviz's order more
   often.
+- DOT diagrams start from the order Graphviz uses, which depends on the order nodes are declared in.
+- DOT diagrams order nested clusters from the outside in, as Graphviz does.
 
 #### Fixed
 
@@ -1459,6 +1464,9 @@ First release.
 
 - The sidebar's icons are an icon font, so they take the theme's icon color, high contrast and the selected row's
   color like VSCode's own icons.
+- In a partial clone, the main view's commit diffs and All Files no longer fetch missing file contents by
+  themselves. A band says how many files' contents aren't here yet, and Fetch Contents gets just those (with the
+  engine; the git execution layer still fetches as git does).
 
 ### [0.2.10] - 2026-11-27
 

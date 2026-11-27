@@ -452,14 +452,14 @@ fn git_line(form: Option<&Value>) -> View {
     }
     if let Some(partial) = form["partial"].as_object() {
         let title = match partial.get("filter").and_then(Value::as_str) {
-            Some(filter) => tr!("Contents fetched when needed ({filter})", filter = filter),
-            None => tr!("Contents fetched when needed"),
+            Some(filter) => tr!("Contents fetched when asked ({filter})", filter = filter),
+            None => tr!("Contents fetched when asked"),
         };
         let remote = partial.get("remote").and_then(Value::as_str).unwrap_or("?");
         items.push((
             title,
             tr!(
-                "Partial clone: file contents are fetched from {remote} when they’re needed.",
+                "Partial clone: file contents are fetched from {remote} when you ask for them or an operation needs them.",
                 remote = remote
             ),
         ));
@@ -1761,7 +1761,7 @@ pub fn view(state: &State, callbacks: Callbacks) -> View {
                     "partial".to_owned(),
                     action_row(
                         tr!(
-                            "Partial clone: file contents are fetched when needed ({filter})",
+                            "Partial clone: file contents are fetched when you ask for them or an operation needs them ({filter})",
                             filter = filter
                         ),
                         tr!(

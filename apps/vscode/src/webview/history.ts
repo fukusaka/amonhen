@@ -1041,7 +1041,7 @@ export function createHistoryView(): View {
         shallowChip.hidden = !message.shallow;
         partialChip.hidden = !message.partial;
         if (message.partial) {
-          partialChip.title = `A partial clone (${message.partial.filter} from ${message.partial.remote}): contents are fetched when needed. Click to fetch all of them.`;
+          partialChip.title = `A partial clone (${message.partial.filter} from ${message.partial.remote}): contents are fetched when you ask for them or an operation needs them. Click to fetch all of them.`;
         }
         break;
       case 'signatures':
@@ -1071,6 +1071,9 @@ export function createHistoryView(): View {
         return;
       case 'commitImage':
         details.showImage(message.oid, message.path, message.before, message.after, message.error);
+        return;
+      case 'contentsFetched':
+        details.contentsFetched(message.oid, message.path, message.error);
         return;
       case 'editMode':
         root.classList.add('editing');

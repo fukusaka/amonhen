@@ -129,7 +129,7 @@ impl Form {
             items.push((
                 partial_title(partial),
                 tr!(
-                    "Partial clone: file contents are fetched from {remote} when they’re needed.",
+                    "Partial clone: file contents are fetched from {remote} when you ask for them or an operation needs them.",
                     remote = partial.remote
                 ),
             ));
@@ -150,8 +150,8 @@ impl Form {
 /// partial clone の短い言い方。
 pub fn partial_title(partial: &Partial) -> String {
     match &partial.filter {
-        Some(filter) => tr!("Contents fetched when needed ({filter})", filter = filter),
-        None => tr!("Contents fetched when needed"),
+        Some(filter) => tr!("Contents fetched when asked ({filter})", filter = filter),
+        None => tr!("Contents fetched when asked"),
     }
 }
 
@@ -581,7 +581,7 @@ mod tests {
             titles,
             [
                 "shallow clone",
-                "Contents fetched when needed (blob:none)",
+                "Contents fetched when asked (blob:none)",
                 "Some folders only"
             ]
         );

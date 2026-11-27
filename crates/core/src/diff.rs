@@ -43,6 +43,9 @@ pub struct FileDiff {
     pub generated: Option<bool>,
     /// まだ差分を取っていない（ファイルの多いコミットでは、開いたときに取る）。そのファイルの変更。
     pub pending: Option<Box<amonhen_model::FileChange>>,
+    /// partial clone で手元にない中身（blob）。空でなければ差分を取っていない（取りには行かない。利用者が頼んだら
+    /// 取って取り直す、`Repository::fetch_stacked_missing`）。行数は 0。
+    pub missing: Vec<amonhen_model::Oid>,
     /// 行を比べるときに無視した空白。無視していれば、行の差分は中身をそのまま表していないので、行ごとの stage・
     /// 取り消しには使えない。
     pub whitespace: Whitespace,
@@ -172,6 +175,7 @@ pub fn whole_file(data: impl Into<Blob>) -> FileDiff {
         removed: 0,
         generated: None,
         pending: None,
+        missing: Vec::new(),
         whitespace: Whitespace::Exact,
     }
 }
@@ -264,6 +268,7 @@ pub fn file_diff_folded(
         removed: 0,
         generated: None,
         pending: None,
+        missing: Vec::new(),
         whitespace,
     };
     if diff.binary {
@@ -887,6 +892,24 @@ pub struct StackedDiff {
 }
 
 impl StackedDiff {
+    /// partial clone で中身が手元になく、差分を取っていないファイルの数（FE は「取ってくる」の帯に出す）。
+    pub fn missing_files(&self) -> usize {
+        self.files
+            .iter()
+            .filter(|(_, d)| !d.missing.is_empty())
+            .count()
+    }
+
+    /// 手元にない中身（重なりは 1 つ）。
+    pub fn missing_ids(&self) -> Vec<amonhen_model::Oid> {
+        let mut seen = amonhen_model::OidSet::default();
+        self.files
+            .iter()
+            .flat_map(|(_, d)| d.missing.iter().copied())
+            .filter(|id| seen.insert(*id))
+            .collect()
+    }
+
     /// `file` 番目のファイルが生成物か（最初は畳む）。`.gitattributes` の `linguist-generated` があればそれに従い、
     /// なければ lock ファイルと縮めたファイル（`.min.js`・`.min.css`）。
     pub fn generated(&self, file: usize) -> bool {
@@ -933,7 +956,9 @@ impl StackedDiff {
             if diff.binary {
                 flags |= DiffRow::BINARY;
             }
-            if diff.pending.is_some() {
+            if !diff.missing.is_empty() {
+                flags |= DiffRow::MISSING;
+            } else if diff.pending.is_some() {
                 flags |= DiffRow::PENDING;
             }
             let text = builder.strings.add(names_buf, &names[at..at + path.len()]);
@@ -954,6 +979,20 @@ impl StackedDiff {
         }
         builder.finish(false, added, removed)
     }
+}
+
+/// partial clone で中身が手元にないファイルの、差分を取っていない形（`missing` が手元にない中身、`pending` が
+/// その変更。利用者が頼んだら取って取り直す）。行も行数もない。
+pub fn missing_file(
+    change: amonhen_model::FileChange,
+    missing: Vec<amonhen_model::Oid>,
+    whitespace: Whitespace,
+) -> FileDiff {
+    let mut d = whole_file(Vec::new());
+    d.pending = Some(Box::new(change));
+    d.missing = missing;
+    d.whitespace = whitespace;
+    d
 }
 
 /// `git range-diff` の差分の差分（`RangePair::diff` の行）を、ほかの差分と同じ形にする。外側の記号で行の種類を
@@ -1043,6 +1082,7 @@ pub fn range_diff_file<S: AsRef<str>>(lines: &[S]) -> FileDiff {
         removed,
         generated: None,
         pending: None,
+        missing: Vec::new(),
         whitespace: Whitespace::Exact,
     }
 }
