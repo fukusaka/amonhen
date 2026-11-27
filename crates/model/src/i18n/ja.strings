@@ -2575,6 +2575,7 @@
 "Click the change bar or line numbers" = "変更の帯・行番号を押して";
 "How lines are staged and unstaged in the Working Copy diff. Space and the right-click menu work either way." = "Working Copy の差分で、行を stage・unstage する形。Space と右クリックのメニューはどちらでも使える";
 "Open every unchanged part of the file (each part also opens from its own row)" = "変更のない所をすべて開く（1 つずつなら、その所の行から開く）";
+"Showing the whole file" = "ファイル全体を表示中";
 "(showing the first {n})" = "（上から {n} 個を表示）";
 "No staged changes in these files" = "選んだファイルに staged の変更はない";
 "No unstaged changes in these files" = "選んだファイルに unstaged の変更はない";

@@ -238,8 +238,8 @@ GTK4 のアプリは macOS のアプリと同じふるまいをめざす。わ�
 | Commit が押せない理由を出す | ✓ | ✓ | ✓ | ✓ | n/a | ✓ | ボタンのツールチップに。<br>TUI: 一番下の行に。 |
 | HEAD → 作業ツリーの 1 つの差分と、行・hunk のチェック | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | macOS: All の側。stage 済みの行はチェックの代わりに塗った帯。<br>VSCode: エンジンがあれば。なければ別々の未ステージ・ステージ済みの差分で行をステージ。<br>CLI: `diff --combined`・`stage --rows`。 |
 | Unstaged・Staged・All（見る側は Working Copy で 1 つ） | ✓ | ✓ | ✓ | △ | ✓ | △ | VSCode: Changes と Staged のグループが、それぞれの側を出す。<br>CLI: `diff`・`diff --staged`・`diff --combined`。<br>TUI: 差分の `s` で側を切り替える。 |
-| 変更のない行を畳み、20 行ずつ・すべて開く | ✓ | ✓ | — | — | n/a | — |  |
-| hunk の見出しの Stage Hunk・Discard Hunk（選ぶと Lines）か変更の帯を、設定で選ぶ | ✓ | ✓ | — | — | n/a | — |  |
+| 変更のない行を畳み、20 行ずつ・すべて開く | ✓ | ✓ | ✓ | — | n/a | — |  |
+| hunk の見出しの Stage Hunk・Discard Hunk（選ぶと Lines）か変更の帯を、設定で選ぶ | ✓ | ✓ | ✓ | — | n/a | — |  |
 | 選んだいくつかのファイルの差分を並べる | ✓ | ✓ | — | — | n/a | — | macOS, GTK4: 一度に開いて並べるファイル（Settings > 差分とマージ）の数まで。 |
 | 行の範囲の選択、J/K・⌥J/⌥K | ✓ | ✓ | ✓ | ✓ | n/a | ✓ | TUI: `v` で範囲を始め、`[` `]` で hunk の見出しへ。 |
 | 重ねられないファイルの Unstaged / Staged の切り替え | ✓ | ✓ | ✓ | n/a | ✓ | ✓ | macOS, GTK4: いつもあり、All もある。<br>VSCode: いつも別々に出す。<br>CLI: `diff --staged`。<br>TUI: 初めは stage していない側。差分の `s` で替える。 |

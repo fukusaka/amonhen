@@ -22,6 +22,14 @@ pub const WORKING_COPY_LAYOUT: &str = "workingCopyLayout";
 pub const WORKING_COPY_COMMIT_COLLAPSED: &str = "workingCopyCommitCollapsed";
 /// 一覧を Staged・Unstaged の節に分けるか（macOS 版・GTK4 版と同じ鍵）。
 pub const WORKING_COPY_SECTIONS: &str = "workingCopySections";
+/// Working Copy の差分で行を stage する形: "select"（選んでから hunk の見出しで）か "bar"（変更の帯・行番号を
+/// 押して）。GTK4 版・macOS 版と同じ鍵。
+pub const LINE_STAGE_STYLE: &str = "lineStageStyle";
+
+/// 行の Stage の仕方が「変更の帯・行番号を押して」か。
+pub fn line_stage_bar() -> bool {
+    string(LINE_STAGE_STYLE).as_deref() == Some("bar")
+}
 /// File History に merge コミットも出す（既定は出さない）。
 pub const FILE_HISTORY_MERGES: &str = "fileHistoryMerges";
 /// 開いたリポジトリを Repositories のブックマークに入れる（既定は入れる。GTK4 版・macOS 版と同じ鍵）。

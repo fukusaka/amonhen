@@ -98,10 +98,6 @@ thread_local! {
         const { RefCell::new(None) };
     /// 差分の欄と、右クリックした位置（メニューを作り直してから、そこで開く）。
     static DIFF_AT: RefCell<Option<(xaml::UIElement, xaml::Point)>> = const { RefCell::new(None) };
-    /// Working Copy の差分で最後に押した印の行と、その行にした状態（Shift+クリックの起点）。
-    static MARK_ANCHOR: std::cell::Cell<Option<(usize, bool)>> = const { std::cell::Cell::new(None) };
-    /// 印の上を引いている間（起点の行、今の行、起点にした状態）。離したら間の行をまとめて同じ状態にする。
-    static MARK_DRAG: std::cell::Cell<Option<(usize, usize, bool)>> = const { std::cell::Cell::new(None) };
     /// 画像の比べる欄で引いているもの（ファイル、欄の最初の表示の行、引き方）。
     static IMAGE_DRAG: std::cell::Cell<Option<(usize, usize, ImageDrag)>> = const { std::cell::Cell::new(None) };
     /// History でコミットを運んでいる間（押した行、押した高さ、動かし始めたか）。
@@ -492,8 +488,8 @@ struct Root {
     diff_area: ElementRef<Grid>,
     /// 差分で右クリックしたファイル（見出しのメニューの中身）。
     diff_file: Option<crate::data::DiffFile>,
-    /// Working Copy の差分で右クリックした行（その行か hunk の行）と、含めている行があるか。
-    diff_rows: Option<(Vec<usize>, bool)>,
+    /// Working Copy の差分で右クリックした行のメニュー（名前、効く行、操作。GTK4 版の `stage_menu`）。
+    diff_rows: Vec<(String, Vec<usize>, crate::data::GapAction)>,
     /// 署名のあるタグの状態と署名者（サイドバーの印とタグのメニュー）。
     tag_signatures: std::collections::HashMap<String, (crate::signature::Status, String)>,
     /// 署名のあるタグの `tagSignatures` の 1 件（署名の吹き出しの中身）。
@@ -1317,8 +1313,14 @@ enum Message {
     OpenFileHistory(String),
     /// 差分で右クリックしたファイル。
     DiffFileAt(Option<crate::data::DiffFile>),
-    /// Working Copy の差分で右クリックした行。
-    DiffRowsAt(Option<(Vec<usize>, bool)>),
+    /// Working Copy の差分で右クリックした行のメニュー（名前、効く行、操作）。
+    DiffRowsAt(Vec<(String, Vec<usize>, crate::data::GapAction)>),
+    /// Working Copy の差分の行の変更を作業ツリーから捨てる（隙間の行の Discard Hunk・Discard Lines）。
+    DiscardWorkingRows(Vec<usize>),
+    /// ファイル全体を表示（Working Copy の差分の変更のない所をすべて開く・畳む）。
+    WholeFile(bool),
+    /// Settings > Diff & Merge の行の Stage の仕方を選んだ（0 は選んでから、1 は変更の帯）。
+    SettingsLineStage(Option<usize>),
     /// 行を捨て終えた（失敗ならそのわけ）。
     LinesDiscarded(Option<String>),
     /// 差分の代わりの一言が替わった（なければ None）。
@@ -1792,7 +1794,7 @@ impl Component for Root {
             push_panel: ElementRef::new(),
             diff_area: ElementRef::new(),
             diff_file: None,
-            diff_rows: None,
+            diff_rows: Vec::new(),
             tag_signatures: std::collections::HashMap::new(),
             tag_signature_details: std::collections::HashMap::new(),
             mark_popover: None,
@@ -8986,7 +8988,7 @@ impl Root {
                     self.diff_menu_request += 1;
                 }
                 self.diff_file = file;
-                self.diff_rows = None;
+                self.diff_rows.clear();
             }
             Message::WorkingNote(note) => {
                 self.working_note = note;
@@ -9013,11 +9015,31 @@ impl Root {
                 }
             }
             Message::DiffRowsAt(rows) => {
-                if rows.is_some() {
+                if !rows.is_empty() {
                     self.diff_menu_request += 1;
                 }
                 self.diff_rows = rows;
                 self.diff_file = None;
+            }
+            Message::DiscardWorkingRows(rows) => self.discard_working_rows(rows, context),
+            Message::WholeFile(on) => self.with_history(|h| h.session.data.set_working_whole(on)),
+            Message::SettingsLineStage(index) => {
+                let Some(i) = index else { return };
+                let value = if i == 1 { "bar" } else { "select" };
+                if crate::prefs::string(crate::prefs::LINE_STAGE_STYLE).as_deref() != Some(value) {
+                    if let Err(e) = crate::prefs::set_string(crate::prefs::LINE_STAGE_STYLE, value)
+                    {
+                        self.dialog = Some(Dialog::Failed {
+                            title: tr!("Save"),
+                            message: e,
+                        });
+                    }
+                    // 出している差分を描き直す（帯の列が出入りするので、文字の形も作り直す）。
+                    self.with_history(|h| {
+                        h.session.renderer.forget_diff();
+                        h.diff.dirty = true;
+                    });
+                }
             }
             Message::DiffFileMenu(key) => self.diff_file_action(&key, context),
             Message::WorkingFileMenu(path, key) => match key.as_str() {
@@ -13637,14 +13659,14 @@ impl Root {
     /// 差分で右クリックしたファイルのメニュー（GTK4 版の `commitfiles` の見出しのメニュー: 畳む・Blame・
     /// File History・パスのコピー・ファイルで表示・エディタ・既定のアプリ）。
     fn diff_file_menu(&self) -> Vec<MenuItem> {
-        // Working Copy の差分: その行（hunk）の変更を捨てる。含めている行は捨てられない（先に外す。GTK4 版と同じ）。
-        if let Some((_, staged)) = &self.diff_rows {
-            let title = "Discard Lines";
-            return vec![if *staged {
-                MenuItem::disabled("discard-lines", title)
-            } else {
-                MenuItem::item("discard-lines", title)
-            }];
+        // Working Copy の差分: 選んだ行・その hunk・その行の Stage（Unstage）と Discard（GTK4 版の `stage_menu`）。
+        if !self.diff_rows.is_empty() {
+            return self
+                .diff_rows
+                .iter()
+                .enumerate()
+                .map(|(i, (title, _, _))| MenuItem::item(format!("stage-menu:{i}"), title.clone()))
+                .collect();
         }
         let Some(file) = &self.diff_file else {
             return Vec::new();
@@ -13723,20 +13745,43 @@ impl Root {
         file.exists().then_some(file)
     }
 
+    /// Working Copy の差分の `rows` 行目の変更を作業ツリーから捨てる（確かめない。Undo で戻せる。macOS 版・GTK4 版と
+    /// 同じ）。空白を無視した差分・stage 済みの側では捨てない。
+    fn discard_working_rows(&mut self, rows: Vec<usize>, context: &ComponentContext<Self>) {
+        let mut target = None;
+        self.with_history(|h| {
+            let data = &h.session.data;
+            if data.whitespace == amonhen_core::diff::Whitespace::Exact {
+                target = data.working_diff().filter(|(_, d)| !d.staged);
+            }
+        });
+        let Some((repo, diff)) = target.filter(|_| !rows.is_empty()) else {
+            return beep();
+        };
+        context.spawn_background(move |_| {
+            let result = repo.discard_rows(&diff, &rows);
+            Message::LinesDiscarded(result.err().map(|e| e.to_string()))
+        });
+    }
+
     fn diff_file_action(&mut self, key: &str, context: &ComponentContext<Self>) {
-        if key == "discard-lines" {
-            let Some((rows, false)) = self.diff_rows.clone() else {
+        if let Some(index) = key.strip_prefix("stage-menu:") {
+            let Some((_, rows, action)) = index
+                .parse::<usize>()
+                .ok()
+                .and_then(|i| self.diff_rows.get(i).cloned())
+            else {
                 return beep();
             };
-            let mut target = None;
-            self.with_history(|h| target = h.session.data.working_diff());
-            let Some((repo, diff)) = target else {
-                return beep();
-            };
-            context.spawn_background(move |_| {
-                let result = repo.discard_rows(&diff, &rows);
-                Message::LinesDiscarded(result.err().map(|e| e.to_string()))
-            });
+            if action == crate::data::GapAction::Discard {
+                self.discard_working_rows(rows, context);
+            } else {
+                let mut done = false;
+                self.with_history(|h| done = h.session.data.stage_working_toggle(rows));
+                if !done {
+                    beep();
+                }
+            }
             return;
         }
         let Some(file) = self.diff_file.clone() else {
@@ -17095,6 +17140,7 @@ impl Root {
                 gantt_zone: context.callback(Message::SettingsGanttZone),
                 math_scale: context.callback(Message::SettingsMathScale),
                 math_time_limit: context.callback(Message::SettingsMathTimeLimit),
+                line_stage: context.callback(Message::SettingsLineStage),
                 mermaid_button: Box::new(|key: String| {
                     context.callback(move |()| Message::SettingsMermaidButton(key.clone()))
                 }),
@@ -17869,6 +17915,7 @@ impl Root {
                     .spacing(4.0)
                     .margin(Thickness::new(0.0, 2.0, 8.0, 2.0))
                     .children((
+                        self.whole_file_button(context),
                         self.whitespace_picker(context),
                         self.wrap_button(context),
                         self.diff_find_button(context),
@@ -18523,6 +18570,35 @@ impl Root {
     /// 行を比べるときに無視する空白を選ぶボタン（macOS 版の `WhitespacePopUp`）: アイコンだけで、押すと 4 つの
     /// 選び方（今のものに ✓、それぞれに説明のツールチップ）。無視している間はアイコンをアクセントの色にする。
     /// 長い行を折り返すボタン（↩︎。空白のボタンの隣。macOS 版・GTK4 版と同じ。折り返している間はアクセントの色）。
+    /// ファイル全体を表示（Working Copy の差分）: 変更のない所をすべて開く・すべて畳む（macOS 版・GTK4 版と同じ）。
+    /// いつも置いておき、開ける所がなければ押せない（出し入れすると reactor が差し込む位置を誤る）。
+    fn whole_file_button(&self, context: &ViewContext<Self>) -> View {
+        let mut counts = (0, 0);
+        self.with_history(|h| {
+            counts = h
+                .session
+                .data
+                .working
+                .as_ref()
+                .map_or((0, 0), |w| w.gap_counts());
+        });
+        let (gaps, folded) = counts;
+        let on = gaps > 0 && folded == 0;
+        let icon = crate::icons::icon("files", 16.0);
+        let hint =
+            tr!("Open every unchanged part of the file (each part also opens from its own row)");
+        let title = if on {
+            tr!("Showing the whole file")
+        } else {
+            tr!("Show Whole File")
+        };
+        crate::small::icon_toggle(icon, on, |b| {
+            b.is_enabled(gaps > 0)
+                .on_click(context.callback(move |()| Message::WholeFile(!on)))
+        })
+        .tooltip(format!("{title}\n{hint}"))
+    }
+
     fn wrap_button(&self, context: &ViewContext<Self>) -> View {
         let on = crate::data::wrap_lines();
         let icon = TextBlock::new().text("↩").font_size(15.0);
@@ -21496,7 +21572,17 @@ impl HistoryView {
             self.sender
                 .send(Message::WorkingNote(s.data.working_note.clone()));
             s.renderer.forget_diff();
-            self.diff.scroll_y = 0.0;
+            // 同じファイル・側を読み直した（隙間を開いた・stage した）なら、同じ所のまま。
+            if std::mem::take(&mut s.data.working_same) {
+                let rows = s
+                    .data
+                    .working
+                    .as_ref()
+                    .map_or(0, |w| w.content().line_count());
+                self.diff.scroll_by(0.0, rows);
+            } else {
+                self.diff.scroll_y = 0.0;
+            }
             self.diff.dirty = true;
             diff_replaced = true;
         }
@@ -21800,6 +21886,20 @@ impl HistoryView {
         } else {
             data.shown_content().map_or(0, |c| c.line_count())
         }
+    }
+
+    /// 差分の欄の幅（DIP）。
+    fn diff_width(&self) -> f32 {
+        self.diff
+            .surface
+            .as_ref()
+            .map_or(0.0, |s| s.width as f32 / self.diff.scale.max(0.01))
+    }
+
+    /// 差分の `row` 行目の、欄の中での上端（スクロールを引いた所）。
+    fn row_screen_top(&self, row: u32) -> f32 {
+        self.line_of_row(row)
+            .map_or(0.0, |l| l as f32 * DIFF_ROW_HEIGHT - self.diff.scroll_y)
     }
 
     /// 差分の `row` 行目の、表示の行（隠したファイルの見出しなら None）。
@@ -23885,66 +23985,8 @@ fn attach_input(element: &IInspectable, target: Target) -> windows_core_reactor:
                     }
                 }
                 Target::Diff if !left => {}
-                // Working Copy の差分: 左の印を押すと、その行を含める・外す。
-                Target::Diff if h.working_page => {
-                    let row = h.row_at_y(position.Y);
-                    if let Some(row) = row.filter(|_| position.X < crate::render::DIFF_MARK_WIDTH) {
-                        let kind = h
-                            .session
-                            .data
-                            .working
-                            .as_ref()
-                            .and_then(|w| w.diff.view.rows.get(row).map(|r| r.kind));
-                        let shift = xaml::InputKeyboardSource::GetKeyStateForCurrentThread(
-                            xaml::VirtualKey::Shift,
-                        )
-                        .is_ok_and(|s| s.contains(xaml::CoreVirtualKeyStates::Down));
-                        match kind {
-                            // Shift+クリック: 前に押した印の行からここまでを、その行と同じ状態に。
-                            Some(
-                                amonhen_layout::DiffRow::ADDED | amonhen_layout::DiffRow::REMOVED,
-                            ) if shift && MARK_ANCHOR.with(std::cell::Cell::get).is_some() => {
-                                if let Some((anchor, stage)) =
-                                    MARK_ANCHOR.with(std::cell::Cell::get)
-                                {
-                                    h.session.data.set_working_range(anchor, row, stage);
-                                }
-                            }
-                            // 押した行を切り替え、引いたら離したときに間の行も同じ状態にする。
-                            Some(
-                                amonhen_layout::DiffRow::ADDED | amonhen_layout::DiffRow::REMOVED,
-                            ) => {
-                                let stage = !h.session.data.working_row_staged(row).unwrap_or(true);
-                                h.session.data.toggle_working_row(row);
-                                MARK_ANCHOR.with(|a| a.set(Some((row, stage))));
-                                MARK_DRAG.with(|d| d.set(Some((row, row, stage))));
-                                if let Ok(pointer) = args.Pointer() {
-                                    let _ = source.CapturePointer(&pointer);
-                                }
-                            }
-                            // hunk の見出しの印: その hunk の行をまとめて。
-                            Some(amonhen_layout::DiffRow::HUNK) => {
-                                h.session.data.toggle_working_hunk(row)
-                            }
-                            _ => {}
-                        }
-                    } else if let Some(row) = row {
-                        // 印の外: 行を選ぶ（Shift で続けて、Ctrl で足す・外す。選んだ行に Discard Lines が効く。
-                        // macOS 版・GTK4 版と同じ）。
-                        let down = |key: xaml::VirtualKey| {
-                            xaml::InputKeyboardSource::GetKeyStateForCurrentThread(key)
-                                .is_ok_and(|s| s.contains(xaml::CoreVirtualKeyStates::Down))
-                        };
-                        let (shift, ctrl) = (
-                            down(xaml::VirtualKey::Shift),
-                            down(xaml::VirtualKey::Control),
-                        );
-                        if let Some(working) = h.session.data.working.as_mut() {
-                            working.select(row as u32, shift, ctrl);
-                            h.diff.dirty = true;
-                        }
-                    }
-                }
+                // Working Copy の差分: 隙間の行・左の帯・行番号・行（GTK4 版の `clicked`）。
+                Target::Diff if h.working_page => working_press(h, position, &source, args),
                 // ファイルの見出しを押すと、そのファイルを畳む・開く（すべてのファイルで開いたファイルには何もしない）。
                 Target::Diff if h.session.data.show_file && !h.working_page => {
                     // 開いた画像の拡大縮小・拡大した絵を動かす。
@@ -24144,7 +24186,7 @@ fn attach_input(element: &IInspectable, target: Target) -> windows_core_reactor:
     }
 
     if target == Target::Diff {
-        // 印の上を引く: 指の下の行を覚え、離したら起点からその行までをまとめて同じ状態にする。
+        // Working Copy の差分の上のマウス: 乗っている隙間の行・帯の上のかたまり、行・行番号のドラッグ。
         let source = ui.clone();
         revokers.push(
             ui.PointerMoved(move |_, args: Ref<xaml::PointerRoutedEventArgs>| {
@@ -24157,18 +24199,21 @@ fn attach_input(element: &IInspectable, target: Target) -> windows_core_reactor:
                     let _ = args.SetHandled(true);
                     return;
                 }
-                let Some((anchor, _, stage)) = MARK_DRAG.with(std::cell::Cell::get) else {
-                    return;
-                };
                 let Ok(position) = args.GetCurrentPoint(&source).and_then(|p| p.Position()) else {
                     return;
                 };
+                let mut handled = false;
                 with_history(|h| {
-                    if let Some(row) = h.row_at_y(position.Y) {
-                        MARK_DRAG.with(|d| d.set(Some((anchor, row, stage))));
+                    if h.working_page {
+                        handled = working_drag(h, position.Y);
+                        if !handled {
+                            working_hover(h, Some(position));
+                        }
                     }
                 });
-                let _ = args.SetHandled(true);
+                if handled {
+                    let _ = args.SetHandled(true);
+                }
             })?,
         );
         let source = ui.clone();
@@ -24182,16 +24227,18 @@ fn attach_input(element: &IInspectable, target: Target) -> windows_core_reactor:
                     let _ = args.SetHandled(true);
                     return;
                 }
-                let Some((anchor, current, stage)) = MARK_DRAG.with(std::cell::Cell::take) else {
-                    return;
-                };
-                if let Ok(pointer) = args.Pointer() {
-                    let _ = source.ReleasePointerCapture(&pointer);
+                let mut handled = false;
+                with_history(|h| {
+                    if h.working_page {
+                        handled = working_drag_end(h);
+                    }
+                });
+                if handled {
+                    if let Ok(pointer) = args.Pointer() {
+                        let _ = source.ReleasePointerCapture(&pointer);
+                    }
+                    let _ = args.SetHandled(true);
                 }
-                if current != anchor {
-                    with_history(|h| h.session.data.set_working_range(anchor, current, stage));
-                }
-                let _ = args.SetHandled(true);
             })?,
         );
         // 右クリック: 押した行のファイルのメニューに作り直してから開く（WinUI が今のメニューを開かないよう、
@@ -24208,14 +24255,20 @@ fn attach_input(element: &IInspectable, target: Target) -> windows_core_reactor:
                     if row < 0.0 {
                         return;
                     }
-                    // Working Copy の差分なら行（hunk）の、History の差分ならファイルのメニュー。
+                    // Working Copy の差分なら選んだ行・hunk・その行の、History の差分ならファイルのメニュー。
                     if h.working_page {
                         let Some(row) = h.row_at_y(at.Y) else { return };
-                        let rows = h.session.data.working_rows_at(row);
-                        if rows.is_some() {
+                        let items = h
+                            .session
+                            .data
+                            .working
+                            .as_ref()
+                            .map(|w| w.stage_menu(row))
+                            .unwrap_or_default();
+                        if !items.is_empty() {
                             DIFF_AT.with(|a| *a.borrow_mut() = Some((source.clone(), at)));
                         }
-                        h.sender.send(Message::DiffRowsAt(rows));
+                        h.sender.send(Message::DiffRowsAt(items));
                         return;
                     }
                     // 木のフォルダの行・すべてのファイルで開いたファイルにはメニューがない。
@@ -24297,6 +24350,27 @@ fn attach_input(element: &IInspectable, target: Target) -> windows_core_reactor:
             {
                 h.sender.send(Message::DiffFindOpen(true));
             }
+            // Working Copy の差分で行を選んでいれば、Space でその行を含める・外す（macOS 版・GTK4 版と同じ）。
+            Target::Diff
+                if key == xaml::VirtualKey::Space
+                    && h.working_page
+                    && h.session
+                        .data
+                        .working
+                        .as_ref()
+                        .is_some_and(|w| !w.selected_changes().is_empty()) =>
+            {
+                let rows = h
+                    .session
+                    .data
+                    .working
+                    .as_ref()
+                    .map(|w| w.selected_changes())
+                    .unwrap_or_default();
+                if !h.session.data.stage_working_toggle(rows) {
+                    beep();
+                }
+            }
             Target::Diff if matches!(key, xaml::VirtualKey::J | xaml::VirtualKey::K) => {
                 // J・K で次・前の変更（hunk）へ、Alt+J・Alt+K で次・前のファイルへ（GTK4 版の `move_hunk`・
                 // `move_file`）。
@@ -24334,6 +24408,243 @@ fn attach_input(element: &IInspectable, target: Target) -> windows_core_reactor:
 
     REVOKERS.with(|r| r.borrow_mut().extend(revokers));
     Ok(())
+}
+
+/// 隙間の行・帯の上の操作（hunk の操作は Stage・Unstage なら含める・外す、Discard なら Root で捨てる）。
+fn working_gap_action(
+    h: &mut HistoryView,
+    index: u32,
+    action: crate::data::GapAction,
+    rows: Vec<usize>,
+) {
+    use crate::data::GapAction;
+    match action {
+        GapAction::Stage | GapAction::Unstage => {
+            if !h.session.data.stage_working_toggle(rows) {
+                beep();
+            }
+        }
+        GapAction::Discard => {
+            h.sender.send(Message::DiscardWorkingRows(rows));
+        }
+        _ => h.session.data.set_working_gap(index, action),
+    }
+}
+
+/// Working Copy の差分を押した（GTK4 版の `clicked`）: 隙間の行ならボタン・札の操作、「変更の帯」の形なら帯で
+/// かたまり・行番号でその行から引き始め、All の帯ならその行を含める・外す。ほかは行を選ぶ（Shift で続けて、Ctrl で
+/// 足す・外す。引けば範囲）。
+fn working_press(
+    h: &mut HistoryView,
+    position: xaml::Point,
+    source: &xaml::UIElement,
+    args: &xaml::PointerRoutedEventArgs,
+) {
+    use amonhen_layout::DiffRow;
+    let Some(row) = h.row_at_y(position.Y) else {
+        return;
+    };
+    let bar = crate::prefs::line_stage_bar();
+    let width = h.diff_width();
+    let top = h.row_screen_top(row as u32);
+    let (x, y) = (position.X, position.Y);
+    let capture = || {
+        if let Ok(pointer) = args.Pointer() {
+            let _ = source.CapturePointer(&pointer);
+        }
+    };
+    let Some(working) = h.session.data.working.as_ref() else {
+        return;
+    };
+    let marks = working.content().marks;
+    let text_x = crate::render::text_left(marks, false);
+    let kind = working.diff.view.rows[row].kind;
+    let change = matches!(kind, DiffRow::ADDED | DiffRow::REMOVED);
+    // 隙間の行: ボタンならその操作、札ならすべて開く（すべて開いていれば畳む）。行のほかの所は何もしない。
+    if kind == DiffRow::HUNK {
+        let gap = working.diff.view.rows[row];
+        let Ok(layout) =
+            h.session
+                .renderer
+                .gap_layout(working.gap_info(row as u32, bar), top, width, text_x)
+        else {
+            return;
+        };
+        let action = if let Some(a) = layout.button_at(x, y) {
+            a
+        } else if !layout.pill_selected
+            && layout.on_pill(x, y)
+            && (gap.old_no > 0 || gap.new_no > 0)
+        {
+            if gap.old_no > 0 {
+                crate::data::GapAction::All
+            } else {
+                crate::data::GapAction::Collapse
+            }
+        } else {
+            return;
+        };
+        working_gap_action(h, row as u32, action, layout.target);
+        return;
+    }
+    // 「変更の帯」の形: 帯を押すとかたまり、行番号を押す・引くとその行（離したとき）。
+    if bar && change && x < text_x - 5.0 {
+        if marks && x < crate::render::DIFF_MARK_WIDTH {
+            let (start, end) = crate::data::change_block(&working.diff.view.rows, row);
+            if !h.session.data.stage_working_toggle((start..end).collect()) {
+                beep();
+            }
+        } else if let Some(w) = h.session.data.working.as_mut() {
+            w.pointer.number_drag = Some((row as u32, vec![row as u32]));
+            h.diff.dirty = true;
+            capture();
+        }
+        return;
+    }
+    // All の帯（「選んでから」の形）: その行を含める・外す（macOS 版・GTK4 版と同じ）。
+    if marks && change && x < crate::render::DIFF_MARK_WIDTH {
+        if !h.session.data.stage_working_toggle(vec![row]) {
+            beep();
+        }
+        return;
+    }
+    let down = |key: xaml::VirtualKey| {
+        xaml::InputKeyboardSource::GetKeyStateForCurrentThread(key)
+            .is_ok_and(|s| s.contains(xaml::CoreVirtualKeyStates::Down))
+    };
+    let (shift, ctrl) = (
+        down(xaml::VirtualKey::Shift),
+        down(xaml::VirtualKey::Control),
+    );
+    let Some(working) = h.session.data.working.as_mut() else {
+        return;
+    };
+    let before = if ctrl {
+        working.selection.clone()
+    } else {
+        Default::default()
+    };
+    working.select(row as u32, shift, ctrl);
+    // 引けば範囲を選ぶ（押した行から。Ctrl なら前に選んでいた行に足す。macOS 版・GTK4 版と同じ）。
+    if !shift {
+        working.pointer.row_drag = Some((row as u32, before));
+        capture();
+    }
+    h.diff.dirty = true;
+}
+
+/// Working Copy の差分の上で引いている（行番号・行）。扱ったら true（GTK4 版の `drag_rows`）。
+fn working_drag(h: &mut HistoryView, y: f32) -> bool {
+    use amonhen_layout::DiffRow;
+    let line = ((h.diff.scroll_y + y) / DIFF_ROW_HEIGHT).floor().max(0.0) as usize;
+    let lines = h.diff_rows();
+    let row = h.row_at_y(y).or_else(|| {
+        // 上下にはみ出したら、端の行。
+        let last = lines.checked_sub(1)?;
+        match h.diff_line(line.min(last))? {
+            crate::data::DiffLine::Row(i) | crate::data::DiffLine::Cont(i, _, _) => {
+                Some(i as usize)
+            }
+            _ => None,
+        }
+    });
+    let Some(working) = h.session.data.working.as_mut() else {
+        return false;
+    };
+    let p = &mut working.pointer;
+    if p.number_drag.is_none() && p.row_drag.is_none() {
+        return false;
+    }
+    let Some(row) = row else { return true };
+    let row = row as u32;
+    let rows = &working.diff.view.rows;
+    if let Some((anchor, _)) = p.number_drag.clone() {
+        let picked: Vec<u32> = (anchor.min(row)..=anchor.max(row))
+            .filter(|&r| matches!(rows[r as usize].kind, DiffRow::ADDED | DiffRow::REMOVED))
+            .collect();
+        p.number_drag = Some((anchor, picked));
+        h.diff.dirty = true;
+        return true;
+    }
+    if let Some((anchor, base)) = p.row_drag.clone() {
+        let mut next = base;
+        next.extend(anchor.min(row)..=anchor.max(row));
+        if next != working.selection {
+            working.selection = next;
+            h.diff.dirty = true;
+        }
+    }
+    true
+}
+
+/// 引くのをやめた: 行番号の上を引いていたなら、その範囲を含める・外す（GTK4 版の `drag_end`）。扱ったら true。
+fn working_drag_end(h: &mut HistoryView) -> bool {
+    let Some(working) = h.session.data.working.as_mut() else {
+        return false;
+    };
+    let rows = working.pointer.row_drag.take().is_some();
+    let Some((_, picked)) = working.pointer.number_drag.take() else {
+        return rows;
+    };
+    h.diff.dirty = true;
+    if !h
+        .session
+        .data
+        .stage_working_toggle(picked.into_iter().map(|r| r as usize).collect())
+    {
+        beep();
+    }
+    true
+}
+
+/// マウスの位置（None なら外れた）から、乗っている隙間の行・ボタンと、帯の上のかたまりを決める（GTK4 版の
+/// `hover_gap`）。変わったら描き直す。
+fn working_hover(h: &mut HistoryView, at: Option<xaml::Point>) {
+    use amonhen_layout::DiffRow;
+    let bar = crate::prefs::line_stage_bar();
+    let width = h.diff_width();
+    let found = at.and_then(|p| Some((p, h.row_at_y(p.Y)?)));
+    let top = found.map_or(0.0, |(_, row)| h.row_screen_top(row as u32));
+    let Some(working) = h.session.data.working.as_mut() else {
+        return;
+    };
+    let before = (working.pointer.hovered_gap, working.pointer.hovered_block);
+    let marks = working.content().marks;
+    let (gap, block) = match found {
+        Some((p, row)) if working.diff.view.rows[row].kind == DiffRow::HUNK => {
+            // 先に行だけ決めて（ボタンを並べるため）、ボタンに乗っているかを調べる。
+            let index = row as u32;
+            if working.pointer.hovered_gap.map(|(r, _)| r) != Some(index) {
+                working.pointer.hovered_gap = Some((index, None));
+            }
+            let text_x = crate::render::text_left(marks, false);
+            let action = h
+                .session
+                .renderer
+                .gap_layout(working.gap_info(index, bar), top, width, text_x)
+                .ok()
+                .and_then(|l| l.button_at(p.X, p.Y));
+            (Some((index, action)), None)
+        }
+        Some((p, row))
+            if bar
+                && marks
+                && p.X < crate::render::DIFF_MARK_WIDTH
+                && matches!(
+                    working.diff.view.rows[row].kind,
+                    DiffRow::ADDED | DiffRow::REMOVED
+                ) =>
+        {
+            let (a, b) = crate::data::change_block(&working.diff.view.rows, row);
+            (None, Some((a as u32, b as u32)))
+        }
+        _ => (None, None),
+    };
+    working.pointer.hovered_gap = gap;
+    working.pointer.hovered_block = block;
+    if before != (gap, block) {
+        h.diff.dirty = true;
+    }
 }
 
 /// 編集の間に History を押した: 範囲の下の境目なら引き始め、行の操作の印ならその行を選んですることの一覧を
