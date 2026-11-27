@@ -52,38 +52,90 @@ fn codepoints_stay_when_an_icon_is_added() {
     assert_eq!(account.0, 0xE002);
 }
 
+/// 字の作り（輪郭の終わりの点の番号、曲線の上の点かの印）と、点の座標（絶対値）。
+type Outline = (Vec<u16>, Vec<u8>, Vec<(i32, i32)>);
+
+/// `glyf` の 1 つの字（このフォントの書き方: 印は点ごとに 1 バイト、座標は差を 2 バイトずつ）を読む。
+fn outline(glyph: &[u8]) -> Outline {
+    if glyph.is_empty() {
+        return Default::default();
+    }
+    let contours = u16_at(glyph, 0);
+    let ends: Vec<u16> = (0..contours)
+        .map(|i| u16_at(glyph, 10 + 2 * i) as u16)
+        .collect();
+    let points = ends.last().map_or(0, |e| *e as usize + 1);
+    let flags_at = 10 + 2 * contours + 2 + u16_at(glyph, 10 + 2 * contours);
+    let flags = glyph[flags_at..flags_at + points].to_vec();
+    let delta = |i: usize| i16::from_be_bytes([glyph[i], glyph[i + 1]]) as i32;
+    let (xs, ys) = (flags_at + points, flags_at + 3 * points);
+    let (mut x, mut y) = (0, 0);
+    let coords = (0..points)
+        .map(|n| {
+            x += delta(xs + 2 * n);
+            y += delta(ys + 2 * n);
+            (x, y)
+        })
+        .collect();
+    (ends, flags, coords)
+}
+
+/// 字ごとの `glyf` のバイト（loca で切り出す）。
+fn glyphs(font: &[u8]) -> Vec<&[u8]> {
+    let (loca, glyf) = (font_table(font, b"loca"), font_table(font, b"glyf"));
+    let at = |n: usize| u32::from_be_bytes(loca[4 * n..4 * n + 4].try_into().unwrap()) as usize;
+    (0..loca.len() / 4 - 1)
+        .map(|n| &glyf[at(n)..at(n + 1)])
+        .collect()
+}
+
 #[test]
 fn font_is_current() {
     let committed = std::fs::read(app().join(vscode_font::FONT_PATH)).unwrap_or_default();
     let table = table();
-    if committed == vscode_font::font(&table) {
+    let made = vscode_font::font(&table);
+    if committed == made {
         return;
     }
-    // どの形の字が違うか（コミットしたフォントの loca・glyf と、今作った字を比べる）。
-    let differ: Vec<&str> = if committed.is_empty() {
-        Vec::new()
-    } else {
-        let (loca, glyf) = (
-            font_table(&committed, b"loca"),
-            font_table(&committed, b"glyf"),
-        );
-        let at = |n: usize| u32::from_be_bytes(loca[4 * n..4 * n + 4].try_into().unwrap()) as usize;
-        vscode_font::glyph_bytes(&table)
-            .into_iter()
-            .enumerate()
-            .filter(|(n, (_, bytes))| {
-                let (from, to) = (at(n + 1), at(n + 2));
-                let old = glyf.get(from..to).unwrap_or_default();
-                old.get(..bytes.len()) != Some(bytes.as_slice())
-                    || old[bytes.len()..].iter().any(|b| *b != 0)
-            })
-            .map(|(_, (name, _))| name)
-            .collect()
-    };
-    panic!(
-        "{} is stale (glyphs differ: {differ:?}): cargo run -p amonhen-icons --example vscode",
+    let stale = format!(
+        "{} is stale: cargo run -p amonhen-icons --example vscode",
         vscode_font::FONT_PATH
     );
+    assert!(!committed.is_empty(), "{stale}");
+    // 輪郭の計算（kurbo）は、rustc と CPU によって、丸めの境目にある座標が 1 単位（1/62.5 px）ずれることがある。
+    // 字の作りは同じで、座標の差が 1 単位までなら同じフォントとみなす。字のほかの表は同じバイトであること。
+    for tag in [
+        b"OS/2", b"cmap", b"hhea", b"hmtx", b"loca", b"maxp", b"name", b"post",
+    ] {
+        assert!(
+            font_table(&committed, tag) == font_table(&made, tag),
+            "{stale} ({} differs)",
+            String::from_utf8_lossy(tag)
+        );
+    }
+    let head = |f: &[u8]| {
+        let mut h = font_table(f, b"head").to_vec();
+        h[8..12].fill(0); // checkSumAdjustment
+        h
+    };
+    assert!(head(&committed) == head(&made), "{stale} (head differs)");
+    let names = ["(notdef)"]
+        .into_iter()
+        .chain(vscode_font::glyph_bytes(&table).into_iter().map(|(n, _)| n));
+    let differ: Vec<&str> = names
+        .zip(glyphs(&committed).into_iter().zip(glyphs(&made)))
+        .filter(|(_, (old, new))| {
+            let ((oe, of, oc), (ne, nf, nc)) = (outline(old), outline(new));
+            oe != ne
+                || of != nf
+                || oc
+                    .iter()
+                    .zip(&nc)
+                    .any(|(a, b)| (a.0 - b.0).abs() > 1 || (a.1 - b.1).abs() > 1)
+        })
+        .map(|(name, _)| name)
+        .collect();
+    assert!(differ.is_empty(), "{stale} (glyphs differ: {differ:?})");
 }
 
 #[test]
