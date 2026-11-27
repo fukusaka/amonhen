@@ -11,6 +11,9 @@ becomes the GitHub Release notes.
 
 #### Changed
 
+- In a partial clone, History's diffs and All Files no longer fetch missing file contents by themselves. A band says
+  how many files' contents aren't here yet, and Fetch Contents gets just those. The CLI's `diff` and `show` still
+  fetch first, as git does.
 - DOT diagrams order clusters as Graphviz does: a cluster is placed whole when first reached, and sorts by where the
   whole cluster sits.
 - In DOT diagrams, a same-rank edge inside a cluster may point right to left when nodes outside pull it, as in
@@ -18,9 +21,7 @@ becomes the GitHub Release notes.
 - DOT crossing reduction keeps the later of two orders with the same crossings, which matches Graphviz's order more
   often.
 - DOT diagrams start from the order Graphviz uses, which depends on the order nodes are declared in.
-- In a partial clone, History's diffs and All Files no longer fetch missing file contents by themselves. A band says
-  how many files' contents aren't here yet, and Fetch Contents gets just those. The CLI's `diff` and `show` still
-  fetch first, as git does.
+- DOT diagrams order nested clusters from the outside in, as Graphviz does.
 
 #### Fixed
 

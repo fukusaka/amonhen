@@ -163,6 +163,8 @@ const RANDOM_START_SEGS: usize = 200;
 const RANDOM_SALT: u64 = 1;
 /// 隣どうしの入れ替えを使う、ランクの間の線の切れ端の数の上限（大きな図の時間のため）。
 const TRANSPOSE_SEGS: usize = 1500;
+/// クラスタの入れ子の段ごとの並べ替えの回数の上限（外側と中の段は早く落ち着く）。
+const LEVEL_SWEEPS: usize = 4;
 
 // ---- 1. ランク ----
 
@@ -809,6 +811,13 @@ struct Ordering<'a> {
     flip: bool,
     /// クラスタの中の同じランクの辺の左右を守らない（初めの並びだけで守る。Graphviz の絵と同じ）。
     loose: bool,
+    /// 並べ替えるクラスタの入れ子の深さ（None ならすべて）。外側から順に並べる（Graphviz と同じく、外側ではクラスタを
+    /// 1 本の柱として見て、中の並びはそのあとで決める）。
+    level: Option<usize>,
+    /// クラスタの入れ子の深さ（いちばん外のクラスタが 1、クラスタの外は 0）。
+    depth: Vec<usize>,
+    /// 並べ替えのときのクラスタの値（クラスタを 1 本の柱として見た隣の位置の中央値）。空なら中のノードの値の平均。
+    cval: Vec<f64>,
 }
 
 impl Ordering<'_> {
@@ -928,6 +937,7 @@ impl Ordering<'_> {
         let value = |it: &Item| -> (f64, usize) {
             match *it {
                 Item::Node(v) => (val[v], self.pos[v]),
+                Item::Cluster(c) if !self.cval.is_empty() => (self.cval[c], gfirst[c]),
                 Item::Cluster(c) if gcount[c] == 0 => (f64::NAN, gfirst[c]),
                 Item::Cluster(c) => (gsum[c] / gcount[c] as f64, gfirst[c]),
             }
@@ -938,6 +948,12 @@ impl Ordering<'_> {
         let mut sorted: Vec<Vec<Item>> = vec![Vec::new(); k + 1];
         let prepare = |g: usize, groups: &mut Vec<Vec<Item>>, sorted: &mut Vec<Vec<Item>>| {
             let mut items = std::mem::take(&mut groups[g]);
+            let gd = if g == k { 0 } else { self.depth[g] };
+            if self.level.is_some_and(|l| l != gd) {
+                // この深さは並べ替えない（今の順のまま）
+                sorted[g] = items;
+                return;
+            }
             // 値のない要素（その側に隣がない）は今の場所に固定し、ほかを値の順に残りの場所へ並べる（Gansner ほか
             // 1993 §3: "left fixed in their current positions with non-fixed vertices sorted into the remaining positions"）
             let mut movable: Vec<Item> = items
@@ -1184,8 +1200,176 @@ impl Ordering<'_> {
                     self.median(list, down).unwrap_or(f64::NAN)
                 };
             }
+            if k > 0 && self.level.is_some() {
+                // クラスタの値: 中のノードの隣を、そのクラスタから見た柱の位置で（中の隣はそのクラスタ自身の柱）
+                let anc = |a: usize, mut b: usize| -> bool {
+                    let mut hops = 0;
+                    loop {
+                        if a == b {
+                            return true;
+                        }
+                        match self.parent[b] {
+                            Some(p) => b = p,
+                            None => return false,
+                        }
+                        hops += 1;
+                        if hops > k {
+                            return false;
+                        }
+                    }
+                };
+                let mut lists: Vec<Vec<f64>> = vec![Vec::new(); k];
+                for &v in &self.layers[r] {
+                    let list = if down {
+                        &self.nodes[v].up
+                    } else {
+                        &self.nodes[v].down
+                    };
+                    let mut c = self.nodes[v].cluster;
+                    let mut hops = 0;
+                    while let Some(ci) = c {
+                        for &s in list {
+                            let u = if down {
+                                self.segs[s].upper
+                            } else {
+                                self.segs[s].lower
+                            };
+                            let inside = self.nodes[u].cluster.is_some_and(|uc| anc(ci, uc));
+                            let mut d = self.nodes[u].cluster;
+                            let mut outer = None;
+                            let mut h = 0;
+                            while let Some(di) = d {
+                                if anc(di, ci) {
+                                    break;
+                                }
+                                outer = Some(di);
+                                d = self.parent[di];
+                                h += 1;
+                                if h > k {
+                                    break;
+                                }
+                            }
+                            lists[ci].push(if inside {
+                                cmean[ci]
+                            } else {
+                                match outer {
+                                    Some(d) => cmean[d],
+                                    None => self.end_key(s, down),
+                                }
+                            });
+                        }
+                        c = self.parent[ci];
+                        hops += 1;
+                        if hops > k {
+                            break;
+                        }
+                    }
+                }
+                self.cval = lists
+                    .into_iter()
+                    .map(|p| Self::median_of(p).unwrap_or(f64::NAN))
+                    .collect();
+            }
             self.sort_layer(r, val);
+            self.cval.clear();
         }
+    }
+
+    /// 深さ `level` から見た交差: それより深いクラスタは 1 本の柱（そのランクのいちばん左の位置）として数え、同じ柱の中の
+    /// 辺は数えない。
+    fn crossings_at(&self, level: Option<usize>) -> usize {
+        let Some(l) = level else {
+            return self.crossings();
+        };
+        let k = self.global.len();
+        // 各ノードの柱（深さ l より深い、いちばん外のクラスタ）
+        let column: Vec<Option<usize>> = self
+            .nodes
+            .iter()
+            .map(|nd| {
+                let mut c = nd.cluster;
+                let mut col = None;
+                let mut hops = 0;
+                while let Some(ci) = c {
+                    if self.depth[ci] > l {
+                        col = Some(ci);
+                    }
+                    c = self.parent[ci];
+                    hops += 1;
+                    if hops > k {
+                        break;
+                    }
+                }
+                col
+            })
+            .collect();
+        let mut up_first = vec![usize::MAX; k];
+        let mut low_first = vec![usize::MAX; k];
+        let mut total = 0usize;
+        for r in 0..self.layers.len().saturating_sub(1) {
+            for (row, table) in [
+                (&self.layers[r], &mut up_first),
+                (&self.layers[r + 1], &mut low_first),
+            ] {
+                for (i, &w) in row.iter().enumerate() {
+                    if let Some(c) = column[w] {
+                        table[c] = table[c].min(i);
+                    }
+                }
+            }
+            let mut keys: Vec<(f64, f64)> = Vec::new();
+            for &u in &self.layers[r] {
+                for &s in &self.nodes[u].down {
+                    let w = self.segs[s].lower;
+                    if column[u].is_some() && column[u] == column[w] {
+                        continue;
+                    }
+                    let ka =
+                        column[u].map_or_else(|| self.end_key(s, true), |c| up_first[c] as f64);
+                    let kb =
+                        column[w].map_or_else(|| self.end_key(s, false), |c| low_first[c] as f64);
+                    keys.push((ka, kb));
+                }
+            }
+            for &u in self.layers[r].iter().chain(&self.layers[r + 1]) {
+                if let Some(c) = column[u] {
+                    up_first[c] = usize::MAX;
+                    low_first[c] = usize::MAX;
+                }
+            }
+            total += Self::inversions(&keys);
+        }
+        total
+    }
+
+    /// 上の端の順に並べたときの、下の端の逆順の組の数（同じ値どうしは数えない）。
+    fn inversions(keys: &[(f64, f64)]) -> usize {
+        let mut lows: Vec<f64> = keys.iter().map(|k| k.1).collect();
+        lows.sort_by(f64::total_cmp);
+        lows.dedup();
+        let mut pairs: Vec<(f64, usize)> = keys
+            .iter()
+            .map(|&(a, b)| (a, lows.partition_point(|&x| x < b)))
+            .collect();
+        pairs.sort_by(|x, y| x.0.total_cmp(&y.0).then(x.1.cmp(&y.1)));
+        let size = lows.len() + 1;
+        let mut tree = vec![0usize; size + 1];
+        let mut total = 0;
+        for (seen, &(_, b)) in pairs.iter().enumerate() {
+            let mut i = b + 1;
+            let mut le = 0usize;
+            while i > 0 {
+                le += tree[i];
+                i &= i - 1;
+            }
+            total += seen - le;
+            let mut i = b + 1;
+            while i <= size {
+                tree[i] += 1;
+                i += i & i.wrapping_neg();
+            }
+        }
+        total
     }
 
     fn crossings(&self) -> usize {
@@ -1238,6 +1422,10 @@ impl Ordering<'_> {
                 for i in 0..len.saturating_sub(1) {
                     let (u, v) = (self.layers[r][i], self.layers[r][i + 1]);
                     let loose = self.loose && self.nodes[u].cluster.is_some();
+                    let ud = self.nodes[u].cluster.map_or(0, |c| self.depth[c]);
+                    if self.level.is_some_and(|l| l != ud) {
+                        continue;
+                    }
                     if self.nodes[u].cluster != self.nodes[v].cluster
                         || (!loose && self.after[u].contains(&v))
                     {
@@ -1617,6 +1805,22 @@ pub fn layout(
         has_flat: vec![false; max_rank + 1],
         flip: false,
         loose: false,
+        level: None,
+        depth: (0..k)
+            .map(|c| {
+                let mut d = 1;
+                let mut x = parent[c];
+                while let Some(p) = x {
+                    d += 1;
+                    x = parent[p];
+                    if d > k {
+                        break;
+                    }
+                }
+                d
+            })
+            .collect(),
+        cval: Vec::new(),
     };
     // 輪になる辺は、先に書いた辺を守って外す（Graphviz の文書どおり、輪は深さ優先で切る）
     for &(t, h) in &flat_edges {
@@ -1926,9 +2130,43 @@ pub fn layout(
         // 並べ替えの間は、クラスタの中の同じランクの辺の左右を守らない（初めの並びでは守る。Graphviz の絵と同じく、
         // クラスタの外のノードに引かれて右から左になりうる。クラスタの外の辺はいつも尾が左）
         ord.loose = true;
-        for i in 0..opt.sweeps {
-            if here == 0 {
+        let max_depth = ord.depth.iter().copied().max().unwrap_or(0);
+        let mut level_done = false;
+        // 1 回目（宣言の順からの初めの並び）は、クラスタの入れ子の段ごとに外側から並べる: 外側の段ではクラスタを 1 本の柱と
+        // して見て並べ、交差も柱で数える。それから中の段、最後に全体（Graphviz の絵と同じく、外の並びを先に決める）
+        let levels: Vec<Option<usize>> = if k > 0 && start == 0 {
+            (0..=max_depth).map(Some).chain([None]).collect()
+        } else {
+            vec![None]
+        };
+        let plan: Vec<(usize, Option<usize>)> = levels
+            .iter()
+            .flat_map(|&l| {
+                let n = if l.is_some() {
+                    LEVEL_SWEEPS.min(opt.sweeps)
+                } else {
+                    opt.sweeps
+                };
+                (0..n).map(move |i| (i, l))
+            })
+            .collect();
+        for (i, lvl) in plan {
+            if here == 0 && lvl.is_none() && ord.level.is_none() {
                 break;
+            }
+            if ord.level != lvl || i == 0 {
+                ord.level = lvl;
+                stale = 0;
+                level_done = false;
+                here = ord.crossings_at(lvl);
+                here_layers = ord.layers.clone();
+            }
+            if level_done {
+                continue;
+            }
+            if lvl.is_some() && here == 0 {
+                level_done = true;
+                continue;
             }
             ord.global_keys();
             // 上り下りの 1 組おきに、同じ値の要素の順を逆にする（同じ交差の数の並びの間を動いて、減る形を探す）。
@@ -1939,29 +2177,30 @@ pub fn layout(
             if transpose {
                 ord.transpose(i % 2 == 1);
             }
-            let c = ord.crossings();
+            let c = ord.crossings_at(lvl);
             if c < here {
                 here = c;
                 here_layers = ord.layers.clone();
                 stale = 0;
-            } else if c == here {
+            } else if c == here && lvl.is_none() {
                 // 同じ交差の数なら後の並びを採る（同じ値の順を逆にした回の並びも残る。Graphviz の絵に近い）。減っては
                 // いないので、続けて減らない回には数える
                 here_layers = ord.layers.clone();
                 stale += 1;
                 if stale >= MINCROSS_STALE {
-                    break;
+                    level_done = true;
                 }
             } else {
                 stale += 1;
                 if stale >= MINCROSS_STALE {
-                    break;
+                    level_done = true;
                 }
                 ord.layers = here_layers.clone();
                 ord.refresh();
             }
         }
         ord.loose = false;
+        ord.level = None;
         if here < best_count {
             best_count = here;
             best = here_layers;
