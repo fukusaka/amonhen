@@ -2555,3 +2555,9 @@
 "Can’t count the changed lines here" = "この環境では変更の行数を数えられません";
 "Show the description and the commit options" = "Description とコミットの設定を出す";
 "Collapse to the summary line" = "Summary の 1 行に畳む";
+"Every change from HEAD to the working tree (the bar on the left of each line shows whether it’s staged)" = "HEAD から working tree までのすべての変更（行の左の帯で staged かどうかを示す）";
+"No staged changes in this file" = "このファイルに staged の変更はない";
+"No unstaged changes in this file" = "このファイルに unstaged の変更はない";
+"All can’t be shown while whitespace is ignored. See Unstaged and Staged." = "空白を無視している間は All を出せない。Unstaged と Staged で見る";
+"This file’s staged and unstaged changes can’t be shown in one diff. See Unstaged and Staged." = "このファイルの staged と unstaged の変更は 1 本の差分で出せない。Unstaged と Staged で見る";
+"Split the list into Staged and Unstaged, like git status (a partly staged file is in both)" = "git status のように一覧を Staged と Unstaged に分ける（一部だけ stage したファイルは両方に出る）";
