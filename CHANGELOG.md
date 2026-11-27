@@ -9,8 +9,22 @@ becomes the GitHub Release notes.
 
 ### Unreleased
 
+#### Added
+
+- Working Copy's diff shows Unstaged, Staged or All, one side for the whole Working Copy, and the list can be split
+  into Staged and Unstaged sections like `git status` (macOS).
+- Working Copy's All Files lists every file of the working tree, with the changes marked (macOS).
+- Unchanged lines in a Working Copy diff fold into one row with the function name, opened 20 lines at a time or all
+  (macOS).
+- Lines are staged from the row above each hunk (Stage Hunk, Discard Hunk; Stage Lines for selected lines) or, chosen
+  in Settings > Diff & Merge, by clicking the change bar and line numbers. Rows can be selected by dragging (macOS).
+- Selecting several files in Working Copy stacks their diffs (macOS).
+
 #### Changed
 
+- Working Copy's file list takes the full height, and the commit message sits at the top right, above the diff; it
+  collapses to the summary line (macOS).
+- History shows a commit's first files open; Settings > Diff & Merge > Files to open together sets how many (macOS).
 - DOT diagrams order clusters as Graphviz does: a cluster is placed whole when first reached, and sorts by where the
   whole cluster sits.
 - In DOT diagrams, a same-rank edge inside a cluster may point right to left when nodes outside pull it, as in

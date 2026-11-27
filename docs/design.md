@@ -89,7 +89,7 @@ As built, the boxes map onto the code this way. There is no `CoreClient`: the ma
 
 | Screen | Left | Right |
 | --- | --- | --- |
-| Working Copy | Commit input (top) and the list of changed files (bottom; checkboxes decide whether each goes into the next commit) | Diff |
+| Working Copy | The list of changed files, or of every file (the full height; checkboxes, or Staged and Unstaged sections) | Commit input (top, collapsible) and the diff (Unstaged, Staged or All) |
 | History | List of commits (graph and subject) | From the top: message and metadata (refs, author, date, ID, parents), changed files, diff |
 
 Selecting a conflicted file in Working Copy shows a merge editor on the right (it can also be moved to a separate window). Current is on the left, Result (starting from the working tree contents) in the middle, and Incoming on the right (left and right are the contents with every conflict taken from that side; with diff3, Base can be shown too), and bands between the columns connect the conflicts. Each conflict is accepted with the ≫ / ≪ on the bands or with buttons, or edited by hand, then saved and marked resolved. ✨ Magic Merge resolves in one go the conflicts that fall into one of these: both sides are the same, only one side changed, only whitespace differs, or different words on the same line were changed. The resolution is computed by the core (`mergeSides`, `resolveText`, `conflictRegions`, `magicMerge`, `saveMerge`). During a merge, rebase etc., a band is shown under the window's toolbar (the number of conflicts and Continue, Skip, Abort).
