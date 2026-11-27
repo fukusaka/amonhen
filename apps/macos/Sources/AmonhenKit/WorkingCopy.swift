@@ -345,3 +345,45 @@ public enum LocalGit {
         if !ok { throw AmonhenError.last() }
     }
 }
+
+/// Working Copy で選んだいくつかのファイルの差分を、見出しの行（`AmonhenDiffRow_FILE`）でつないだ表示。HEAD と
+/// 作業ツリーの差分の行には `STAGED` の印が付く。行の操作は、`location(of:)` でファイルとその中の行に直して、
+/// そのファイルの差分（`files`）に頼む。
+public final class WorkingStackedDiff: FileDiff, @unchecked Sendable {
+    public let files: [WorkingFileDiff]
+    /// 各ファイルの見出しの行（i 番目がファイル i）。
+    public let fileRows: [Int]
+
+    /// `files` をつなぐ。`collapsed[i]` が true のファイルは見出しだけ。
+    public init(files: [WorkingFileDiff], collapsed: [Bool]) {
+        self.files = files
+        let raws: [OpaquePointer?] = files.map { $0.raw }
+        let raw = raws.withUnsafeBufferPointer { diffs in
+            collapsed.withUnsafeBufferPointer {
+                amonhen_working_stacked_view(diffs.baseAddress, $0.baseAddress, UInt32(files.count), UInt8(AmonhenEncoding_Utf16.rawValue))!
+            }
+        }
+        var rows: [Int] = []
+        let view = amonhen_diff_view(raw)
+        for i in 0..<Int(view.row_count) where view.rows[i].kind == UInt8(AmonhenDiffRow_FILE) { rows.append(i) }
+        fileRows = rows
+        super.init(raw: raw, owner: files as AnyObject, view: view, free: { amonhen_diff_free($0) })
+    }
+
+    /// `row` 行目が、どのファイルの何行目か（見出しの行なら nil）。
+    public func location(of row: Int) -> (file: Int, row: Int)? {
+        guard let file = fileRows.lastIndex(where: { $0 <= row }), fileRows[file] != row else { return nil }
+        return (file, row - fileRows[file] - 1)
+    }
+
+    /// `rows` をファイルごとに分ける（ファイルの番号 → その中の行）。
+    public func split(_ rows: [Int]) -> [Int: [Int]] {
+        var out: [Int: [Int]] = [:]
+        for row in rows { if let at = location(of: row) { out[at.file, default: []].append(at.row) } }
+        return out
+    }
+
+    public func isStaged(row: Int) -> Bool {
+        withRows { $0[row].flags & UInt8(AmonhenDiffRow_STAGED) != 0 }
+    }
+}

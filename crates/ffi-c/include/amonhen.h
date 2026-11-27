@@ -1250,6 +1250,19 @@ AmonhenStacked *amonhen_stacked_diff(const AmonhenRepo *repo_ptr,
                                      uint8_t whitespace);
 
 /**
+ * Working Copy で選んだ `count` 個のファイルの差分を、見出しの行（`DiffRow::FILE`）でつないだ表示
+ * （`amonhen_diff_free` で解放する）。`collapsed` の i 番目が true のファイルは見出しだけ。HEAD と作業ツリーの
+ * 差分の行には `STAGED` の印が付く。ファイルの行は、見出しの次の行からそのファイルの差分の行と同じ順。
+ *
+ * # Safety
+ * `diffs` は `count` 個の有効な `amonhen_working_diff` の結果、`collapsed` は `count` 個の `bool` を読めること。
+ */
+AmonhenDiff *amonhen_working_stacked_view(const AmonhenWorkingDiff *const *diffs,
+                                          const bool *collapsed,
+                                          uint32_t count,
+                                          AmonhenEncoding encoding);
+
+/**
  * 全ファイルを見出しの行（`DiffRow::FILE`）でつないだ差分の表示（`amonhen_diff_free` で解放する。
  * `amonhen_diff_view`・`amonhen_diff_syntax` が使える）。`collapsed` の i 番目が true のファイルは見出しだけ。
  *

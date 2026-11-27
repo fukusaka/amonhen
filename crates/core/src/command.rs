@@ -11274,6 +11274,40 @@ mod tests {
         repo.set_rows_staged(&whole, &[removed, added], true)
             .unwrap();
         assert_eq!(index_blob(dir), lines.replace("10\n", "ten\n").as_bytes());
+        // いくつかのファイルを見出しでつなぐ: 各ファイルの行は見出しの次から同じ順で、stage の印も付く。
+        let status = repo.load_status().unwrap();
+        let staged = repo
+            .working_diff_combined(&status.status.entries[0], &FrontendProfile::MACOS)
+            .unwrap()
+            .unwrap();
+        let view = crate::WorkingDiff::stacked_view(
+            &[&narrow, &staged],
+            &[false, false],
+            &FrontendProfile::MACOS,
+        );
+        let file = amonhen_layout::DiffRow::FILE;
+        let second = 1 + narrow.view.rows.len();
+        assert_eq!(
+            view.rows.len(),
+            2 + narrow.view.rows.len() + staged.view.rows.len()
+        );
+        assert_eq!((view.rows[0].kind, view.rows[second].kind), (file, file));
+        let flags = |rows: &[amonhen_layout::DiffRow]| {
+            rows.iter().map(|r| (r.kind, r.flags)).collect::<Vec<_>>()
+        };
+        assert_eq!(flags(&view.rows[second + 1..]), flags(&staged.view.rows));
+        assert!(
+            view.rows[second + 1..]
+                .iter()
+                .any(|r| r.flags & amonhen_layout::DiffRow::STAGED != 0)
+        );
+        // 畳んだファイルは見出しだけ。
+        let folded = crate::WorkingDiff::stacked_view(
+            &[&narrow, &staged],
+            &[true, false],
+            &FrontendProfile::MACOS,
+        );
+        assert_eq!(folded.rows.len(), 2 + staged.view.rows.len());
     }
 
     #[test]

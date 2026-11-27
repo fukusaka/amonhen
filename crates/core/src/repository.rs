@@ -56,6 +56,43 @@ pub struct WorkingDiff {
     pub line_endings: Option<LineEndings>,
 }
 
+impl WorkingDiff {
+    /// Working Copy で選んだいくつかのファイルの差分を、見出しの行（`DiffRow::FILE`）でつないだ表示（History の
+    /// コミットの全ファイルと同じ形）。`collapsed[i]` が true のファイルは見出しだけ。HEAD と作業ツリーの差分
+    /// （`combined`）の行には、index に入っているかの印（`STAGED`）を付ける。ファイルの行は、見出しの次の行から
+    /// そのファイルの `view` の行と同じ順に並ぶ。
+    pub fn stacked_view(
+        diffs: &[&WorkingDiff],
+        collapsed: &[bool],
+        profile: &FrontendProfile,
+    ) -> DiffView {
+        let stacked = diff::StackedDiff {
+            files: diffs
+                .iter()
+                .map(|d| (d.entry.path.clone(), d.file.clone()))
+                .collect(),
+        };
+        let mut view = stacked.view(collapsed, profile);
+        let mut at = 0;
+        for (i, d) in diffs.iter().enumerate() {
+            at += 1;
+            let hidden = collapsed.get(i).copied().unwrap_or(false) || d.file.binary;
+            if hidden {
+                continue;
+            }
+            if let Some(staged) = &d.combined {
+                for (row, &on) in view.rows[at..].iter_mut().zip(staged) {
+                    if on {
+                        row.flags |= DiffRow::STAGED;
+                    }
+                }
+            }
+            at += d.file.lines.len();
+        }
+        view
+    }
+}
+
 /// 2 つ選んだときの差分の取り方。
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 pub enum PairMode {

@@ -2175,6 +2175,47 @@ pub unsafe extern "C" fn amonhen_stacked_diff(
     }
 }
 
+/// Working Copy で選んだ `count` 個のファイルの差分を、見出しの行（`DiffRow::FILE`）でつないだ表示
+/// （`amonhen_diff_free` で解放する）。`collapsed` の i 番目が true のファイルは見出しだけ。HEAD と作業ツリーの
+/// 差分の行には `STAGED` の印が付く。ファイルの行は、見出しの次の行からそのファイルの差分の行と同じ順。
+///
+/// # Safety
+/// `diffs` は `count` 個の有効な `amonhen_working_diff` の結果、`collapsed` は `count` 個の `bool` を読めること。
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn amonhen_working_stacked_view(
+    diffs: *const *const AmonhenWorkingDiff,
+    collapsed: *const bool,
+    count: u32,
+    encoding: AmonhenEncoding,
+) -> *mut AmonhenDiff {
+    if count > 0 && (diffs.is_null() || collapsed.is_null()) {
+        set_error("NULL was passed as diffs");
+        return std::ptr::null_mut();
+    }
+    let raw: &[*const AmonhenWorkingDiff] = if count == 0 {
+        &[]
+    } else {
+        unsafe { std::slice::from_raw_parts(diffs, count as usize) }
+    };
+    let collapsed: &[bool] = if count == 0 {
+        &[]
+    } else {
+        unsafe { std::slice::from_raw_parts(collapsed, count as usize) }
+    };
+    let mut list = Vec::with_capacity(raw.len());
+    for &d in raw {
+        match unsafe { d.cast::<WorkingDiff>().as_ref() } {
+            Some(d) => list.push(d),
+            None => {
+                set_error("NULL was passed as a diff");
+                return std::ptr::null_mut();
+            }
+        }
+    }
+    let view = WorkingDiff::stacked_view(&list, collapsed, &profile(encoding));
+    Box::into_raw(Box::new(view)).cast()
+}
+
 /// 全ファイルを見出しの行（`DiffRow::FILE`）でつないだ差分の表示（`amonhen_diff_free` で解放する。
 /// `amonhen_diff_view`・`amonhen_diff_syntax` が使える）。`collapsed` の i 番目が true のファイルは見出しだけ。
 ///
