@@ -753,6 +753,9 @@ pub enum Command {
     /// HEAD と作業ツリーの、ファイルごとの追加・削除の行数（`info.stats`: `path`・`added`・`removed`。
     /// バイナリは null。untracked は含まない）。
     WorkingStats,
+    /// `WorkingStats` を index で分けたもの（`info.staged`: HEAD と index、`info.unstaged`: index と作業ツリー。
+    /// 形は `info.stats` と同じ）。
+    WorkingStatsSplit,
     /// `.gitignore` の書きかけの中身（`text`）の各行に合うファイルの例（`info.lines`: 行の番号・パターン・
     /// 例・合う数）。空行・# の行・! の行は飛ばす。多すぎないよう 40 行まで。
     IgnoreMatches {
@@ -5386,6 +5389,14 @@ impl Repository {
                 info: Some(serde_json::json!({ "stats": ops.working_stats()? })),
                 ..Default::default()
             }),
+            Command::WorkingStatsSplit => {
+                let (staged, unstaged) = ops.working_stats_split()?;
+                Ok(Response {
+                    ok: true,
+                    info: Some(serde_json::json!({ "staged": staged, "unstaged": unstaged })),
+                    ..Default::default()
+                })
+            }
             Command::Remotes => Ok(Response {
                 ok: true,
                 info: Some(serde_json::json!({ "remotes": ops.remotes()? })),
@@ -9089,6 +9100,16 @@ mod tests {
             (stats[0]["added"].as_u64(), stats[0]["removed"].as_u64()),
             (Some(2), Some(1))
         );
+        // index で分ける: staged は 2 → x、unstaged は y を足しただけ。
+        let r = run(&repo, r#"{"op":"workingStatsSplit"}"#);
+        let count = |side: &str| {
+            let list = r["info"][side].as_array().unwrap();
+            assert_eq!(list.len(), 1, "{r}");
+            assert_eq!(list[0]["path"], "a.txt");
+            (list[0]["added"].as_u64(), list[0]["removed"].as_u64())
+        };
+        assert_eq!(count("staged"), (Some(1), Some(1)));
+        assert_eq!(count("unstaged"), (Some(1), Some(0)));
     }
 
     #[test]

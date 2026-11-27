@@ -951,6 +951,10 @@ pub trait Operations: Send + Sync {
     }
     /// HEAD と作業ツリーの、ファイルごとの追加・削除の行数（index の分も含む。untracked は含まない）。
     fn working_stats(&self) -> Result<Vec<crate::FileStat>>;
+    /// `working_stats` を index で分けたもの: HEAD と index（staged）、index と作業ツリー（unstaged）。
+    fn working_stats_split(&self) -> Result<(Vec<crate::FileStat>, Vec<crate::FileStat>)> {
+        Err(crate::tr!("Can’t count the changed lines here").into())
+    }
     /// .gitignore の書き方の確かめ: パターンごとに、合うファイル（追跡しているものと、していないもの。
     /// 中身ごと合うフォルダは 1 つにまとめる）の初めの `limit` 個と、合う数。
     fn ignore_matches(

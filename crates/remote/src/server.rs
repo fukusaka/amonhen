@@ -622,6 +622,7 @@ fn handle_op(backend: &dyn GitBackend, op: Op, cancel: &AtomicBool) -> Result<Ve
         Op::WorktreeChanges(paths, fresh) => encode(&ops.worktree_changes(&paths, fresh)?),
         Op::ChangeWorktree(change) => encode(&ops.change_worktree(&change)?),
         Op::WorkingStats => encode(&ops.working_stats()?),
+        Op::WorkingStatsSplit => encode(&ops.working_stats_split()?),
         Op::IgnoreMatches(patterns, limit) => encode(&ops.ignore_matches(&patterns, limit)?),
         // daemon の中の記録（daemon では、git を動かしているのは手元の backend）。
         Op::Activity => encode(&amonhen_model::activity::entries()),
