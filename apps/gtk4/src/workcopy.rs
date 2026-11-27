@@ -16,7 +16,7 @@ use std::sync::Arc;
 use amonhen_core::diff::{self, DiffView, Whitespace};
 use amonhen_core::{Repository, StatusSnapshot, WorkingDiff};
 use amonhen_layout::DiffRow;
-use amonhen_model::{StatusEntry, StatusKind, tr};
+use amonhen_model::{ChangeKind, FileChange, Oid, StatusEntry, StatusKind, tr};
 use amonhen_projection::FrontendProfile;
 use gtk::prelude::*;
 use gtk::{gio, glib};
@@ -233,6 +233,16 @@ struct Inner {
     sections_button: gtk::ToggleButton,
     /// 一覧の行の `entries` の番号ごとの節（節分けでないときはすべて None）。
     entry_sections: RefCell<Vec<Option<Side>>>,
+    /// 「すべてのファイル」の切り替え・木（出している間だけ）と、その置き場所。出している間は変更の一覧を隠す。
+    all_files: gtk::ToggleButton,
+    browser: RefCell<Option<Rc<crate::commitbrowser::Browser>>>,
+    browser_holder: gtk::Box,
+    include_row: gtk::Box,
+    list_area: gtk::Overlay,
+    /// すべてのファイルで開いているファイル（作り直しで選び直す）。
+    tree_open: RefCell<Option<String>>,
+    /// すべてのファイルの木の HEAD（コミットして HEAD が動いたら作り直す）。
+    browser_head: Cell<Option<Oid>>,
     /// 一覧で 2 つ以上選んだときに並べている差分。
     multi: RefCell<Option<Multi>>,
     /// ファイルと見る側ごとの、変更のない所（隙間）の開き方（隙間の番号 → 上・下から見せる行数）。覚えない。
@@ -399,9 +409,6 @@ impl WorkingCopy {
         // 左の下: 変更のあるファイルの一覧。
         // 太字の「Changes」と、すぐ右に「含めた数 / 変更の数」、右端に見せ方の切り替え（macOS 版と同じ）。
         let all = gtk::CheckButton::new();
-        let all_title = gtk::Label::new(Some(&tr!("Changes")));
-        all_title.add_css_class("heading");
-        all.set_child(Some(&all_title));
         all.set_tooltip_text(Some(&tr!(
             "Include or exclude all listed files in the next commit"
         )));
@@ -411,9 +418,30 @@ impl WorkingCopy {
         count.add_css_class("caption");
         count.add_css_class("numeric");
         count.set_tooltip_text(Some(&tr!("Files in the next commit / changed files")));
+        // 上の行: 変更｜すべてのファイル、右端に節分けと見せ方。その下の行: すべてを含めるチェックと数
+        // （macOS 版と同じ。すべてのファイルでは下の行を隠す）。
+        let changes_button = gtk::ToggleButton::with_label(&tr!("Changes"));
+        changes_button.set_tooltip_text(Some(&tr!(
+            "Changed files, with checkboxes for the next commit"
+        )));
+        let all_files = gtk::ToggleButton::with_label(&tr!("All Files"));
+        all_files.set_group(Some(&changes_button));
+        changes_button.set_active(true);
+        all_files.set_tooltip_text(Some(&tr!(
+            "Every file in the working tree (ignored files are left out)"
+        )));
+        let view_switch = gtk::Box::new(gtk::Orientation::Horizontal, 0);
+        view_switch.add_css_class("linked");
+        for b in [&changes_button, &all_files] {
+            b.add_css_class("small-push");
+            b.set_valign(gtk::Align::Center);
+            view_switch.append(b);
+        }
         let list_header = gtk::Box::new(gtk::Orientation::Horizontal, 6);
-        list_header.append(&all);
-        list_header.append(&count);
+        list_header.append(&view_switch);
+        let include_row = gtk::Box::new(gtk::Orientation::Horizontal, 2);
+        include_row.append(&all);
+        include_row.append(&count);
         let spacer = gtk::Box::new(gtk::Orientation::Horizontal, 0);
         spacer.set_hexpand(true);
         list_header.append(&spacer);
@@ -514,6 +542,7 @@ impl WorkingCopy {
         files_part.set_margin_end(10);
         list_scrolled.set_min_content_height(100);
         files_part.append(&list_header);
+        files_part.append(&include_row);
         // sparse checkout なら、一覧の上にそう出す（取り出していないフォルダのファイルは変更に出ない。macOS 版と同じ）。
         let sparse_label = gtk::Label::new(None);
         sparse_label.add_css_class("dim-label");
@@ -540,6 +569,10 @@ impl WorkingCopy {
         files_part.append(&sparse_note);
         files_part.append(&filter);
         files_part.append(&list_area);
+        let browser_holder = gtk::Box::new(gtk::Orientation::Vertical, 0);
+        browser_holder.set_vexpand(true);
+        browser_holder.set_visible(false);
+        files_part.append(&browser_holder);
         let left = files_part;
 
         // 右: 操作のボタンと差分。
@@ -707,6 +740,13 @@ impl WorkingCopy {
             entry_sections: RefCell::default(),
             open_gaps: RefCell::default(),
             multi: RefCell::default(),
+            all_files: all_files.clone(),
+            browser: RefCell::default(),
+            browser_holder: browser_holder.clone(),
+            include_row: include_row.clone(),
+            list_area: list_area.clone(),
+            tree_open: RefCell::default(),
+            browser_head: Cell::default(),
             whole_file: whole_file.clone(),
             split_stats: RefCell::default(),
             conflict_buttons,
@@ -769,6 +809,9 @@ impl WorkingCopy {
                 {
                     this.layout.set(layout);
                     Inner::rebuild_list(&this);
+                    if let Some(browser) = this.browser.borrow().as_ref() {
+                        browser.set_flat(layout != Layout::Tree);
+                    }
                     // 次に開く窓も同じ見せ方にする（`--layout` では覚えない）。
                     if remember.get() {
                         crate::settings::set_string(
@@ -1345,6 +1388,12 @@ impl Inner {
                 Inner::load_split_stats(&this);
             }
         });
+        let weak = Rc::downgrade(this);
+        this.all_files.connect_toggled(move |_| {
+            if let Some(this) = weak.upgrade() {
+                Inner::all_files_changed(&this);
+            }
+        });
         // 見る側の切り替え: Working Copy で 1 つ。押した側で読み直す（節分けなら、一覧の選択もその節の行に移す）。
         for (button, side) in [
             (this.worktree_side.clone(), Side::Unstaged),
@@ -1723,6 +1772,13 @@ impl Inner {
             if let Some(entry) = shown {
                 Inner::reload_diff(this, entry);
             }
+            // status は同じでも HEAD が動いた（変えていないファイルだけのコミット）なら、木を作り直す。
+            if this.all_files.is_active()
+                && let Some(repo) = this.repo()
+                && head_of(&repo) != this.browser_head.get()
+            {
+                Inner::rebuild_browser(this);
+            }
             return;
         }
         // コンフリクトを先に、あとはパスの順。
@@ -1736,6 +1792,9 @@ impl Inner {
         this.all_entries.replace(entries);
         this.prune_editors();
         Inner::rebuild_list(this);
+        if this.all_files.is_active() {
+            Inner::rebuild_browser(this);
+        }
         Inner::load_stats(this);
         Inner::load_conflict_states(this);
         if let Some(f) = this.on_count.borrow().as_ref() {
@@ -2793,6 +2852,162 @@ impl Inner {
     }
 
     /// ファイルを次のコミットに含める・外す（すべて含めていれば外し、そうでなければ含める）。
+    /// 変更の一覧とすべてのファイルを切り替える。すべてのファイルは HEAD の木に作業ツリーの変更を重ねた木で、
+    /// 開いたファイルは右に出す（変えたファイルはファイル全体の差分、変えていないファイルは中身）。
+    fn all_files_changed(this: &Rc<Self>) {
+        let on = this.all_files.is_active();
+        this.filter.set_visible(!on);
+        this.list_area.set_visible(!on);
+        this.browser_holder.set_visible(on);
+        this.include_row.set_visible(!on);
+        this.sections_button.set_sensitive(!on);
+        if let Some(b) = this.browser.take() {
+            this.browser_holder.remove(&b.root);
+        }
+        // 差分に出していたファイルを、すべてのファイルの木でも選ぶ（ファイル全体の差分にする。macOS 版と同じ）。
+        this.tree_open.replace(if on {
+            this.selected.borrow().clone()
+        } else {
+            None
+        });
+        if on {
+            Inner::rebuild_browser(this);
+        } else {
+            // 一覧を作り直して、差分に出していたファイルの行を選び直す（なければ最初の行。差分も読み直す）。
+            this.diff.set_file_mode(false);
+            Inner::rebuild_list(this);
+        }
+    }
+
+    /// すべてのファイルの木を、今の HEAD と status で作り直す。
+    fn rebuild_browser(this: &Rc<Self>) {
+        let Some(repo) = this.repo() else { return };
+        let expanded = this
+            .browser
+            .borrow()
+            .as_ref()
+            .map(|b| b.expanded_paths())
+            .unwrap_or_default();
+        if let Some(b) = this.browser.take() {
+            this.browser_holder.remove(&b.root);
+        }
+        let head = head_of(&repo);
+        this.browser_head.set(head);
+        let Some(head) = head else {
+            this.diff.show_message(&tr!("No commits yet"));
+            return;
+        };
+        let mut changes = Vec::new();
+        for e in this.all_entries.borrow().iter() {
+            let state = if e.worktree != b'.' {
+                e.worktree
+            } else {
+                e.index
+            };
+            let kind = match state {
+                b'?' | b'A' => ChangeKind::Added,
+                b'D' => ChangeKind::Deleted,
+                b'R' => ChangeKind::Renamed,
+                _ => ChangeKind::Modified,
+            };
+            changes.push(FileChange {
+                kind,
+                path: e.path.clone(),
+                old_path: e.orig_path.clone(),
+                old_id: None,
+                new_id: None,
+                submodule: false,
+            });
+            // 名前を変えたファイルの元の名前は、作業ツリーにはもうない（消したファイルと同じく赤の取り消し線）。
+            if let Some(orig) = &e.orig_path {
+                changes.push(FileChange {
+                    kind: ChangeKind::Deleted,
+                    path: orig.clone(),
+                    old_path: None,
+                    old_id: None,
+                    new_id: None,
+                    submodule: false,
+                });
+            }
+        }
+        let weak = Rc::downgrade(this);
+        let browser = crate::commitbrowser::Browser::new_working(
+            repo,
+            head,
+            changes,
+            this.layout.get() != Layout::Tree,
+            this.pending.clone(),
+            move |path| {
+                if let Some(this) = weak.upgrade() {
+                    Inner::open_tree_file(&this, head, path);
+                }
+            },
+        );
+        this.browser_holder.append(&browser.root);
+        let open = this.tree_open.borrow().clone();
+        browser.restore(&expanded, open.as_deref());
+        this.browser.replace(Some(browser));
+        // 開いていたファイルを読み直す（変えた・戻した・stage したで中身が変わる）。
+        if let Some(path) = open {
+            Inner::open_tree_file(this, head, &path);
+        }
+    }
+
+    /// すべてのファイルで開いた: 変えたファイルはファイル全体の差分、変えていないファイルは HEAD の中身。
+    fn open_tree_file(this: &Rc<Self>, head: Oid, path: &str) {
+        this.tree_open.replace(Some(path.to_owned()));
+        let entry = this
+            .all_entries
+            .borrow()
+            .iter()
+            .find(|e| e.path == path)
+            .cloned();
+        if let Some(entry) = entry {
+            this.selected.replace(Some(entry.path.clone()));
+            Inner::load_diff(this, entry, false);
+            return;
+        }
+        let Some(repo) = this.repo() else { return };
+        this.multi.replace(None);
+        this.current.replace(None);
+        this.selected.replace(None);
+        this.path.set_text(path);
+        this.sides.set_visible(false);
+        this.whole_file.set_visible(false);
+        this.conflict_buttons.set_visible(false);
+        this.show_line_endings(None);
+        let generation = this.generation.get() + 1;
+        this.generation.set(generation);
+        let path = path.to_owned();
+        this.pending.set(this.pending.get() + 1);
+        let weak = Rc::downgrade(this);
+        glib::spawn_future_local(async move {
+            let view = gio::spawn_blocking(move || {
+                repo.tree_file(&head, &path, &FrontendProfile::GTK)
+                    .map(View::new)
+                    .map_err(|e| e.to_string())
+            })
+            .await;
+            let Some(this) = weak.upgrade() else { return };
+            this.pending.set(this.pending.get() - 1);
+            if this.generation.get() != generation {
+                return;
+            }
+            match view {
+                Ok(Ok(view)) => {
+                    this.diff.set_folds(false, HashMap::new(), None, false);
+                    this.diff.set_file_mode(true);
+                    this.diff.show_plain(view);
+                }
+                Ok(Err(e)) => this
+                    .diff
+                    .show_message(&tr!("Can’t read the diff: {e}", e = e)),
+                Err(_) => {}
+            }
+            this.update_buttons();
+        });
+    }
+
     /// 見る側の切り替えのボタンを `side` に合わせる。
     fn sync_side_buttons(&self) {
         let side = self.side.get();
@@ -3174,7 +3389,19 @@ impl Inner {
         let Some(repo) = this.repo() else { return };
         let whitespace = this.whitespace.whitespace();
         this.multi.replace(None);
-        let side = this.side.get();
+        this.diff.set_file_mode(false);
+        // すべてのファイルでは、変えたファイルもファイル全体で見せる（畳まない。側は All、表せなければ変更のある側）。
+        let whole = this.all_files.is_active();
+        let side = if !whole {
+            this.side.get()
+        } else if entry.is_staged() && entry.is_unstaged() {
+            Side::All
+        } else if entry.is_staged() {
+            Side::Staged
+        } else {
+            Side::Unstaged
+        };
+        let context = if whole { u32::MAX } else { 3 };
         let opened: Vec<amonhen_core::diff::GapOpen> = this
             .open_gaps
             .borrow()
@@ -3199,7 +3426,7 @@ impl Inner {
             return;
         }
         this.unembed();
-        this.sides.set_visible(true);
+        this.sides.set_visible(!whole);
         // その側に変更がなければ、読まずにそう出す（macOS 版と同じ）。
         let nothing = match side {
             Side::Unstaged => !entry.is_unstaged(),
@@ -3235,7 +3462,7 @@ impl Inner {
                             ));
                         }
                         match repo
-                            .working_diff_combined_context(&entry, 3, Some(&opened), &profile)
+                            .working_diff_combined_context(&entry, context, Some(&opened), &profile)
                             .map_err(unreadable)?
                         {
                             Some(d) => d,
@@ -3250,7 +3477,7 @@ impl Inner {
                         .working_diff_context(
                             &entry,
                             side == Side::Staged,
-                            3,
+                            context,
                             Some(&opened),
                             whitespace,
                             &profile,
@@ -3304,7 +3531,7 @@ impl Inner {
                         let folded = rows.clone().filter(|l| l.old_no > 0).count();
                         (rows.count(), folded)
                     });
-                    this.whole_file.set_visible(gaps > 0);
+                    this.whole_file.set_visible(gaps > 0 && !whole);
                     this.whole_file.set_active(gaps > 0 && folded == 0);
                     let split = (!checks).then_some(side == Side::Staged);
                     this.diff
@@ -4972,6 +5199,13 @@ fn tree(entries: &[StatusEntry]) -> Vec<TreeItem> {
     let mut out = Vec::new();
     walk(&root, "", 0, entries, &mut out);
     out
+}
+
+/// HEAD のコミット（まだコミットがなければ None）。
+fn head_of(repo: &Repository) -> Option<Oid> {
+    serde_json::from_str::<Value>(&repo.run_json(r#"{"op":"resolveCommit","rev":"HEAD"}"#))
+        .ok()
+        .and_then(|v| v["text"].as_str().and_then(Oid::from_hex))
 }
 
 #[cfg(test)]

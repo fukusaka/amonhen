@@ -2105,6 +2105,8 @@
 "Top folder" = "先頭のフォルダ";
 "All files" = "すべてのファイル";
 "All Files" = "すべてのファイル";
+"Changed files, with checkboxes for the next commit" = "変更のあるファイル（チェックで次のコミットに含める）";
+"Every file in the working tree (ignored files are left out)" = "作業ツリーのすべてのファイル（無視しているファイルは出さない）";
 "Export One Folder" = "1 つのフォルダだけを書き出す";
 "Folders in this commit." = "このコミットのフォルダです。";
 "Fetch File Contents First?" = "先に中身を取ってきますか？";
