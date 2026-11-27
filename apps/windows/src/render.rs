@@ -184,8 +184,45 @@ fn diff_color(kind: crate::theme::DiffColor) -> D2D1_COLOR_F {
 fn diff_file() -> D2D1_COLOR_F {
     themed((0.11, 0.11, 0.12, 0.07), (1.0, 1.0, 1.0, 0.08))
 }
-/// Working Copy の差分の、行ごとの含める印の列の幅。
+/// Working Copy の差分の、行の左の帯の列の幅。
 pub const DIFF_MARK_WIDTH: f32 = 22.0;
+
+/// 隙間の行の置き場所（差分の欄の座標）。字は形と、その幅・高さ。
+pub struct GapLayout {
+    /// 中央の札（0 行の見出しの行にはない）と、選んだ行の数を出しているか。
+    pub pill: Option<(D2D_RECT_F, (IDWriteTextLayout, f32, f32))>,
+    pub pill_selected: bool,
+    /// 札の右の開く・畳む（マウスが乗っているときだけ）と、右端の hunk の操作。
+    pub buttons: Vec<(
+        crate::data::GapAction,
+        D2D_RECT_F,
+        (IDWriteTextLayout, f32, f32),
+    )>,
+    /// 左の関数名の左端と字。
+    pub function: Option<(f32, (IDWriteTextLayout, f32, f32))>,
+    /// hunk の操作が効く行（選んだ行か、hunk の変更すべて）。
+    pub target: Vec<usize>,
+}
+
+impl GapLayout {
+    /// (x, y) にあるボタン（押しやすいよう少し広く取る）。
+    pub fn button_at(&self, x: f32, y: f32) -> Option<crate::data::GapAction> {
+        self.buttons
+            .iter()
+            .find(|(_, r, _)| near(r, x, y))
+            .map(|(a, _, _)| *a)
+    }
+
+    /// (x, y) が札の上か。
+    pub fn on_pill(&self, x: f32, y: f32) -> bool {
+        self.pill.as_ref().is_some_and(|(r, _)| near(r, x, y))
+    }
+}
+
+/// `r` を左右 2・上下 3 だけ広げた中に (x, y) があるか。
+fn near(r: &D2D_RECT_F, x: f32, y: f32) -> bool {
+    x >= r.left - 2.0 && x <= r.right + 2.0 && y >= r.top - 3.0 && y <= r.bottom + 3.0
+}
 const DIFF_MARK: D2D1_COLOR_F = rgba(0.0, 0.47, 0.84, 1.0);
 fn diff_gutter() -> D2D1_COLOR_F {
     themed((0.11, 0.11, 0.12, 0.035), (1.0, 1.0, 1.0, 0.04))
@@ -194,14 +231,6 @@ const LABEL_PADDING: f32 = 6.0;
 const LABEL_GAP: f32 = 4.0;
 /// ラベルを並べる幅の上限（文字の幅に対する割合）。残りは件名に回す。
 const LABEL_SHARE: f32 = 0.6;
-
-/// 差分の行（hunk）を次のコミットに含めているか。
-#[derive(Clone, Copy)]
-enum Mark {
-    All,
-    Some,
-    None,
-}
 
 /// 署名の検証の結果の色（GTK4 版の `signature_color`。まだ検証していなければ薄い灰色）。
 fn signature_color(mark: Option<crate::data::Signature>) -> D2D1_COLOR_F {
@@ -426,6 +455,8 @@ pub struct Renderer {
     code_format: IDWriteTextFormat,
     file_format: IDWriteTextFormat,
     icon_format: IDWriteTextFormat,
+    /// 隙間の行のボタンの字（小さめの太字）。
+    gap_bold_format: IDWriteTextFormat,
     /// 画像の比べる欄の、読んだ前と後の絵（差分の番号とファイルごと。差分が替わったら捨てる）。
     images: HashMap<(u64, usize), ImageEntry>,
     /// 差分の行の文字の形（今の差分の行ごと。差分が替わったら捨てる）。
@@ -525,6 +556,16 @@ impl Renderer {
                 w!("ja-jp"),
             )?;
             file_format.SetWordWrapping(DWRITE_WORD_WRAPPING_NO_WRAP)?;
+            let gap_bold_format = dwrite.CreateTextFormat(
+                w!("Segoe UI"),
+                None,
+                DWRITE_FONT_WEIGHT_SEMI_BOLD,
+                DWRITE_FONT_STYLE_NORMAL,
+                DWRITE_FONT_STRETCH_NORMAL,
+                11.0,
+                w!("ja-jp"),
+            )?;
+            gap_bold_format.SetWordWrapping(DWRITE_WORD_WRAPPING_NO_WRAP)?;
             // ファイルの見出しの山形（Segoe Fluent Icons の ChevronRight・ChevronDown）。
             let icon_format = dwrite.CreateTextFormat(
                 w!("Segoe Fluent Icons"),
@@ -575,6 +616,7 @@ impl Renderer {
                 code_format,
                 file_format,
                 icon_format,
+                gap_bold_format,
                 images: HashMap::new(),
                 diff_rows: HashMap::new(),
                 syntax_brushes: HashMap::new(),
@@ -1562,7 +1604,10 @@ impl Renderer {
                 _ if modified => Some(rgba(0.21, 0.52, 0.89, 0.2)),
                 DiffRow::ADDED => Some(diff_color(crate::theme::DiffColor::Added)),
                 DiffRow::REMOVED => Some(diff_color(crate::theme::DiffColor::Removed)),
-                DiffRow::HUNK => Some(diff_color(crate::theme::DiffColor::Hunk)),
+                // 畳んだ差分の隙間の行は地を塗らない（破線と札。GTK4 版・macOS 版と同じ）。
+                DiffRow::HUNK if commit.folds.is_none() => {
+                    Some(diff_color(crate::theme::DiffColor::Hunk))
+                }
                 DiffRow::FILE => Some(diff_file()),
                 _ => None,
             };
@@ -1581,6 +1626,12 @@ impl Renderer {
                     self.brush.SetColor(&SELECTION);
                     self.d2d.FillRectangle(&rect(left, width), &self.brush);
                 }
+            }
+            if let Some(folds) = commit.folds
+                && row.kind == DiffRow::HUNK
+            {
+                self.draw_gap_row(folds, i, top, width, text_x)?;
+                continue;
             }
             let title = self.header_title(&commit, i);
             self.diff_layout(view, commit.syntax, i, title.as_deref())?;
@@ -1710,29 +1761,12 @@ impl Renderer {
                     );
                 }
             }
-            if commit.marks && matches!(row.kind, DiffRow::ADDED | DiffRow::REMOVED) {
-                let mark = if row.flags & DiffRow::STAGED != 0 {
-                    Mark::All
-                } else {
-                    Mark::None
-                };
-                self.draw_mark(mark, top)?;
-            }
-            // hunk の見出し: その hunk の行をすべて（☑）・一部（▣）・どれも（☐）含めているか。
-            if commit.marks && row.kind == DiffRow::HUNK {
-                let rows = crate::data::hunk_rows(&view.rows, i as usize);
-                let staged = rows
-                    .iter()
-                    .filter(|&&r| view.rows[r].flags & DiffRow::STAGED != 0)
-                    .count();
-                let mark = match staged {
-                    0 => Mark::None,
-                    n if n == rows.len() => Mark::All,
-                    _ => Mark::Some,
-                };
-                if !rows.is_empty() {
-                    self.draw_mark(mark, top)?;
-                }
+            // 変更の行の左の帯（All は staged か、「変更の帯」の形ではかたまりの印）。
+            if commit.marks
+                && let Some(folds) = commit.folds
+                && matches!(row.kind, DiffRow::ADDED | DiffRow::REMOVED)
+            {
+                self.draw_bar(folds, i, row, top, left + numbers);
             }
         }
         // 見出しの行が上に隠れたファイルは、見出しを上に張り付かせる（次のファイルの見出しが来たら押し上げる。
@@ -2962,49 +2996,280 @@ impl Renderer {
         Ok(Some(brush))
     }
 
-    /// 行を次のコミットに含めているかの印（含めていれば塗った四角にチェック、一部なら横線、いなければ枠だけ）。
-    fn draw_mark(&self, mark: Mark, top: f32) -> Result<()> {
-        let size = 12.0;
-        let (x, y) = (
-            (DIFF_MARK_WIDTH - size) / 2.0,
-            top + (DIFF_ROW_HEIGHT - size) / 2.0,
-        );
-        let rect = D2D1_ROUNDED_RECT {
-            rect: D2D_RECT_F {
-                left: x,
-                top: y,
-                right: x + size,
-                bottom: y + size,
-            },
-            radiusX: 2.5,
-            radiusY: 2.5,
+    /// 隙間の行の字の形と、その幅・高さ（小さめの字。`bold` ならボタンの太字）。
+    fn small_text(&self, text: &str, bold: bool) -> Result<(IDWriteTextLayout, f32, f32)> {
+        let format = if bold {
+            &self.gap_bold_format
+        } else {
+            &self.meta_format
         };
+        let text: Vec<u16> = text.encode_utf16().collect();
+        let layout = unsafe {
+            self.dwrite
+                .CreateTextLayout(&text, format, 10_000.0, DIFF_ROW_HEIGHT)?
+        };
+        let mut metrics = DWRITE_TEXT_METRICS::default();
+        unsafe { layout.GetMetrics(&mut metrics)? };
+        Ok((
+            layout,
+            metrics.widthIncludingTrailingWhitespace.ceil(),
+            metrics.height,
+        ))
+    }
+
+    /// 隙間の行の置き場所（差分の欄の座標。GTK4 版の `gap_layout`）。左に関数名、中央に札、札の右に開く・畳む
+    /// （マウスが乗っているとき）、右端にその下の hunk の操作。
+    pub fn gap_layout(
+        &self,
+        info: crate::data::GapInfo,
+        top: f32,
+        width: f32,
+        text_x: f32,
+    ) -> Result<GapLayout> {
+        let height = DIFF_ROW_HEIGHT - 2.0;
+        let y = top + (DIFF_ROW_HEIGHT - height) / 2.0;
+        let rect = |x: f32, w: f32| D2D_RECT_F {
+            left: x,
+            top: y,
+            right: x + w,
+            bottom: y + height,
+        };
+        let mut buttons = Vec::new();
+        // 右端の hunk の操作（右から並べる）。
+        let mut right = width - 10.0;
+        for (action, title) in info.hunk_actions.iter().rev() {
+            let text = self.small_text(title, true)?;
+            let w = text.1 + 12.0;
+            buttons.push((*action, rect(right - w, w), text));
+            right -= w + 2.0;
+        }
+        // 中央の札（自分の幅だけで中央に置く。ボタンが出ても動かない）と、その右の開く・畳む。
+        let mut pill = None;
+        if !info.pill.is_empty() {
+            let text = self.small_text(&info.pill, false)?;
+            let w = text.1 + 20.0;
+            let mut x = (text_x + (width - text_x - w) / 2.0).max(text_x + 8.0);
+            pill = Some((rect(x, w), text));
+            x += w + 6.0;
+            for (action, title) in &info.gap_actions {
+                let text = self.small_text(title, true)?;
+                let cw = text.1 + 16.0;
+                if x + cw >= right - 8.0 {
+                    break;
+                }
+                buttons.push((*action, rect(x, cw), text));
+                x += cw + 6.0;
+            }
+        }
+        // 左の関数名（札にかかるなら出さない）。
+        let mut function = None;
+        if !info.function.is_empty() {
+            let text = self.small_text(&format!("ƒ {}", info.function), false)?;
+            let end = text_x + 8.0 + text.1;
+            let limit = pill.as_ref().map_or(right, |(r, _)| r.left);
+            if end + 12.0 < limit {
+                function = Some((text_x + 8.0, text));
+            }
+        }
+        Ok(GapLayout {
+            pill,
+            pill_selected: info.selected,
+            buttons,
+            function,
+            target: info.target,
+        })
+    }
+
+    /// 隙間の行: 破線と、札・ボタン・関数名（GTK4 版の `draw_gap_row`）。
+    fn draw_gap_row(
+        &self,
+        folds: crate::data::Folds,
+        index: u32,
+        top: f32,
+        width: f32,
+        text_x: f32,
+    ) -> Result<()> {
+        use crate::data::GapAction;
+        let working = folds.working;
+        let layout = self.gap_layout(working.gap_info(index, folds.bar), top, width, text_x)?;
+        let hovered = working.pointer.hovered_gap;
+        let red = rgba(0.88, 0.27, 0.25, 1.0);
+        let faint = |a: f32| with_alpha(foreground(), a);
+        let mid = (top + DIFF_ROW_HEIGHT / 2.0).floor();
+        let mut holes: Vec<(f32, f32)> = layout
+            .buttons
+            .iter()
+            .map(|(_, r, _)| (r.left - 6.0, r.right + 6.0))
+            .collect();
+        if let Some((r, _)) = &layout.pill {
+            holes.push((r.left - 6.0, r.right + 6.0));
+        }
+        if let Some((x, text)) = &layout.function {
+            holes.push((x - 4.0, x + text.1 + 8.0));
+        }
         unsafe {
-            match mark {
-                Mark::All => {
-                    self.brush.SetColor(&DIFF_MARK);
-                    self.d2d.FillRoundedRectangle(&rect, &self.brush);
-                    self.brush.SetColor(&background());
-                    let a = point(x + 2.8, y + 6.2);
-                    let b = point(x + 5.2, y + 8.8);
-                    let c = point(x + 9.4, y + 3.6);
-                    self.d2d.DrawLine(a, b, &self.brush, 1.6, &self.round);
-                    self.d2d.DrawLine(b, c, &self.brush, 1.6, &self.round);
+            self.brush.SetColor(&faint(0.25));
+            let mut x = text_x + 4.0;
+            while x < width - 4.0 {
+                let inside = |v: f32| holes.iter().any(|&(a, b)| v >= a && v <= b);
+                if !inside(x) && !inside(x + 4.0) {
+                    self.d2d.FillRectangle(
+                        &D2D_RECT_F {
+                            left: x,
+                            top: mid,
+                            right: x + 4.0,
+                            bottom: mid + 1.0,
+                        },
+                        &self.brush,
+                    );
                 }
-                Mark::Some => {
-                    self.brush.SetColor(&DIFF_MARK);
-                    self.d2d.FillRoundedRectangle(&rect, &self.brush);
-                    self.brush.SetColor(&background());
-                    let (a, b) = (point(x + 3.0, y + 6.0), point(x + 9.0, y + 6.0));
-                    self.d2d.DrawLine(a, b, &self.brush, 1.6, &self.round);
+                x += 8.0;
+            }
+        }
+        let rounded = |rect: &D2D_RECT_F, radius: f32, color: &D2D1_COLOR_F| unsafe {
+            self.brush.SetColor(color);
+            self.d2d.FillRoundedRectangle(
+                &D2D1_ROUNDED_RECT {
+                    rect: *rect,
+                    radiusX: radius,
+                    radiusY: radius,
+                },
+                &self.brush,
+            );
+        };
+        let put = |text: &(IDWriteTextLayout, f32, f32),
+                   rect: &D2D_RECT_F,
+                   color: &D2D1_COLOR_F| unsafe {
+            self.brush.SetColor(color);
+            self.d2d.DrawTextLayout(
+                point(
+                    rect.left + (rect.right - rect.left - text.1) / 2.0,
+                    rect.top + (rect.bottom - rect.top - text.2) / 2.0,
+                ),
+                &text.0,
+                &self.brush,
+                D2D1_DRAW_TEXT_OPTIONS_NONE,
+            );
+        };
+        if let Some((rect, text)) = &layout.pill {
+            let fill = if layout.pill_selected {
+                with_alpha(ACCENT, 0.18)
+            } else {
+                faint(if hovered == Some((index, None)) {
+                    0.22
+                } else {
+                    0.12
+                })
+            };
+            rounded(rect, (rect.bottom - rect.top) / 2.0, &fill);
+            put(
+                text,
+                rect,
+                &if layout.pill_selected {
+                    ACCENT
+                } else {
+                    faint(0.7)
+                },
+            );
+        }
+        for (action, rect, text) in &layout.buttons {
+            let on = hovered == Some((index, Some(*action)));
+            let color = if *action == GapAction::Discard {
+                red
+            } else {
+                ACCENT
+            };
+            if action.is_hunk() {
+                // hunk の操作は字だけ（乗ったときだけ薄く塗る）。
+                if on {
+                    rounded(rect, 4.0, &with_alpha(color, 0.14));
                 }
-                Mark::None => {
-                    self.brush.SetColor(&secondary());
-                    self.d2d.DrawRoundedRectangle(&rect, &self.brush, 1.0, None);
-                }
+            } else {
+                rounded(
+                    rect,
+                    (rect.bottom - rect.top) / 2.0,
+                    &with_alpha(color, if on { 0.30 } else { 0.14 }),
+                );
+            }
+            put(text, rect, &color);
+        }
+        if let Some((x, text)) = &layout.function {
+            unsafe {
+                self.brush.SetColor(&faint(0.45));
+                self.d2d.DrawTextLayout(
+                    point(*x, top + (DIFF_ROW_HEIGHT - text.2) / 2.0),
+                    &text.0,
+                    &self.brush,
+                    D2D1_DRAW_TEXT_OPTIONS_NONE,
+                );
             }
         }
         Ok(())
+    }
+
+    /// 変更の行の左の帯（GTK4 版の `draw_bar`）: All では staged なら塗り、まだなら枠だけ。片側（「変更の帯」の
+    /// 形）では、かたまりの印（乗ると太く、行番号の欄も薄く塗る）。`gutter_right` は行番号の欄の右端。
+    fn draw_bar(
+        &self,
+        folds: crate::data::Folds,
+        index: u32,
+        row: &amonhen_layout::DiffRow,
+        top: f32,
+        gutter_right: f32,
+    ) {
+        use amonhen_layout::DiffRow;
+        let pointer = &folds.working.pointer;
+        let hot = pointer
+            .hovered_block
+            .is_some_and(|(a, b)| index >= a && index < b)
+            || pointer
+                .number_drag
+                .as_ref()
+                .is_some_and(|(_, rows)| rows.contains(&index));
+        let x = 8.0;
+        let bottom = top + DIFF_ROW_HEIGHT;
+        let bar = if hot {
+            unsafe {
+                self.brush.SetColor(&with_alpha(ACCENT, 0.14));
+                self.d2d.FillRectangle(
+                    &D2D_RECT_F {
+                        left: DIFF_MARK_WIDTH,
+                        top,
+                        right: gutter_right,
+                        bottom,
+                    },
+                    &self.brush,
+                );
+            }
+            (x - 1.0, x + 5.0)
+        } else {
+            (x, x + 4.0)
+        };
+        let fill = |left: f32, right: f32, color: &D2D1_COLOR_F| unsafe {
+            self.brush.SetColor(color);
+            self.d2d.FillRectangle(
+                &D2D_RECT_F {
+                    left,
+                    top,
+                    right,
+                    bottom,
+                },
+                &self.brush,
+            );
+        };
+        if folds.working.diff.combined.is_none() {
+            fill(
+                bar.0,
+                bar.1,
+                &with_alpha(ACCENT, if hot { 1.0 } else { 0.55 }),
+            );
+        } else if row.flags & DiffRow::STAGED != 0 {
+            fill(bar.0, bar.1, &ACCENT);
+        } else {
+            let line = with_alpha(foreground(), 0.5);
+            fill(bar.0, bar.0 + 1.0, &line);
+            fill(bar.1 - 1.0, bar.1, &line);
+        }
     }
 
     /// 行番号（0 なら書かない）を、`x` から幅 `DIFF_NUMBER_WIDTH` の列に右寄せで書く。

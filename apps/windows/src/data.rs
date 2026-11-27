@@ -121,6 +121,69 @@ pub struct DiffContent<'a> {
     pub picture_caption: Option<&'a str>,
     /// 選んだ行（Working Copy の差分。地を塗る）。
     pub selection: Option<&'a std::collections::BTreeSet<u32>>,
+    /// 変更のない所を畳んだ Working Copy の差分（hunk の見出しの行は隙間の行として描く）。
+    pub folds: Option<Folds<'a>>,
+}
+
+/// 隙間の行の操作。開く・畳むは隙間に、stage・unstage・discard はその下の hunk に効く（GTK4 版・macOS 版と同じ）。
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum GapAction {
+    /// 上（前の変更に続く所）から開く。
+    Down,
+    /// 下（次の変更の手前）から開く。
+    Up,
+    All,
+    Collapse,
+    Stage,
+    Unstage,
+    Discard,
+}
+
+impl GapAction {
+    /// その下の hunk（か選んだ行）に効く操作か。
+    pub fn is_hunk(self) -> bool {
+        matches!(
+            self,
+            GapAction::Stage | GapAction::Unstage | GapAction::Discard
+        )
+    }
+}
+
+/// 隙間を 1 度に開く行数。
+pub const GAP_STEP: u32 = 20;
+
+/// Working Copy の差分の上のマウスの様子（乗っている隙間の行・ボタン、帯の上の変更のかたまり、ドラッグ）。
+#[derive(Clone, Debug, Default)]
+pub struct WorkingPointer {
+    pub hovered_gap: Option<(u32, Option<GapAction>)>,
+    /// 帯の上で乗っている変更のかたまり（始め、終わりの次）。
+    pub hovered_block: Option<(u32, u32)>,
+    /// 「変更の帯」の形で行番号の上をドラッグしている（押した行と、今の範囲の変更の行。離したら stage する）。
+    pub number_drag: Option<(u32, Vec<u32>)>,
+    /// 行をドラッグで選んでいる（押した行と、その前に選んでいた行）。
+    pub row_drag: Option<(u32, std::collections::BTreeSet<u32>)>,
+}
+
+/// 畳んだ差分の描き方（行の Stage の仕方と、差分。マウスの様子は差分の `pointer`）。
+#[derive(Clone, Copy)]
+pub struct Folds<'a> {
+    /// 「変更の帯・行番号を押して」の形か（そうでなければ「選んでから hunk の見出しで」）。
+    pub bar: bool,
+    pub working: &'a WorkingShown,
+}
+
+/// 隙間の行に出すもの（置き場所は描く側が決める。GTK4 版の `gap_layout` の、文字と操作の部分）。
+pub struct GapInfo {
+    /// 中央の札（0 行の見出しの行では空）と、それが選んだ行の数か。
+    pub pill: String,
+    pub selected: bool,
+    /// 札の右の開く・畳む（マウスが乗っているときだけ）と、右端の hunk の操作。
+    pub gap_actions: Vec<(GapAction, String)>,
+    pub hunk_actions: Vec<(GapAction, String)>,
+    /// 左の関数名（なければ空）。
+    pub function: String,
+    /// hunk の操作が効く行（選んだ行か、hunk の変更すべて）。
+    pub target: Vec<usize>,
 }
 
 /// SVG の見せ方（macOS 版の `SVGView`、GTK4 版の `SvgView`）: 絵・モバイル（絵と、モバイル向けの描画部品で
@@ -405,7 +468,7 @@ fn syntax_of(view: &DiffView) -> HashMap<u32, Vec<(u32, u32, u8)>> {
 
 /// Working Copy で見る側（Working Copy で 1 つ。macOS 版・GTK4 版と同じく Unstaged・Staged・All の順、初めは
 /// Unstaged）。All は HEAD と作業ツリーの 1 本の差分（行ごとに staged か）。
-#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Hash)]
 pub enum WorkingSide {
     #[default]
     Unstaged,
@@ -439,6 +502,12 @@ pub struct WorkingShown {
     /// 読み直すと行の番号が別の行を指すことがある）。
     pub selection: std::collections::BTreeSet<u32>,
     pub anchor: Option<u32>,
+    /// 見ている側と、読んだときの隙間の開き方（隙間の番号ごとに、上・下から見せる行数）。
+    pub side: WorkingSide,
+    pub openings: HashMap<u32, (u32, u32)>,
+    /// 隙間の行（hunk の見出しの行）の番号（昇順。並びが隙間の番号）。
+    pub gap_rows: Vec<u32>,
+    pub pointer: WorkingPointer,
 }
 
 impl WorkingShown {
@@ -448,8 +517,9 @@ impl WorkingShown {
             highlights: &self.highlights,
             syntax: &self.syntax,
             file_rows: &[],
-            // 行ごとの印は、空白を無視していなければどの側でも（片側では押すとその側から移す）。
-            marks: self.diff.file.whitespace == Whitespace::Exact,
+            // 行の左の帯: All ではいつも（staged かを見せる）、片側では「変更の帯」の形のときだけ（GTK4 版の
+            // `mark_column`）。
+            marks: self.diff.combined.is_some() || crate::prefs::line_stage_bar(),
             file_marks: &[],
             tree: self.tree.as_ref(),
             counts: None,
@@ -462,6 +532,10 @@ impl WorkingShown {
             mobile: None,
             picture_caption: None,
             selection: Some(&self.selection),
+            folds: Some(Folds {
+                bar: crate::prefs::line_stage_bar(),
+                working: self,
+            }),
         }
     }
 
@@ -517,6 +591,200 @@ impl WorkingShown {
             })
             .map(|&r| r as usize)
             .collect()
+    }
+
+    /// 行 `row` を含めているか（変わった行でなければ None）。
+    pub fn row_staged(&self, row: usize) -> Option<bool> {
+        use amonhen_layout::DiffRow;
+        let kind = self.diff.view.rows.get(row)?.kind;
+        if !matches!(kind, DiffRow::ADDED | DiffRow::REMOVED) {
+            return None;
+        }
+        match self.diff.combined.as_ref() {
+            Some(combined) => combined.get(row).copied(),
+            // 片側の差分: stage 済みの側の行は含めている、作業ツリーの側の行は含めていない。
+            None => Some(self.diff.staged),
+        }
+    }
+
+    /// `rows` に効く操作と名前（Stage・Unstage・Discard。`lines` なら Lines、そうでなければ Hunk。GTK4 版の
+    /// `stage_actions`）。All は、すべて含めていれば Unstage、そうでなければ Stage。
+    pub fn stage_actions(&self, rows: &[usize], lines: bool) -> Vec<(GapAction, String)> {
+        if rows.is_empty() {
+            return Vec::new();
+        }
+        let noun = if lines { "Lines" } else { "Hunk" };
+        if self.diff.combined.is_some() {
+            let all = rows.iter().all(|&r| self.row_staged(r).unwrap_or(false));
+            return vec![if all {
+                (GapAction::Unstage, format!("Unstage {noun}"))
+            } else {
+                (GapAction::Stage, format!("Stage {noun}"))
+            }];
+        }
+        if self.diff.staged {
+            return vec![(GapAction::Unstage, format!("Unstage {noun}"))];
+        }
+        vec![
+            (GapAction::Stage, format!("Stage {noun}")),
+            (GapAction::Discard, format!("Discard {noun}")),
+        ]
+    }
+
+    /// 隙間の行 `index` の下の hunk で、操作が効く行（選んだ行があればその行、なければ hunk の変更すべて）と、
+    /// 選んだ行か。「変更の帯」の形では hunk の操作を出さない（空）。
+    pub fn gap_target(&self, index: usize, bar: bool) -> (Vec<usize>, bool) {
+        if bar {
+            return (Vec::new(), false);
+        }
+        let changes = hunk_rows(&self.diff.view.rows, index);
+        let selected: Vec<usize> = changes
+            .iter()
+            .copied()
+            .filter(|&r| self.selection.contains(&(r as u32)))
+            .collect();
+        if selected.is_empty() {
+            (changes, false)
+        } else {
+            (selected, true)
+        }
+    }
+
+    /// 右クリックのメニューの、選んだ行・その hunk・その行の Stage（Unstage）と Discard（名前、行、操作。
+    /// GTK4 版の `stage_menu`）。
+    pub fn stage_menu(&self, row: usize) -> Vec<(String, Vec<usize>, GapAction)> {
+        use amonhen_layout::DiffRow;
+        let rows = &self.diff.view.rows;
+        if row >= rows.len() {
+            return Vec::new();
+        }
+        let mut out = Vec::new();
+        let mut add = |picked: Vec<usize>, lines: bool, what: String| {
+            for (action, title) in self.stage_actions(&picked, lines) {
+                let name = if lines {
+                    title.replace("Lines", &what)
+                } else {
+                    title
+                };
+                out.push((name, picked.clone(), action));
+            }
+        };
+        let selected = self.selected_changes();
+        if !selected.is_empty() {
+            let n = selected.len();
+            add(selected, true, tr!("{n} Selected Lines", n = n));
+        }
+        let header = if rows[row].kind == DiffRow::HUNK {
+            Some(row)
+        } else {
+            (0..row)
+                .rev()
+                .take_while(|&i| rows[i].kind != DiffRow::FILE)
+                .find(|&i| rows[i].kind == DiffRow::HUNK)
+        };
+        if let Some(h) = header {
+            add(hunk_rows(rows, h), false, String::new());
+        }
+        if matches!(rows[row].kind, DiffRow::ADDED | DiffRow::REMOVED) {
+            add(vec![row], true, tr!("This Line"));
+        }
+        out
+    }
+
+    /// 隙間の行 `index` に出すもの（左に関数名、中央に札、マウスが乗っていれば札の右に開く・畳む、右端に
+    /// その下の hunk の操作）。hunk の行を選んでいれば、札は選んだ行の数になり、操作は選んだ行に効く。
+    pub fn gap_info(&self, index: u32, bar: bool) -> GapInfo {
+        let row = self.diff.view.rows[index as usize];
+        let (hidden, shown) = (row.old_no, row.new_no);
+        let function = String::from_utf8_lossy(self.diff.view.strings.bytes(row.text)).into_owned();
+        let (leading, trailing) = self.gap_edges(index as usize);
+        let (target, selected) = self.gap_target(index as usize, bar);
+        let pill = if selected {
+            tr!("{n} lines selected", n = target.len())
+        } else if hidden > 0 {
+            format!("⋯  {}", tr!("{n} unchanged lines", n = hidden))
+        } else if shown > 0 {
+            tr!("{n} unchanged lines shown", n = shown)
+        } else {
+            String::new()
+        };
+        let mut gap_actions = Vec::new();
+        if self.pointer.hovered_gap.is_some_and(|(r, _)| r == index) && !selected {
+            if hidden > GAP_STEP {
+                let step = tr!("{n} lines", n = GAP_STEP);
+                if !leading {
+                    gap_actions.push((GapAction::Down, format!("↓ {step}")));
+                }
+                if !trailing {
+                    gap_actions.push((GapAction::Up, format!("↑ {step}")));
+                }
+            }
+            if hidden > 0 {
+                gap_actions.push((GapAction::All, tr!("All")));
+            }
+            if shown > 0 {
+                gap_actions.push((GapAction::Collapse, tr!("Collapse")));
+            }
+        }
+        let hunk_actions = self.stage_actions(&target, selected);
+        GapInfo {
+            pill,
+            selected,
+            gap_actions,
+            hunk_actions,
+            function,
+            target,
+        }
+    }
+
+    /// 隙間の行 `index` がファイルの頭・末尾の隙間か（前・後に変更の行がない）。
+    pub fn gap_edges(&self, index: usize) -> (bool, bool) {
+        use amonhen_layout::DiffRow;
+        let rows = &self.diff.view.rows;
+        let edge = |range: &mut dyn Iterator<Item = usize>| {
+            for i in range {
+                if rows[i].kind == DiffRow::FILE {
+                    return true;
+                }
+                if matches!(rows[i].kind, DiffRow::ADDED | DiffRow::REMOVED) {
+                    return false;
+                }
+            }
+            true
+        };
+        (
+            edge(&mut (0..index).rev()),
+            edge(&mut (index + 1..rows.len())),
+        )
+    }
+
+    /// 隙間の行 `index` に `action`（開く・畳む）をした後の開き方（隙間の番号と、None なら畳む）。隙間の行で
+    /// なければ None。
+    pub fn gap_opening(&self, index: u32, action: GapAction) -> Option<(u32, Option<(u32, u32)>)> {
+        let gap = self.gap_rows.binary_search(&index).ok()? as u32;
+        let (top, bottom) = self.openings.get(&gap).copied().unwrap_or((0, 0));
+        let grow = |v: u32| v.saturating_add(GAP_STEP);
+        let new = match action {
+            GapAction::Down => Some((grow(top), bottom)),
+            GapAction::Up => Some((top, grow(bottom))),
+            // すべて開くときは、隙間の行を開いた行の上に残す（そこから畳める）。
+            GapAction::All => Some((top, u32::MAX)),
+            GapAction::Collapse => None,
+            _ => return None,
+        };
+        Some((gap, new))
+    }
+
+    /// 隙間の数と、まだ隠している行のある隙間の数（ファイル全体を表示の印）。開ける隙間がなければ数は 0。
+    pub fn gap_counts(&self) -> (usize, usize) {
+        let rows = &self.diff.view.rows;
+        let gaps = self.gap_rows.iter().map(|&r| rows[r as usize]);
+        let folded = gaps.clone().filter(|r| r.old_no > 0).count();
+        let openable = gaps.filter(|r| r.old_no > 0 || r.new_no > 0).count();
+        if openable == 0 {
+            return (0, 0);
+        }
+        (self.gap_rows.len(), folded)
     }
 }
 
@@ -577,6 +845,7 @@ impl FileShown {
             mobile: self.mobile.as_deref(),
             picture_caption: self.drawable.as_ref().map(|d| d.caption.as_str()),
             selection: None,
+            folds: None,
         }
     }
 }
@@ -778,6 +1047,7 @@ impl CommitShown {
             mobile: None,
             picture_caption: None,
             selection: None,
+            folds: None,
         }
     }
 
@@ -1186,6 +1456,21 @@ pub fn hunk_rows(rows: &[amonhen_layout::DiffRow], hunk: usize) -> Vec<usize> {
         .collect()
 }
 
+/// `row` を含む変更のかたまり（続いた追加・削除の行。始め、終わりの次。GTK4 版の `change_block`）。
+pub fn change_block(rows: &[amonhen_layout::DiffRow], row: usize) -> (usize, usize) {
+    use amonhen_layout::DiffRow;
+    let change = |r: &DiffRow| matches!(r.kind, DiffRow::ADDED | DiffRow::REMOVED);
+    let mut start = row;
+    while start > 0 && change(&rows[start - 1]) {
+        start -= 1;
+    }
+    let mut end = row + 1;
+    while end < rows.len() && change(&rows[end]) {
+        end += 1;
+    }
+    (start, end)
+}
+
 /// History の差分のファイル（見出しの右クリックのメニュー）。
 #[derive(Clone, Debug, PartialEq)]
 pub struct DiffFile {
@@ -1272,8 +1557,12 @@ pub struct Data {
     /// Working Copy で選んだファイルの差分（届いたもの）と、読んでいるファイル。
     pub working: Option<Box<WorkingShown>>,
     working_wanted: Option<String>,
-    /// 差分が届いた（見たら `false` に戻す）。
+    /// 差分が届いた（見たら `false` に戻す）と、前と同じファイル・側の差分を読み直したものか（スクロールを残す）。
     pub working_changed: bool,
+    pub working_same: bool,
+    /// Working Copy の差分で開いた隙間（見る側とパスごとに、隙間の番号と上・下から見せる行数。GTK4 版の
+    /// `open_gaps`）。
+    working_gaps: HashMap<(WorkingSide, String), HashMap<u32, (u32, u32)>>,
     /// 「すべてのファイル」で開いたファイルの中身（届いたもの）と、読んでいるファイル、届いたか（見たら false）。
     pub file_view: Option<Box<FileShown>>,
     file_wanted: Option<String>,
@@ -1698,6 +1987,8 @@ impl Data {
             working: None,
             working_wanted: None,
             working_changed: false,
+            working_same: false,
+            working_gaps: HashMap::new(),
             file_view: None,
             file_wanted: None,
             file_view_changed: false,
@@ -1880,20 +2171,39 @@ impl Data {
         }
         let whitespace = self.whitespace;
         let (tx, wake) = (self.tx.clone(), self.wake.clone());
+        // 変更のない所は前後 3 行を残して畳み、開いた隙間はその分だけ見せる（GTK4 版・macOS 版と同じ）。
+        let openings = self
+            .working_gaps
+            .get(&(side, entry.path.clone()))
+            .cloned()
+            .unwrap_or_default();
+        let opened: Vec<amonhen_core::diff::GapOpen> = openings
+            .iter()
+            .map(|(&gap, &(top, bottom))| amonhen_core::diff::GapOpen { gap, top, bottom })
+            .collect();
         std::thread::spawn(move || {
             let diff = match side {
                 WorkingSide::All if whitespace != Whitespace::Exact => Err(tr!(
                     "All can’t be shown while whitespace is ignored. See Unstaged and Staged."
                 )),
-                WorkingSide::All => match repo.working_diff_combined(&entry, &PROFILE) {
-                    Ok(Some(diff)) => Ok(diff),
-                    Ok(None) => Err(tr!(
-                        "This file’s staged and unstaged changes can’t be shown in one diff. See Unstaged and Staged."
-                    )),
-                    Err(e) => Err(tr!("Can’t read the diff: {e}", e = e)),
-                },
+                WorkingSide::All => {
+                    match repo.working_diff_combined_context(&entry, 3, Some(&opened), &PROFILE) {
+                        Ok(Some(diff)) => Ok(diff),
+                        Ok(None) => Err(tr!(
+                            "This file’s staged and unstaged changes can’t be shown in one diff. See Unstaged and Staged."
+                        )),
+                        Err(e) => Err(tr!("Can’t read the diff: {e}", e = e)),
+                    }
+                }
                 side => repo
-                    .working_diff_ws(&entry, side == WorkingSide::Staged, whitespace, &PROFILE)
+                    .working_diff_context(
+                        &entry,
+                        side == WorkingSide::Staged,
+                        3,
+                        Some(&opened),
+                        whitespace,
+                        &PROFILE,
+                    )
                     .map(|mut diff| {
                         // stage 済みの側の変更は、どれも index に入っている（印を埋める）。
                         if diff.staged {
@@ -1910,6 +2220,14 @@ impl Data {
             let event = match diff {
                 Ok(diff) => {
                     let (highlights, syntax) = (highlights_of(&diff.view), syntax_of(&diff.view));
+                    let gap_rows = diff
+                        .view
+                        .rows
+                        .iter()
+                        .enumerate()
+                        .filter(|(_, r)| r.kind == DiffRow::HUNK)
+                        .map(|(i, _)| i as u32)
+                        .collect();
                     Event::Working(
                         Box::new(WorkingShown {
                             path: entry.path.clone(),
@@ -1920,6 +2238,10 @@ impl Data {
                             wrap_cols: 0,
                             selection: Default::default(),
                             anchor: None,
+                            side,
+                            openings,
+                            gap_rows,
+                            pointer: WorkingPointer::default(),
                         }),
                         seq,
                     )
@@ -1929,15 +2251,6 @@ impl Data {
             let _ = tx.send(event);
             wake();
         });
-    }
-
-    /// Working Copy の差分の `row` 行目（変更の行）を、次のコミットに含める・外す（今と逆にする）。終わったら status を
-    /// 読み直し、差分も読み直される。
-    pub fn toggle_working_row(&self, row: usize) {
-        let Some(staged) = self.working_row_staged(row) else {
-            return;
-        };
-        self.stage_working_rows(vec![row], !staged);
     }
 
     /// Working Copy の差分の変わった行 `rows` を `stage`（含める・外す）にする。All（1 本の差分）は行ごとの状態を
@@ -1968,70 +2281,64 @@ impl Data {
         });
     }
 
-    /// Working Copy の差分の `row` の行を含めているか（変わった行でなければ None）。
-    pub fn working_row_staged(&self, row: usize) -> Option<bool> {
-        use amonhen_layout::DiffRow;
-        let working = self.working.as_ref()?;
-        let kind = working.diff.view.rows.get(row)?.kind;
-        if !matches!(kind, DiffRow::ADDED | DiffRow::REMOVED) {
-            return None;
-        }
-        match working.diff.combined.as_ref() {
-            Some(combined) => combined.get(row).copied(),
-            // 片側の差分: stage 済みの側の行は含めている、作業ツリーの側の行は含めていない。
-            None => Some(working.diff.staged),
-        }
-    }
-
-    /// Working Copy の差分の `a`〜`b` の変わった行を、まとめて `stage`（含める・外す）にする（印の上を引いた
-    /// ときと Shift+クリック。GTK4 版の印の範囲）。
-    pub fn set_working_range(&self, a: usize, b: usize, stage: bool) {
-        let rows: Vec<usize> = (a.min(b)..=a.max(b))
-            .filter(|&r| self.working_row_staged(r).is_some_and(|s| s != stage))
-            .collect();
-        self.stage_working_rows(rows, stage);
-    }
-
-    /// Working Copy の差分の hunk の見出し（`row`）の行をまとめて含める・外す（GTK4 版の hunk の印）。1 行でも
-    /// 含めていなければすべて含め、すべて含めていればすべて外す。
-    pub fn toggle_working_hunk(&self, row: usize) {
-        let Some(working) = &self.working else { return };
-        let rows = hunk_rows(&working.diff.view.rows, row);
-        if rows.is_empty() {
-            return;
-        }
-        let stage = rows
-            .iter()
-            .any(|&r| !self.working_row_staged(r).unwrap_or(false));
-        self.stage_working_rows(rows, stage);
-    }
-
-    /// Working Copy の差分で右クリックした `row` の行（変わった行ならその行、hunk の見出しならその hunk の行）と、
-    /// そのうちに含めている行があるか（含めている行は捨てられない）。stage 済みの側の差分では None。
-    pub fn working_rows_at(&self, row: usize) -> Option<(Vec<usize>, bool)> {
-        // 空白を無視した差分の行は中身をそのまま表していないので、行ごとには捨てない（macOS 版と同じ）。
-        if self.whitespace != Whitespace::Exact {
-            return None;
-        }
-        use amonhen_layout::DiffRow;
-        let working = self.working.as_ref()?;
-        if working.diff.staged {
-            return None;
-        }
-        // 選んだ行の中を押したら、選んだ変更の行すべて（macOS 版・GTK4 版の Discard Lines）。
-        let selected = working.selected_changes();
-        let rows = match working.diff.view.rows.get(row)?.kind {
-            _ if working.selection.contains(&(row as u32)) && !selected.is_empty() => selected,
-            DiffRow::ADDED | DiffRow::REMOVED => vec![row],
-            DiffRow::HUNK => hunk_rows(&working.diff.view.rows, row),
-            _ => return None,
+    /// Working Copy の差分の `rows` を含める・外す（All は、すべて含めていれば外し、そうでなければ含める。片側は
+    /// その側から移す）。空白を無視した差分では行ごとには移さない（false。GTK4 版は音で知らせる）。
+    pub fn stage_working_toggle(&self, rows: Vec<usize>) -> bool {
+        let Some(working) = &self.working else {
+            return false;
         };
-        let staged = working
-            .diff
-            .combined
-            .as_ref()
-            .is_some_and(|c| rows.iter().any(|&r| c.get(r).copied().unwrap_or(false)));
-        (!rows.is_empty()).then_some((rows, staged))
+        if self.whitespace != Whitespace::Exact {
+            return false;
+        }
+        let stage = if working.diff.combined.is_some() {
+            !rows.iter().all(|&r| working.row_staged(r).unwrap_or(false))
+        } else {
+            !working.diff.staged
+        };
+        self.stage_working_rows(rows, stage);
+        true
+    }
+
+    /// Working Copy の差分の隙間の行 `index` を開く・畳む（`action` は Down・Up・All・Collapse）。開き方を覚えて
+    /// 読み直す。
+    pub fn set_working_gap(&mut self, index: u32, action: GapAction) {
+        let Some(working) = &self.working else { return };
+        let Some((gap, opening)) = working.gap_opening(index, action) else {
+            return;
+        };
+        let key = (working.side, working.path.clone());
+        let map = self.working_gaps.entry(key).or_default();
+        match opening {
+            Some(o) => {
+                map.insert(gap, o);
+            }
+            None => {
+                map.remove(&gap);
+            }
+        }
+        self.reload_working();
+    }
+
+    /// ファイル全体を表示: 変更のない所をすべて開く（`on`）・すべて畳む。
+    pub fn set_working_whole(&mut self, on: bool) {
+        let Some(working) = &self.working else { return };
+        let open: HashMap<u32, (u32, u32)> = if on {
+            (0..working.gap_rows.len() as u32)
+                .map(|g| (g, (0, u32::MAX)))
+                .collect()
+        } else {
+            HashMap::new()
+        };
+        self.working_gaps
+            .insert((working.side, working.path.clone()), open);
+        self.reload_working();
+    }
+
+    /// 今の Working Copy の差分を、同じファイル・側で読み直す。
+    fn reload_working(&mut self) {
+        if let Some((entry, side)) = self.working_entry.clone() {
+            self.want_working(Some(entry), side);
+        }
     }
 
     /// Working Copy の今の差分（行を捨てるのに使う）。
@@ -2291,6 +2598,10 @@ impl Data {
                     if seq == self.working_seq
                         && self.working_wanted.as_deref() == Some(shown.path.as_str())
                     {
+                        self.working_same = self
+                            .working
+                            .as_ref()
+                            .is_some_and(|w| w.path == shown.path && w.side == shown.side);
                         self.working = Some(shown);
                         self.working_note = None;
                         self.apply_wrap();
@@ -3460,6 +3771,31 @@ fn current_chunk<T>(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn change_blocks_and_hunk_rows_stop_at_context_and_gap_rows() {
+        use amonhen_layout::DiffRow;
+        let row = |kind| DiffRow {
+            kind,
+            ..Default::default()
+        };
+        // 隙間の行、変わらない行、消した・足した行、変わらない行、足した行、次の隙間の行。
+        let rows = [
+            row(DiffRow::HUNK),
+            row(DiffRow::CONTEXT),
+            row(DiffRow::REMOVED),
+            row(DiffRow::ADDED),
+            row(DiffRow::CONTEXT),
+            row(DiffRow::ADDED),
+            row(DiffRow::HUNK),
+        ];
+        assert_eq!(change_block(&rows, 3), (2, 4));
+        assert_eq!(change_block(&rows, 2), (2, 4));
+        assert_eq!(change_block(&rows, 5), (5, 6));
+        assert_eq!(hunk_rows(&rows, 0), [2, 3, 5]);
+        // 最後の隙間の行の下に変更はない（hunk の操作を出さない）。
+        assert!(hunk_rows(&rows, 6).is_empty());
+    }
 
     #[test]
     fn rows_the_cached_history_cant_read_are_dropped() {

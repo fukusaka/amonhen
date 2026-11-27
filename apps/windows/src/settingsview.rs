@@ -212,6 +212,8 @@ pub struct Callbacks<'a> {
     /// 数式の大きさ・1 つのファイルで描く時間の上限を選んだ（`math::FONT_SCALES`・`math::TIME_LIMITS` の番号）。
     pub math_scale: Callback<Option<usize>>,
     pub math_time_limit: Callback<Option<usize>>,
+    /// Diff & Merge: 行の Stage の仕方を選んだ（0 は選んでから hunk の見出しで、1 は変更の帯・行番号を押して）。
+    pub line_stage: Callback<Option<usize>>,
     /// 窓の背景の欄（Choose…・Remove、位置、横棒、ツールバーの色を敷くか・色）。
     pub backdrop: BackdropCallbacks<'a>,
     pub ssh: crate::sshhosts::Callbacks<'a>,
@@ -1045,6 +1047,26 @@ pub fn view(state: &State, callbacks: Callbacks) -> View {
                 state.auto_magic_merge,
                 tr!("Resolve unambiguous conflicts when the merge editor opens"),
             ),
+            // Working Copy の差分で行を stage する形（GTK4 版・macOS 版と同じ 2 つ）。
+            StackPanel::new()
+                .orientation(Orientation::Horizontal)
+                .spacing(12.0)
+                .margin(Thickness::new(0.0, 8.0, 0.0, 0.0))
+                .children((
+                    TextBlock::new()
+                        .text(tr!("Staging lines"))
+                        .vertical_alignment(VerticalAlignment::Center),
+                    ComboBox::new()
+                        .items_source(vec![
+                            tr!("Select lines, then use the hunk header"),
+                            tr!("Click the change bar or line numbers"),
+                        ])
+                        .selected_index(usize::from(crate::prefs::line_stage_bar()))
+                        .on_selection_changed(callbacks.line_stage.clone()),
+                )),
+            note(tr!(
+                "How lines are staged and unstaged in the Working Copy diff. Space and the right-click menu work either way."
+            )),
             StackPanel::new().children((
                 heading("File History".to_owned()),
                 check(
