@@ -8800,6 +8800,11 @@ impl Root {
                 // partial clone なら、すべてのファイルで開く前に中身が手元にあるかを確かめる。
                 let partial = form.partial.is_some();
                 self.with_history(|h| h.session.data.partial = partial);
+                // 形が変わったら木を作り直す（同じ形の木に差し替えるだけだと、WinUI は開いた子の行を前の項目のまま
+                // 残し、History の行の印とツールチップが付かない）。
+                if self.form != form {
+                    self.sidebar_epoch += 1;
+                }
                 self.form = form;
             }
             Message::FetchMissing => {
