@@ -85,7 +85,7 @@ pub fn band(fetch: Fetch, boundary_time: Rc<dyn Fn() -> Option<i64>>) -> gtk::Bo
     let widget = gtk::Box::new(gtk::Orientation::Horizontal, 8);
     widget.add_css_class("shallow-band");
     for w in [&more, &all] {
-        w.add_css_class("small");
+        w.add_css_class("small-push");
         w.set_valign(gtk::Align::Center);
     }
     spinner.set_valign(gtk::Align::Center);

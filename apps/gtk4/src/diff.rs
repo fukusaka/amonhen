@@ -511,6 +511,61 @@ pub struct State {
     current_match: Option<usize>,
     /// 差分の代わりに出す知らせ（「Loading the diff…」など）。
     message: Option<String>,
+    /// 変更のない所（隙間）を少しずつ開閉する差分（Working Copy）。hunk の見出しの行の代わりに隙間の行があり
+    /// （`old_no` が隠している行数、`new_no` が見せている行数、文字は関数名）、破線と札で描く（macOS 版と同じ）。
+    folds: bool,
+    /// 隙間の開き方（隙間の番号 → 上・下から見せている行数）と、隙間の行（番号の順）。
+    gap_openings: HashMap<u32, (u32, u32)>,
+    gap_rows: Vec<u32>,
+    /// 隙間の開き方を変えた（隙間の番号、新しい開き方。None なら畳む）。
+    on_set_gap: Option<SetGapCallback>,
+    /// 行・hunk の変更を捨てる（Unstaged の差分の行）。
+    on_discard_rows: Option<Rc<dyn Fn(Vec<usize>)>>,
+    /// Unstaged・Staged の差分か（Some(true) が Staged）。All（`checks`）とほかの差分では None。
+    split_side: Option<bool>,
+    /// 行の Stage の仕方が「変更の帯・行番号を押して」か（そうでなければ「選んでから hunk の見出しで」）。
+    stage_bar: bool,
+    /// マウスが乗っている隙間の行と、そのボタン。
+    hovered_gap: Option<(u32, Option<GapAction>)>,
+    /// 帯の上でマウスが乗っている変更のかたまり（始め、終わりの次）。
+    hovered_block: Option<(u32, u32)>,
+    /// 「変更の帯」の形で、行番号の上をドラッグしている行（押した行と、今の範囲の変更の行）。
+    number_drag: Option<(u32, Vec<u32>)>,
+    /// 行をドラッグで選んでいる（押した行と、その前に選んでいた行）。
+    row_drag: Option<(u32, BTreeSet<u32>)>,
+}
+
+/// 隙間の開き方を変えたときに呼ぶ（隙間の番号、上・下から見せる行数。None なら畳む）。
+type SetGapCallback = Rc<dyn Fn(u32, Option<(u32, u32)>)>;
+
+/// 隙間の行の操作。開く・畳むは隙間に、stage・unstage・discard はその下の hunk に効く（macOS 版と同じ）。
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum GapAction {
+    /// 上（前の変更に続く所）から開く。
+    Down,
+    /// 下（次の変更の手前）から開く。
+    Up,
+    All,
+    Collapse,
+    Stage,
+    Unstage,
+    Discard,
+}
+
+/// 1 度に開く行数。
+const GAP_STEP: u32 = 20;
+
+/// 隙間の行の置き場所（部品の中の座標）。
+struct GapLayout {
+    /// 中央の札（0 行の見出しの行にはない）と、選んだ行の数を出しているか。
+    pill: Option<(graphene::Rect, pango::Layout)>,
+    pill_selected: bool,
+    /// 札の右の開く・畳む（マウスが乗っているときだけ）と、右端の hunk の操作。
+    buttons: Vec<(GapAction, graphene::Rect, pango::Layout)>,
+    /// 左の関数名。
+    function: Option<(f32, pango::Layout)>,
+    /// hunk の操作が効く行（選んだ行か、hunk の変更すべて）。
+    target: Vec<usize>,
 }
 
 /// ファイルの見出し・差分の行を右クリックしたときに呼ぶ（見出しの上ならファイルの番号、パス、x、y）。
@@ -922,6 +977,12 @@ mod imp {
                     view.drag_to((x + dx) as f32, (y + dy) as f32);
                 }
             });
+            let weak = view.downgrade();
+            drag.connect_drag_end(move |_, _, _| {
+                if let Some(view) = weak.upgrade() {
+                    view.drag_end();
+                }
+            });
             view.add_controller(drag);
             // 選んだ文字の色は、フォーカスがあるかで変える。
             let focus = gtk::EventControllerFocus::new();
@@ -952,14 +1013,16 @@ mod imp {
             // マウスが乗っているファイルの見出しを薄く塗る（macOS 版と同じ）。
             let motion = gtk::EventControllerMotion::new();
             let weak = view.downgrade();
-            motion.connect_motion(move |_, _, y| {
+            motion.connect_motion(move |_, x, y| {
                 if let Some(view) = weak.upgrade() {
+                    view.hover_gap(Some((x as f32, y as f32)));
                     view.hover(Some(y as f32));
                 }
             });
             let weak = view.downgrade();
             motion.connect_leave(move |_| {
                 if let Some(view) = weak.upgrade() {
+                    view.hover_gap(None);
                     view.hover(None);
                 }
             });
@@ -1360,6 +1423,26 @@ impl DiffWidget {
             st.rows.clear();
             st.marks = true;
             st.checks = checks;
+            st.gap_rows = if st.folds {
+                st.view
+                    .as_ref()
+                    .map(|v| {
+                        v.view
+                            .rows
+                            .iter()
+                            .enumerate()
+                            .filter(|(_, r)| r.kind == DiffRow::HUNK)
+                            .map(|(i, _)| i as u32)
+                            .collect()
+                    })
+                    .unwrap_or_default()
+            } else {
+                Vec::new()
+            };
+            st.hovered_gap = None;
+            st.hovered_block = None;
+            st.number_drag = None;
+            st.row_drag = None;
             st.selection.clear();
             st.anchor = None;
             st.text_selection = None;
@@ -1524,17 +1607,19 @@ impl DiffWidget {
     }
 
     fn file_menu(&self, x: f64, y: f64) {
-        let (view, f, rows_f) = {
+        let (view, f, rows_f, marks) = {
             let st = self.state();
             (
                 st.view.clone(),
                 st.on_file_menu.clone(),
                 st.on_row_menu.clone(),
+                st.marks,
             )
         };
         let index = self.row_at(y);
+        // 行を選ぶ差分（Working Copy）では、見出しの上でなければ行のメニュー（いくつかのファイルを並べても）。
         if let (Some(view), Some(rows_f), Some(index)) = (&view, rows_f, index)
-            && view.file_rows.is_empty()
+            && (view.file_rows.is_empty() || (marks && self.header_at(y as f32).is_none()))
         {
             rows_f(index, x, y);
             return;
@@ -1682,7 +1767,7 @@ impl DiffWidget {
     }
 
     /// ファイルの見出しの行。
-    fn file_rows(&self) -> Vec<u32> {
+    pub fn file_rows(&self) -> Vec<u32> {
         self.state()
             .view
             .as_ref()
@@ -1975,7 +2060,7 @@ impl DiffWidget {
 
     /// 本文の左端（印・行番号の列の右。行番号の列の幅は、等幅なので桁数から）。行番号と印は横にスクロールしない。
     fn text_left(st: &State, view: &View) -> f32 {
-        let left = if st.checks {
+        let left = if Self::mark_column(st) {
             TEXT_INSET + MARK_WIDTH
         } else {
             TEXT_INSET
@@ -2075,12 +2160,52 @@ impl DiffWidget {
             self.begin_text_selection(x, y, shift, clicks);
             return;
         }
+        // いくつかのファイルを並べた Working Copy の差分: 見出しを押すとそのファイルを畳む・開く、右端の ⋯ は
+        // そのファイルのメニュー。
+        if !view.file_rows.is_empty()
+            && let Some(file) = self.header_at(y)
+        {
+            if x > self.width() as f32 - MORE_WIDTH {
+                self.file_menu(x as f64, y as f64);
+                return;
+            }
+            let f = self.state().on_toggle_file.clone();
+            if let Some(f) = f {
+                f(file);
+            }
+            return;
+        }
         let Some(index) = self.row_at(y as f64) else {
             return;
         };
         let index = index as u32;
         let rows = &view.view.rows;
         let row = rows[index as usize];
+        let (folds, bar, mark_column, text_x) = {
+            let st = self.state();
+            (
+                st.folds,
+                st.stage_bar && (st.checks || st.split_side.is_some()),
+                Self::mark_column(&st),
+                Self::text_left(&st, &view),
+            )
+        };
+        // 隙間の行: ボタン・札で開く・畳む、hunk の操作。行のほかの所は何もしない（選ばない）。
+        if folds && row.kind == DiffRow::HUNK {
+            self.gap_click(x, y, index);
+            return;
+        }
+        // 「変更の帯」の形: 帯を押すとかたまり、行番号を押す・ドラッグするとその行（離したとき）。
+        if folds && bar && Self::is_change(&row) && x < text_x - GUTTER_GAP / 2.0 {
+            if mark_column && x < TEXT_INSET + MARK_WIDTH {
+                let (start, end) = Self::change_block(rows, index as usize);
+                self.stage_rows((start..end).collect());
+            } else {
+                self.state().number_drag = Some((index, vec![index]));
+                self.queue_draw();
+            }
+            return;
+        }
         // 左端のチェックボックス: その行（hunk の見出しなら hunk の変更すべて）を含める・外す（macOS 版と同じ）。
         if checks
             && x < TEXT_INSET + MARK_WIDTH
@@ -2102,7 +2227,16 @@ impl DiffWidget {
             }
             return;
         }
+        let before = if ctrl {
+            self.state().selection.clone()
+        } else {
+            BTreeSet::new()
+        };
         self.select_rows(&view, index, shift, ctrl);
+        // ドラッグで範囲を選ぶ（押した行から。Ctrl なら前に選んでいた行に足す。macOS 版と同じ）。
+        if !shift {
+            self.state().row_drag = Some((index, before));
+        }
     }
 
     /// `(x, y)`（部品の中の位置）の文字の位置。上にはみ出せば先頭、下にはみ出せば末尾。
@@ -2203,6 +2337,9 @@ impl DiffWidget {
 
     /// ドラッグした: 選ぶ文字を `(x, y)` まで広げる（上下にはみ出せば、その向きにスクロールする）。
     fn drag_to(&self, x: f32, y: f32) {
+        if self.drag_rows(y) {
+            return;
+        }
         let (dragging, current, unit) = {
             let st = self.state();
             (
@@ -2681,7 +2818,7 @@ impl DiffWidget {
             st.theme_generation = crate::theme::generation();
         }
         let secondary = gdk::RGBA::new(fg.red(), fg.green(), fg.blue(), fg.alpha() * 0.5);
-        let left = if st.checks {
+        let left = if Self::mark_column(st) {
             TEXT_INSET + MARK_WIDTH
         } else {
             TEXT_INSET
@@ -2730,7 +2867,7 @@ impl DiffWidget {
             let background = match row.kind {
                 DiffRow::ADDED => Some(DiffColor::Added),
                 DiffRow::REMOVED => Some(DiffColor::Removed),
-                DiffRow::HUNK => Some(DiffColor::Hunk),
+                DiffRow::HUNK if !st.folds => Some(DiffColor::Hunk),
                 DiffRow::OURS => Some(DiffColor::Current),
                 DiffRow::THEIRS => Some(DiffColor::Incoming),
                 DiffRow::BASE => Some(DiffColor::Base),
@@ -2749,6 +2886,10 @@ impl DiffWidget {
                     &graphene::Rect::new(0.0, top, width, row_h),
                 );
             }
+            if st.folds && row.kind == DiffRow::HUNK {
+                self.draw_gap_row(snapshot, st, &view, index, top, width, text_x);
+                continue;
+            }
             if row.kind == DiffRow::HUNK && st.on_expand_hunk.is_some() {
                 self.draw_expand_mark(snapshot, top, rh, text_x - GUTTER_GAP / 2.0);
             }
@@ -2757,7 +2898,9 @@ impl DiffWidget {
             let y = top + ((rh - h as f32) / 2.0).round();
             // 変更の行と hunk の見出しのチェックボックス。hunk は中の変更がすべて含まれていれば ✓、一部なら −
             // （macOS 版と同じ）。
-            if st.checks {
+            if st.folds && Self::mark_column(st) && Self::is_change(row) {
+                self.draw_bar(snapshot, st, index, row, top, row_h, text_x, &fg);
+            } else if st.checks {
                 let check = if Self::is_change(row) {
                     Some(if row.flags & DiffRow::STAGED != 0 {
                         Check::On
@@ -3343,6 +3486,646 @@ enum Check {
     On,
     /// hunk の変更の一部だけを含めている。
     Mixed,
+}
+
+/// 変更のない所（隙間）の行と、行の stage（Working Copy。macOS 版と同じ）。
+impl DiffWidget {
+    /// 次の `show_working` の差分を、隙間を開閉する形で出す。`openings` は隙間の番号 → 上・下から見せている行数、
+    /// `split_side` は Unstaged・Staged の差分なら Some（Staged なら true）、`stage_bar` は「変更の帯」の形か。
+    pub fn set_folds(
+        &self,
+        folds: bool,
+        openings: HashMap<u32, (u32, u32)>,
+        split_side: Option<bool>,
+        stage_bar: bool,
+    ) {
+        let mut st = self.state();
+        st.folds = folds;
+        st.gap_openings = openings;
+        st.split_side = split_side;
+        st.stage_bar = stage_bar;
+    }
+
+    /// いくつかのファイルを並べた Working Copy の差分の、見出しの飾りと畳んだファイル（`show_working` の後に）。
+    pub fn set_working_files(&self, decor: Decor, collapsed: Vec<bool>) {
+        self.replace_decor(decor);
+        self.state().collapsed = collapsed;
+        self.queue_draw();
+    }
+
+    pub fn connect_set_gap(&self, f: impl Fn(u32, Option<(u32, u32)>) + 'static) {
+        self.state().on_set_gap = Some(Rc::new(f));
+    }
+
+    pub fn connect_discard_rows(&self, f: impl Fn(Vec<usize>) + 'static) {
+        self.state().on_discard_rows = Some(Rc::new(f));
+    }
+
+    /// 行の左に帯（All）・チェックの欄を置くか。
+    fn mark_column(st: &State) -> bool {
+        st.checks || (st.folds && st.stage_bar && st.split_side.is_some())
+    }
+
+    /// `row` を含む変更のかたまり（続いた追加・削除の行。始め、終わりの次）。
+    fn change_block(rows: &[DiffRow], row: usize) -> (usize, usize) {
+        let mut start = row;
+        while start > 0 && Self::is_change(&rows[start - 1]) {
+            start -= 1;
+        }
+        let mut end = row + 1;
+        while end < rows.len() && Self::is_change(&rows[end]) {
+            end += 1;
+        }
+        (start, end)
+    }
+
+    /// `rows` の変更を stage・unstage する（Unstaged・Staged ならその側の操作、All なら入れ替える）。
+    fn stage_rows(&self, rows: Vec<usize>) {
+        let f = self.state().on_mark.clone();
+        if let Some(f) = f.filter(|_| !rows.is_empty()) {
+            f(rows);
+        }
+    }
+
+    /// `rows` に効く操作と名前（Stage・Unstage・Discard。`lines` なら Lines、そうでなければ Hunk）。
+    fn stage_actions(
+        st: &State,
+        view: &View,
+        rows: &[usize],
+        lines: bool,
+    ) -> Vec<(GapAction, String)> {
+        if rows.is_empty() || !(st.checks || st.split_side.is_some()) {
+            return Vec::new();
+        }
+        let noun = if lines { "Lines" } else { "Hunk" };
+        if st.checks {
+            let all = rows
+                .iter()
+                .all(|&r| view.view.rows[r].flags & DiffRow::STAGED != 0);
+            return vec![if all {
+                (GapAction::Unstage, format!("Unstage {noun}"))
+            } else {
+                (GapAction::Stage, format!("Stage {noun}"))
+            }];
+        }
+        if st.split_side == Some(true) {
+            return vec![(GapAction::Unstage, format!("Unstage {noun}"))];
+        }
+        let mut out = vec![(GapAction::Stage, format!("Stage {noun}"))];
+        if st.on_discard_rows.is_some() {
+            out.push((GapAction::Discard, format!("Discard {noun}")));
+        }
+        out
+    }
+
+    /// 右クリックのメニューの、選んだ行・その hunk・その行の Stage（Unstage）と Discard（名前と行）。
+    pub fn stage_menu(&self, row: usize) -> Vec<(String, Vec<usize>, bool)> {
+        let st = self.state();
+        let Some(view) = st.view.clone() else {
+            return Vec::new();
+        };
+        if !st.folds || row >= view.view.rows.len() {
+            return Vec::new();
+        }
+        let rows = &view.view.rows;
+        let mut out = Vec::new();
+        let mut add = |picked: Vec<usize>, lines: bool, what: String| {
+            for (action, title) in Self::stage_actions(&st, &view, &picked, lines) {
+                let name = if lines {
+                    title.replace("Lines", &what)
+                } else {
+                    title
+                };
+                out.push((name, picked.clone(), action == GapAction::Discard));
+            }
+        };
+        let selected: Vec<usize> = st
+            .selection
+            .iter()
+            .map(|&r| r as usize)
+            .filter(|&r| Self::is_change(&rows[r]))
+            .collect();
+        if !selected.is_empty() {
+            let n = selected.len();
+            add(selected, true, tr!("{n} Selected Lines", n = n));
+        }
+        let header = if rows[row].kind == DiffRow::HUNK {
+            Some(row)
+        } else {
+            (0..row)
+                .rev()
+                .take_while(|&i| rows[i].kind != DiffRow::FILE)
+                .find(|&i| rows[i].kind == DiffRow::HUNK)
+        };
+        if let Some(h) = header {
+            let changes: Vec<usize> = Self::hunk_changes(rows, h).collect();
+            add(changes, false, String::new());
+        }
+        if Self::is_change(&rows[row]) {
+            add(vec![row], true, tr!("This Line"));
+        }
+        out
+    }
+
+    /// 小さめの字の配置（隙間の行の札・ボタン・関数名）。
+    fn small_layout(&self, text: &str, bold: bool) -> pango::Layout {
+        let layout = self.create_pango_layout(Some(text));
+        let attrs = pango::AttrList::new();
+        attrs.insert(pango::AttrFloat::new_scale(0.85));
+        if bold {
+            attrs.insert(pango::AttrInt::new_weight(pango::Weight::Semibold));
+        }
+        layout.set_attributes(Some(&attrs));
+        layout
+    }
+
+    /// 隙間の行の置き場所（部品の中の座標）。左に関数名、中央に札、札の右に開く・畳む（マウスが乗っているとき）、
+    /// 右端にその下の hunk の操作（「選んでから」の形）。hunk の行を選んでいれば、札は選んだ行の数になり、操作は
+    /// 選んだ行に効く。
+    fn gap_layout(
+        &self,
+        st: &State,
+        view: &View,
+        index: u32,
+        top: f32,
+        width: f32,
+        text_x: f32,
+    ) -> GapLayout {
+        let rows = &view.view.rows;
+        let row = rows[index as usize];
+        let (hidden, shown) = (row.old_no, row.new_no);
+        let function = view.text(&row).to_owned();
+        let size = |l: &pango::Layout| {
+            let (w, h) = l.pixel_size();
+            (w as f32, h as f32)
+        };
+        // ファイルの頭・末尾の隙間か（いくつかのファイルを並べた差分では、そのファイルの中で）。
+        let edge = |range: &mut dyn Iterator<Item = usize>| {
+            for i in range {
+                if rows[i].kind == DiffRow::FILE {
+                    return true;
+                }
+                if Self::is_change(&rows[i]) {
+                    return false;
+                }
+            }
+            true
+        };
+        let leading = edge(&mut (0..index as usize).rev());
+        let trailing = edge(&mut (index as usize + 1..rows.len()));
+        let changes: Vec<usize> = if !st.stage_bar {
+            Self::hunk_changes(rows, index as usize).collect()
+        } else {
+            Vec::new()
+        };
+        let selected: Vec<usize> = changes
+            .iter()
+            .copied()
+            .filter(|&r| st.selection.contains(&(r as u32)))
+            .collect();
+        let pill_text = if !selected.is_empty() {
+            tr!("{n} lines selected", n = selected.len())
+        } else if hidden > 0 {
+            format!("⋯  {}", tr!("{n} unchanged lines", n = hidden))
+        } else if shown > 0 {
+            tr!("{n} unchanged lines shown", n = shown)
+        } else {
+            String::new()
+        };
+        let mut gap_actions: Vec<(GapAction, String)> = Vec::new();
+        if st.hovered_gap.is_some_and(|(r, _)| r == index) && selected.is_empty() {
+            if hidden > GAP_STEP {
+                if !leading {
+                    gap_actions.push((
+                        GapAction::Down,
+                        format!("↓ {}", tr!("{n} lines", n = GAP_STEP)),
+                    ));
+                }
+                if !trailing {
+                    gap_actions.push((
+                        GapAction::Up,
+                        format!("↑ {}", tr!("{n} lines", n = GAP_STEP)),
+                    ));
+                }
+            }
+            if hidden > 0 {
+                gap_actions.push((GapAction::All, tr!("All")));
+            }
+            if shown > 0 {
+                gap_actions.push((GapAction::Collapse, tr!("Collapse")));
+            }
+        }
+        let target = if selected.is_empty() {
+            changes
+        } else {
+            selected.clone()
+        };
+        let hunk_actions = Self::stage_actions(st, view, &target, !selected.is_empty());
+        let rh = st.row_height;
+        let height = (rh - 4.0).max(10.0);
+        let y = top + (rh - height) / 2.0;
+        let mut buttons = Vec::new();
+        // 右端の hunk の操作（右から並べる）。
+        let mut right = width - 10.0;
+        for (action, title) in hunk_actions.iter().rev() {
+            let layout = self.small_layout(title, true);
+            let w = size(&layout).0 + 12.0;
+            buttons.push((
+                *action,
+                graphene::Rect::new(right - w, y, w, height),
+                layout,
+            ));
+            right -= w + 2.0;
+        }
+        // 中央の札（自分の幅だけで中央に置く。ボタンが出ても動かない）と、その右の開く・畳む。
+        let mut pill = None;
+        if !pill_text.is_empty() {
+            let layout = self.small_layout(&pill_text, false);
+            let w = size(&layout).0 + 20.0;
+            let mut x = (text_x + (width - text_x - w) / 2.0).max(text_x + 8.0);
+            pill = Some((graphene::Rect::new(x, y, w, height), layout));
+            x += w + 6.0;
+            for (action, title) in gap_actions {
+                let layout = self.small_layout(&title, true);
+                let cw = size(&layout).0 + 16.0;
+                if x + cw >= right - 8.0 {
+                    break;
+                }
+                buttons.push((action, graphene::Rect::new(x, y, cw, height), layout));
+                x += cw + 6.0;
+            }
+        }
+        // 左の関数名（札にかかるなら出さない）。
+        let function = (!function.is_empty())
+            .then(|| self.small_layout(&format!("ƒ {function}"), false))
+            .filter(|l| {
+                let end = text_x + 8.0 + size(l).0;
+                end + 12.0 < pill.as_ref().map_or(right, |(r, _)| r.x())
+            })
+            .map(|l| (text_x + 8.0, l));
+        GapLayout {
+            pill,
+            pill_selected: !selected.is_empty(),
+            buttons,
+            function,
+            target,
+        }
+    }
+
+    /// 隙間の行: 破線と、札・ボタン・関数名。
+    #[allow(clippy::too_many_arguments)]
+    fn draw_gap_row(
+        &self,
+        snapshot: &gtk::Snapshot,
+        st: &State,
+        view: &View,
+        index: u32,
+        top: f32,
+        width: f32,
+        text_x: f32,
+    ) {
+        let layout = self.gap_layout(st, view, index, top, width, text_x);
+        let fg = self.color();
+        let rh = st.row_height;
+        let accent = gdk::RGBA::new(0.21, 0.52, 0.89, 1.0);
+        let red = gdk::RGBA::new(0.88, 0.27, 0.25, 1.0);
+        let faint = |a: f32| gdk::RGBA::new(fg.red(), fg.green(), fg.blue(), a);
+        let with_alpha = |c: &gdk::RGBA, a: f32| gdk::RGBA::new(c.red(), c.green(), c.blue(), a);
+        let mid = (top + rh / 2.0).floor();
+        let mut holes: Vec<(f32, f32)> = layout
+            .buttons
+            .iter()
+            .map(|(_, r, _)| (r.x() - 6.0, r.x() + r.width() + 6.0))
+            .collect();
+        if let Some((r, _)) = &layout.pill {
+            holes.push((r.x() - 6.0, r.x() + r.width() + 6.0));
+        }
+        if let Some((x, l)) = &layout.function {
+            holes.push((x - 4.0, x + l.pixel_size().0 as f32 + 8.0));
+        }
+        let mut x = text_x + 4.0;
+        while x < width - 4.0 {
+            if !holes
+                .iter()
+                .any(|&(a, b)| (x >= a && x <= b) || (x + 4.0 >= a && x + 4.0 <= b))
+            {
+                snapshot.append_color(&faint(0.25), &graphene::Rect::new(x, mid, 4.0, 1.0));
+            }
+            x += 8.0;
+        }
+        let rounded =
+            |snapshot: &gtk::Snapshot, rect: &graphene::Rect, radius: f32, color: &gdk::RGBA| {
+                let size = graphene::Size::new(radius, radius);
+                snapshot.push_rounded_clip(&gsk::RoundedRect::new(*rect, size, size, size, size));
+                snapshot.append_color(color, rect);
+                snapshot.pop();
+            };
+        let put = |snapshot: &gtk::Snapshot,
+                   l: &pango::Layout,
+                   rect: &graphene::Rect,
+                   color: &gdk::RGBA| {
+            let (w, h) = l.pixel_size();
+            snapshot.save();
+            snapshot.translate(&graphene::Point::new(
+                rect.x() + (rect.width() - w as f32) / 2.0,
+                rect.y() + (rect.height() - h as f32) / 2.0,
+            ));
+            snapshot.append_layout(l, color);
+            snapshot.restore();
+        };
+        if let Some((rect, l)) = &layout.pill {
+            let hovered = st.hovered_gap == Some((index, None));
+            let fill = if layout.pill_selected {
+                with_alpha(&accent, 0.18)
+            } else {
+                faint(if hovered { 0.22 } else { 0.12 })
+            };
+            rounded(snapshot, rect, rect.height() / 2.0, &fill);
+            put(
+                snapshot,
+                l,
+                rect,
+                &if layout.pill_selected {
+                    accent
+                } else {
+                    faint(0.7)
+                },
+            );
+        }
+        for (action, rect, l) in &layout.buttons {
+            let hovered = st.hovered_gap == Some((index, Some(*action)));
+            let color = if *action == GapAction::Discard {
+                red
+            } else {
+                accent
+            };
+            let hunk = matches!(
+                action,
+                GapAction::Stage | GapAction::Unstage | GapAction::Discard
+            );
+            if hunk {
+                if hovered {
+                    rounded(snapshot, rect, 4.0, &with_alpha(&color, 0.14));
+                }
+            } else {
+                rounded(
+                    snapshot,
+                    rect,
+                    rect.height() / 2.0,
+                    &with_alpha(&color, if hovered { 0.30 } else { 0.14 }),
+                );
+            }
+            put(snapshot, l, rect, &color);
+        }
+        if let Some((x, l)) = &layout.function {
+            let h = l.pixel_size().1 as f32;
+            snapshot.save();
+            snapshot.translate(&graphene::Point::new(*x, top + (rh - h) / 2.0));
+            snapshot.append_layout(l, &faint(0.45));
+            snapshot.restore();
+        }
+    }
+
+    /// 変更の行の左の帯: All では staged なら塗り、まだなら枠だけ。Unstaged・Staged（「変更の帯」の形）では、
+    /// かたまりの印（乗ると太く、行番号の欄も薄く塗る）。
+    #[allow(clippy::too_many_arguments)]
+    fn draw_bar(
+        &self,
+        snapshot: &gtk::Snapshot,
+        st: &State,
+        index: u32,
+        row: &DiffRow,
+        top: f32,
+        row_h: f32,
+        text_x: f32,
+        fg: &gdk::RGBA,
+    ) {
+        let accent = gdk::RGBA::new(0.21, 0.52, 0.89, 1.0);
+        let hot = st
+            .hovered_block
+            .is_some_and(|(a, b)| index >= a && index < b)
+            || st
+                .number_drag
+                .as_ref()
+                .is_some_and(|(_, rows)| rows.contains(&index));
+        // 左端から少し離す（差分の左端の数 px は、一覧との境の仕切りが押されたものとして受け取る）。
+        let x = TEXT_INSET + 8.0;
+        let bar = if hot {
+            snapshot.append_color(
+                &gdk::RGBA::new(0.21, 0.52, 0.89, 0.14),
+                &graphene::Rect::new(
+                    TEXT_INSET + MARK_WIDTH,
+                    top,
+                    text_x - GUTTER_GAP - TEXT_INSET - MARK_WIDTH,
+                    row_h,
+                ),
+            );
+            graphene::Rect::new(x - 1.0, top, 6.0, row_h)
+        } else {
+            graphene::Rect::new(x, top, 4.0, row_h)
+        };
+        if !st.checks {
+            let a = if hot { 1.0 } else { 0.55 };
+            snapshot.append_color(
+                &gdk::RGBA::new(accent.red(), accent.green(), accent.blue(), a),
+                &bar,
+            );
+        } else if row.flags & DiffRow::STAGED != 0 {
+            snapshot.append_color(&accent, &bar);
+        } else {
+            let line = gdk::RGBA::new(fg.red(), fg.green(), fg.blue(), 0.5);
+            snapshot.append_color(
+                &line,
+                &graphene::Rect::new(bar.x(), bar.y(), 1.0, bar.height()),
+            );
+            snapshot.append_color(
+                &line,
+                &graphene::Rect::new(bar.x() + bar.width() - 1.0, bar.y(), 1.0, bar.height()),
+            );
+        }
+    }
+
+    /// 隙間の行を押した: ボタンならその操作、札ならすべて開く（すべて開いていれば畳む）。
+    fn gap_click(&self, x: f32, y: f32, index: u32) {
+        let scroll = self.vadjustment().map_or(0.0, |a| a.value()) as f32;
+        let width = self.width() as f32;
+        let (layout, gap, row, opening, on_set, on_discard) = {
+            let mut st = self.state();
+            self.ensure_font(&mut st);
+            let Some(view) = st.view.clone() else { return };
+            let top = st.row_y(index) - scroll;
+            let text_x = Self::text_left(&st, &view);
+            let layout = self.gap_layout(&st, &view, index, top, width, text_x);
+            let Ok(gap) = st.gap_rows.binary_search(&index) else {
+                return;
+            };
+            let gap = gap as u32;
+            (
+                layout,
+                gap,
+                view.view.rows[index as usize],
+                st.gap_openings.get(&gap).copied().unwrap_or((0, 0)),
+                st.on_set_gap.clone(),
+                st.on_discard_rows.clone(),
+            )
+        };
+        let p = graphene::Point::new(x, y);
+        let inside = |r: &graphene::Rect| {
+            graphene::Rect::new(r.x() - 2.0, r.y() - 3.0, r.width() + 4.0, r.height() + 6.0)
+                .contains_point(&p)
+        };
+        let action = if let Some((a, _, _)) = layout.buttons.iter().find(|(_, r, _)| inside(r)) {
+            *a
+        } else if let Some((r, _)) = layout.pill.as_ref().filter(|_| !layout.pill_selected)
+            && inside(r)
+            && (row.old_no > 0 || row.new_no > 0)
+        {
+            if row.old_no > 0 {
+                GapAction::All
+            } else {
+                GapAction::Collapse
+            }
+        } else {
+            return;
+        };
+        let grow = |v: u32| v.saturating_add(GAP_STEP);
+        let (top, bottom) = opening;
+        let new = match action {
+            GapAction::Down => Some((grow(top), bottom)),
+            GapAction::Up => Some((top, grow(bottom))),
+            // すべて開くときは、隙間の行を開いた行の上に残す（そこから畳める）。
+            GapAction::All => Some((top, u32::MAX)),
+            GapAction::Collapse => None,
+            GapAction::Stage | GapAction::Unstage => {
+                self.stage_rows(layout.target);
+                return;
+            }
+            GapAction::Discard => {
+                if let Some(f) = on_discard {
+                    f(layout.target);
+                }
+                return;
+            }
+        };
+        if let Some(f) = on_set {
+            f(gap, new);
+        }
+    }
+
+    /// マウスの位置（None なら外れた）から、乗っている隙間の行・ボタンと、帯の上のかたまりを決める。
+    fn hover_gap(&self, at: Option<(f32, f32)>) {
+        let scroll = self.vadjustment().map_or(0.0, |a| a.value()) as f32;
+        let width = self.width() as f32;
+        let (before, gap, block) = {
+            let mut st = self.state();
+            if !st.folds {
+                return;
+            }
+            // 比べるための前の値（下でボタンを並べるために行だけ先に書く）。
+            let before = (st.hovered_gap, st.hovered_block);
+            self.ensure_font(&mut st);
+            let Some(view) = st.view.clone() else { return };
+            let found = at.and_then(|(x, y)| {
+                let index = st.row_at(y + scroll);
+                (index >= 0 && (index as u32) < st.row_count()).then_some((x, y, index as u32))
+            });
+            let (gap, block) = match found {
+                Some((x, y, index)) if view.view.rows[index as usize].kind == DiffRow::HUNK => {
+                    // 先に行だけ決めて（ボタンを並べるため）、ボタンに乗っているかを調べる。
+                    if st.hovered_gap.map(|(r, _)| r) != Some(index) {
+                        st.hovered_gap = Some((index, None));
+                    }
+                    let top = st.row_y(index) - scroll;
+                    let text_x = Self::text_left(&st, &view);
+                    let layout = self.gap_layout(&st, &view, index, top, width, text_x);
+                    let p = graphene::Point::new(x, y);
+                    let action = layout
+                        .buttons
+                        .iter()
+                        .find(|(_, r, _)| {
+                            graphene::Rect::new(
+                                r.x() - 2.0,
+                                r.y() - 3.0,
+                                r.width() + 4.0,
+                                r.height() + 6.0,
+                            )
+                            .contains_point(&p)
+                        })
+                        .map(|(a, _, _)| *a);
+                    (Some((index, action)), None)
+                }
+                Some((x, _, index))
+                    if st.stage_bar
+                        && Self::mark_column(&st)
+                        && x < TEXT_INSET + MARK_WIDTH
+                        && Self::is_change(&view.view.rows[index as usize]) =>
+                {
+                    let (a, b) = Self::change_block(&view.view.rows, index as usize);
+                    (None, Some((a as u32, b as u32)))
+                }
+                _ => (None, None),
+            };
+            (before, gap, block)
+        };
+        let changed = {
+            let mut st = self.state();
+            let changed = before != (gap, block);
+            st.hovered_gap = gap;
+            st.hovered_block = block;
+            changed
+        };
+        if changed {
+            self.queue_draw();
+        }
+    }
+
+    /// 行番号の上・行のドラッグ。扱ったら true。
+    fn drag_rows(&self, y: f32) -> bool {
+        let scroll = self.vadjustment().map_or(0.0, |a| a.value()) as f32;
+        let mut st = self.state();
+        let Some(view) = st.view.clone() else {
+            return false;
+        };
+        let count = view.view.rows.len();
+        if count == 0 {
+            return false;
+        }
+        let row = (st.row_at(y + scroll).max(0) as usize).min(count - 1) as u32;
+        if let Some((anchor, _)) = st.number_drag.clone() {
+            let rows: Vec<u32> = (anchor.min(row)..=anchor.max(row))
+                .filter(|&r| Self::is_change(&view.view.rows[r as usize]))
+                .collect();
+            st.number_drag = Some((anchor, rows));
+            drop(st);
+            self.queue_draw();
+            return true;
+        }
+        if let Some((anchor, base)) = st.row_drag.clone().filter(|_| st.marks) {
+            let mut next = base;
+            next.extend(anchor.min(row)..=anchor.max(row));
+            if next != st.selection {
+                st.selection = next;
+                drop(st);
+                self.queue_draw();
+                self.selection_changed();
+            }
+            return true;
+        }
+        false
+    }
+
+    /// ドラッグを離した: 行番号の上のドラッグなら、その範囲を stage する。
+    fn drag_end(&self) {
+        let drag = {
+            let mut st = self.state();
+            st.row_drag = None;
+            st.number_drag.take()
+        };
+        if let Some((_, rows)) = drag {
+            self.stage_rows(rows.into_iter().map(|r| r as usize).collect());
+            self.queue_draw();
+        }
+    }
 }
 
 fn draw_mark(snapshot: &gtk::Snapshot, x: f32, top: f32, rh: f32, check: Check, fg: &gdk::RGBA) {

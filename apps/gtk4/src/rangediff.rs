@@ -156,6 +156,8 @@ impl RangeDiff {
         entry.add_css_class("monospace");
         entry.set_hexpand(true);
         let compare = gtk::Button::with_label(&tr!("Compare"));
+        compare.add_css_class("small-push");
+        compare.set_valign(gtk::Align::Center);
         let close = gtk::Button::from_icon_name("window-close-symbolic");
         close.add_css_class("flat");
         close.set_tooltip_text(Some(&tr!("Close Range Diff")));

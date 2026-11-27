@@ -343,6 +343,9 @@ fn build(
     if modes.is_some() {
         let group = gtk::Box::new(gtk::Orientation::Horizontal, 0);
         group.add_css_class("linked");
+        // macOS 版の小さなセグメント。
+        group.add_css_class("small-pushes");
+        group.set_valign(gtk::Align::Center);
         for m in Mode::ALL {
             let icon = crate::icon::Icon::default();
             icon.set(m.icon(), false);
@@ -413,6 +416,8 @@ fn build(
     bar.append(&zoom_label);
     let zooms = gtk::Box::new(gtk::Orientation::Horizontal, 0);
     zooms.add_css_class("linked");
+    zooms.add_css_class("small-pushes");
+    zooms.set_valign(gtk::Align::Center);
     for (kind, title) in [
         (crate::icon::Kind::ZoomOut, tr!("Zoom Out")),
         (crate::icon::Kind::ZoomIn, tr!("Zoom In")),

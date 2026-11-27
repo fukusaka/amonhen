@@ -38,6 +38,26 @@ pub const OPEN_THROUGH_DAEMON: &str = "openThroughDaemon";
 pub const USE_FSMONITOR: &str = "useFSMonitor";
 pub const WORKING_COPY_LAYOUT: &str = "workingCopyLayout";
 pub const AUTO_MAGIC_MERGE: &str = "autoMagicMerge";
+/// Working Copy の差分で行を stage する形: "select"（選んでから hunk の見出しで）か "bar"（変更の帯・行番号を押して）。
+/// macOS 版と同じキー。
+pub const LINE_STAGE_STYLE: &str = "lineStageStyle";
+
+/// 複数のファイルを並べた差分（History のコミット、Working Copy で選んだファイル）で、開いて並べるファイルの数。
+/// macOS 版と同じキー。
+pub const DIFF_OPEN_FILES: &str = "diffOpenFiles";
+const DIFF_OPEN_FILES_CHOICES: [usize; 5] = [5, 10, 20, 50, 100];
+
+pub fn diff_open_files() -> usize {
+    string(DIFF_OPEN_FILES)
+        .and_then(|s| s.parse().ok())
+        .filter(|n| DIFF_OPEN_FILES_CHOICES.contains(n))
+        .unwrap_or(20)
+}
+
+/// 行の Stage の仕方が「変更の帯・行番号を押して」か。
+pub fn line_stage_bar() -> bool {
+    string(LINE_STAGE_STYLE).as_deref() == Some("bar")
+}
 /// File History に merge のコミットも出すか。
 pub const FILE_HISTORY_MERGES: &str = "fileHistoryMerges";
 /// 開いたリポジトリをブックマークに入れる（Repositories の一覧）。
@@ -663,14 +683,53 @@ pub fn show(near: &impl IsA<gtk::Widget>) {
 
     // Diff & Merge
     stack.add_titled(
-        &page(&[section(
-            Some(&tr!("Merge Editor")),
-            &[check(
-                AUTO_MAGIC_MERGE,
-                &tr!("Resolve unambiguous conflicts when the merge editor opens"),
-            )
-            .upcast()],
-        )]),
+        &page(&[
+            section(
+                Some(&tr!("Diff")),
+                &[
+                    choice_row(
+                        &tr!("Files to open together"),
+                        &DIFF_OPEN_FILES_CHOICES.map(|n| n.to_string()),
+                        || {
+                            DIFF_OPEN_FILES_CHOICES
+                                .iter()
+                                .position(|&n| n == diff_open_files())
+                                .unwrap_or(2)
+                        },
+                        |i| set_string(DIFF_OPEN_FILES, &DIFF_OPEN_FILES_CHOICES[i].to_string()),
+                        DIFF_OPEN_FILES,
+                    )
+                    .upcast(),
+                    note(&tr!(
+                        "When a diff lists several files (a commit in History, files selected in Working Copy), this many are shown open from the top."
+                    ))
+                    .upcast(),
+                    choice_row(
+                        &tr!("Staging lines"),
+                        &[
+                            tr!("Select lines, then use the hunk header"),
+                            tr!("Click the change bar or line numbers"),
+                        ],
+                        || usize::from(line_stage_bar()),
+                        |i| set_string(LINE_STAGE_STYLE, if i == 1 { "bar" } else { "select" }),
+                        LINE_STAGE_STYLE,
+                    )
+                    .upcast(),
+                    note(&tr!(
+                        "How lines are staged and unstaged in the Working Copy diff. Space and the right-click menu work either way."
+                    ))
+                    .upcast(),
+                ],
+            ),
+            section(
+                Some(&tr!("Merge Editor")),
+                &[check(
+                    AUTO_MAGIC_MERGE,
+                    &tr!("Resolve unambiguous conflicts when the merge editor opens"),
+                )
+                .upcast()],
+            ),
+        ]),
         Some("diff-merge"),
         &tr!("Diff & Merge"),
     );

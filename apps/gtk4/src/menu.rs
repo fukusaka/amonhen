@@ -342,7 +342,8 @@ fn build(
 /// （macOS 版の 17 pt。ふつうの字の 13 pt に対する比）。押せない Commit・削除などのボタンは色を外して、ふつうの
 /// 押せないボタンと同じに（macOS 版と同じ。押せないのに色が残ると押せそうに見える）。`compact-icon` は枠のない
 /// 小さなアイコンのボタン（macOS 版のプルダウンの ▾ や時計のように、幅を取らない）。`small-push` は小さな文字の
-/// ボタン（macOS 版の controlSize small）。一覧の選んだ行は、一覧に入力の焦点がないときはアクセントカラーではなく
+/// ボタン（macOS 版の controlSize small）。`small-pushes` はつないだ組の中のボタンをすべて、DropDown・MenuButton
+/// の `small-push` は中のボタンを、同じ小ささに。一覧の選んだ行は、一覧に入力の焦点がないときはアクセントカラーではなく
 /// 灰色に（macOS 版の焦点のない表と同じ。History は自分で描くので同じ色を自分で選ぶ）。
 /// 交互の背景（`stripe_rows`。作り直す ListBox は並びのとおりに塗る）の色もここに。
 pub fn install_css() {
@@ -363,7 +364,8 @@ pub fn install_css() {
            background-color: alpha(currentColor, 0.1); color: @window_fg_color; } \
          button.compact-icon, menubutton.compact-icon > button { \
            min-width: 16px; padding-left: 4px; padding-right: 4px; } \
-         button.small-push { min-height: 24px; padding: 2px 8px; font-size: smaller; } \
+         button.small-push, .small-pushes > button, dropdown.small-push > button, \
+         menubutton.small-push > button { min-height: 24px; padding: 2px 8px; font-size: smaller; } \
          listview:not(:focus-within) > row:selected, list:not(:focus-within) > row:selected { \
          background-color: alpha(currentColor, 0.12); } \
          .zebra row.zebra-odd:not(:selected), list.zebra > row:nth-child(even):not(:selected) { \

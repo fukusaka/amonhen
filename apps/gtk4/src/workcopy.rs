@@ -16,7 +16,7 @@ use std::sync::Arc;
 use amonhen_core::diff::{self, DiffView, Whitespace};
 use amonhen_core::{Repository, StatusSnapshot, WorkingDiff};
 use amonhen_layout::DiffRow;
-use amonhen_model::{StatusEntry, StatusKind, tr};
+use amonhen_model::{ChangeKind, FileChange, Oid, StatusEntry, StatusKind, tr};
 use amonhen_projection::FrontendProfile;
 use gtk::prelude::*;
 use gtk::{gio, glib};
@@ -106,6 +106,42 @@ impl Layout {
 /// 追加と削除の行数（バイナリなどで数えられなければ None）。
 type LineCounts = (Option<u64>, Option<u64>);
 
+/// 一覧で 2 つ以上選んだときに並べている差分（選んだファイルのパス、並べた差分、畳んだファイル、ファイルごとの
+/// 隙間の番号の始まり: ファイルの番号・並べた差分での最初の番号・数）。
+struct Multi {
+    paths: Vec<String>,
+    diffs: Arc<Vec<WorkingDiff>>,
+    collapsed: HashSet<String>,
+    offsets: Vec<(usize, u32, u32)>,
+}
+
+/// 並べた差分のファイルの見出しの印（A・D・M・R）。
+fn header_mark(entry: &StatusEntry) -> &'static str {
+    let state = if entry.worktree != b'.' {
+        entry.worktree
+    } else {
+        entry.index
+    };
+    match state {
+        b'?' | b'A' => "A",
+        b'D' => "D",
+        b'R' => "R",
+        _ => "M",
+    }
+}
+
+/// 隙間の番号 → 上・下から見せる行数。
+type GapOpenings = HashMap<u32, (u32, u32)>;
+
+/// 差分で見る側（git の index → 作業ツリー・HEAD → index・HEAD → 作業ツリー）。Working Copy で 1 つで、ファイルを
+/// 替えても変わらない（macOS 版と同じ）。
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
+enum Side {
+    Unstaged,
+    Staged,
+    All,
+}
+
 /// 裏のスレッドで作った 1 ファイルの差分。行の操作に使う。コンフリクトなら None（行の操作はしない）。
 struct Working(Option<WorkingDiff>);
 
@@ -189,6 +225,35 @@ struct Inner {
     sides: gtk::Box,
     worktree_side: gtk::ToggleButton,
     staged_side: gtk::ToggleButton,
+    all_side: gtk::ToggleButton,
+    /// 差分で見る側。
+    side: Cell<Side>,
+    /// 一覧を git status のように Staged・Unstaged の節に分けるか（覚える）と、その切り替え。
+    sections: Cell<bool>,
+    sections_button: gtk::ToggleButton,
+    /// 一覧の行の `entries` の番号ごとの節（節分けでないときはすべて None）。
+    entry_sections: RefCell<Vec<Option<Side>>>,
+    /// 「すべてのファイル」の切り替え・木（出している間だけ）と、その置き場所。出している間は変更の一覧を隠す。
+    all_files: gtk::ToggleButton,
+    browser: RefCell<Option<Rc<crate::commitbrowser::Browser>>>,
+    browser_holder: gtk::Box,
+    include_row: gtk::Box,
+    list_area: gtk::Overlay,
+    /// すべてのファイルで開いているファイル（作り直しで選び直す）。
+    tree_open: RefCell<Option<String>>,
+    /// 画像の比べ方（ファイルを替えても保つ）と、テキストで見ることにした SVG（パス）。
+    image_mode: Cell<crate::imagediff::Mode>,
+    svg_as_text: RefCell<HashSet<String>>,
+    /// すべてのファイルの木の HEAD（コミットして HEAD が動いたら作り直す）。
+    browser_head: Cell<Option<Oid>>,
+    /// 一覧で 2 つ以上選んだときに並べている差分。
+    multi: RefCell<Option<Multi>>,
+    /// ファイルと見る側ごとの、変更のない所（隙間）の開き方（隙間の番号 → 上・下から見せる行数）。覚えない。
+    open_gaps: RefCell<HashMap<(Side, String), GapOpenings>>,
+    /// ファイル全体を表示（変更のない所をすべて開く・閉じる）。
+    whole_file: gtk::ToggleButton,
+    /// 節ごとの行数（Staged は HEAD と index、Unstaged は index と作業ツリー）。
+    split_stats: RefCell<(HashMap<String, LineCounts>, HashMap<String, LineCounts>)>,
     /// コンフリクトのファイルの解決のボタン。
     conflict_buttons: gtk::Box,
     /// 差分（`diff`）か、コンフリクトのファイルのマージエディタ（`merge`）。
@@ -245,6 +310,8 @@ struct RowCell {
     detail: gtk::Label,
     counts: gtk::Box,
     discard: gtk::Button,
+    /// 節の見出しの Stage All・Unstage All（ほかの行では出さない）。
+    action: gtk::Button,
     /// 変更を捨てるボタンを、マウスを載せたときに出すか（コンフリクトと、stage 済みだけのファイルにはない）。
     can_discard: Cell<bool>,
     /// 中身を入れている間（チェックの変化を操作として扱わない）。
@@ -345,9 +412,6 @@ impl WorkingCopy {
         // 左の下: 変更のあるファイルの一覧。
         // 太字の「Changes」と、すぐ右に「含めた数 / 変更の数」、右端に見せ方の切り替え（macOS 版と同じ）。
         let all = gtk::CheckButton::new();
-        let all_title = gtk::Label::new(Some(&tr!("Changes")));
-        all_title.add_css_class("heading");
-        all.set_child(Some(&all_title));
         all.set_tooltip_text(Some(&tr!(
             "Include or exclude all listed files in the next commit"
         )));
@@ -357,9 +421,30 @@ impl WorkingCopy {
         count.add_css_class("caption");
         count.add_css_class("numeric");
         count.set_tooltip_text(Some(&tr!("Files in the next commit / changed files")));
+        // 上の行: 変更｜すべてのファイル、右端に節分けと見せ方。その下の行: すべてを含めるチェックと数
+        // （macOS 版と同じ。すべてのファイルでは下の行を隠す）。
+        let changes_button = gtk::ToggleButton::with_label(&tr!("Changes"));
+        changes_button.set_tooltip_text(Some(&tr!(
+            "Changed files, with checkboxes for the next commit"
+        )));
+        let all_files = gtk::ToggleButton::with_label(&tr!("All Files"));
+        all_files.set_group(Some(&changes_button));
+        changes_button.set_active(true);
+        all_files.set_tooltip_text(Some(&tr!(
+            "Every file in the working tree (ignored files are left out)"
+        )));
+        let view_switch = gtk::Box::new(gtk::Orientation::Horizontal, 0);
+        view_switch.add_css_class("linked");
+        for b in [&changes_button, &all_files] {
+            b.add_css_class("small-push");
+            b.set_valign(gtk::Align::Center);
+            view_switch.append(b);
+        }
         let list_header = gtk::Box::new(gtk::Orientation::Horizontal, 6);
-        list_header.append(&all);
-        list_header.append(&count);
+        list_header.append(&view_switch);
+        let include_row = gtk::Box::new(gtk::Orientation::Horizontal, 2);
+        include_row.append(&all);
+        include_row.append(&count);
         let spacer = gtk::Box::new(gtk::Orientation::Horizontal, 0);
         spacer.set_hexpand(true);
         list_header.append(&spacer);
@@ -388,6 +473,9 @@ impl WorkingCopy {
             icon.set(kind, false);
             let button = gtk::ToggleButton::new();
             button.set_child(Some(&icon));
+            // 変更｜すべてのファイルと同じ高さに（macOS 版の小さなセグメント）。
+            button.add_css_class("small-push");
+            button.set_valign(gtk::Align::Center);
             button.set_tooltip_text(Some(&amonhen_model::i18n::translate(tip)));
             if let Some(first) = layout_buttons.first() {
                 button.set_group(Some(&first.0));
@@ -396,6 +484,17 @@ impl WorkingCopy {
             layout_buttons.push((button, layout));
         }
         layout_buttons[0].0.set_active(true);
+        // 一覧を Staged・Unstaged の節に分ける（git status と同じ。macOS 版と同じ）。
+        let sections_button = gtk::ToggleButton::new();
+        let sections_icon = crate::icon::Icon::default();
+        sections_icon.set(crate::icon::Kind::TwoUp, false);
+        sections_button.set_child(Some(&sections_icon));
+        sections_button.add_css_class("flat");
+        sections_button.set_tooltip_text(Some(&tr!(
+            "Split the list into Staged and Unstaged, like git status (a partly staged file is in both)"
+        )));
+        sections_button.set_active(crate::settings::bool(SECTIONS));
+        list_header.append(&sections_button);
         list_header.append(&layouts);
         let filter = gtk::SearchEntry::builder()
             .placeholder_text(tr!("Filter by path"))
@@ -422,19 +521,34 @@ impl WorkingCopy {
         list_area.set_child(Some(&list_scrolled));
         list_area.add_overlay(&empty);
 
-        // 左の列は上下 2 段: 上にコミットの入力、下にファイルの一覧。間の仕切りをドラッグするとメッセージの欄の
-        // 高さが変わり、位置は覚えておく。窓の高さが変わったときは、ファイルの一覧の側が伸び縮みする（macOS 版と同じ）。
+        // 右の列は上下 2 段: 上にコミットの入力、下に差分。間の仕切りをドラッグするとメッセージの欄の高さが変わり、
+        // 位置は覚えておく。窓の高さが変わったときは、差分の側が伸び縮みする（macOS 版と同じ）。件名の左のボタンで、
+        // 件名の 1 行に畳める（数と Commit はその行に移る）。
+        let collapse = gtk::Button::from_icon_name("pan-down-symbolic");
+        collapse.add_css_class("flat");
+        collapse.set_valign(gtk::Align::Center);
+        let subject_row = gtk::Box::new(gtk::Orientation::Horizontal, 4);
+        subject.set_hexpand(true);
+        subject_row.append(&collapse);
+        subject_row.append(&subject);
         let message_part = gtk::Box::new(gtk::Orientation::Vertical, 8);
         message_part.set_margin_top(10);
         message_part.set_margin_bottom(6);
-        message_part.append(&subject);
+        message_part.set_margin_start(10);
+        message_part.set_margin_end(10);
+        message_part.append(&subject_row);
         message_part.append(&body_box);
         message_part.append(&commit_row);
         message_part.append(&message);
+        // 左の列: 変更のあるファイルの一覧（上から下まで。macOS 版と同じ）。
         let files_part = gtk::Box::new(gtk::Orientation::Vertical, 8);
-        files_part.set_margin_top(6);
+        files_part.set_margin_top(10);
+        files_part.set_margin_bottom(10);
+        files_part.set_margin_start(10);
+        files_part.set_margin_end(10);
         list_scrolled.set_min_content_height(100);
         files_part.append(&list_header);
+        files_part.append(&include_row);
         // sparse checkout なら、一覧の上にそう出す（取り出していないフォルダのファイルは変更に出ない。macOS 版と同じ）。
         let sparse_label = gtk::Label::new(None);
         sparse_label.add_css_class("dim-label");
@@ -461,15 +575,11 @@ impl WorkingCopy {
         files_part.append(&sparse_note);
         files_part.append(&filter);
         files_part.append(&list_area);
-        let left = gtk::Paned::new(gtk::Orientation::Vertical);
-        left.set_margin_start(10);
-        left.set_margin_end(10);
-        left.set_start_child(Some(&message_part));
-        left.set_end_child(Some(&files_part));
-        left.set_resize_start_child(false);
-        left.set_shrink_start_child(false);
-        left.set_shrink_end_child(false);
-        remember_message_height(&left);
+        let browser_holder = gtk::Box::new(gtk::Orientation::Vertical, 0);
+        browser_holder.set_vexpand(true);
+        browser_holder.set_visible(false);
+        files_part.append(&browser_holder);
+        let left = files_part;
 
         // 右: 操作のボタンと差分。
         let path = gtk::Label::new(None);
@@ -479,6 +589,11 @@ impl WorkingCopy {
         path.set_ellipsize(gtk::pango::EllipsizeMode::Middle);
         let lines = gtk::Button::with_label("Stage Lines");
         let discard = gtk::Button::with_label("Discard File");
+        // 見る側の切り替えと同じ小さなボタン（macOS 版の controlSize small）。
+        for b in [&lines, &discard] {
+            b.add_css_class("small-push");
+            b.set_valign(gtk::Align::Center);
+        }
         let worktree_side = gtk::ToggleButton::with_label("Unstaged");
         worktree_side.set_tooltip_text(Some(&tr!(
             "Changes in the working tree that are not staged yet"
@@ -486,11 +601,22 @@ impl WorkingCopy {
         let staged_side = gtk::ToggleButton::with_label("Staged");
         staged_side.set_tooltip_text(Some(&tr!("Staged changes (included in the next commit)")));
         staged_side.set_group(Some(&worktree_side));
+        let all_side = gtk::ToggleButton::with_label("All");
+        all_side.set_tooltip_text(Some(&tr!(
+            "Every change from HEAD to the working tree (the bar on the left of each line shows whether it’s staged)"
+        )));
+        all_side.set_group(Some(&worktree_side));
         worktree_side.set_active(true);
+        // macOS 版の小さいセグメントと同じ大きさ（`small-push`）。
+        for b in [&worktree_side, &staged_side, &all_side] {
+            b.add_css_class("small-push");
+            b.set_valign(gtk::Align::Center);
+        }
         let sides = gtk::Box::new(gtk::Orientation::Horizontal, 0);
         sides.add_css_class("linked");
         sides.append(&worktree_side);
         sides.append(&staged_side);
+        sides.append(&all_side);
         sides.set_visible(false);
         let conflict_buttons = gtk::Box::new(gtk::Orientation::Horizontal, 6);
         conflict_buttons.set_visible(false);
@@ -504,6 +630,17 @@ impl WorkingCopy {
         line_endings.add_css_class("caption");
         line_endings.set_visible(false);
         bar.append(&line_endings);
+        // ファイル全体を表示: 変更のない所をすべて開く・閉じる（macOS 版と同じ）。
+        let whole_file = gtk::ToggleButton::new();
+        let whole_icon = crate::icon::Icon::default();
+        whole_icon.set(crate::icon::Kind::Doc, false);
+        whole_file.set_child(Some(&whole_icon));
+        whole_file.add_css_class("flat");
+        whole_file.set_tooltip_text(Some(&tr!(
+            "Open every unchanged part of the file (each part also opens from its own row)"
+        )));
+        whole_file.set_visible(false);
+        bar.append(&whole_file);
         let whitespace = crate::whitespace::Picker::new();
         whitespace.widget().set_visible(false);
         bar.append(whitespace.widget());
@@ -536,6 +673,29 @@ impl WorkingCopy {
         right_stack.add_named(&diff_area, Some("diff"));
         right_stack.add_named(&merge_holder, Some("merge"));
         right.append(&right_stack);
+        let message_split = gtk::Paned::new(gtk::Orientation::Vertical);
+        message_split.set_start_child(Some(&message_part));
+        message_split.set_end_child(Some(&right));
+        message_split.set_resize_start_child(false);
+        message_split.set_shrink_start_child(false);
+        message_split.set_shrink_end_child(false);
+        let collapsed = Rc::new(Cell::new(crate::settings::bool(COMMIT_COLLAPSED)));
+        remember_message_height(&message_split, collapsed.clone());
+        let commit_collapse = CommitCollapse {
+            button: collapse.clone(),
+            subject_row,
+            commit_row: commit_row.clone(),
+            body_box: body_box.clone(),
+            summary_count: summary_count.clone(),
+            after_count: aids.insert.clone(),
+            commit_group: commit_group.clone(),
+            split: message_split.clone(),
+            collapsed,
+        };
+        commit_collapse.apply();
+        let c = commit_collapse.clone();
+        collapse.connect_clicked(move |_| c.toggle());
+        let right = message_split;
 
         let root = gtk::Paned::new(gtk::Orientation::Horizontal);
         root.set_start_child(Some(&left));
@@ -584,6 +744,24 @@ impl WorkingCopy {
             sides,
             worktree_side,
             staged_side,
+            all_side,
+            side: Cell::new(Side::Unstaged),
+            sections: Cell::new(crate::settings::bool(SECTIONS)),
+            sections_button: sections_button.clone(),
+            entry_sections: RefCell::default(),
+            open_gaps: RefCell::default(),
+            multi: RefCell::default(),
+            all_files: all_files.clone(),
+            browser: RefCell::default(),
+            browser_holder: browser_holder.clone(),
+            include_row: include_row.clone(),
+            list_area: list_area.clone(),
+            tree_open: RefCell::default(),
+            browser_head: Cell::default(),
+            image_mode: Cell::default(),
+            svg_as_text: RefCell::default(),
+            whole_file: whole_file.clone(),
+            split_stats: RefCell::default(),
             conflict_buttons,
             right_stack,
             merge_holder,
@@ -644,6 +822,9 @@ impl WorkingCopy {
                 {
                     this.layout.set(layout);
                     Inner::rebuild_list(&this);
+                    if let Some(browser) = this.browser.borrow().as_ref() {
+                        browser.set_flat(layout != Layout::Tree);
+                    }
                     // 次に開く窓も同じ見せ方にする（`--layout` では覚えない）。
                     if remember.get() {
                         crate::settings::set_string(
@@ -968,6 +1149,150 @@ impl Inner {
             let Some(this) = weak.upgrade() else { return };
             Inner::set_rows(&this, rows, None);
         });
+        // 隙間の行のボタン: 出しているファイルの、その変更のない所の開き方を変えて読み直す。
+        let weak = Rc::downgrade(this);
+        this.diff.connect_set_gap(move |gap, opening| {
+            let Some(this) = weak.upgrade() else { return };
+            // 並べた差分: 隙間の番号をファイルとその中の番号に直す。
+            let target = this.multi.borrow().as_ref().and_then(|m| {
+                let &(file, first, _) =
+                    m.offsets.iter().rev().find(|(_, first, _)| *first <= gap)?;
+                Some((m.diffs.get(file)?.entry.path.clone(), gap - first))
+            });
+            if let Some((path, local)) = target {
+                {
+                    let mut gaps = this.open_gaps.borrow_mut();
+                    let map = gaps.entry((this.side.get(), path)).or_default();
+                    match opening {
+                        Some(o) => {
+                            map.insert(local, o);
+                        }
+                        None => {
+                            map.remove(&local);
+                        }
+                    }
+                }
+                let chosen = this.chosen_entries();
+                Inner::show_multi(&this, chosen, true);
+                return;
+            }
+            let Some(entry) = this.selected_entry() else {
+                return;
+            };
+            {
+                let mut gaps = this.open_gaps.borrow_mut();
+                let map = gaps
+                    .entry((this.side.get(), entry.path.clone()))
+                    .or_default();
+                match opening {
+                    Some(o) => {
+                        map.insert(gap, o);
+                    }
+                    None => {
+                        map.remove(&gap);
+                    }
+                }
+            }
+            Inner::load_diff(&this, entry, true);
+        });
+        // 並べた差分の見出し: 押すとそのファイルを畳む・開く、⋯ でそのファイルの Stage・Unstage・Discard…。
+        let weak = Rc::downgrade(this);
+        this.diff.connect_toggle_file(move |file| {
+            let Some(this) = weak.upgrade() else { return };
+            {
+                let mut multi = this.multi.borrow_mut();
+                let Some(m) = multi.as_mut() else { return };
+                let Some(path) = m.diffs.get(file).map(|d| d.entry.path.clone()) else {
+                    return;
+                };
+                if !m.collapsed.remove(&path) {
+                    m.collapsed.insert(path);
+                }
+            }
+            Inner::show_multi_view(&this, true);
+        });
+        let weak = Rc::downgrade(this);
+        this.diff.connect_file_menu(move |file, _, x, y| {
+            let Some(this) = weak.upgrade() else { return };
+            let entry = file.and_then(|f| {
+                let multi = this.multi.borrow();
+                let path = multi.as_ref()?.diffs.get(f)?.entry.path.clone();
+                this.all_entries
+                    .borrow()
+                    .iter()
+                    .find(|e| e.path == path)
+                    .cloned()
+            });
+            let Some(entry) = entry else { return };
+            let unstage = entry.is_staged() && !entry.is_unstaged();
+            let mut items = Vec::new();
+            let (w, e) = (Rc::downgrade(&this), entry.clone());
+            items.push(crate::menu::action(
+                if unstage { "Unstage" } else { "Stage" },
+                move || {
+                    if let Some(this) = w.upgrade() {
+                        Inner::toggle_entry(&this, &e);
+                    }
+                },
+            ));
+            if entry.is_unstaged() {
+                let (w, e) = (Rc::downgrade(&this), entry.clone());
+                items.push(crate::menu::action("Discard…", move || {
+                    if let Some(this) = w.upgrade() {
+                        Inner::discard_file(&this, &e);
+                    }
+                }));
+            }
+            crate::menu::popup(&this.diff, x, y, items);
+        });
+        // 行・hunk の Discard（hunk の見出し・右クリック）: 確かめずに捨てる（Undo で戻せる。macOS 版と同じ）。
+        let weak = Rc::downgrade(this);
+        this.diff.connect_discard_rows(move |rows| {
+            if let Some(this) = weak.upgrade() {
+                Inner::discard_rows(&this, rows);
+            }
+        });
+        // ファイル全体を表示: 変更のない所をすべて開く・すべて閉じる。
+        let weak = Rc::downgrade(this);
+        this.whole_file.connect_clicked(move |b| {
+            let Some(this) = weak.upgrade() else { return };
+            let Some(entry) = this.selected_entry() else {
+                return;
+            };
+            let gaps = this
+                .current
+                .borrow()
+                .as_ref()
+                .and_then(|c| c.0.as_ref())
+                .map_or(0, |w| {
+                    w.file
+                        .lines
+                        .iter()
+                        .filter(|l| l.kind == DiffRow::HUNK)
+                        .count()
+                });
+            let open: HashMap<u32, (u32, u32)> = if b.is_active() {
+                (0..gaps as u32).map(|g| (g, (0, u32::MAX))).collect()
+            } else {
+                HashMap::new()
+            };
+            this.open_gaps
+                .borrow_mut()
+                .insert((this.side.get(), entry.path.clone()), open);
+            Inner::load_diff(&this, entry, true);
+        });
+        // 行の Stage の仕方を変えたら、出している差分を描き直す。
+        let weak = Rc::downgrade(this);
+        crate::settings::connect_changed_while(&this.diff, move |key| {
+            if key != crate::settings::LINE_STAGE_STYLE {
+                return;
+            }
+            let Some(this) = weak.upgrade() else { return };
+            if let Some(entry) = this.selected_entry() {
+                Inner::load_diff(&this, entry, true);
+            }
+            this.update_buttons();
+        });
         // 一覧のキー（macOS 版と同じ）: Space・Enter で選んだファイルを含める・外す、⌫・Delete で捨てる（確かめて）。
         let keys = gtk::EventControllerKey::new();
         keys.set_propagation_phase(gtk::PropagationPhase::Capture);
@@ -1014,7 +1339,20 @@ impl Inner {
         let weak = Rc::downgrade(this);
         this.diff.connect_row_menu(move |row, x, y| {
             let Some(this) = weak.upgrade() else { return };
-            let items: Vec<_> = this.hunk_item(row).into_iter().collect();
+            // 選んだ行・その hunk・その行の Stage（Unstage）と Discard（macOS 版と同じ）。
+            let mut items: Vec<_> = Vec::new();
+            for (title, rows, discard) in this.diff.stage_menu(row) {
+                let weak = Rc::downgrade(&this);
+                items.push(crate::menu::action(title, move || {
+                    let Some(this) = weak.upgrade() else { return };
+                    if discard {
+                        Inner::discard_rows(&this, rows.clone());
+                    } else {
+                        Inner::set_rows(&this, rows.clone(), None);
+                    }
+                }));
+            }
+            items.extend(this.hunk_item(row));
             if !items.is_empty() {
                 crate::menu::popup(&this.diff, x, y, items);
             }
@@ -1054,23 +1392,37 @@ impl Inner {
             }
         });
         let weak = Rc::downgrade(this);
-        this.staged_side.connect_toggled(move |side| {
+        this.sections_button.connect_toggled(move |b| {
             let Some(this) = weak.upgrade() else { return };
-            // 出している差分に合わせただけなら、読み直さない。
-            let showing = this.current.borrow().as_ref().and_then(|c| {
-                c.0.as_ref()
-                    .map(|w| (w.entry.path.clone(), w.staged == side.is_active()))
-            });
-            if let Some((path, true)) = showing
-                && this.selected.borrow().as_deref() == Some(path.as_str())
-            {
-                return;
-            }
-            let entry = this.selected_entry();
-            if let Some(entry) = entry {
-                Inner::load_diff(&this, entry, false);
+            this.sections.set(b.is_active());
+            crate::settings::set_bool(SECTIONS, b.is_active());
+            Inner::rebuild_list(&this);
+            if b.is_active() {
+                Inner::load_split_stats(&this);
             }
         });
+        let weak = Rc::downgrade(this);
+        this.all_files.connect_toggled(move |_| {
+            if let Some(this) = weak.upgrade() {
+                Inner::all_files_changed(&this);
+            }
+        });
+        // 見る側の切り替え: Working Copy で 1 つ。押した側で読み直す（節分けなら、一覧の選択もその節の行に移す）。
+        for (button, side) in [
+            (this.worktree_side.clone(), Side::Unstaged),
+            (this.staged_side.clone(), Side::Staged),
+            (this.all_side.clone(), Side::All),
+        ] {
+            let weak = Rc::downgrade(this);
+            button.connect_toggled(move |b| {
+                let Some(this) = weak.upgrade() else { return };
+                if !b.is_active() || this.side.get() == side {
+                    return;
+                }
+                this.side.set(side);
+                Inner::side_changed(&this);
+            });
+        }
         for (title, ours) in [("Take Current File", true), ("Take Incoming File", false)] {
             let button = gtk::Button::with_label(&amonhen_model::i18n::translate(title));
             let weak = Rc::downgrade(this);
@@ -1433,6 +1785,13 @@ impl Inner {
             if let Some(entry) = shown {
                 Inner::reload_diff(this, entry);
             }
+            // status は同じでも HEAD が動いた（変えていないファイルだけのコミット）なら、木を作り直す。
+            if this.all_files.is_active()
+                && let Some(repo) = this.repo()
+                && head_of(&repo) != this.browser_head.get()
+            {
+                Inner::rebuild_browser(this);
+            }
             return;
         }
         // コンフリクトを先に、あとはパスの順。
@@ -1446,6 +1805,9 @@ impl Inner {
         this.all_entries.replace(entries);
         this.prune_editors();
         Inner::rebuild_list(this);
+        if this.all_files.is_active() {
+            Inner::rebuild_browser(this);
+        }
         Inner::load_stats(this);
         Inner::load_conflict_states(this);
         if let Some(f) = this.on_count.borrow().as_ref() {
@@ -1455,15 +1817,42 @@ impl Inner {
 
     /// 絞り込みに合うファイルで一覧を作り直し、選んでいたファイルを選び直す（なければ最初のもの）。
     fn rebuild_list(this: &Rc<Self>) {
+        // いくつか選んで並べていたか（選び直しの途中で 1 ファイルの読み込みが消すので、先に覚える）。
+        let was_multi = this.multi.borrow().is_some();
         // 前後の空白は除いて比べる（macOS 版と同じ）。
         let filter = this.filter.text().trim().to_lowercase();
-        let entries: Vec<StatusEntry> = this
+        let filtered: Vec<StatusEntry> = this
             .all_entries
             .borrow()
             .iter()
             .filter(|e| filter.is_empty() || e.path.to_lowercase().contains(&filter))
             .cloned()
             .collect();
+        // 節分けなら、コンフリクト・Staged・Unstaged の順に（一部だけ stage したファイルは 2 度）。
+        let (entries, sections): (Vec<StatusEntry>, Vec<Option<Side>>) = if this.sections.get() {
+            let conflict = |e: &&StatusEntry| e.kind == StatusKind::Unmerged;
+            let mut out: Vec<(StatusEntry, Option<Side>)> = filtered
+                .iter()
+                .filter(conflict)
+                .map(|e| (e.clone(), None))
+                .collect();
+            out.extend(
+                filtered
+                    .iter()
+                    .filter(|e| !conflict(e) && e.is_staged())
+                    .map(|e| (e.clone(), Some(Side::Staged))),
+            );
+            out.extend(
+                filtered
+                    .iter()
+                    .filter(|e| !conflict(e) && e.is_unstaged())
+                    .map(|e| (e.clone(), Some(Side::Unstaged))),
+            );
+            out.into_iter().unzip()
+        } else {
+            let n = filtered.len();
+            (filtered, vec![None; n])
+        };
         // 一覧にフォーカスがあれば、作り直した後も選んだ行に戻す（Space・Enter で続けて含める・外せるように）。
         let focused = this.list.root().and_then(|r| r.focus()).is_some_and(|f| {
             &f == this.list.upcast_ref::<gtk::Widget>() || f.is_ancestor(&this.list)
@@ -1489,7 +1878,11 @@ impl Inner {
         this.follow.set(this.follow.get() + 1);
         let (rows, row_entries) = {
             let collapsed = this.collapsed.borrow();
-            list_rows(&entries, this.layout.get(), &collapsed)
+            if this.sections.get() {
+                section_rows(&entries, &sections, this.layout.get(), &collapsed)
+            } else {
+                list_rows(&entries, this.layout.get(), &collapsed)
+            }
         };
         // 中身の変わった所だけを入れ替える（変わらない行は部品も選択もそのまま）。
         let (start, old_end, new_end) = changed_span(&this.rows.borrow(), &rows);
@@ -1553,6 +1946,7 @@ impl Inner {
                 tr!("No matching files")
             });
         this.set_all_check(&entries);
+        this.entry_sections.replace(sections.clone());
         // 次のコミットに含めるファイルの数 / 変更のあるファイルの数。
         let all = this.all_entries.borrow();
         if all.is_empty() {
@@ -1564,12 +1958,19 @@ impl Inner {
         drop(all);
         let wanted = this.selected.borrow().clone();
         let row_of = |i: usize| this.row_entries.borrow().iter().position(|&r| r == Some(i));
-        // 差分に出していたファイルがなくなれば、ほかに選んでいて一覧に残ったファイル。
+        // 差分に出していたファイルがなくなれば、ほかに選んでいて一覧に残ったファイル。節分けでは、今見ている
+        // 側の節の行を選ぶ（なければもう一方の節）。
+        let side = this.side.get();
         let found = wanted
-            .and_then(|p| entries.iter().position(|e| e.path == p))
+            .as_ref()
+            .and_then(|p| {
+                (0..entries.len())
+                    .find(|&i| entries[i].path == *p && sections[i] == Some(side))
+                    .or_else(|| entries.iter().position(|e| e.path == *p))
+            })
             .or_else(|| {
                 entries.iter().enumerate().position(|(i, e)| {
-                    row_of(i).is_some() && kept.contains(&RowKey::File(e.path.clone()))
+                    row_of(i).is_some() && kept.contains(&RowKey::File(e.path.clone(), sections[i]))
                 })
             });
         let index = found.unwrap_or(0);
@@ -1593,6 +1994,10 @@ impl Inner {
             }
             this.rebuilding.set(false);
             // 選び直しでは選択の変化を扱わないので、差分は自分で読み直す。
+            if let Some(Some(s)) = this.entry_sections.borrow().get(index).copied() {
+                this.side.set(s);
+            }
+            this.sync_side_buttons();
             let entry = this.entries.borrow()[index].clone();
             let same = this.selected.borrow().as_deref() == Some(entry.path.as_str());
             this.selected.replace(Some(entry.path.clone()));
@@ -1637,6 +2042,13 @@ impl Inner {
             this.selection.select_item(row as u32, false);
         }
         this.rebuilding.set(false);
+        // いくつか選んでいれば、並べた差分のまま読み直す。
+        if was_multi {
+            let chosen = this.chosen_entries();
+            if chosen.len() >= 2 {
+                Inner::show_multi(this, chosen, true);
+            }
+        }
         this.update_buttons();
     }
 
@@ -1671,10 +2083,23 @@ impl Inner {
         let Some(row) = focused.or_else(first) else {
             return;
         };
+        // 2 つ以上選んだら、選んだファイルの差分を並べる（macOS 版と同じ）。
+        let chosen = this.chosen_entries();
+        if chosen.len() >= 2 {
+            Inner::show_multi(this, chosen, false);
+            return;
+        }
         let index = this.row_entries.borrow().get(row).copied().flatten();
         let entry = index.and_then(|i| this.entries.borrow().get(i).cloned());
+        // 節の行を選んだら、見る側をその節に合わせる（替えたら同じファイルでも読み直す）。
+        let section = index.and_then(|i| this.entry_sections.borrow().get(i).copied().flatten());
+        let moved = section.is_some_and(|s| s != this.side.get());
+        if let Some(s) = section {
+            this.side.set(s);
+            this.sync_side_buttons();
+        }
         if let Some(entry) = entry {
-            let same = this.selected.borrow().as_deref() == Some(entry.path.as_str());
+            let same = !moved && this.selected.borrow().as_deref() == Some(entry.path.as_str());
             this.selected.replace(Some(entry.path.clone()));
             Inner::load_diff(this, entry, same);
         }
@@ -1786,6 +2211,10 @@ impl Inner {
         discard.set_tooltip_text(Some(&tr!(
             "Discard the working tree changes (return to the content of the index)"
         )));
+        let action = gtk::Button::new();
+        action.add_css_class("flat");
+        action.add_css_class("caption");
+        action.set_visible(false);
         let line = gtk::Box::new(gtk::Orientation::Horizontal, 6);
         for w in [
             arrow.upcast_ref::<gtk::Widget>(),
@@ -1795,6 +2224,7 @@ impl Inner {
             detail.upcast_ref(),
             counts.upcast_ref(),
             discard.upcast_ref(),
+            action.upcast_ref(),
         ] {
             line.append(w);
         }
@@ -1809,6 +2239,7 @@ impl Inner {
             detail,
             counts,
             discard,
+            action,
             can_discard: Cell::new(false),
             binding: Cell::new(false),
         });
@@ -1825,10 +2256,34 @@ impl Inner {
             }
             let item = cell.item.borrow().clone();
             match item {
+                Some(Row::File {
+                    entry,
+                    section: Some(section),
+                    ..
+                }) => Inner::toggle_entries_in(&this, &[entry], Some(section)),
                 Some(Row::File { entry, .. }) => Inner::toggle_entry(&this, &entry),
                 Some(Row::Dir { path, check, .. }) => Inner::toggle_dir(&this, &path, check.all()),
-                None => {}
+                Some(Row::Section { .. }) | None => {}
             }
+        });
+        // 節の見出しの Stage All・Unstage All: その節のファイルをまとめて。
+        let (weak, c) = (Rc::downgrade(this), Rc::downgrade(&cell));
+        cell.action.connect_clicked(move |_| {
+            let (Some(this), Some(cell)) = (weak.upgrade(), c.upgrade()) else {
+                return;
+            };
+            let Some(Row::Section { side, .. }) = cell.item.borrow().clone() else {
+                return;
+            };
+            let entries: Vec<StatusEntry> = {
+                let all = this.entries.borrow();
+                let sections = this.entry_sections.borrow();
+                (0..all.len())
+                    .filter(|&i| sections.get(i).copied().flatten() == side)
+                    .map(|i| all[i].clone())
+                    .collect()
+            };
+            Inner::toggle_entries_in(&this, &entries, side);
         });
         // ▸・▾ のクリックで畳む・開く（macOS 版の NSOutlineView の三角と同じ）。
         let click = gtk::GestureClick::new();
@@ -1898,7 +2353,40 @@ impl Inner {
         };
         cell.binding.set(true);
         reveal_discard(&cell.discard, false);
+        cell.action.set_visible(false);
+        cell.name.remove_css_class("heading");
+        if let Some(list_item) = cell.list_item.upgrade() {
+            list_item.set_selectable(!matches!(item, Row::Section { .. }));
+        }
         match item {
+            Row::Section { side, count } => {
+                cell.line.set_margin_start(0);
+                cell.arrow.set_visible(false);
+                cell.check.set_visible(false);
+                cell.state.set_visible(false);
+                cell.name.set_text(match side {
+                    Some(Side::Staged) => "Staged",
+                    Some(_) => "Unstaged",
+                    None => "Unmerged",
+                });
+                cell.name.remove_css_class("dim-label");
+                cell.name.add_css_class("heading");
+                cell.name.set_hexpand(false);
+                cell.detail.set_text(&count.to_string());
+                cell.detail.set_visible(true);
+                cell.detail.set_hexpand(true);
+                cell.counts.set_visible(false);
+                cell.can_discard.set(false);
+                if let Some(side) = side.filter(|_| count > 0) {
+                    cell.action.set_label(if side == Side::Staged {
+                        "Unstage All"
+                    } else {
+                        "Stage All"
+                    });
+                    cell.action.set_visible(true);
+                }
+                cell.line.set_tooltip_text(None);
+            }
             Row::Dir {
                 name,
                 depth,
@@ -1930,13 +2418,21 @@ impl Inner {
                 entry,
                 layout,
                 depth,
+                section,
             } => {
                 let conflict = entry.kind == StatusKind::Unmerged;
                 cell.line.set_margin_start((depth * 16) as i32);
                 cell.arrow.set_visible(false);
                 cell.name.remove_css_class("dim-label");
-                let on = entry.is_staged() && !entry.is_unstaged();
-                let mixed = entry.is_staged() && entry.is_unstaged();
+                // 節の行: Staged の行は含める、Unstaged の行は含めない（一部だけでも、その節の側で見る）。
+                let (on, mixed) = match section {
+                    Some(Side::Staged) => (true, false),
+                    Some(_) => (false, false),
+                    None => (
+                        entry.is_staged() && !entry.is_unstaged(),
+                        entry.is_staged() && entry.is_unstaged(),
+                    ),
+                };
                 cell.check.set_active(on);
                 cell.check.set_inconsistent(mixed);
                 // コンフリクトのファイルにはチェックを出さない（index は両方の側で「一部」に見える。macOS 版と同じ）。
@@ -1967,8 +2463,21 @@ impl Inner {
                 let flat_parent = layout == Layout::Flat && !parent.is_empty();
                 cell.detail.set_hexpand(flat_parent);
                 cell.name.set_hexpand(!flat_parent);
-                fill_counts(&cell.counts, self.stats.borrow().get(&entry.path).copied());
-                cell.can_discard.set(!conflict && entry.is_unstaged());
+                // 節の行は、その節の側の行数（Staged は HEAD と index、Unstaged は index と作業ツリー）。
+                let counts = match section {
+                    Some(Side::Staged) => self.split_stats.borrow().0.get(&entry.path).copied(),
+                    Some(_) => self
+                        .split_stats
+                        .borrow()
+                        .1
+                        .get(&entry.path)
+                        .copied()
+                        .or_else(|| self.stats.borrow().get(&entry.path).copied()),
+                    None => self.stats.borrow().get(&entry.path).copied(),
+                };
+                fill_counts(&cell.counts, counts);
+                cell.can_discard
+                    .set(!conflict && entry.is_unstaged() && section != Some(Side::Staged));
                 // パス（名前を変えたファイルはもとのパス → 今のパス。macOS 版と同じ）。
                 let tip = match &entry.orig_path {
                     Some(orig) => format!("{orig} → {}", entry.path),
@@ -2036,6 +2545,9 @@ impl Inner {
             this.stats.replace(stats);
             // 一覧と差分は作り直さない（見えている行の行数を埋めるだけ）。
             this.refresh_cells();
+            if this.sections.get() {
+                Inner::load_split_stats(&this);
+            }
         });
     }
 
@@ -2353,6 +2865,284 @@ impl Inner {
     }
 
     /// ファイルを次のコミットに含める・外す（すべて含めていれば外し、そうでなければ含める）。
+    /// 変更の一覧とすべてのファイルを切り替える。すべてのファイルは HEAD の木に作業ツリーの変更を重ねた木で、
+    /// 開いたファイルは右に出す（変えたファイルはファイル全体の差分、変えていないファイルは中身）。
+    fn all_files_changed(this: &Rc<Self>) {
+        let on = this.all_files.is_active();
+        this.filter.set_visible(!on);
+        this.list_area.set_visible(!on);
+        this.browser_holder.set_visible(on);
+        this.include_row.set_visible(!on);
+        this.sections_button.set_sensitive(!on);
+        if let Some(b) = this.browser.take() {
+            this.browser_holder.remove(&b.root);
+        }
+        // 差分に出していたファイルを、すべてのファイルの木でも選ぶ（ファイル全体の差分にする。macOS 版と同じ）。
+        this.tree_open.replace(if on {
+            this.selected.borrow().clone()
+        } else {
+            None
+        });
+        if on {
+            Inner::rebuild_browser(this);
+        } else {
+            // 一覧を作り直して、差分に出していたファイルの行を選び直す（なければ最初の行。差分も読み直す）。
+            this.diff.set_file_mode(false);
+            Inner::rebuild_list(this);
+        }
+    }
+
+    /// すべてのファイルの木を、今の HEAD と status で作り直す。
+    fn rebuild_browser(this: &Rc<Self>) {
+        let Some(repo) = this.repo() else { return };
+        let expanded = this
+            .browser
+            .borrow()
+            .as_ref()
+            .map(|b| b.expanded_paths())
+            .unwrap_or_default();
+        if let Some(b) = this.browser.take() {
+            this.browser_holder.remove(&b.root);
+        }
+        let head = head_of(&repo);
+        this.browser_head.set(head);
+        let Some(head) = head else {
+            this.diff.show_message(&tr!("No commits yet"));
+            return;
+        };
+        let mut changes = Vec::new();
+        for e in this.all_entries.borrow().iter() {
+            let state = if e.worktree != b'.' {
+                e.worktree
+            } else {
+                e.index
+            };
+            let kind = match state {
+                b'?' | b'A' => ChangeKind::Added,
+                b'D' => ChangeKind::Deleted,
+                b'R' => ChangeKind::Renamed,
+                _ => ChangeKind::Modified,
+            };
+            changes.push(FileChange {
+                kind,
+                path: e.path.clone(),
+                old_path: e.orig_path.clone(),
+                old_id: None,
+                new_id: None,
+                submodule: false,
+            });
+            // 名前を変えたファイルの元の名前は、作業ツリーにはもうない（消したファイルと同じく赤の取り消し線）。
+            if let Some(orig) = &e.orig_path {
+                changes.push(FileChange {
+                    kind: ChangeKind::Deleted,
+                    path: orig.clone(),
+                    old_path: None,
+                    old_id: None,
+                    new_id: None,
+                    submodule: false,
+                });
+            }
+        }
+        let weak = Rc::downgrade(this);
+        let browser = crate::commitbrowser::Browser::new_working(
+            repo,
+            head,
+            changes,
+            this.layout.get() != Layout::Tree,
+            this.pending.clone(),
+            move |path| {
+                if let Some(this) = weak.upgrade() {
+                    Inner::open_tree_file(&this, head, path);
+                }
+            },
+        );
+        this.browser_holder.append(&browser.root);
+        let open = this.tree_open.borrow().clone();
+        browser.restore(&expanded, open.as_deref());
+        this.browser.replace(Some(browser));
+        // 開いていたファイルを読み直す（変えた・戻した・stage したで中身が変わる）。
+        if let Some(path) = open {
+            Inner::open_tree_file(this, head, &path);
+        }
+    }
+
+    /// すべてのファイルで開いた: 変えたファイルはファイル全体の差分、変えていないファイルは HEAD の中身。
+    fn open_tree_file(this: &Rc<Self>, head: Oid, path: &str) {
+        this.tree_open.replace(Some(path.to_owned()));
+        let entry = this
+            .all_entries
+            .borrow()
+            .iter()
+            .find(|e| e.path == path)
+            .cloned();
+        if let Some(entry) = entry {
+            this.selected.replace(Some(entry.path.clone()));
+            Inner::load_diff(this, entry, false);
+            return;
+        }
+        let Some(repo) = this.repo() else { return };
+        this.multi.replace(None);
+        this.current.replace(None);
+        this.selected.replace(None);
+        this.path.set_text(path);
+        this.sides.set_visible(false);
+        this.whole_file.set_visible(false);
+        this.conflict_buttons.set_visible(false);
+        this.show_line_endings(None);
+        let generation = this.generation.get() + 1;
+        this.generation.set(generation);
+        let path = path.to_owned();
+        this.unembed();
+        if crate::imagediff::is_image(&path) {
+            // 変えていない画像は、絵を 1 枚で（macOS 版と同じ。読めなければバイナリファイル）。
+            this.pending.set(this.pending.get() + 1);
+            let weak = Rc::downgrade(this);
+            glib::spawn_future_local(async move {
+                let data = gio::spawn_blocking(move || repo.file_at(&head, &path).ok()).await;
+                let Some(this) = weak.upgrade() else { return };
+                this.pending.set(this.pending.get() - 1);
+                if this.generation.get() != generation {
+                    return;
+                }
+                match data
+                    .ok()
+                    .flatten()
+                    .and_then(|d| crate::imagediff::single(&d, None))
+                {
+                    Some(panel) => this.embed_widget(&panel),
+                    None => this.diff.show_message(&tr!("Binary file")),
+                }
+                this.update_buttons();
+            });
+            return;
+        }
+        this.pending.set(this.pending.get() + 1);
+        let weak = Rc::downgrade(this);
+        glib::spawn_future_local(async move {
+            let view = gio::spawn_blocking(move || {
+                repo.tree_file(&head, &path, &FrontendProfile::GTK)
+                    .map(View::new)
+                    .map_err(|e| e.to_string())
+            })
+            .await;
+            let Some(this) = weak.upgrade() else { return };
+            this.pending.set(this.pending.get() - 1);
+            if this.generation.get() != generation {
+                return;
+            }
+            match view {
+                Ok(Ok(view)) => {
+                    this.diff.set_folds(false, HashMap::new(), None, false);
+                    this.diff.set_file_mode(true);
+                    this.diff.show_plain(view);
+                }
+                Ok(Err(e)) => this
+                    .diff
+                    .show_message(&tr!("Can’t read the diff: {e}", e = e)),
+                Err(_) => {}
+            }
+            this.update_buttons();
+        });
+    }
+
+    /// 見る側の切り替えのボタンを `side` に合わせる。
+    fn sync_side_buttons(&self) {
+        let side = self.side.get();
+        for (button, s) in [
+            (&self.worktree_side, Side::Unstaged),
+            (&self.staged_side, Side::Staged),
+            (&self.all_side, Side::All),
+        ] {
+            if s == side && !button.is_active() {
+                button.set_active(true);
+            }
+        }
+    }
+
+    /// 節ごとの行数を裏で読み、見えている行を描き直す（節分けのときだけ）。
+    fn load_split_stats(this: &Rc<Self>) {
+        let Some(repo) = this.repo() else { return };
+        let source = repo.clone();
+        let weak = Rc::downgrade(this);
+        glib::spawn_future_local(async move {
+            let reply: Value = gio::spawn_blocking(move || {
+                serde_json::from_str(&repo.run_json(r#"{"op":"workingStatsSplit"}"#))
+                    .unwrap_or_default()
+            })
+            .await
+            .unwrap_or_default();
+            let Some(this) = weak.upgrade().filter(|t| t.is_on(&source)) else {
+                return;
+            };
+            let side = |key: &str| -> HashMap<String, LineCounts> {
+                reply["info"][key]
+                    .as_array()
+                    .into_iter()
+                    .flatten()
+                    .filter_map(|s| {
+                        Some((
+                            s["path"].as_str()?.to_owned(),
+                            (s["added"].as_u64(), s["removed"].as_u64()),
+                        ))
+                    })
+                    .collect()
+            };
+            this.split_stats.replace((side("staged"), side("unstaged")));
+            this.refresh_cells();
+        });
+    }
+
+    /// 節の行のチェック・見出しの Stage All・Unstage All: Staged の行は外し、Unstaged の行は含める。節のない行は
+    /// 今の状態で切り替える。
+    fn toggle_entries_in(this: &Rc<Self>, entries: &[StatusEntry], section: Option<Side>) {
+        let paths: Vec<String> = entries
+            .iter()
+            .filter(|e| e.kind != StatusKind::Unmerged)
+            .map(|e| e.path.clone())
+            .collect();
+        if paths.is_empty() {
+            return;
+        }
+        let unstage = match section {
+            Some(Side::Staged) => true,
+            Some(_) => false,
+            None => entries.iter().all(|e| e.is_staged() && !e.is_unstaged()),
+        };
+        Inner::run(this, move |repo| {
+            let refs: Vec<&str> = paths.iter().map(String::as_str).collect();
+            if unstage {
+                repo.unstage(&refs)
+            } else {
+                repo.stage(&refs)
+            }
+        });
+    }
+
+    /// 見る側を替えた: 出しているファイルをその側で読み直す（節分けなら、一覧の選択もその側の節の行へ）。
+    fn side_changed(this: &Rc<Self>) {
+        let side = this.side.get();
+        this.sync_side_buttons();
+        if this.sections.get()
+            && let Some(path) = this.selected.borrow().clone()
+            && let Some(row) = this.rows.borrow().iter().position(|r| {
+                matches!(r, Row::File { entry, section: Some(s), .. } if entry.path == path && *s == side)
+            })
+        {
+            this.rebuilding.set(true);
+            this.selection.select_item(row as u32, true);
+            this.rebuilding.set(false);
+        }
+        if this.multi.borrow().is_some() {
+            let chosen = this.chosen_entries();
+            if chosen.len() >= 2 {
+                return Inner::show_multi(this, chosen, false);
+            }
+        }
+        if let Some(entry) = this.selected_entry() {
+            Inner::load_diff(this, entry, false);
+        }
+    }
+
     fn toggle_entry(this: &Rc<Self>, entry: &StatusEntry) {
         let path = entry.path.clone();
         let fully = entry.is_staged() && !entry.is_unstaged();
@@ -2385,6 +3175,216 @@ impl Inner {
             i += step;
         }
         this.list.error_bell();
+    }
+
+    /// 一覧で選んでいるファイル（行の順。ディレクトリの行とコンフリクトは除く）。
+    fn chosen_entries(&self) -> Vec<StatusEntry> {
+        let rows = self.row_entries.borrow();
+        let entries = self.entries.borrow();
+        let mut seen = HashSet::new();
+        self.selected_positions()
+            .into_iter()
+            .filter_map(|p| rows.get(p).copied().flatten())
+            .filter_map(|i| entries.get(i).cloned())
+            .filter(|e| e.kind != StatusKind::Unmerged && seen.insert(e.path.clone()))
+            .collect()
+    }
+
+    /// 選んだいくつかのファイルの差分を、見出しでつないで並べる（上から Files to open together の数まで）。
+    /// 見る側（Unstaged・Staged・All）は 1 ファイルのときと同じ。その側に変更のないファイルは並べない（macOS 版と同じ）。
+    fn show_multi(this: &Rc<Self>, chosen: Vec<StatusEntry>, keep: bool) {
+        let Some(repo) = this.repo() else { return };
+        let side = this.side.get();
+        let whitespace = this.whitespace.whitespace();
+        let candidates: Vec<StatusEntry> = chosen
+            .iter()
+            .filter(|e| match side {
+                Side::Unstaged => e.is_unstaged(),
+                Side::Staged => e.is_staged(),
+                Side::All => true,
+            })
+            .cloned()
+            .collect();
+        let shown: Vec<StatusEntry> = candidates
+            .iter()
+            .take(crate::settings::diff_open_files())
+            .cloned()
+            .collect();
+        let paths: Vec<String> = chosen.iter().map(|e| e.path.clone()).collect();
+        let collapsed_paths = match this.multi.borrow().as_ref() {
+            Some(m) if m.paths == paths => m.collapsed.clone(),
+            _ => HashSet::new(),
+        };
+        let mut title = tr!("{count} files", count = chosen.len());
+        if candidates.len() > shown.len() {
+            title += &format!("  {}", tr!("(showing the first {n})", n = shown.len()));
+        }
+        this.path.set_text(&title);
+        this.unembed();
+        this.conflict_buttons.set_visible(false);
+        this.show_line_endings(None);
+        this.sides.set_visible(true);
+        this.whole_file.set_visible(false);
+        this.selected.replace(None);
+        this.current.replace(None);
+        let generation = this.generation.get() + 1;
+        this.generation.set(generation);
+        if shown.is_empty() {
+            this.multi.replace(Some(Multi {
+                paths,
+                diffs: Arc::new(Vec::new()),
+                collapsed: collapsed_paths,
+                offsets: Vec::new(),
+            }));
+            this.diff.show_message(&if side == Side::Staged {
+                tr!("No staged changes in these files")
+            } else {
+                tr!("No unstaged changes in these files")
+            });
+            this.update_buttons();
+            return;
+        }
+        let openings: Vec<Vec<amonhen_core::diff::GapOpen>> = shown
+            .iter()
+            .map(|e| {
+                this.open_gaps
+                    .borrow()
+                    .get(&(side, e.path.clone()))
+                    .map(|m| {
+                        m.iter()
+                            .map(|(&gap, &(top, bottom))| amonhen_core::diff::GapOpen {
+                                gap,
+                                top,
+                                bottom,
+                            })
+                            .collect()
+                    })
+                    .unwrap_or_default()
+            })
+            .collect();
+        this.pending.set(this.pending.get() + 1);
+        let weak = Rc::downgrade(this);
+        glib::spawn_future_local(async move {
+            let diffs = gio::spawn_blocking(move || {
+                let profile = FrontendProfile::GTK;
+                shown
+                    .iter()
+                    .zip(&openings)
+                    .filter_map(|(e, open)| match side {
+                        Side::All => (whitespace == Whitespace::Exact)
+                            .then(|| {
+                                repo.working_diff_combined_context(e, 3, Some(open), &profile)
+                                    .ok()
+                                    .flatten()
+                            })
+                            .flatten(),
+                        side => repo
+                            .working_diff_context(
+                                e,
+                                side == Side::Staged,
+                                3,
+                                Some(open),
+                                whitespace,
+                                &profile,
+                            )
+                            .ok(),
+                    })
+                    .collect::<Vec<WorkingDiff>>()
+            })
+            .await;
+            let Some(this) = weak.upgrade() else { return };
+            this.pending.set(this.pending.get() - 1);
+            let Ok(diffs) = diffs else { return };
+            if this.generation.get() != generation {
+                return;
+            }
+            this.multi.replace(Some(Multi {
+                paths,
+                diffs: Arc::new(diffs),
+                collapsed: collapsed_paths,
+                offsets: Vec::new(),
+            }));
+            Inner::show_multi_view(&this, keep);
+        });
+    }
+
+    /// 並べた差分を、畳んだファイルを除いてつないで出す（読み直さない）。
+    fn show_multi_view(this: &Rc<Self>, keep: bool) {
+        let side = this.side.get();
+        let (diffs, collapsed) = {
+            let multi = this.multi.borrow();
+            let Some(m) = multi.as_ref() else { return };
+            let collapsed: Vec<bool> = m
+                .diffs
+                .iter()
+                .map(|d| m.collapsed.contains(&d.entry.path))
+                .collect();
+            (m.diffs.clone(), collapsed)
+        };
+        let refs: Vec<&WorkingDiff> = diffs.iter().collect();
+        let view = WorkingDiff::stacked_view(&refs, &collapsed, &FrontendProfile::GTK);
+        // 隙間の番号は、並べた差分の頭から数える（畳んだファイルには隙間の行がない）。ファイルごとに直す。
+        let mut offsets: Vec<(usize, u32, u32)> = Vec::new();
+        let mut next = 0u32;
+        let mut openings: GapOpenings = HashMap::new();
+        for (i, d) in diffs.iter().enumerate() {
+            if collapsed[i] || d.file.binary {
+                continue;
+            }
+            let count = d
+                .file
+                .lines
+                .iter()
+                .filter(|l| l.kind == DiffRow::HUNK)
+                .count() as u32;
+            if let Some(own) = this.open_gaps.borrow().get(&(side, d.entry.path.clone())) {
+                for (&gap, &o) in own {
+                    if gap < count {
+                        openings.insert(next + gap, o);
+                    }
+                }
+            }
+            offsets.push((i, next, count));
+            next += count;
+        }
+        if let Some(m) = this.multi.borrow_mut().as_mut() {
+            m.offsets = offsets;
+        }
+        let checks = side == Side::All;
+        let split = (!checks).then_some(side == Side::Staged);
+        this.diff
+            .set_folds(true, openings, split, crate::settings::line_stage_bar());
+        this.diff.show_working(View::new(view), keep, checks);
+        let marks: HashMap<usize, &'static str> = diffs
+            .iter()
+            .enumerate()
+            .map(|(i, d)| (i, header_mark(&d.entry)))
+            .collect();
+        this.diff.set_working_files(
+            crate::diff::Decor {
+                marks,
+                ..Default::default()
+            },
+            collapsed,
+        );
+        this.update_buttons();
+    }
+
+    /// 並べた差分の `rows` を、ファイルごとの差分の行に分ける（ファイルの番号 → その中の行）。
+    fn split_multi_rows(&self, rows: &[usize]) -> Vec<(usize, Vec<usize>)> {
+        let file_rows = self.diff.file_rows();
+        let mut out: Vec<(usize, Vec<usize>)> = Vec::new();
+        for &row in rows {
+            let Some(file) = file_rows.iter().rposition(|&f| (f as usize) < row) else {
+                continue;
+            };
+            let local = row - file_rows[file] as usize - 1;
+            match out.iter_mut().find(|(f, _)| *f == file) {
+                Some((_, list)) => list.push(local),
+                None => out.push((file, vec![local])),
+            }
+        }
+        out
     }
 
     fn selected_entry(&self) -> Option<StatusEntry> {
@@ -2425,15 +3425,36 @@ impl Inner {
     fn read_diff(this: &Rc<Self>, entry: StatusEntry, same: bool, only_changed: bool) {
         let Some(repo) = this.repo() else { return };
         let whitespace = this.whitespace.whitespace();
-        // 両側に変更のあるファイルは作業ツリーの側から。同じファイルを読み直すときだけ、今の側のまま
-        // （macOS 版の `side(for:)`）。
-        let reselect = this
-            .current
+        this.multi.replace(None);
+        this.diff.set_file_mode(false);
+        // すべてのファイルでは、変えたファイルもファイル全体で見せる（畳まない。側は All、表せなければ変更のある側）。
+        let whole = this.all_files.is_active();
+        let side = if !whole {
+            this.side.get()
+        } else if entry.is_staged() && entry.is_unstaged() {
+            Side::All
+        } else if entry.is_staged() {
+            Side::Staged
+        } else {
+            Side::Unstaged
+        };
+        let context = if whole { u32::MAX } else { 3 };
+        let opened: Vec<amonhen_core::diff::GapOpen> = this
+            .open_gaps
             .borrow()
-            .as_ref()
-            .and_then(|c| c.0.as_ref())
-            .is_some_and(|w| w.entry.path == entry.path);
-        let prefer_staged = reselect && this.staged_side.is_active();
+            .get(&(side, entry.path.clone()))
+            .map(|m| {
+                m.iter()
+                    .map(|(&gap, &(top, bottom))| amonhen_core::diff::GapOpen { gap, top, bottom })
+                    .collect()
+            })
+            .unwrap_or_default();
+        let openings = this
+            .open_gaps
+            .borrow()
+            .get(&(side, entry.path.clone()))
+            .cloned()
+            .unwrap_or_default();
         let generation = this.generation.get() + 1;
         this.generation.set(generation);
         this.path.set_text(&entry.path);
@@ -2442,28 +3463,63 @@ impl Inner {
             return;
         }
         this.unembed();
+        this.sides.set_visible(!whole);
+        // その側に変更がなければ、読まずにそう出す（macOS 版と同じ）。
+        let nothing = match side {
+            Side::Unstaged => !entry.is_unstaged(),
+            Side::Staged => !entry.is_staged(),
+            Side::All => false,
+        };
+        if nothing {
+            this.whole_file.set_visible(false);
+            this.conflict_buttons.set_visible(false);
+            this.show_line_endings(None);
+            this.current.replace(None);
+            this.diff.show_message(&if side == Side::Staged {
+                tr!("No staged changes in this file")
+            } else {
+                tr!("No unstaged changes in this file")
+            });
+            this.update_buttons();
+            return;
+        }
         this.pending.set(this.pending.get() + 1);
         let weak = Rc::downgrade(this);
         glib::spawn_future_local(async move {
             let result = gio::spawn_blocking(move || {
                 let profile = FrontendProfile::GTK;
-                // 1 本の差分で表せなければ、選んだ側（片側にしか変更がなければその側）。
-                // 1 本の差分で表せない・読めないとき・空白を無視するときは、選んだ側の差分（macOS 版と同じ）。
-                let combined = if whitespace == Whitespace::Exact {
-                    repo.working_diff_combined(&entry, &profile).ok().flatten()
-                } else {
-                    None
-                };
-                let mut working = match combined {
-                    Some(d) => d,
-                    None => {
-                        let staged = if entry.is_staged() && entry.is_unstaged() {
-                            prefer_staged
-                        } else {
-                            !entry.is_unstaged()
-                        };
-                        repo.working_diff_ws(&entry, staged, whitespace, &profile)?
+                let unreadable = |e: amonhen_model::Error| tr!("Can’t read the diff: {e}", e = e);
+                // All は HEAD と作業ツリーの 1 本の差分（行ごとに staged か）。表せないとき・空白を無視するときは、
+                // そう言って Unstaged と Staged へ案内する（macOS 版と同じ）。
+                let mut working = match side {
+                    Side::All => {
+                        if whitespace != Whitespace::Exact {
+                            return Err(tr!(
+                                "All can’t be shown while whitespace is ignored. See Unstaged and Staged."
+                            ));
+                        }
+                        match repo
+                            .working_diff_combined_context(&entry, context, Some(&opened), &profile)
+                            .map_err(unreadable)?
+                        {
+                            Some(d) => d,
+                            None => {
+                                return Err(tr!(
+                                    "This file’s staged and unstaged changes can’t be shown in one diff. See Unstaged and Staged."
+                                ));
+                            }
+                        }
                     }
+                    side => repo
+                        .working_diff_context(
+                            &entry,
+                            side == Side::Staged,
+                            context,
+                            Some(&opened),
+                            whitespace,
+                            &profile,
+                        )
+                        .map_err(unreadable)?,
                 };
                 let empty =
                     diff::file_diff(Arc::<Vec<u8>>::default(), Arc::<Vec<u8>>::default(), 0);
@@ -2477,7 +3533,7 @@ impl Inner {
                         }
                     }
                 }
-                Ok::<_, amonhen_model::Error>((Arc::new(Working(Some(working))), View::new(view)))
+                Ok::<_, String>((Arc::new(Working(Some(working))), View::new(view)))
             })
             .await;
             let Some(this) = weak.upgrade() else { return };
@@ -2502,22 +3558,35 @@ impl Inner {
                                     && a.file.old == b.file.old
                                     && a.file.new == b.file.new
                             }) => {}
+                Ok(Ok((working, _)))
+                    if working.0.as_ref().is_some_and(|w| this.shows_as_image(w)) =>
+                {
+                    // 画像は History と同じく、前後を並べる・スワイプ・重ねる・違いで比べる（macOS 版と同じ）。
+                    if let Some(w) = working.0.as_ref() {
+                        Inner::show_image(&this, w);
+                    }
+                    this.show_line_endings(None);
+                    this.whole_file.set_visible(false);
+                    this.conflict_buttons.set_visible(false);
+                    this.current.replace(Some(working));
+                }
                 Ok(Ok((working, view))) => {
                     let w = working.0.as_ref();
                     this.show_line_endings(w.and_then(|w| w.line_endings.as_ref()));
-                    this.sides.set_visible(w.is_some_and(|w| {
-                        w.combined.is_none() && w.entry.is_staged() && w.entry.is_unstaged()
-                    }));
                     let checks = w.is_some_and(|w| w.combined.is_some());
+                    // 隙間の数と、まだ隠している行のある隙間があるか（ファイル全体を表示の印）。
+                    let (gaps, folded) = w.map_or((0, 0), |w| {
+                        let rows = w.file.lines.iter().filter(|l| l.kind == DiffRow::HUNK);
+                        let folded = rows.clone().filter(|l| l.old_no > 0).count();
+                        (rows.count(), folded)
+                    });
+                    this.whole_file.set_visible(gaps > 0 && !whole);
+                    this.whole_file.set_active(gaps > 0 && folded == 0);
+                    let split = (!checks).then_some(side == Side::Staged);
+                    this.diff
+                        .set_folds(true, openings, split, crate::settings::line_stage_bar());
                     this.conflict_buttons.set_visible(false);
-                    let staged = w.is_some_and(|w| w.staged);
                     this.current.replace(Some(working));
-                    // 切り替えを、出した側に合わせる（ほかのファイルで Staged にしたままにしない）。
-                    if staged {
-                        this.staged_side.set_active(true);
-                    } else {
-                        this.worktree_side.set_active(true);
-                    }
                     this.diff.show_working(view, same, checks);
                     this.find.refresh();
                     if let Some(row) = this.toggle_once.take() {
@@ -2528,11 +3597,9 @@ impl Inner {
                 Ok(Err(e)) => {
                     // 前に出していたもの（コンフリクトのボタンなど）を残さない。理由は差分の場所に。
                     this.conflict_buttons.set_visible(false);
-                    this.sides.set_visible(false);
                     this.show_line_endings(None);
                     this.current.replace(None);
-                    this.diff
-                        .show_message(&tr!("Can’t read the diff: {e}", e = e));
+                    this.diff.show_message(&e);
                 }
                 Err(_) => {}
             }
@@ -2542,6 +3609,28 @@ impl Inner {
 
     /// 選んだ行（`rows`）を含める・外す。`stage` が None なら、すべて含めていれば外し、そうでなければ含める。
     fn set_rows(this: &Rc<Self>, rows: Vec<usize>, stage: Option<bool>) {
+        let multi = this.multi.borrow().as_ref().map(|m| m.diffs.clone());
+        if let Some(diffs) = multi {
+            if !this.exact() {
+                this.diff.error_bell();
+                return;
+            }
+            let parts = this.split_multi_rows(&rows);
+            Inner::run(this, move |repo| {
+                for (file, rows) in &parts {
+                    let Some(w) = diffs.get(*file) else { continue };
+                    match &w.combined {
+                        Some(staged) => {
+                            let stage = stage.unwrap_or_else(|| !rows.iter().all(|&r| staged[r]));
+                            repo.set_rows_staged(w, rows, stage)?
+                        }
+                        None => repo.stage_rows(w, rows)?,
+                    }
+                }
+                Ok(())
+            });
+            return;
+        }
         let Some(current) = this.current.borrow().clone() else {
             return;
         };
@@ -2575,7 +3664,11 @@ impl Inner {
         if w.staged {
             return;
         }
-        let rows = this.diff.selected_rows();
+        let rows = if crate::settings::line_stage_bar() {
+            this.diff.selected_rows()
+        } else {
+            Vec::new()
+        };
         if !rows.is_empty() {
             if !this.exact() {
                 this.diff.error_bell();
@@ -2589,6 +3682,40 @@ impl Inner {
         // ファイル全体を一度に捨てるときは確かめる（行の単位は選んで押すので、そのまま。macOS 版と同じ）。
         let entry = w.entry.clone();
         Inner::discard_file(this, &entry);
+    }
+
+    /// 差分の `rows` 行目の変更を作業ツリーから捨てる（hunk の見出し・右クリック）。
+    fn discard_rows(this: &Rc<Self>, rows: Vec<usize>) {
+        let multi = this.multi.borrow().as_ref().map(|m| m.diffs.clone());
+        if let Some(diffs) = multi {
+            if !this.exact() || this.side.get() == Side::Staged {
+                this.diff.error_bell();
+                return;
+            }
+            let parts = this.split_multi_rows(&rows);
+            Inner::perform(this, move |repo| {
+                for (file, rows) in &parts {
+                    if let Some(w) = diffs.get(*file) {
+                        repo.discard_rows(w, rows)?;
+                    }
+                }
+                Ok(())
+            });
+            return;
+        }
+        let Some(current) = this.current.borrow().clone() else {
+            return;
+        };
+        if rows.is_empty() || current.0.as_ref().is_none_or(|w| w.staged) {
+            return;
+        }
+        if !this.exact() {
+            this.diff.error_bell();
+            return;
+        }
+        Inner::perform(this, move |repo| {
+            repo.discard_rows(current.0.as_ref().expect("working diff"), &rows)
+        });
     }
 
     /// 一覧の行のボタン: 1 ファイルの変更を捨てる（確かめてから）。作業ツリーを index の内容に戻すので、
@@ -2947,6 +4074,55 @@ impl Inner {
         while let Some(child) = self.merge_holder.first_child() {
             self.merge_holder.remove(&child);
         }
+    }
+
+    /// 差分の代わりに画像の比べる欄を出すか（画像のファイルで中身がバイナリ、または絵で見ている SVG）。
+    fn shows_as_image(&self, w: &WorkingDiff) -> bool {
+        let path = &w.entry.path;
+        let svg = crate::imagediff::is_svg(path);
+        (crate::imagediff::is_image(path) || svg)
+            && (w.file.binary || (svg && !self.svg_as_text.borrow().contains(path)))
+    }
+
+    /// 画像の前と後を比べる欄を、差分の場所に出す。足したファイルは前を、消したファイルは後を空に（macOS 版と同じ）。
+    fn show_image(this: &Rc<Self>, w: &WorkingDiff) {
+        let e = &w.entry;
+        let added = e.worktree == b'?' || ((w.combined.is_some() || w.staged) && e.index == b'A');
+        let deleted = e.worktree == b'D' || (w.staged && e.index == b'D');
+        let before = (!added).then_some(&w.file.old[..]);
+        let after = (!deleted).then_some(&w.file.new[..]);
+        let weak = Rc::downgrade(this);
+        let on_mode: Rc<dyn Fn(crate::imagediff::Mode)> = Rc::new(move |mode| {
+            if let Some(this) = weak.upgrade() {
+                this.image_mode.set(mode);
+            }
+        });
+        let weak = Rc::downgrade(this);
+        let path = e.path.clone();
+        let on_text: Rc<dyn Fn()> = Rc::new(move || {
+            let Some(this) = weak.upgrade() else { return };
+            this.svg_as_text.borrow_mut().insert(path.clone());
+            if let Some(entry) = this.selected_entry() {
+                Inner::load_diff(&this, entry, false);
+            }
+        });
+        let panel = crate::imagediff::panel(
+            before,
+            after,
+            crate::imagediff::is_svg(&e.path),
+            this.image_mode.get(),
+            on_mode,
+            on_text,
+        );
+        this.embed_widget(&panel);
+    }
+
+    /// 差分の場所に、差分の代わりの部品（画像の欄）を出す。次に差分を読むと外れる。
+    fn embed_widget(&self, widget: &impl IsA<gtk::Widget>) {
+        self.unembed();
+        widget.set_vexpand(true);
+        self.merge_holder.append(widget);
+        self.right_stack.set_visible_child_name("merge");
     }
 
     /// マージエディタの場所に、案内（別の窓で開いている・読めない）を出す。
@@ -3471,7 +4647,10 @@ impl Inner {
         };
         // 選んだファイルがなければ、ファイルの操作は出さない（macOS 版と同じ）。
         let chosen = self.selected.borrow().is_some();
-        self.lines.set_visible(!conflict && chosen);
+        // 「選んでから」の形では、選んだ行の操作は hunk の見出しの行と Space・右クリックで（帯のボタンは出さない）。
+        let select_style = !crate::settings::line_stage_bar();
+        let selected = if select_style { 0 } else { selected };
+        self.lines.set_visible(!conflict && chosen && !select_style);
         self.lines.set_label(if unstage {
             "Unstage Lines"
         } else {
@@ -3520,12 +4699,84 @@ impl Inner {
 
 /// コミットの入力とファイルの一覧の間の仕切りの位置（上の段の高さ）を覚える設定の鍵。
 const MESSAGE_HEIGHT: &str = "workingCopyMessageHeight";
+/// コミットの入力を件名の 1 行に畳んでいるか（macOS 版と同じキー）。
+const COMMIT_COLLAPSED: &str = "workingCopyCommitCollapsed";
+/// 一覧を Staged・Unstaged の節に分けるか（macOS 版と同じキー）。
+const SECTIONS: &str = "workingCopySections";
 
 /// 仕切りを覚えた位置に置き、動かしたら覚える（ドラッグの間は書かず、止まってから）。覚えた位置がなければ、
 /// メッセージの欄を最小より少し広めに（macOS 版と同じく 60 pt ほど。Description が 150 ほどの高さになる）。
-fn remember_message_height(paned: &gtk::Paned) {
+/// コミットの入力を件名の 1 行に畳む（覚える）。畳むと本文とボタンの行を隠し、件名の文字数・Commit を件名の行に
+/// 移す。仕切りは件名の行の高さまで上げ、開いたら覚えた高さに戻す（macOS 版と同じ）。
+#[derive(Clone)]
+struct CommitCollapse {
+    button: gtk::Button,
+    subject_row: gtk::Box,
+    commit_row: gtk::Box,
+    body_box: gtk::Overlay,
+    summary_count: gtk::Label,
+    /// ボタンの行で、件名の文字数のすぐ前の部品（戻すときの場所）。
+    after_count: gtk::Button,
+    commit_group: gtk::Box,
+    split: gtk::Paned,
+    collapsed: Rc<Cell<bool>>,
+}
+
+impl CommitCollapse {
+    fn toggle(&self) {
+        self.collapsed.set(!self.collapsed.get());
+        crate::settings::set_bool(COMMIT_COLLAPSED, self.collapsed.get());
+        self.apply();
+    }
+
+    fn apply(&self) {
+        let collapsed = self.collapsed.get();
+        let in_subject =
+            self.summary_count.parent().as_ref() == Some(self.subject_row.upcast_ref());
+        if collapsed && !in_subject {
+            self.commit_row.remove(&self.summary_count);
+            self.commit_row.remove(&self.commit_group);
+            self.summary_count.set_hexpand(false);
+            self.subject_row.append(&self.summary_count);
+            self.subject_row.append(&self.commit_group);
+        } else if !collapsed && in_subject {
+            self.subject_row.remove(&self.summary_count);
+            self.subject_row.remove(&self.commit_group);
+            self.summary_count.set_hexpand(true);
+            self.commit_row
+                .insert_child_after(&self.summary_count, Some(&self.after_count));
+            self.commit_row.append(&self.commit_group);
+        }
+        self.body_box.set_visible(!collapsed);
+        self.commit_row.set_visible(!collapsed);
+        self.button.set_icon_name(if collapsed {
+            "pan-end-symbolic"
+        } else {
+            "pan-down-symbolic"
+        });
+        self.button.set_tooltip_text(Some(&if collapsed {
+            tr!("Show the description and the commit options")
+        } else {
+            tr!("Collapse to the summary line")
+        }));
+        if collapsed {
+            // 件名の行の高さまで上げる（縮められない分は Paned が止める）。
+            self.split.set_position(0);
+        } else if let Some(height) =
+            crate::settings::string(MESSAGE_HEIGHT).and_then(|s| s.parse::<i32>().ok())
+        {
+            self.split.set_position(height);
+        }
+    }
+}
+
+fn remember_message_height(paned: &gtk::Paned, collapsed: Rc<Cell<bool>>) {
     let placing = Rc::new(Cell::new(false));
-    if let Some(height) = crate::settings::string(MESSAGE_HEIGHT).and_then(|s| s.parse().ok()) {
+    if collapsed.get() {
+        // 畳んでいれば、`CommitCollapse::apply` が置く。
+    } else if let Some(height) =
+        crate::settings::string(MESSAGE_HEIGHT).and_then(|s| s.parse().ok())
+    {
         paned.set_position(height);
     } else {
         let placing = placing.clone();
@@ -3547,8 +4798,8 @@ fn remember_message_height(paned: &gtk::Paned) {
     }
     let pending: Rc<RefCell<Option<glib::SourceId>>> = Rc::default();
     paned.connect_position_notify(move |paned| {
-        // 自分で置いたとき・まだ大きさが決まっていないときは覚えない。
-        if !paned.is_mapped() || placing.get() {
+        // 自分で置いたとき・まだ大きさが決まっていないとき・畳んでいるときは覚えない。
+        if !paned.is_mapped() || placing.get() || collapsed.get() {
             return;
         }
         if let Some(id) = pending.borrow_mut().take() {
@@ -3774,7 +5025,11 @@ enum Row {
         entry: StatusEntry,
         layout: Layout,
         depth: usize,
+        /// 節分けの一覧で、どの節の行か（Mixed とコンフリクトは None）。一部だけ stage したファイルは両方の節に出る。
+        section: Option<Side>,
     },
+    /// 節分けの一覧の節の見出し（None は Unmerged）と、中のファイルの数。
+    Section { side: Option<Side>, count: usize },
     /// 木のディレクトリ（`name` は出す名前、`path` はパス。子が 1 つのディレクトリはつないだもの）。
     Dir {
         name: String,
@@ -3788,7 +5043,8 @@ enum Row {
 /// 作り直しをまたいで同じ行を探すための鍵（ファイルかディレクトリかと、そのパス）。
 #[derive(Clone, Debug, PartialEq, Eq)]
 enum RowKey {
-    File(String),
+    File(String, Option<Side>),
+    Section(Option<Side>),
     Dir(String),
 }
 
@@ -3804,8 +5060,9 @@ fn rows_to_reselect(kept: &[RowKey], rows: &[Row]) -> Vec<usize> {
 impl Row {
     fn key(&self) -> RowKey {
         match self {
-            Row::File { entry, .. } => RowKey::File(entry.path.clone()),
+            Row::File { entry, section, .. } => RowKey::File(entry.path.clone(), *section),
             Row::Dir { path, .. } => RowKey::Dir(path.clone()),
+            Row::Section { side, .. } => RowKey::Section(*side),
         }
     }
 
@@ -3814,12 +5071,19 @@ impl Row {
         match (self, other) {
             (
                 Row::File {
-                    entry: a, depth: x, ..
+                    entry: a,
+                    depth: x,
+                    section: p,
+                    ..
                 },
                 Row::File {
-                    entry: b, depth: y, ..
+                    entry: b,
+                    depth: y,
+                    section: q,
+                    ..
                 },
-            ) => a.path == b.path && x == y,
+            ) => a.path == b.path && x == y && p == q,
+            (Row::Section { side: a, .. }, Row::Section { side: b, .. }) => a == b,
             (
                 Row::Dir {
                     path: a, depth: x, ..
@@ -3837,6 +5101,7 @@ impl Row {
         match self {
             Row::File { depth, .. } => (*depth, None),
             Row::Dir { depth, path, .. } => (*depth, Some(path.clone())),
+            Row::Section { .. } => (0, None),
         }
     }
 }
@@ -3855,6 +5120,7 @@ fn list_rows(
                 entry: entry.clone(),
                 layout,
                 depth: 0,
+                section: None,
             });
             row_entries.push(Some(i));
         }
@@ -3892,9 +5158,45 @@ fn list_rows(
                     entry: entries[index].clone(),
                     layout,
                     depth,
+                    section: None,
                 });
                 row_entries.push(Some(index));
             }
+        }
+    }
+    (rows, row_entries)
+}
+
+/// 節分けの一覧の行（git status の節: Unmerged があれば、Staged、Unstaged）。`sections[i]` は `entries[i]` の節。
+/// 節ごとに `list_rows` で並べ、見出しの行を前に置く。行ごとの番号は `entries` の番号。
+fn section_rows(
+    entries: &[StatusEntry],
+    sections: &[Option<Side>],
+    layout: Layout,
+    collapsed: &std::collections::HashSet<String>,
+) -> (Vec<Row>, Vec<Option<usize>>) {
+    let mut rows = Vec::new();
+    let mut row_entries = Vec::new();
+    for side in [None, Some(Side::Staged), Some(Side::Unstaged)] {
+        let picked: Vec<usize> = (0..entries.len())
+            .filter(|&i| sections[i] == side)
+            .collect();
+        if side.is_none() && picked.is_empty() {
+            continue;
+        }
+        rows.push(Row::Section {
+            side,
+            count: picked.len(),
+        });
+        row_entries.push(None);
+        let part: Vec<StatusEntry> = picked.iter().map(|&i| entries[i].clone()).collect();
+        let (part_rows, part_entries) = list_rows(&part, layout, collapsed);
+        for (mut row, index) in part_rows.into_iter().zip(part_entries) {
+            if let Row::File { section, .. } = &mut row {
+                *section = side;
+            }
+            rows.push(row);
+            row_entries.push(index.map(|i| picked[i]));
         }
     }
     (rows, row_entries)
@@ -3997,6 +5299,13 @@ fn tree(entries: &[StatusEntry]) -> Vec<TreeItem> {
     out
 }
 
+/// HEAD のコミット（まだコミットがなければ None）。
+fn head_of(repo: &Repository) -> Option<Oid> {
+    serde_json::from_str::<Value>(&repo.run_json(r#"{"op":"resolveCommit","rev":"HEAD"}"#))
+        .ok()
+        .and_then(|v| v["text"].as_str().and_then(Oid::from_hex))
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -4083,6 +5392,7 @@ mod tests {
                         path, collapsed, ..
                     } => format!("{path}/{}", if *collapsed { " ▸" } else { "" }),
                     Row::File { entry, depth, .. } => format!("{depth} {}", entry.path),
+                    Row::Section { .. } => String::new(),
                 })
                 .collect()
         };
@@ -4131,8 +5441,8 @@ mod tests {
         let c = entry(StatusKind::Changed, "z.txt", b'.', b'M');
         let none = std::collections::HashSet::new();
         let kept = vec![
-            RowKey::File("src/a.rs".into()),
-            RowKey::File("z.txt".into()),
+            RowKey::File("src/a.rs".into(), None),
+            RowKey::File("z.txt".into(), None),
             RowKey::Dir("src".into()),
         ];
         // 一覧: a・b・z。a と z を選んでいた。

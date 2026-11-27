@@ -50,7 +50,14 @@ fn name_of(path: &str) -> &str {
 }
 
 impl Tree {
-    fn new(repo: Arc<Repository>, commit: Oid, changes: Option<Arc<Vec<FileChange>>>) -> Self {
+    /// `working` なら Working Copy の「すべてのファイル」: `commit` は HEAD、`changes` は作業ツリーの変更で、HEAD の
+    /// 木にない足したファイル（untracked を含む）を足す（消したファイルは木にあるので、印を付けるだけ）。
+    fn new(
+        repo: Arc<Repository>,
+        commit: Oid,
+        changes: Option<Arc<Vec<FileChange>>>,
+        working: bool,
+    ) -> Self {
         let mut tree = Self {
             repo,
             commit,
@@ -67,7 +74,15 @@ impl Tree {
                 folder = parent_of(folder);
             }
             tree.changed_folders.insert(String::new());
-            if change.kind == ChangeKind::Deleted {
+            let missing = if working {
+                matches!(
+                    change.kind,
+                    ChangeKind::Added | ChangeKind::Renamed | ChangeKind::Copied
+                )
+            } else {
+                change.kind == ChangeKind::Deleted
+            };
+            if missing {
                 tree.deleted_files
                     .entry(parent_of(&change.path).to_owned())
                     .or_default()
@@ -127,7 +142,10 @@ impl Tree {
                 is_dir: false,
                 oid: None,
                 children: RefCell::new(None),
-                kind: Some(ChangeKind::Deleted),
+                kind: Some(
+                    self.change(path)
+                        .map_or(ChangeKind::Deleted, |(_, c)| c.kind),
+                ),
                 contains_changes: true,
             }));
         }
@@ -188,6 +206,8 @@ fn node_of(item: &glib::Object) -> Option<Rc<Node>> {
 
 /// ファイルの番号を受け取る知らせ先。
 type OnFile = Rc<dyn Fn(usize)>;
+/// ファイルを開いたときに、中身の欄の代わりに呼ぶもの（パス）。
+type OnOpenFile = Rc<dyn Fn(&str)>;
 
 /// SVG の見せ方（macOS 版の `SVGView`）: 絵（librsvg で描く）・モバイル（絵と、モバイル向けの描画部品で崩れる
 /// 機能の一覧）・テキスト。
@@ -384,6 +404,8 @@ pub struct Browser {
     pending: Rc<Cell<u32>>,
     on_show_change: RefCell<Option<OnFile>>,
     on_folders_change: RefCell<Option<Rc<dyn Fn()>>>,
+    /// ファイルを開いたときに、自分の中身の欄の代わりに呼ぶ（Working Copy の「すべてのファイル」。パス）。
+    on_open_file: RefCell<Option<OnOpenFile>>,
     /// partial clone か（ファイルを開く前に、中身が手元にあるかを確かめる）。
     partial: Cell<bool>,
     /// パスの帯の下に置く「取ってくる」の帯の置き場（中身が手元にないファイルを開いたときだけ）。
@@ -398,7 +420,33 @@ impl Browser {
         flat: bool,
         pending: Rc<Cell<u32>>,
     ) -> Rc<Self> {
-        let tree = Rc::new(Tree::new(repo, commit, changes));
+        Self::build(repo, commit, changes, flat, pending, false)
+    }
+
+    /// Working Copy の「すべてのファイル」の木（HEAD の木に作業ツリーの変更を重ねる。足したファイルも出す）。
+    /// ファイルを開くと、中身の欄を出さずに `open` を呼ぶ。
+    pub fn new_working(
+        repo: Arc<Repository>,
+        head: Oid,
+        changes: Vec<FileChange>,
+        flat: bool,
+        pending: Rc<Cell<u32>>,
+        open: impl Fn(&str) + 'static,
+    ) -> Rc<Self> {
+        let this = Self::build(repo, head, Some(Arc::new(changes)), flat, pending, true);
+        this.on_open_file.replace(Some(Rc::new(open)));
+        this
+    }
+
+    fn build(
+        repo: Arc<Repository>,
+        commit: Oid,
+        changes: Option<Arc<Vec<FileChange>>>,
+        flat: bool,
+        pending: Rc<Cell<u32>>,
+        working: bool,
+    ) -> Rc<Self> {
+        let tree = Rc::new(Tree::new(repo, commit, changes, working));
         let top = Rc::new(Node {
             name: String::new(),
             path: String::new(),
@@ -524,6 +572,8 @@ impl Browser {
         path_bar.append(&path_label);
         let svg_switch = gtk::Box::new(gtk::Orientation::Horizontal, 0);
         svg_switch.add_css_class("linked");
+        svg_switch.add_css_class("small-pushes");
+        svg_switch.set_valign(gtk::Align::Center);
         svg_switch.set_visible(false);
         let mut svg_buttons: Vec<(SvgView, gtk::ToggleButton)> = Vec::new();
         for view in SvgView::ALL {
@@ -537,6 +587,8 @@ impl Browser {
         }
         let markdown_switch = gtk::Box::new(gtk::Orientation::Horizontal, 0);
         markdown_switch.add_css_class("linked");
+        markdown_switch.add_css_class("small-pushes");
+        markdown_switch.set_valign(gtk::Align::Center);
         markdown_switch.set_visible(false);
         let markdown_buttons = [
             (tr!("Preview"), tr!("Show the Markdown formatted")),
@@ -551,6 +603,8 @@ impl Browser {
         markdown_buttons[1].set_group(Some(&markdown_buttons[0]));
         let drawable_switch = gtk::Box::new(gtk::Orientation::Horizontal, 0);
         drawable_switch.add_css_class("linked");
+        drawable_switch.add_css_class("small-pushes");
+        drawable_switch.set_valign(gtk::Align::Center);
         drawable_switch.set_visible(false);
         let drawable_buttons = [
             (tr!("Picture"), tr!("Draw the VectorDrawable")),
@@ -640,6 +694,7 @@ impl Browser {
             pending,
             on_show_change: RefCell::default(),
             on_folders_change: RefCell::default(),
+            on_open_file: RefCell::default(),
             partial: Cell::new(false),
             notice,
         });
@@ -660,6 +715,11 @@ impl Browser {
             if let Some(node) = node_of(&item)
                 && !node.is_dir
             {
+                let open = this.on_open_file.borrow().clone();
+                if let Some(open) = open {
+                    open(&node.path);
+                    return;
+                }
                 this.open(&node.path, None);
             }
         });
@@ -843,6 +903,46 @@ impl Browser {
         }
     }
 
+    /// 開いているフォルダのパス（作り直しで保つ）。
+    pub fn expanded_paths(&self) -> HashSet<String> {
+        (0..self.model.n_items())
+            .filter_map(|i| self.model.row(i))
+            .filter(|r| r.is_expandable() && r.is_expanded())
+            .filter_map(|r| r.item().and_then(|o| node_of(&o)).map(|n| n.path.clone()))
+            .collect()
+    }
+
+    /// 作り直した木で、前に開いていたフォルダを開き直し、`selected` のファイルの行を選ぶ。
+    pub fn restore(&self, expanded: &HashSet<String>, selected: Option<&str>) {
+        if !self.flat.get() && !expanded.is_empty() {
+            let mut i = 0;
+            while i < self.model.n_items() {
+                if let Some(row) = self.model.row(i)
+                    && let Some(node) = row.item().and_then(|o| node_of(&o))
+                    && node.is_dir
+                {
+                    row.set_expanded(expanded.contains(&node.path));
+                }
+                i += 1;
+            }
+        }
+        let Some(selected) = selected else { return };
+        let model = self.selection.model();
+        let Some(model) = model else { return };
+        let found = (0..model.n_items()).find(|&i| {
+            model.item(i).is_some_and(|o| {
+                let o = o
+                    .downcast_ref::<gtk::TreeListRow>()
+                    .and_then(|r| r.item())
+                    .unwrap_or(o);
+                node_of(&o).is_some_and(|n| n.path == selected)
+            })
+        });
+        if let Some(i) = found {
+            self.selection.set_selected(i);
+        }
+    }
+
     /// 開いているフォルダがあるか（フォルダのボタンの向き）。
     pub fn any_folder_expanded(&self) -> bool {
         !self.flat.get()
@@ -938,6 +1038,8 @@ impl Browser {
     fn renderer_switch(self: &Rc<Self>) -> gtk::Widget {
         let switch = gtk::Box::new(gtk::Orientation::Horizontal, 0);
         switch.add_css_class("linked");
+        switch.add_css_class("small-pushes");
+        switch.set_valign(gtk::Align::Center);
         let mut first: Option<gtk::ToggleButton> = None;
         for (target, title) in RENDERERS {
             let button = gtk::ToggleButton::with_label(title);

@@ -385,6 +385,8 @@ impl Mode {
         texts.append(&summary);
         texts.append(&preview);
         let move_stacked = gtk::CheckButton::with_label(&tr!("Also move the stacked branches"));
+        // macOS 版の小さな文字のチェックボックス。
+        move_stacked.add_css_class("caption");
         move_stacked.set_tooltip_text(Some(&tr!(
             "For this edit only (git’s update-ref). Starts from rebase.updateRefs."
         )));

@@ -175,6 +175,7 @@ pub fn confirm(actions: &Rc<Actions>, sources: Vec<Source>, branch: Option<Strin
         let label = sheets::forecast_label();
         sheet.add(&label);
         let put_last = gtk::Button::with_label("");
+        put_last.add_css_class("small-push");
         put_last.set_halign(gtk::Align::Start);
         // 答えが来るまでは見えないようにして、場所は取っておく（シートの大きさを変えないため）。
         hide_keeping_space(&put_last, true);

@@ -208,6 +208,11 @@ impl Reword {
         let cancel = gtk::Button::with_label(&tr!("Cancel"));
         let save = gtk::Button::with_label(&tr!("Save"));
         save.add_css_class("suggested-action");
+        // macOS 版の小さなボタン（controlSize small）。
+        for b in [&cancel, &save] {
+            b.add_css_class("small-push");
+            b.set_valign(gtk::Align::Center);
+        }
         let bar = gtk::Box::new(gtk::Orientation::Horizontal, 6);
         bar.set_margin_top(4);
         bar.set_margin_bottom(4);
