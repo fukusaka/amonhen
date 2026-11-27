@@ -1086,7 +1086,12 @@ impl Repository {
 
     /// partial clone で取りに行かなかった中身を、利用者が頼んだので取ってくる（`ids` をまとめて 1 回で）。
     pub fn fetch_contents(&self, ids: &[Oid]) -> Result<()> {
-        self.backend.prefetch_blobs(ids)
+        self.backend.prefetch_blobs(ids)?;
+        // まとめて取れない git（2.29 より前）では取れずに残るので、1 つずつ読ませて取る（頼まれた分だけ）。
+        for id in self.backend.missing_blobs(ids)? {
+            self.backend.blob(&id)?;
+        }
+        Ok(())
     }
 
     /// `stacked` の、partial clone で手元になかったファイルの中身を取ってきて、それらの差分を取る（利用者が
@@ -1096,7 +1101,7 @@ impl Repository {
         if ids.is_empty() {
             return Ok(());
         }
-        self.backend.prefetch_blobs(&ids)?;
+        self.fetch_contents(&ids)?;
         for file in 0..stacked.files.len() {
             if stacked.files[file].1.missing.is_empty() {
                 continue;
