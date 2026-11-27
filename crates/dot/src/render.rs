@@ -859,6 +859,12 @@ pub fn render(
                 // 輪は配置の右に出す。横向きの配置（LR・RL）では絵の上になる側（配置の左）
                 extra_left: if dir.sideways() { loop_room[i] } else { 0.0 },
                 extra_right: if dir.sideways() { 0.0 } else { loop_room[i] },
+                key: model.nodes[i]
+                    .name
+                    .bytes()
+                    .fold(0xcbf2_9ce4_8422_2325u64, |h, b| {
+                        (h ^ u64::from(b)).wrapping_mul(0x0100_0000_01b3)
+                    }),
             }
         })
         .collect();
