@@ -836,6 +836,25 @@ impl Ordering<'_> {
         }
     }
 
+    /// 初めの並びのクラスタの左右: 中のノードの値のいちばん小さいもの。
+    fn global_from(&mut self, val: &[f64]) {
+        let k = self.global.len();
+        let mut m = vec![f64::INFINITY; k];
+        for (v, nd) in self.nodes.iter().enumerate() {
+            let mut c = nd.cluster;
+            let mut hops = 0;
+            while let Some(ci) = c {
+                m[ci] = m[ci].min(val[v]);
+                c = self.parent[ci];
+                hops += 1;
+                if hops > 1000 {
+                    break;
+                }
+            }
+        }
+        self.global = m;
+    }
+
     /// クラスタの左右の手がかり: 中のノードの相対の位置の平均。
     fn global_keys(&mut self) {
         let k = self.global.len();
@@ -1039,7 +1058,11 @@ impl Ordering<'_> {
     }
 
     fn median(&self, list: &[usize], upper: bool) -> Option<f64> {
-        let mut p: Vec<f64> = list.iter().map(|&s| self.end_key(s, upper)).collect();
+        let p: Vec<f64> = list.iter().map(|&s| self.end_key(s, upper)).collect();
+        Self::median_of(p)
+    }
+
+    fn median_of(mut p: Vec<f64>) -> Option<f64> {
         if p.is_empty() {
             return None;
         }
@@ -1068,7 +1091,33 @@ impl Ordering<'_> {
         } else {
             (0..ranks.saturating_sub(1)).rev().collect()
         };
+        let k = self.global.len();
         for r in order {
+            // 隣のランクの、クラスタごとの位置の平均。自分の入っていないクラスタの中の隣は、そのクラスタを 1 本の柱として
+            // 見る（中の並びではなく、クラスタの場所で並べる。中の並びはクラスタの中のノードどうしで決まる）
+            let mut cmean = vec![0f64; k];
+            if k > 0 {
+                let ra = if down { r - 1 } else { r + 1 };
+                let mut cnt = vec![0usize; k];
+                for (i, &u) in self.layers[ra].iter().enumerate() {
+                    let mut c = self.nodes[u].cluster;
+                    let mut hops = 0;
+                    while let Some(ci) = c {
+                        cmean[ci] += i as f64;
+                        cnt[ci] += 1;
+                        c = self.parent[ci];
+                        hops += 1;
+                        if hops > k {
+                            break;
+                        }
+                    }
+                }
+                for ci in 0..k {
+                    if cnt[ci] > 0 {
+                        cmean[ci] /= cnt[ci] as f64;
+                    }
+                }
+            }
             for &v in &self.layers[r] {
                 let list = if down {
                     &self.nodes[v].up
@@ -1076,7 +1125,48 @@ impl Ordering<'_> {
                     &self.nodes[v].down
                 };
                 // その側に隣のないノードは値なし（今の場所に固定する）
-                val[v] = self.median(list, down).unwrap_or(f64::NAN);
+                val[v] = if k > 0 && self.nodes[v].real {
+                    let mut mine: Vec<usize> = Vec::new();
+                    let mut c = self.nodes[v].cluster;
+                    while let Some(ci) = c {
+                        mine.push(ci);
+                        c = self.parent[ci];
+                        if mine.len() > k {
+                            break;
+                        }
+                    }
+                    let p: Vec<f64> = list
+                        .iter()
+                        .map(|&s| {
+                            let u = if down {
+                                self.segs[s].upper
+                            } else {
+                                self.segs[s].lower
+                            };
+                            let mut outer = None;
+                            let mut c = self.nodes[u].cluster;
+                            let mut hops = 0;
+                            while let Some(ci) = c {
+                                if mine.contains(&ci) {
+                                    break;
+                                }
+                                outer = Some(ci);
+                                c = self.parent[ci];
+                                hops += 1;
+                                if hops > k {
+                                    break;
+                                }
+                            }
+                            match outer {
+                                Some(d) => cmean[d],
+                                None => self.end_key(s, down),
+                            }
+                        })
+                        .collect();
+                    Self::median_of(p).unwrap_or(f64::NAN)
+                } else {
+                    self.median(list, down).unwrap_or(f64::NAN)
+                };
             }
             self.sort_layer(r, val);
         }
@@ -1539,9 +1629,28 @@ pub fn layout(
     ord.refresh();
     ord.global_keys();
     let mut val = vec![0f64; total];
-    // 深さ優先の初めの並び（Gansner ほか 1993 §3 の init_order）: `top` なら小さいランクのノードから出る辺を、
-    // そうでなければ大きいランクのノードから入る辺をたどり、訪ねた順を各ランクの左からの順にする（木なら交差なし）
-    let dfs_order = |top: bool, by_seq: bool, val: &mut [f64]| {
+    // クラスタ（とその中のクラスタ）の中のノード
+    let within = |v: usize, c: usize| -> bool {
+        let mut x = nodes[v].cluster;
+        let mut hops = 0;
+        while let Some(ci) = x {
+            if ci == c {
+                return true;
+            }
+            x = parent[ci];
+            hops += 1;
+            if hops > k {
+                break;
+            }
+        }
+        false
+    };
+    // 幅優先の初めの並び（Gansner ほか 1993 §3 の init_order）: `top` なら小さいランクのノードから出る辺を、
+    // そうでなければ大きいランクのノードから入る辺をたどり、訪ねた順を各ランクの左からの順にする（木なら交差なし）。
+    // クラスタに初めて着いたら、そのクラスタ（いちばん外の、まだ置いていないもの）の中をすべて先に置く（クラスタを
+    // 1 つのまとまりとして並べる。Graphviz の絵と同じく、クラスタは先に着いた側へ寄る）。ランクを 1 つずつ下りる辺
+    // だけなので、クラスタのない図では深さ優先と同じ並びになる
+    let first_order = |top: bool, by_seq: bool, val: &mut [f64]| {
         let mut seen = vec![false; total];
         let mut next = 0f64;
         // 辺は行き先のノードの作られた順にたどる（Graphviz の絵と同じく、書いた順ではなく宣言の順で並ぶ）。仮のノードは
@@ -1573,32 +1682,105 @@ pub fn layout(
         } else {
             starts.sort_by_key(|&v| (std::cmp::Reverse(nodes[v].rank), nodes[v].seq, v));
         }
-        for s0 in starts {
+        // クラスタごとの中のノード（初めの順）
+        let mut members: Vec<Vec<usize>> = vec![Vec::new(); k];
+        for &v in &starts {
+            let mut c = nodes[v].cluster;
+            let mut hops = 0;
+            while let Some(ci) = c {
+                members[ci].push(v);
+                c = parent[ci];
+                hops += 1;
+                if hops > k {
+                    break;
+                }
+            }
+        }
+        let mut placed_cluster = vec![false; k];
+        // w を置く（クラスタの中なら、そのクラスタを丸ごと）。置いたノードを `queue` の後ろへ
+        let mut place = |w: usize, seen: &mut [bool], val: &mut [f64], queue: &mut Vec<usize>| {
+            let mut outer = None;
+            let mut c = nodes[w].cluster;
+            let mut hops = 0;
+            while let Some(ci) = c {
+                if !placed_cluster[ci] {
+                    outer = Some(ci);
+                }
+                c = parent[ci];
+                hops += 1;
+                if hops > k {
+                    break;
+                }
+            }
+            let Some(c) = outer else {
+                seen[w] = true;
+                val[w] = next;
+                next += 1.0;
+                queue.push(w);
+                return;
+            };
+            for (ci, done) in placed_cluster.iter_mut().enumerate() {
+                let mut x = Some(ci);
+                let mut hops = 0;
+                while let Some(xi) = x {
+                    if xi == c {
+                        *done = true;
+                        break;
+                    }
+                    x = parent[xi];
+                    hops += 1;
+                    if hops > k {
+                        break;
+                    }
+                }
+            }
+            // クラスタの中だけを幅優先で（w から、残りは初めの順で）
+            let roots = std::iter::once(w).chain(members[c].iter().copied());
+            for r0 in roots {
+                if seen[r0] {
+                    continue;
+                }
+                seen[r0] = true;
+                val[r0] = next;
+                next += 1.0;
+                let from = queue.len();
+                queue.push(r0);
+                let mut head = from;
+                while head < queue.len() {
+                    let v = queue[head];
+                    head += 1;
+                    for &u in &next_of[v] {
+                        if !seen[u] && within(u, c) {
+                            seen[u] = true;
+                            val[u] = next;
+                            next += 1.0;
+                            queue.push(u);
+                        }
+                    }
+                }
+            }
+        };
+        for &s0 in &starts {
             if seen[s0] {
                 continue;
             }
-            let mut stack = vec![(s0, 0usize)];
-            seen[s0] = true;
-            val[s0] = next;
-            next += 1.0;
-            while let Some(&mut (v, ref mut k)) = stack.last_mut() {
-                let list = &next_of[v];
-                if *k < list.len() {
-                    let w = list[*k];
-                    *k += 1;
+            let mut queue: Vec<usize> = Vec::new();
+            place(s0, &mut seen, val, &mut queue);
+            let mut head = 0;
+            while head < queue.len() {
+                let v = queue[head];
+                head += 1;
+                for &w in &next_of[v] {
                     if !seen[w] {
-                        seen[w] = true;
-                        val[w] = next;
-                        next += 1.0;
-                        stack.push((w, 0));
+                        place(w, &mut seen, val, &mut queue);
                     }
-                } else {
-                    stack.pop();
                 }
             }
         }
     };
-    dfs_order(true, true, &mut val);
+    first_order(true, true, &mut val);
+    // クラスタの左右も初めの並びから（中のいちばん早いノードの順）
+    ord.global_from(&val);
     for r in 0..ord.layers.len() {
         ord.sort_layer(r, &val);
     }
@@ -1629,24 +1811,24 @@ pub fn layout(
             }
             ord.layers = first_layers.clone();
             ord.refresh();
-            ord.global_keys();
+            ord.global_from(&val);
             for r in 0..ord.layers.len() {
                 ord.sort_layer(r, &val);
             }
         }
         if start == 1 {
-            dfs_order(false, true, &mut val);
-            ord.global_keys();
+            first_order(false, true, &mut val);
+            ord.global_from(&val);
             for r in (0..ord.layers.len()).rev() {
                 ord.sort_layer(r, &val);
             }
         }
         if start == 2 {
             // 3 回目は辺を書いた順にたどる上からの並び（宣言の順からでは届かない少ない交差の並びがある）
-            dfs_order(true, false, &mut val);
+            first_order(true, false, &mut val);
             ord.layers = first_layers.clone();
             ord.refresh();
-            ord.global_keys();
+            ord.global_from(&val);
             for r in 0..ord.layers.len() {
                 ord.sort_layer(r, &val);
             }
@@ -1663,9 +1845,10 @@ pub fn layout(
                 break;
             }
             ord.global_keys();
-            // 上り下りの 1 組おきに、同じ値の要素の順を逆にする（同じ交差の数の並びの間を動いて、減る形を探す）
+            // 上り下りの 1 組おきに、同じ値の要素の順を逆にする（同じ交差の数の並びの間を動いて、減る形を探す）。
+            // 1 回目は下から上へ（Graphviz の絵と同じく、上のランクが下の並びに合わせる）
             ord.flip = i % 4 >= 2;
-            ord.sweep((i + start) % 2 == 0, &mut val);
+            ord.sweep((i + start + usize::from(k > 0)) % 2 == 0, &mut val);
             ord.flip = false;
             if transpose {
                 ord.transpose(i % 2 == 1);
