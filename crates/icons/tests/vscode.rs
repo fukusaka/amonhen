@@ -55,9 +55,33 @@ fn codepoints_stay_when_an_icon_is_added() {
 #[test]
 fn font_is_current() {
     let committed = std::fs::read(app().join(vscode_font::FONT_PATH)).unwrap_or_default();
-    assert!(
-        committed == vscode_font::font(&table()),
-        "{} is stale: cargo run -p amonhen-icons --example vscode",
+    let table = table();
+    if committed == vscode_font::font(&table) {
+        return;
+    }
+    // どの形の字が違うか（コミットしたフォントの loca・glyf と、今作った字を比べる）。
+    let differ: Vec<&str> = if committed.is_empty() {
+        Vec::new()
+    } else {
+        let (loca, glyf) = (
+            font_table(&committed, b"loca"),
+            font_table(&committed, b"glyf"),
+        );
+        let at = |n: usize| u32::from_be_bytes(loca[4 * n..4 * n + 4].try_into().unwrap()) as usize;
+        vscode_font::glyph_bytes(&table)
+            .into_iter()
+            .enumerate()
+            .filter(|(n, (_, bytes))| {
+                let (from, to) = (at(n + 1), at(n + 2));
+                let old = glyf.get(from..to).unwrap_or_default();
+                old.get(..bytes.len()) != Some(bytes.as_slice())
+                    || old[bytes.len()..].iter().any(|b| *b != 0)
+            })
+            .map(|(_, (name, _))| name)
+            .collect()
+    };
+    panic!(
+        "{} is stale (glyphs differ: {differ:?}): cargo run -p amonhen-icons --example vscode",
         vscode_font::FONT_PATH
     );
 }

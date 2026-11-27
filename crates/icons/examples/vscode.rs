@@ -2,6 +2,8 @@
 //! `contributes.icons` を、今の形から作り直す。足した形には字の番号を振り、表（`tools/vscode-codepoints.tsv`）に足す。
 //!   cargo run -p amonhen-icons --example vscode
 
+// テストだけが使う関数もある。
+#[allow(dead_code)]
 #[path = "../tools/vscode_font.rs"]
 mod vscode_font;
 

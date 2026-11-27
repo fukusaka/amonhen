@@ -89,9 +89,11 @@ fn outline(icon: &Icon) -> BezPath {
         let mut i = 0;
         while i < s.len() {
             let op = Op::from_code(s[i]).expect("op");
+            // 座標は 1/1024 px の格子に丸める。弧から作った点（build.rs の sin・cos）は、rustc・OS によって末尾の桁が
+            // 違うことがあり、そのままではフォントのバイトが変わる。
             let c: Vec<f64> = s[i + 1..i + 1 + op.arity()]
                 .iter()
-                .map(|v| *v as f64)
+                .map(|v| (*v as f64 * 1024.0).round() / 1024.0)
                 .collect();
             match op {
                 Op::Move => {
@@ -244,6 +246,14 @@ fn checksum(data: &[u8]) -> u32 {
         w[..c.len()].copy_from_slice(c);
         sum.wrapping_add(u32::from_be_bytes(w))
     })
+}
+
+/// 字ごとの `glyf` のバイト（表の形のある行の順、名前つき）。
+pub fn glyph_bytes(table: &Table) -> Vec<(&'static str, Vec<u8>)> {
+    glyphs(table)
+        .into_iter()
+        .map(|(_, name, icon)| (name, glyph(&contours(&outline(icon)))))
+        .collect()
 }
 
 /// フォント（TrueType）。0 番の字は空、表の形のある行が番号の順に 1 番から。
