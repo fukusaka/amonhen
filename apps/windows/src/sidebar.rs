@@ -379,7 +379,7 @@ pub fn nodes(
     }
     if let Some(filter) = &form.partial {
         history_tips.push(tr!(
-            "Partial clone: file contents are fetched when needed ({filter})",
+            "Partial clone: file contents are fetched when you ask for them or an operation needs them ({filter})",
             filter = filter
         ));
     }
@@ -403,7 +403,7 @@ pub fn nodes(
         history_marks.push(form_mark(
             "partial",
             tr!(
-                "Partial clone: file contents are fetched when needed ({filter})",
+                "Partial clone: file contents are fetched when you ask for them or an operation needs them ({filter})",
                 filter = filter
             ),
         ));

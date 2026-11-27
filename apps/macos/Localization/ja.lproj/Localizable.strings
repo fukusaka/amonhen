@@ -1708,11 +1708,11 @@
 "(not fetched)" = "（取得していません）";
 "Fetching and Folders" = "取得とフォルダ";
 "Older history isn’t fetched. Fetch more in Fetching and Folders, or at the end of History." = "これより古い履歴は取得していません。「取得とフォルダ」か、History の終わりで取り足せます。";
-"Partial clone: file contents are fetched from %@ when they’re needed." = "partial clone: ファイルの中身は、必要なときに %@ から取得します。";
+"Partial clone: file contents are fetched from %@ when you ask for them or an operation needs them." = "partial clone: ファイルの中身は、頼んだときか操作に要るときに %@ から取得します。";
 "Some folders only" = "一部のフォルダだけ";
 "Registered with git maintenance, which tidies it up in the background." = "git maintenance に登録してあり、裏で整理されます。";
-"Contents fetched when needed (%@)" = "中身は必要なときに取得（%@）";
-"Contents fetched when needed" = "中身は必要なときに取得";
+"Contents fetched when asked (%@)" = "中身は頼んだときに取得（%@）";
+"Contents fetched when asked" = "中身は頼んだときに取得";
 "Sparse checkout: only %ld folders are checked out." = "sparse checkout: %ld 個のフォルダだけを取り出しています。";
 "Sparse checkout: only 1 folder is checked out." = "sparse checkout: 1 個のフォルダだけを取り出しています。";
 "Sparse checkout: only the files at the top are checked out." = "sparse checkout: 最上位のファイルだけを取り出しています。";
@@ -1747,7 +1747,7 @@
 "Every folder is checked out again (git sparse-checkout disable). In a large repository this can take long and use a lot of disk." = "すべてのフォルダをまた取り出します（git sparse-checkout disable）。大きなリポジトリでは時間がかかり、ディスクも多く使います。";
 "Check Out All" = "すべて取り出す";
 "Shallow clone: older history isn’t fetched" = "shallow clone: 古い履歴は取得していません";
-"Partial clone: file contents are fetched when needed (%@)" = "partial clone: ファイルの中身は必要なときに取得します（%@）";
+"Partial clone: file contents are fetched when you ask for them or an operation needs them (%@)" = "partial clone: ファイルの中身は、頼んだときか操作に要るときに取得します（%@）";
 "Only some folders are checked out (%ld)" = "一部のフォルダだけ取り出し中（%ld）";
 "Only some files are checked out" = "一部のファイルだけ取り出し中";
 "Click to change them in Settings > Fetching and Folders." = "押すと、設定 > 取得とフォルダで変えられます。";

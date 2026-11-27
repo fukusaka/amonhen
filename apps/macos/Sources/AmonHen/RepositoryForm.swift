@@ -49,7 +49,7 @@ nonisolated struct RepositoryForm: Decodable, Equatable, Sendable {
         }
         if let partial {
             items.append((Self.partialTitle(partial),
-                          L("Partial clone: file contents are fetched from %@ when they’re needed.", partial.remote)))
+                          L("Partial clone: file contents are fetched from %@ when you ask for them or an operation needs them.", partial.remote)))
         }
         if let sparse {
             items.append((L("Some folders only"), Self.sparseHelp(sparse)))
@@ -61,7 +61,7 @@ nonisolated struct RepositoryForm: Decodable, Equatable, Sendable {
     }
 
     static func partialTitle(_ partial: Partial) -> String {
-        partial.filter.map { L("Contents fetched when needed (%@)", $0) } ?? L("Contents fetched when needed")
+        partial.filter.map { L("Contents fetched when asked (%@)", $0) } ?? L("Contents fetched when asked")
     }
 
     static func sparseHelp(_ sparse: Sparse) -> String {
