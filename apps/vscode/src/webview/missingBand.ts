@@ -24,6 +24,8 @@ export function missingBand(message: string, fetch: () => void): MissingBand {
   const icon = el('span', 'shared-icon partial');
   icon.setAttribute('aria-hidden', 'true');
   const label = el('span', 'missing-text', message);
+  // 狭い窓では文が「…」で切れるので、全文をツールチップにも置く
+  label.title = message;
   const button = el('button', 'secondary', 'Fetch Contents');
   button.title = 'Fetch just these contents from the remote, in one go, and show them.';
   button.addEventListener('click', () => {
