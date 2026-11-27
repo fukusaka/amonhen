@@ -33,8 +33,15 @@ Two directions were weighed: a shared, original set drawn by every front end, or
 2. Five shapes still didn't say what they mean: Merge (a common motif), Rebase (it only said that something moved), Stash and Pop (they looked like download and upload) and Repositories (it read as a cake or a tray). Each got three or four alternatives.
 3. The chosen ones: Merge C (Branch upside down, so the two pair up), Rebase B (dots where the branch used to start), Stash and Pop B (a drawer), Repositories B (a bookshelf).
 4. In the apps they looked out of place next to each platform's own icons. Measured on screenshots: the 1.5-unit strokes were heavier than SF Symbols on macOS (1.7pt against 1.4pt), Segoe Fluent Icons on Windows (1.9px against 1px) and codicons in VSCode (1.5 against 1), lighter than Adwaita in GTK4 (1.5px against 2px), and blurred at 100% because they fell between pixels. Two fixes were drawn as samples: each front end at its platform's weight, or one weight (1.25) everywhere. The first was chosen, with straight lines moved onto whole pixels.
+5. The other 72 shapes (sidebar sections, branch and worktree states, tools, settings pages, signatures, clone states, CI, AI, image comparison) were drawn the same way. Where the first draft didn't read well, 31 of them, three or more alternatives were drawn, and more when none of those worked (16 for the main worktree). The pull request's shape was chosen from four drafts later.
 
 ![The drafts and the choice](images/icons/alternatives.en.png)
+
+The other shapes, what each one means and the drafts they were chosen from:
+
+![What the other shapes mean](images/icons/intent-rest.en.png)
+
+![The other shapes' drafts and the choice](images/icons/alternatives-rest.en.png)
 
 ## Implementation
 
@@ -53,6 +60,8 @@ The figures on this page come from `crates/icons/tools/figures.swift` (on macOS)
 cd crates/icons/tools
 swift figures.swift intent intent.en.tsv ../svg ../../../docs/images/icons/intent.en.png
 swift figures.swift alternatives alternatives.en.tsv alternatives ../../../docs/images/icons/alternatives.en.png
+swift figures.swift intent intent-rest.en.tsv ../svg ../../../docs/images/icons/intent-rest.en.png
+swift figures.swift alternatives alternatives-rest.en.tsv alternatives ../../../docs/images/icons/alternatives-rest.en.png
 ```
 
 ## The terminal front end
@@ -62,24 +71,24 @@ The terminal front end can't stroke shapes, so it shows one character for each s
 - Only characters whose Unicode East Asian Width is N or Na, so each takes one cell in every locale. Ambiguous ones such as ● ↑ ★ ▸ take two cells in GNOME Terminal set up for Japanese, while `unicode-width` counts them as one.
 - No character with the Emoji property: Windows Terminal draws some of them as color emoji when its font lacks them (✔ and ⏲ did).
 - Checked in three terminals with their default fonts: GNOME Terminal (Ubuntu Sans Mono, Japanese locale), macOS Terminal (SF Mono) and Windows Terminal (Cascadia Mono). Most of the characters aren't in those fonts and come from a fallback: macOS Terminal shrinks the glyph to the cell, GNOME Terminal lets it spill into the next cell, and Windows Terminal takes it from Segoe UI Symbol. A character that spilled over in any of them was replaced, which rules out most round shapes (circled arrows, gears, circled stars).
-- Characters follow the shared shapes where they can: the line on top for a remote (`⊤`, and `⍡` when it disagrees), a dotted arrow for restore (a dotted line is the previous position), `!` for cannot verify like its circled !.
-- Names with the same meaning share a character (`✗` for failed and CI failed, `⊘` for cancelled and CI cancelled, `⁺` for both new-branch names, `✎` for a worktree with changes and Working Copy); bad signature also uses `✗`, as it only appears among signatures. Different meanings get different characters: no changes `=`, signed `ʃ` and CI passed `✓`; cannot verify `!` and an untracked file `?` (like `git status`'s `??`).
+- Characters follow the shared shapes where they can: the line on top for a remote (`⊤`, and `⍡` for a tag that differs there), two-headed diagonal arrows for expanding the details (`⤢`) and the other diagonal for restoring them (`⤡`; no character has arrows pointing in), a frame for zoom to fit (`⬚`), `!` for cannot verify like its circled !.
+- Names with the same meaning share a character (`✗` for failed and CI failed, `⊘` for cancelled and CI cancelled, `⁺` for both new-branch names, `✎` for the worktree to write to and Working Copy, which have the same shape); bad signature also uses `✗`, as it only appears among signatures. Different meanings get different characters: no changes `=`, signed `ʃ` and CI passed `✓`; cannot verify `!` (a circled !) and a file of unknown kind `?` (a sheet with ?).
 - CI running `⣾` is a frame of the braille spinner, so the front end can step through ⣾⣽⣻⢿⡿⣟⣯⣷. Refresh `⤸` is drawn small in macOS Terminal; the circled arrows that read better spill over in GNOME Terminal.
 
 | Name | Meaning | Character | Code point |
 | --- | --- | --- | --- |
-| `account` | Account | `@` | U+0040 |
-| `activity` | Activity (background work) | `≋` | U+224B |
+| `account` | Accounts | `@` | U+0040 |
+| `activity` | Activity | `≋` | U+224B |
 | `ahead-behind` | Ahead / behind | `↨` | U+21A8 |
-| `ai` | AI | `✦` | U+2726 |
-| `appearance` | Appearance (light / dark) | `☾` | U+263E |
+| `ai` | AI explanation and suggestion | `✦` | U+2726 |
+| `appearance` | Appearance | `☾` | U+263E |
 | `back` | Back | `‹` | U+2039 |
 | `bad-signature` | Bad signature | `✗` | U+2717 |
 | `branch` | Branch | `⑂` | U+2442 |
 | `cancelled` | Cancelled | `⊘` | U+2298 |
-| `cannot-verify` | Cannot verify | `!` | U+0021 |
+| `cannot-verify` | Can't verify with this git | `!` | U+0021 |
 | `changed-pixels` | Changed pixels | `⊹` | U+22B9 |
-| `checkerboard` | Checkerboard (transparency) | `▚` | U+259A |
+| `checkerboard` | Checkerboard | `▚` | U+259A |
 | `ci-cancelled` | CI cancelled | `⊘` | U+2298 |
 | `ci-failed` | CI failed | `✗` | U+2717 |
 | `ci-none` | No CI | `◌` | U+25CC |
@@ -92,9 +101,9 @@ The terminal front end can't stroke shapes, so it shows one character for each s
 | `disconnected` | Disconnected | `⌁` | U+2301 |
 | `display-options` | Display options | `⁑` | U+2051 |
 | `edit-mode` | Edit mode | `✐` | U+2710 |
-| `edited-worktree` | Worktree with changes | `✎` | U+270E |
+| `edited-worktree` | Worktree to write to | `✎` | U+270E |
 | `editor` | Editor | `⟨` | U+27E8 |
-| `expand` | Expand | `›` | U+203A |
+| `expand` | Expand the details | `⤢` | U+2922 |
 | `expand-all` | Expand all | `⊞` | U+229E |
 | `expired-key` | Expired key | `⧖` | U+29D6 |
 | `failed` | Failed | `✗` | U+2717 |
@@ -111,10 +120,10 @@ The terminal front end can't stroke shapes, so it shows one character for each s
 | `missing-key` | Missing key | `⚷` | U+26B7 |
 | `modified` | Modified | `⁎` | U+204E |
 | `new-branch` | New Branch | `⁺` | U+207A |
-| `new-branch-row` | New branch (row) | `⁺` | U+207A |
+| `new-branch-row` | New branch row | `⁺` | U+207A |
 | `not-checked-out` | Not checked out | `∘` | U+2218 |
 | `onion-skin` | Onion skin | `⊓` | U+2293 |
-| `partial` | Partly staged | `⊏` | U+228F |
+| `partial` | Partial clone | `⊏` | U+228F |
 | `performance` | Performance | `ϟ` | U+03DF |
 | `pop` | Pop | `⤉` | U+2909 |
 | `preview` | Preview | `⌾` | U+233E |
@@ -126,38 +135,38 @@ The terminal front end can't stroke shapes, so it shows one character for each s
 | `rebase` | Rebase | `↱` | U+21B1 |
 | `reflog` | Reflog | `↜` | U+219C |
 | `refresh` | Refresh | `⤸` | U+2938 |
-| `remote` | Remote | `⊤` | U+22A4 |
-| `remote-conflict` | Remote disagrees | `⍡` | U+2361 |
+| `remote` | Remotes | `⊤` | U+22A4 |
+| `remote-conflict` | Tag differs on the remote | `⍡` | U+2361 |
 | `repositories` | Repositories | `⦙` | U+2999 |
-| `restore` | Restore (discard) | `⇠` | U+21E0 |
+| `restore` | Restore the details | `⤡` | U+2921 |
 | `revoked-key` | Revoked key | `⌀` | U+2300 |
 | `search` | Search | `⌕` | U+2315 |
 | `settings` | Settings | `⋮` | U+22EE |
 | `shallow` | Shallow clone | `⋯` | U+22EF |
 | `side-by-side` | Side by side | `⫴` | U+2AF4 |
 | `sidebar` | Sidebar | `⎸` | U+23B8 |
-| `signed` | Signed | `ʃ` | U+0283 |
-| `signer-mismatch` | Signer mismatch | `≁` | U+2241 |
+| `signed` | Verified | `ʃ` | U+0283 |
+| `signer-mismatch` | Different signer | `≁` | U+2241 |
 | `sparse` | Sparse checkout | `⁘` | U+2058 |
-| `stacked` | Stacked | `⫶` | U+2AF6 |
+| `stacked` | Stacked branch | `⫶` | U+2AF6 |
 | `stash` | Stash | `⤈` | U+2908 |
-| `stashes` | Stashes (section) | `⊔` | U+2294 |
-| `submodule` | Submodule | `⊡` | U+22A1 |
-| `subtree` | Subtree | `⤷` | U+2937 |
+| `stashes` | Stashes | `⊔` | U+2294 |
+| `submodule` | Submodules | `⊡` | U+22A1 |
+| `subtree` | Subtrees | `⤷` | U+2937 |
 | `swipe` | Swipe | `⇹` | U+21F9 |
-| `tag` | Tag | `⬦` | U+2B26 |
+| `tag` | Tags | `⬦` | U+2B26 |
 | `terminal` | Terminal | `≻` | U+227B |
 | `theme` | Theme | `◬` | U+25EC |
-| `translate` | Translate | `⥊` | U+294A |
+| `translate` | AI translation | `⥊` | U+294A |
 | `tree` | Tree | `⊢` | U+22A2 |
-| `trust-unknown` | Trust unknown | `⸮` | U+2E2E |
+| `trust-unknown` | Trust undecided | `⸮` | U+2E2E |
 | `undo` | Undo | `↩` | U+21A9 |
-| `unknown-file` | Untracked file | `?` | U+003F |
+| `unknown-file` | Unknown kind | `?` | U+003F |
 | `upstream-gone` | Upstream gone | `⍊` | U+234A |
 | `whitespace` | Whitespace | `␣` | U+2423 |
 | `working-copy` | Working Copy | `✎` | U+270E |
 | `wrap-lines` | Wrap lines | `↵` | U+21B5 |
-| `zoom-fit` | Zoom to fit | `⤢` | U+2922 |
+| `zoom-fit` | Zoom to fit | `⬚` | U+2B1A |
 | `zoom-in` | Zoom in | `+` | U+002B |
 | `zoom-out` | Zoom out | `-` | U+002D |
 

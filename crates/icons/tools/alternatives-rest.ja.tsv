@@ -1,0 +1,201 @@
+title	残りの形の案 — 描いた案と選んだ案
+note	A は最初の形。青い枠が選んだ案。各案は 48・20・16 の大きさ（右の黒い帯は暗い背景の 16）
+group	reflog	Reflog
+alt	reflog-A	A 最初の形		時計に左回りの矢印。履歴を巻き戻す形で、History と区別できない。
+alt	reflog-B	B 戻る矢印つきの線		幹に並んだコミットと、下から上へ回り込む矢印。HEAD の行き来をさかのぼる。
+alt	reflog-C	C 記録の行と戻る矢印		並んだ記録の行と、左の上向きの矢印。記録を上へたどる。
+alt	reflog-D	D 回る矢印とコミット		左回りの矢印の中にコミットの丸。HEAD がたどったコミットへ戻る。
+alt	reflog-E	E 移った跡		2 つのコミットの上を、点線の跡が渡って右のコミットへ下りる。参照（HEAD・ブランチ）が前のコミットから今のコミットへ移った。点線＝前の位置。
+alt	reflog-F	F 移動の記録	chosen	各行の頭に小さな矢印（参照の移動）を付けた記録の行。checkout・reset などのたびに 1 行足される。
+alt	reflog-G	G 動いた名札		今の名札（実線）がコミットを指し、左に前の位置の名札が点線で残る。
+group	submodule	Submodules
+alt	submodule-A	A 最初の形		枠の中の枠。リポジトリの中のリポジトリ。
+alt	submodule-B	B 箱		封をした箱。別のリポジトリを丸ごと入れたもの（macOS の前の印と同じ考え）。
+alt	submodule-C	C フォルダの中のコミット		フォルダの中にコミットの丸。中に別の履歴がある。
+alt	submodule-D	D 枠の中の Branch		枠の中に小さな Branch。リポジトリの中のリポジトリ。
+alt	submodule-E	E 枠と大きな Branch	chosen	角丸の枠いっぱいに Branch。中に別の履歴があることを強める。
+alt	submodule-F	F 枠と幹のコミット		枠の中に、縦の幹と 2 つのコミット（小さな History）。
+alt	submodule-G	G 枠とコミット 1 つ		枠の真ん中にコミットの丸 1 つ。いちばん簡単な形。
+alt	submodule-H	H 二重の枠と Branch		外の枠と内の枠。内の枠に小さな Branch。
+group	subtree	Subtrees
+alt	subtree-A	A 最初の形		幹から枝が出て、その先が小さなフォルダ。履歴ごと取り込んだフォルダ。16 で読みにくい。
+alt	subtree-B	B フォルダの中の Branch		フォルダの中に小さな Branch。履歴ごと取り込んだフォルダ。
+alt	subtree-C	C フォルダが幹へ合流		右上のフォルダから線が下りて左の幹に合わさる。別の履歴を取り込む。
+alt	subtree-D	D フォルダの中の木		フォルダの中に段違いの線。中に入れ子の中身。
+alt	subtree-E	E フォルダと大きな Branch	chosen	フォルダの下の部分いっぱいに Branch。
+alt	subtree-F	F フォルダと幹のコミット		フォルダの中に縦の幹と 2 つのコミット。履歴ごと入ったフォルダ。
+alt	subtree-G	G フォルダと Merge		フォルダの中に Merge の形（取り込んだ）。
+alt	subtree-H	H 2 つのフォルダが合流		左の幹に、小さなフォルダからの線が合わさる。
+group	current-branch	今のブランチ
+alt	current-branch-A	A 最初の形		Branch の先の丸を二重にし、真ん中に点。「ここにいる」コミット。違いが小さい。
+alt	current-branch-B	B チェック		チェックだけ。VSCode の前の印と同じ。
+alt	current-branch-C	C 先を照準に		Branch の先の丸を、照準（Go to HEAD と同じ）にする。
+alt	current-branch-D	D 矢印が差すコミット		左から矢印がコミットの丸を差す。HEAD が指す所。
+alt	current-branch-E	E 上から差す矢印		上から下向きの矢印がコミットの丸を差す。HEAD がここ。
+alt	current-branch-F	F Branch とチェック	chosen	Branch の右下に小さなチェック。
+alt	current-branch-G	G 丸の中の Branch		丸の中に Branch（最初の案）。
+alt	current-branch-H	H 現在地のピン		地図のピン（ここにいる）。
+alt	current-branch-I	I 太い先のコミット		Branch の先の丸を大きく、中に点。
+group	main-worktree	メインの worktree
+alt	main-worktree-A	A 最初の形		最初の案。屋根・箱・扉。
+alt	main-worktree-B	B 家（扉なし）	chosen	屋根と箱。
+alt	main-worktree-C	C 根		下の二重の丸から幹が伸びる。
+alt	main-worktree-D	D 錨		錨（つなぎとめる元）。
+alt	main-worktree-E	E フォルダと屋根		フォルダの中に小さな家。
+alt	main-worktree-F	F 家と Branch		家の中に幹とコミット。
+alt	main-worktree-G	G 家（低い屋根）		屋根を低く広く。
+alt	main-worktree-H	H 星のフォルダ		フォルダに星。
+alt	main-worktree-I	I ⌂ の形		五角形の ⌂（VSCode・CLI の文字の印と同じ）。
+alt	main-worktree-J	J ⌂ と鉛筆		⌂ に鉛筆（書き込む先と混ざる）。
+alt	main-worktree-K	K 枠と角の星		Working Copy の枠に星。
+alt	main-worktree-L	L ⌂ と幹		⌂ に幹とコミット。
+alt	main-worktree-M	M ⌂ と扉の線		⌂ の下に扉の縦線を 1 本。家だと読みやすく、16 でも潰れない。
+alt	main-worktree-N	N 根		幹の下で根が 3 本に分かれる。ほかの worktree が生える元。
+alt	main-worktree-O	O 旗		竿に旗（本拠地）。
+alt	main-worktree-P	P 屋根のフォルダ		フォルダの上の辺を屋根にした形。元の作業ツリーのフォルダ。
+group	edited-worktree	書き込む先
+alt	edited-worktree-A	A 最初の形		丸の中に鉛筆。Working Copy の鉛筆を丸に収め、行の印の大きさにした。
+alt	edited-worktree-B	B 鉛筆		鉛筆だけ。書き込む先。
+alt	edited-worktree-C	C フォルダと鉛筆		フォルダに鉛筆。書き込む作業ツリー。
+alt	edited-worktree-D	D Working Copy と同じ	chosen	枠に鉛筆（サイドバーの Working Copy と同じ形）。
+group	clean	変更なし
+alt	clean-A	A 最初の形		丸の中にチェック。変更のない worktree をまとめた行。
+alt	clean-B	B チェック		チェックだけ。
+alt	clean-C	C フォルダとチェック		フォルダにチェック。変更のない作業ツリー。
+alt	clean-D	D 枠とチェック		枠にチェック（Working Copy の枠）。
+alt	clean-E	E 重ねた枠とチェック		重ねた 2 枚の枠（まとめた worktree）の手前にチェック。
+alt	clean-F	F 枠に「=」		枠の中に「=」（差がない）。
+alt	clean-G	G 重ねた枠と「=」	chosen	重ねた 2 枚の枠の手前に「=」。
+alt	clean-H	H 枠と鉛筆に斜線		Working Copy の枠と鉛筆を、斜線で消す（書き換えがない）。
+group	settings	設定
+alt	settings-A	A 最初の形		歯車（丸と 8 本の歯）。太陽にも見える。
+alt	settings-B	B 丸い歯の歯車	chosen	8 枚の歯を山形の輪郭にした歯車。太陽に見えにくい。
+alt	settings-C	C 縦のつまみ		縦の線 3 本につまみ（表示のメニューの縦向き）。調整する所。
+alt	settings-D	D スパナ		スパナ。手入れの道具。
+group	expand	詳細を広げる
+alt	expand-A	A 最初の形	chosen	外向きの斜めの矢印 2 本。
+alt	expand-B	B 外向きの角		四隅の角が外へ。枠いっぱいに広げる。
+alt	expand-C	C 枠から出る矢印		枠の右上から外へ出る矢印。
+alt	expand-D	D 離れる山形		上下へ離れる山形。
+group	restore	広げた詳細を戻す
+alt	restore-A	A 最初の形	chosen	内向きの斜めの矢印 2 本。詳細を広げるの逆。
+alt	restore-B	B 内向きの角		四隅の角が内へ。広げたのを戻す。
+alt	restore-C	C 枠へ入る矢印		外から枠の中へ入る矢印。
+alt	restore-D	D 寄る山形		上下から寄る山形。
+group	expand-all	すべて開く
+alt	expand-all-A	A 最初の形		2 本の線から上下へ離れる矢印。差分を開く。
+alt	expand-all-B	B 二重の山形	chosen	上と下へ開く山形を重ねる。
+alt	expand-all-C	C 枠に＋		枠に＋（木を開く印）。
+alt	expand-all-D	D 下向きの山形 2 つ		下向きの山形を 2 つ（畳んだ物を下へ広げる）。
+group	collapse-all	すべて畳む
+alt	collapse-all-A	A 最初の形		上下から 2 本の線へ寄る矢印。差分を畳む。
+alt	collapse-all-B	B 二重の山形	chosen	上と下から閉じる山形を重ねる。
+alt	collapse-all-C	C 枠に−		枠に−（木を畳む印）。
+alt	collapse-all-D	D 上向きの山形 2 つ		上向きの山形を 2 つ（上へ畳む）。
+group	back	戻る
+alt	back-A	A 最初の形		左向きの山形。木に戻る。
+alt	back-B	B 左向きの矢印	chosen	軸のある左向きの矢印。
+alt	back-C	C 上へ戻る矢印		上へ折れて左へ戻る矢印。木の一つ上へ。
+alt	back-D	D 丸の中の山形		丸の中に左向きの山形。
+group	wrap-lines	折り返し
+alt	wrap-lines-A	A 最初の形		右端で下へ回り込んで左へ戻る矢印と、その下の行。
+alt	wrap-lines-B	B 行と戻る矢印		1 行目、右で折れて戻る 2 行目、短い 3 行目。
+alt	wrap-lines-C	C 改行の記号		↵（右から下へ回って左へ）。
+alt	wrap-lines-D	D 枠の端で折れる	chosen	縦の線（右の端）で折れて次の行へ。
+group	whitespace	空白
+alt	whitespace-A	A 最初の形	chosen	空白キーの形（下の受け皿）。差分で無視する空白。
+alt	whitespace-B	B 中点		並んだ 3 つの点（空白を点で見せる）。
+alt	whitespace-C	C 語の間		2 つの語のあいだの受け皿。
+alt	whitespace-D	D タブ		右向きの矢印と縦の線（タブ）。
+group	account	Accounts
+alt	account-A	A 最初の形		人（頭と肩）。
+alt	account-B	B 丸の中の人		丸の中に人（macOS の前の印と同じ考え）。
+alt	account-C	C 名札		名札（顔と 2 行）。
+alt	account-D	D 角丸の枠の人	chosen	角丸の枠に人（アバターの枠）。
+group	appearance	Appearance
+alt	appearance-A	A 最初の形		絵筆。見た目を塗る。
+alt	appearance-B	B 明暗の丸	chosen	右半分に斜線のある丸。明るい・暗いの外観。
+alt	appearance-C	C 窓と字		窓の中に「A」。窓・文字の見た目。
+alt	appearance-D	D 窓と半分の地		窓の左半分に斜線（地の濃さ）。
+group	theme	Theme
+alt	theme-A	A 最初の形		絵の具のパレット（3 つの点が色）。
+alt	theme-B	B 色見本	chosen	扇に開いた色見本の短冊。
+alt	theme-C	C 3 つの丸		重なる 3 つの丸（色を混ぜる）。
+alt	theme-D	D 色付きのコード		長さの違う行（構文の色のテーマ）。
+group	performance	Performance
+alt	performance-A	A 最初の形		速度計（半円と針）。
+alt	performance-B	B ストップウォッチ	chosen	ストップウォッチ。速さを測る。
+alt	performance-C	C 稲妻		稲妻。速さ。
+alt	performance-D	D 上がる線		軸と、右へ上がる折れ線（グラフ）。
+group	unknown-file	種類の分からないもの
+alt	unknown-file-A	A 最初の形		点線の枠に「?」。点線＝まだ分からない。
+alt	unknown-file-B	B 紙に「?」	chosen	角を折った紙に「?」。種類の分からないファイル。
+alt	unknown-file-C	C 点線の紙		点線の紙（Files の形）。
+alt	unknown-file-D	D 点線の丸に「?」		点線の丸に「?」。
+group	shallow	shallow clone
+alt	shallow-A	A 最初の形		はさみ。古い履歴を切り落としてある。
+alt	shallow-B	B 途切れた履歴	chosen	上の 2 つのコミットは実線、その下の幹は点線（取っていない）。
+alt	shallow-C	C 底の線までの矢印		下向きの矢印と底の線。ここまでしか取らない。
+alt	shallow-D	D 下が点線の層		3 本の横線のいちばん下が点線。
+group	partial	partial clone
+alt	partial-A	A 最初の形		雲から下向きの矢印。中身は必要なときに取ってくる。
+alt	partial-B	B 点線の紙と矢印		点線の紙へ下りる矢印。中身は必要なときに来る。
+alt	partial-C	C 実と点線のコミット		幹のコミットは実線、枝の先（中身）は点線。
+alt	partial-D	D 点線の雲と矢印		点線の雲から下向きの矢印。
+alt	partial-E	E 幹のコミットと点線の紙		左の幹のコミットは実線、右の中身の紙は点線。履歴はある、中身は後で。
+alt	partial-F	F 上が実線・下が点線の紙	chosen	紙の上半分は実線、下半分は点線。一部だけ取ってある。
+alt	partial-G	G リモートの線と点線の紙		上の横線（リモート）から矢印が、点線の紙へ下りる（Fetch の形）。
+alt	partial-H	H フォルダの中が点線		フォルダの中に点線の紙。中身は必要なときに来る。
+group	sparse	sparse checkout
+alt	sparse-A	A 最初の形		フォルダに「−」。一部のフォルダだけ取り出している。
+alt	sparse-B	B 一部が点線の木		木の行のうち、取り出していない行は点線。
+alt	sparse-C	C 実と点線のフォルダ		取り出したフォルダと、点線のフォルダ。
+alt	sparse-D	D 漏斗とフォルダ		フォルダに漏斗（絞り込んで取り出す）。
+alt	sparse-E	E 実線と点線のフォルダ		大きめの 2 つのフォルダ。右は点線（取り出していない）。
+alt	sparse-F	F 真ん中だけ点線の行	chosen	木の 3 行のうち、真ん中の行だけ点線。
+alt	sparse-G	G フォルダの中の行		フォルダの中に 2 行、下の行は点線。
+alt	sparse-H	H 枠の中の 2 つのフォルダ		作業ツリーの枠に、実線と点線の小さなフォルダ。
+group	modified	変更あり
+alt	modified-A	A 最初の形		鉛筆。submodule の中に変更がある。
+alt	modified-B	B 枠と鉛筆		submodule の枠に鉛筆。
+alt	modified-C	C 枠と点		submodule の枠の中に点（VSCode の「変更あり」の ●）。
+alt	modified-D	D 丸と鉛筆		丸の中に鉛筆（書き込む先と同じ形）。
+alt	modified-E	E 枠と角の点		submodule の枠の右上の角に点（変更あり）。
+alt	modified-F	F 枠をはみ出す鉛筆	chosen	枠の右上から鉛筆が入る。
+alt	modified-G	G 丸と点		丸の中に点（VSCode の「変更あり」の ● に近い）。
+alt	modified-H	H 枠と星印		枠の中に「*」（変更の印）。
+group	cancelled	取り消した
+alt	cancelled-A	A 最初の形		丸の中に四角（停止）。
+alt	cancelled-B	B 四角		停止の四角だけ。
+alt	cancelled-C	C 丸に斜線	chosen	丸に斜線（取り消し）。CI を取り消したと同じ形。
+alt	cancelled-D	D 点線の丸と四角		点線の丸の中に四角（途中で止めた）。
+group	ci-running	CI が走っている
+alt	ci-running-A	A 最初の形		丸の中に小さな丸。動いている途中。
+alt	ci-running-B	B 回る弧	chosen	4 分の 3 の弧（回っている途中）。
+alt	ci-running-C	C 丸に時計の針		丸に時計の針（待っている・進んでいる）。
+alt	ci-running-D	D 点線の輪と点		点線の輪の中に点。
+group	ci-none	CI がない
+alt	ci-none-A	A 最初の形		空の丸。
+alt	ci-none-B	B 点線の丸	chosen	点線の丸（まだない）。
+alt	ci-none-C	C 丸に横線		丸に横線（なし）。
+alt	ci-none-D	D 小さな点		小さな丸だけ。
+group	ci-cancelled	CI を取り消した
+alt	ci-cancelled-A	A 最初の形		丸に斜線。
+alt	ci-cancelled-B	B 丸に四角		丸の中に四角（止めた）。
+alt	ci-cancelled-C	C 丸に−		丸に−。
+alt	ci-cancelled-D	D 点線の丸に斜線	chosen	点線の丸に斜線。
+group	changed-pixels	違うピクセル
+alt	changed-pixels-A	A 最初の形		＋と斜線と−。足した・消した画素。
+alt	changed-pixels-B	B 升目と 1 つの点		3×3 の升目の真ん中に点（違う画素）。
+alt	changed-pixels-C	C ずれた 2 枚	chosen	ずれて重なる 2 枚の枠（差のある所）。
+alt	changed-pixels-D	D 枠に ±		枠の中に＋と−。
+group	zoom-fit	枠に合わせる
+alt	zoom-fit-A	A 最初の形		虫眼鏡の中に、向かい合う角。
+alt	zoom-fit-B	B 四隅の角	chosen	四隅の角（枠に合わせる）。外向きの角と同じ考え。
+alt	zoom-fit-C	C 枠の中の両向き矢印		枠の中に、左右へ伸びる矢印。
+alt	zoom-fit-D	D 虫眼鏡と枠		虫眼鏡の中に四角。
+group	checkerboard	市松模様
+alt	checkerboard-A	A 最初の形		枠を 4 つに分け、斜めの 2 つに点。透けた所の下の模様。
+alt	checkerboard-B	B 3×3 の点		3×3 の升目の、四隅と真ん中に点。
+alt	checkerboard-C	C 明暗の丸		右半分に斜線の丸（明暗を切り替える）。
+alt	checkerboard-D	D 斜線の升	chosen	4 つの升の 2 つに斜線。
