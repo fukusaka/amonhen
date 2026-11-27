@@ -1721,14 +1721,15 @@ pub fn render(
                     }
                 }
                 // ラベルの仮のノードの脇のラベルは、文字を線の側に寄せる（箱は書体の違いの分だけ文字より広い。
-                // 文字の左端は仮のノードから 6）。横向きの配置では箱の余りは線と平行なので寄せない
+                // 文字の左端は仮のノードから `LABEL_GAP`）。横向きの配置では箱の余りは線と平行なので寄せない
                 let hug = match (&ev.label, label, dir.sideways()) {
                     (Some(t), Some(l), false) => {
                         let box_w = t.fit_width() + 4.0;
-                        // 仮のノード（同じ行の点）から 6 + 箱の半分の右にあれば、その脇のラベル
+                        // 仮のノード（同じ行の点）から間 + 箱の半分の右にあれば、その脇のラベル
+                        let gap = layout::LABEL_GAP;
                         let beside = points
                             .iter()
-                            .any(|p| p.1 == l.1 && (l.0 - p.0 - (6.0 + box_w / 2.0)).abs() < 0.01);
+                            .any(|p| p.1 == l.1 && (l.0 - p.0 - (gap + box_w / 2.0)).abs() < 0.01);
                         if beside { (box_w - t.width) / 2.0 } else { 0.0 }
                     }
                     _ => 0.0,

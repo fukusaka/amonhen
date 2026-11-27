@@ -1590,9 +1590,17 @@ fn dot_edge_labels_sit_beside_their_line() {
             .iter()
             .min_by(|a, b| (a.1 - ly).abs().total_cmp(&(b.1 - ly).abs()))
             .unwrap();
-        // ラベルの真ん中から線まで: ラベルの幅の半分（約 28）と間の 6 ほど
+        // ラベルの真ん中から線まで: ラベルの幅の半分（約 28）と間の 2 ほど
         assert!((lx - near.0).abs() < 40.0, "{i} {lx} {near:?} {svg}");
     }
+
+    // 文字の端は線の 2〜3pt 脇（Graphviz の絵と同じく、線にほぼ接する）
+    let svg = render("digraph { a -> b [label=\"m\"] }").unwrap().svg;
+    let t = svg.split("<text class=\"dot-edge-label\"").nth(1).unwrap();
+    let lx = attr_num(t, "x");
+    let x = attr_num(part(&svg, "a"), "cx");
+    let gap = lx - x;
+    assert!(gap > 3.0 && gap < 9.0, "{gap} {svg}");
 }
 
 /// 仮のノードを通る長い辺の束は、仮のノードの列を 1 本だけ持ち、真ん中の線から左右に同じだけ離れる（Graphviz の
