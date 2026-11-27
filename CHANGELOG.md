@@ -89,6 +89,17 @@ becomes the GitHub Release notes.
   Graphviz.
 - DOT diagrams: dot edges are fitted as long smooth curves through their corridor instead of short curves joined at
   every bend, as Graphviz draws them.
+- DOT diagrams: the dot layout orders the nodes of a rank as the dot paper describes (depth-first starting orders, nodes
+  without neighbours left in place, ties flipped between sweeps), leaving about 15% fewer edge crossings.
+- DOT diagrams: a long dot edge no longer slants across the nodes of a rank it passes.
+- DOT diagrams: edges between the same two nodes, such as a pair of opposite arrows, are drawn apart as in Graphviz
+  instead of on top of each other.
+- DOT diagrams: self-loops are flat rings beside the node (above it with `rankdir=LR`), sized as Graphviz sizes them,
+  instead of one large round curve.
+- DOT diagrams: an edge to a subgraph that names a node twice (`a -> {b c b}`) draws one edge to it, as Graphviz
+  does, not two.
+- DOT diagrams: polygons with `distortion` or `skew` keep the size of the plain polygon and widen only as much as
+  Graphviz's do, instead of growing to several times that, and `orientation` turns shapes counterclockwise, as in Graphviz.
 - Exporting chosen folders as an archive in a partial clone fetches only the contents it asked about, not every missing
   file of the commit (git 2.41 or later; older git fetches them all, and the question now counts them all).
 - Markdown previews put a list item's mark on the same line as a list nested at its start (`- 1. text`), as GitHub
@@ -1523,6 +1534,9 @@ First release.
   or the index to change.
 - The in-progress row and Working Copy notice when another editor or rerere removes a conflicted file's markers, as the
   app does, instead of waiting for a save in VSCode.
+- Aborting a merge, rebase or other operation closes the merge editors it left open, as the app does.
+- File History's "No commits changed this file." wraps in a narrow window instead of running off its edge.
+- Save as Bundle shows the commit count on the save button too, since the macOS save panel has no title.
 
 ### [0.2.9] - 2026-11-24
 
