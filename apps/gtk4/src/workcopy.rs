@@ -241,6 +241,9 @@ struct Inner {
     list_area: gtk::Overlay,
     /// すべてのファイルで開いているファイル（作り直しで選び直す）。
     tree_open: RefCell<Option<String>>,
+    /// 画像の比べ方（ファイルを替えても保つ）と、テキストで見ることにした SVG（パス）。
+    image_mode: Cell<crate::imagediff::Mode>,
+    svg_as_text: RefCell<HashSet<String>>,
     /// すべてのファイルの木の HEAD（コミットして HEAD が動いたら作り直す）。
     browser_head: Cell<Option<Oid>>,
     /// 一覧で 2 つ以上選んだときに並べている差分。
@@ -755,6 +758,8 @@ impl WorkingCopy {
             list_area: list_area.clone(),
             tree_open: RefCell::default(),
             browser_head: Cell::default(),
+            image_mode: Cell::default(),
+            svg_as_text: RefCell::default(),
             whole_file: whole_file.clone(),
             split_stats: RefCell::default(),
             conflict_buttons,
@@ -2987,6 +2992,30 @@ impl Inner {
         let generation = this.generation.get() + 1;
         this.generation.set(generation);
         let path = path.to_owned();
+        this.unembed();
+        if crate::imagediff::is_image(&path) {
+            // 変えていない画像は、絵を 1 枚で（macOS 版と同じ。読めなければバイナリファイル）。
+            this.pending.set(this.pending.get() + 1);
+            let weak = Rc::downgrade(this);
+            glib::spawn_future_local(async move {
+                let data = gio::spawn_blocking(move || repo.file_at(&head, &path).ok()).await;
+                let Some(this) = weak.upgrade() else { return };
+                this.pending.set(this.pending.get() - 1);
+                if this.generation.get() != generation {
+                    return;
+                }
+                match data
+                    .ok()
+                    .flatten()
+                    .and_then(|d| crate::imagediff::single(&d, None))
+                {
+                    Some(panel) => this.embed_widget(&panel),
+                    None => this.diff.show_message(&tr!("Binary file")),
+                }
+                this.update_buttons();
+            });
+            return;
+        }
         this.pending.set(this.pending.get() + 1);
         let weak = Rc::downgrade(this);
         glib::spawn_future_local(async move {
@@ -3529,6 +3558,18 @@ impl Inner {
                                     && a.file.old == b.file.old
                                     && a.file.new == b.file.new
                             }) => {}
+                Ok(Ok((working, _)))
+                    if working.0.as_ref().is_some_and(|w| this.shows_as_image(w)) =>
+                {
+                    // 画像は History と同じく、前後を並べる・スワイプ・重ねる・違いで比べる（macOS 版と同じ）。
+                    if let Some(w) = working.0.as_ref() {
+                        Inner::show_image(&this, w);
+                    }
+                    this.show_line_endings(None);
+                    this.whole_file.set_visible(false);
+                    this.conflict_buttons.set_visible(false);
+                    this.current.replace(Some(working));
+                }
                 Ok(Ok((working, view))) => {
                     let w = working.0.as_ref();
                     this.show_line_endings(w.and_then(|w| w.line_endings.as_ref()));
@@ -4033,6 +4074,55 @@ impl Inner {
         while let Some(child) = self.merge_holder.first_child() {
             self.merge_holder.remove(&child);
         }
+    }
+
+    /// 差分の代わりに画像の比べる欄を出すか（画像のファイルで中身がバイナリ、または絵で見ている SVG）。
+    fn shows_as_image(&self, w: &WorkingDiff) -> bool {
+        let path = &w.entry.path;
+        let svg = crate::imagediff::is_svg(path);
+        (crate::imagediff::is_image(path) || svg)
+            && (w.file.binary || (svg && !self.svg_as_text.borrow().contains(path)))
+    }
+
+    /// 画像の前と後を比べる欄を、差分の場所に出す。足したファイルは前を、消したファイルは後を空に（macOS 版と同じ）。
+    fn show_image(this: &Rc<Self>, w: &WorkingDiff) {
+        let e = &w.entry;
+        let added = e.worktree == b'?' || ((w.combined.is_some() || w.staged) && e.index == b'A');
+        let deleted = e.worktree == b'D' || (w.staged && e.index == b'D');
+        let before = (!added).then_some(&w.file.old[..]);
+        let after = (!deleted).then_some(&w.file.new[..]);
+        let weak = Rc::downgrade(this);
+        let on_mode: Rc<dyn Fn(crate::imagediff::Mode)> = Rc::new(move |mode| {
+            if let Some(this) = weak.upgrade() {
+                this.image_mode.set(mode);
+            }
+        });
+        let weak = Rc::downgrade(this);
+        let path = e.path.clone();
+        let on_text: Rc<dyn Fn()> = Rc::new(move || {
+            let Some(this) = weak.upgrade() else { return };
+            this.svg_as_text.borrow_mut().insert(path.clone());
+            if let Some(entry) = this.selected_entry() {
+                Inner::load_diff(&this, entry, false);
+            }
+        });
+        let panel = crate::imagediff::panel(
+            before,
+            after,
+            crate::imagediff::is_svg(&e.path),
+            this.image_mode.get(),
+            on_mode,
+            on_text,
+        );
+        this.embed_widget(&panel);
+    }
+
+    /// 差分の場所に、差分の代わりの部品（画像の欄）を出す。次に差分を読むと外れる。
+    fn embed_widget(&self, widget: &impl IsA<gtk::Widget>) {
+        self.unembed();
+        widget.set_vexpand(true);
+        self.merge_holder.append(widget);
+        self.right_stack.set_visible_child_name("merge");
     }
 
     /// マージエディタの場所に、案内（別の窓で開いている・読めない）を出す。
