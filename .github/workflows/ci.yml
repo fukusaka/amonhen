@@ -52,7 +52,7 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        os: ${{ fromJSON(needs.changes.outputs.macos == 'true' && '["macos-latest","ubuntu-latest","windows-latest"]' || '["ubuntu-latest","windows-latest"]') }}
+        os: ["windows-latest"]
     runs-on: ${{ matrix.os }}
     timeout-minutes: 30
     permissions:
@@ -272,7 +272,7 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        os: ${{ fromJSON(needs.changes.outputs.macos == 'true' && '["macos-latest","ubuntu-latest","windows-latest"]' || '["ubuntu-latest","windows-latest"]') }}
+        os: ["windows-latest"]
     runs-on: ${{ matrix.os }}
     timeout-minutes: 30
     permissions:

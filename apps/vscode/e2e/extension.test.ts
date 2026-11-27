@@ -4176,9 +4176,9 @@ suite('Amon Hen in VSCode', () => {
     const merge = (b: string, mode: string) =>
       withWindow(
         {
-          showQuickPick: async (items: readonly (vscode.QuickPickItem & { mode?: string })[]) => items.find((i) => i.mode === mode),
-          showInformationMessage: async () => undefined,
-          showWarningMessage: async () => undefined,
+          showQuickPick: async (items: readonly (vscode.QuickPickItem & { mode?: string })[]) => (console.log('DIAG quickPick', items.map((i) => i.mode ?? i.label).join(',')), items.find((i) => i.mode === mode)),
+          showInformationMessage: async (m: string) => void console.log('DIAG info', m),
+          showWarningMessage: async (m: string) => void console.log('DIAG warning', m),
         },
         async () => vscode.commands.executeCommand('amonhen.nav.merge', node(b)),
       );
@@ -4187,14 +4187,29 @@ suite('Amon Hen in VSCode', () => {
     git('add', 'mm.txt');
     git('commit', '-q', '-m', 'mm topic');
     git('switch', '-q', branch);
+    const dog = setInterval(() => {
+      const gd = git('rev-parse', '--absolute-git-dir').trim();
+      console.log('DIAG WATCHDOG ' + new Date().toISOString());
+      console.log('DIAG status', JSON.stringify(git('status', '--porcelain=v1', '-uall')));
+      console.log('DIAG gitdir', readdirSync(gd).filter((f) => /HEAD|MSG|MODE|lock|rebase/.test(f)).join(','));
+      console.log('DIAG errors', JSON.stringify(errors.slice(-5)), 'notices', JSON.stringify(notices.slice(-5)));
+      console.log('DIAG tabs', JSON.stringify(vscode.window.tabGroups.all.flatMap((g) => g.tabs).map((t) => [t.label, t.isDirty, Object.keys((t.input as object) ?? {}).join('/')])));
+      console.log('DIAG dirty docs', JSON.stringify(vscode.workspace.textDocuments.filter((d) => d.isDirty).map((d) => d.uri.toString())));
+      console.log('DIAG mm.txt', JSON.stringify(readFileSync(join(root, 'mm.txt'), 'utf8')));
+    }, 25_000);
     try {
+      console.log('DIAG STEP 1 ' + new Date().toISOString() + ' ' + 'await repo.refresh();');
       await repo.refresh();
       // fast-forward で済んでも merge コミットを作る
+      console.log('DIAG STEP 2 ' + new Date().toISOString() + ' ' + "await merge('mm-topic', 'noFastForward');");
       await merge('mm-topic', 'noFastForward');
+      console.log('DIAG STEP 3 ' + new Date().toISOString() + ' ' + "await until('--no-ff', () => parents() === 2 && git('rev-parse', 'HEAD");
       await until('--no-ff', () => parents() === 2 && git('rev-parse', 'HEAD').trim(), undefined, lastErrors);
       git('reset', '-q', '--hard', start);
       // squash は 1 つの普通のコミット
+      console.log('DIAG STEP 4 ' + new Date().toISOString() + ' ' + "await merge('mm-topic', 'squash');");
       await merge('mm-topic', 'squash');
+      console.log('DIAG STEP 5 ' + new Date().toISOString() + ' ' + "await until('squash', () => git('log', '-1', '--format=%s').startsWith");
       await until('squash', () => git('log', '-1', '--format=%s').startsWith('Squashed commit of the following:'), undefined, lastErrors);
       assert.equal(parents(), 1);
       assert.equal(git('rev-parse', 'HEAD~1').trim(), start);
@@ -4205,19 +4220,31 @@ suite('Amon Hen in VSCode', () => {
       git('add', 'mm.txt');
       git('commit', '-q', '-m', 'mm main');
       const head = git('rev-parse', 'HEAD').trim();
+      console.log('DIAG STEP 6 ' + new Date().toISOString() + ' ' + 'await repo.refresh();');
       await repo.refresh();
+      console.log('DIAG STEP 7 ' + new Date().toISOString() + ' ' + "await merge('mm-topic', 'squash');");
       await merge('mm-topic', 'squash');
+      console.log('DIAG STEP 8 ' + new Date().toISOString() + ' ' + "await until('Squash の途中', async () => (await repo.backend.sequenceInPr");
       await until('Squash の途中', async () => (await repo.backend.sequenceInProgress()) === 'squash', undefined, lastErrors);
+      console.log('DIAG STEP 9 ' + new Date().toISOString() + ' ' + 'await repo.refresh();');
       await repo.refresh();
       // アプリと同じく、止まったら Working Copy に切り替え、最初のコンフリクトのファイルをマージエディタで開く
+      console.log('DIAG STEP 10 ' + new Date().toISOString() + ' ' + "await until('マージエディタ', () => mergeEditorTabs('mm.txt').length > 0, und");
       await until('マージエディタ', () => mergeEditorTabs('mm.txt').length > 0, undefined, lastErrors);
       // Abort でやめると、アプリと同じく開いていたマージエディタを閉じる。もう一度 squash して続きを試す
+      console.log('DIAG STEP 11 ' + new Date().toISOString() + ' ' + "await vscode.commands.executeCommand('amonhen.abortSequence');");
       await vscode.commands.executeCommand('amonhen.abortSequence');
+      console.log('DIAG STEP 12 ' + new Date().toISOString() + ' ' + "await until('Abort でマージエディタを閉じる', () => mergeEditorTabs('mm.txt').leng");
       await until('Abort でマージエディタを閉じる', () => mergeEditorTabs('mm.txt').length === 0, undefined, lastErrors);
+      console.log('DIAG STEP 13 ' + new Date().toISOString() + ' ' + 'await repo.refresh();');
       await repo.refresh();
+      console.log('DIAG STEP 14 ' + new Date().toISOString() + ' ' + "await merge('mm-topic', 'squash');");
       await merge('mm-topic', 'squash');
+      console.log('DIAG STEP 15 ' + new Date().toISOString() + ' ' + "await until('もう一度 Squash の途中', async () => (await repo.backend.sequenc");
       await until('もう一度 Squash の途中', async () => (await repo.backend.sequenceInProgress()) === 'squash', undefined, lastErrors);
+      console.log('DIAG STEP 16 ' + new Date().toISOString() + ' ' + "await until('マージエディタ（2 回目）', () => mergeEditorTabs('mm.txt').length > ");
       await until('マージエディタ（2 回目）', () => mergeEditorTabs('mm.txt').length > 0, undefined, lastErrors);
+      console.log('DIAG STEP 17 ' + new Date().toISOString() + ' ' + 'await vscode.window.tabGroups.close(mergeEditorTabs());');
       await vscode.window.tabGroups.close(mergeEditorTabs());
       // エンジンがあれば、アプリの帯と同じく何をどこへしている途中かと、なぜ止まったか（コンフリクト）を言う
       const row = await until('サイドバーの Squash の行', () =>
@@ -4228,12 +4255,16 @@ suite('Amon Hen in VSCode', () => {
       }
       writeFileSync(join(root, 'mm.txt'), 'both\n');
       git('add', 'mm.txt');
+      console.log('DIAG STEP 18 ' + new Date().toISOString() + ' ' + 'await withWindow({ showInformationMessage: async () => undefined }, as');
       await withWindow({ showInformationMessage: async () => undefined }, async () => vscode.commands.executeCommand('amonhen.continueSequence'));
+      console.log('DIAG STEP 19 ' + new Date().toISOString() + ' ' + "await until('Continue', () => git('rev-parse', 'HEAD~1').trim() === he");
       await until('Continue', () => git('rev-parse', 'HEAD~1').trim() === head, undefined, lastErrors);
       assert.equal(await repo.backend.sequenceInProgress(), undefined);
     } finally {
+      clearInterval(dog);
       git('reset', '-q', '--hard', start);
       git('branch', '-q', '-D', 'mm-topic');
+      console.log('DIAG STEP 20 ' + new Date().toISOString() + ' ' + 'await repo.refresh();');
       await repo.refresh();
     }
   });
