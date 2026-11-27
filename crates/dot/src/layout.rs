@@ -120,6 +120,9 @@ pub struct Portal {
 /// 辺の仮のノードの列（上から下、両端を含む）、逆向きか、ラベルの仮のノード。
 type Chain = (Vec<usize>, bool, Option<usize>);
 
+/// ラベルの仮のノードの所で、線がラベルの脇から離れてよい幅。
+const LABEL_SLACK: f64 = 2.0;
+
 /// 仮のノードの上限。
 const MAX_DUMMIES: usize = 12_000;
 /// 直角の線の段の間の下限（ランクの間を広げる上限を超えても保つ）。
@@ -1866,10 +1869,13 @@ pub fn layout(
         for &v in &chain[1..chain.len() - 1] {
             let r = nodes[v].rank;
             let (left, right, mut lo, mut hi) = between(v);
+            // ラベルの仮のノードでは、線はラベルのすぐ脇を通る（Graphviz の絵と同じく、ラベルは線に沿う）
             if Some(v) == *label_node {
                 if opt.label_left {
                     lo = xs[v] - 1.0;
+                    hi = hi.min(xs[v] + LABEL_SLACK);
                 } else {
+                    lo = lo.max(xs[v] - LABEL_SLACK);
                     hi = xs[v] + 1.0;
                 }
             }
