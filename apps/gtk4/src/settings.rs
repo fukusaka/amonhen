@@ -38,6 +38,14 @@ pub const OPEN_THROUGH_DAEMON: &str = "openThroughDaemon";
 pub const USE_FSMONITOR: &str = "useFSMonitor";
 pub const WORKING_COPY_LAYOUT: &str = "workingCopyLayout";
 pub const AUTO_MAGIC_MERGE: &str = "autoMagicMerge";
+/// Working Copy の差分で行を stage する形: "select"（選んでから hunk の見出しで）か "bar"（変更の帯・行番号を押して）。
+/// macOS 版と同じキー。
+pub const LINE_STAGE_STYLE: &str = "lineStageStyle";
+
+/// 行の Stage の仕方が「変更の帯・行番号を押して」か。
+pub fn line_stage_bar() -> bool {
+    string(LINE_STAGE_STYLE).as_deref() == Some("bar")
+}
 /// File History に merge のコミットも出すか。
 pub const FILE_HISTORY_MERGES: &str = "fileHistoryMerges";
 /// 開いたリポジトリをブックマークに入れる（Repositories の一覧）。
@@ -663,14 +671,36 @@ pub fn show(near: &impl IsA<gtk::Widget>) {
 
     // Diff & Merge
     stack.add_titled(
-        &page(&[section(
-            Some(&tr!("Merge Editor")),
-            &[check(
-                AUTO_MAGIC_MERGE,
-                &tr!("Resolve unambiguous conflicts when the merge editor opens"),
-            )
-            .upcast()],
-        )]),
+        &page(&[
+            section(
+                Some(&tr!("Diff")),
+                &[
+                    choice_row(
+                        &tr!("Staging lines"),
+                        &[
+                            tr!("Select lines, then use the hunk header"),
+                            tr!("Click the change bar or line numbers"),
+                        ],
+                        || usize::from(line_stage_bar()),
+                        |i| set_string(LINE_STAGE_STYLE, if i == 1 { "bar" } else { "select" }),
+                        LINE_STAGE_STYLE,
+                    )
+                    .upcast(),
+                    note(&tr!(
+                        "How lines are staged and unstaged in the Working Copy diff. Space and the right-click menu work either way."
+                    ))
+                    .upcast(),
+                ],
+            ),
+            section(
+                Some(&tr!("Merge Editor")),
+                &[check(
+                    AUTO_MAGIC_MERGE,
+                    &tr!("Resolve unambiguous conflicts when the merge editor opens"),
+                )
+                .upcast()],
+            ),
+        ]),
         Some("diff-merge"),
         &tr!("Diff & Merge"),
     );

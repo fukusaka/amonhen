@@ -106,6 +106,9 @@ impl Layout {
 /// 追加と削除の行数（バイナリなどで数えられなければ None）。
 type LineCounts = (Option<u64>, Option<u64>);
 
+/// 隙間の番号 → 上・下から見せる行数。
+type GapOpenings = HashMap<u32, (u32, u32)>;
+
 /// 差分で見る側（git の index → 作業ツリー・HEAD → index・HEAD → 作業ツリー）。Working Copy で 1 つで、ファイルを
 /// 替えても変わらない（macOS 版と同じ）。
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
@@ -206,6 +209,10 @@ struct Inner {
     sections_button: gtk::ToggleButton,
     /// 一覧の行の `entries` の番号ごとの節（節分けでないときはすべて None）。
     entry_sections: RefCell<Vec<Option<Side>>>,
+    /// ファイルと見る側ごとの、変更のない所（隙間）の開き方（隙間の番号 → 上・下から見せる行数）。覚えない。
+    open_gaps: RefCell<HashMap<(Side, String), GapOpenings>>,
+    /// ファイル全体を表示（変更のない所をすべて開く・閉じる）。
+    whole_file: gtk::ToggleButton,
     /// 節ごとの行数（Staged は HEAD と index、Unstaged は index と作業ツリー）。
     split_stats: RefCell<(HashMap<String, LineCounts>, HashMap<String, LineCounts>)>,
     /// コンフリクトのファイルの解決のボタン。
@@ -548,6 +555,17 @@ impl WorkingCopy {
         line_endings.add_css_class("caption");
         line_endings.set_visible(false);
         bar.append(&line_endings);
+        // ファイル全体を表示: 変更のない所をすべて開く・閉じる（macOS 版と同じ）。
+        let whole_file = gtk::ToggleButton::new();
+        let whole_icon = crate::icon::Icon::default();
+        whole_icon.set(crate::icon::Kind::Doc, false);
+        whole_file.set_child(Some(&whole_icon));
+        whole_file.add_css_class("flat");
+        whole_file.set_tooltip_text(Some(&tr!(
+            "Open every unchanged part of the file (each part also opens from its own row)"
+        )));
+        whole_file.set_visible(false);
+        bar.append(&whole_file);
         let whitespace = crate::whitespace::Picker::new();
         whitespace.widget().set_visible(false);
         bar.append(whitespace.widget());
@@ -656,6 +674,8 @@ impl WorkingCopy {
             sections: Cell::new(crate::settings::bool(SECTIONS)),
             sections_button: sections_button.clone(),
             entry_sections: RefCell::default(),
+            open_gaps: RefCell::default(),
+            whole_file: whole_file.clone(),
             split_stats: RefCell::default(),
             conflict_buttons,
             right_stack,
@@ -1041,6 +1061,77 @@ impl Inner {
             let Some(this) = weak.upgrade() else { return };
             Inner::set_rows(&this, rows, None);
         });
+        // 隙間の行のボタン: 出しているファイルの、その変更のない所の開き方を変えて読み直す。
+        let weak = Rc::downgrade(this);
+        this.diff.connect_set_gap(move |gap, opening| {
+            let Some(this) = weak.upgrade() else { return };
+            let Some(entry) = this.selected_entry() else {
+                return;
+            };
+            {
+                let mut gaps = this.open_gaps.borrow_mut();
+                let map = gaps
+                    .entry((this.side.get(), entry.path.clone()))
+                    .or_default();
+                match opening {
+                    Some(o) => {
+                        map.insert(gap, o);
+                    }
+                    None => {
+                        map.remove(&gap);
+                    }
+                }
+            }
+            Inner::load_diff(&this, entry, true);
+        });
+        // 行・hunk の Discard（hunk の見出し・右クリック）: 確かめずに捨てる（Undo で戻せる。macOS 版と同じ）。
+        let weak = Rc::downgrade(this);
+        this.diff.connect_discard_rows(move |rows| {
+            if let Some(this) = weak.upgrade() {
+                Inner::discard_rows(&this, rows);
+            }
+        });
+        // ファイル全体を表示: 変更のない所をすべて開く・すべて閉じる。
+        let weak = Rc::downgrade(this);
+        this.whole_file.connect_clicked(move |b| {
+            let Some(this) = weak.upgrade() else { return };
+            let Some(entry) = this.selected_entry() else {
+                return;
+            };
+            let gaps = this
+                .current
+                .borrow()
+                .as_ref()
+                .and_then(|c| c.0.as_ref())
+                .map_or(0, |w| {
+                    w.file
+                        .lines
+                        .iter()
+                        .filter(|l| l.kind == DiffRow::HUNK)
+                        .count()
+                });
+            let open: HashMap<u32, (u32, u32)> = if b.is_active() {
+                (0..gaps as u32).map(|g| (g, (0, u32::MAX))).collect()
+            } else {
+                HashMap::new()
+            };
+            this.open_gaps
+                .borrow_mut()
+                .insert((this.side.get(), entry.path.clone()), open);
+            Inner::load_diff(&this, entry, true);
+        });
+        // 行の Stage の仕方を変えたら、出している差分を描き直す。
+        let weak = Rc::downgrade(this);
+        crate::settings::connect_changed_while(&this.diff, move |key| {
+            if key != crate::settings::LINE_STAGE_STYLE {
+                return;
+            }
+            let Some(this) = weak.upgrade() else { return };
+            if let Some(entry) = this.selected_entry() {
+                Inner::load_diff(&this, entry, true);
+            }
+            this.update_buttons();
+        });
         // 一覧のキー（macOS 版と同じ）: Space・Enter で選んだファイルを含める・外す、⌫・Delete で捨てる（確かめて）。
         let keys = gtk::EventControllerKey::new();
         keys.set_propagation_phase(gtk::PropagationPhase::Capture);
@@ -1087,7 +1178,20 @@ impl Inner {
         let weak = Rc::downgrade(this);
         this.diff.connect_row_menu(move |row, x, y| {
             let Some(this) = weak.upgrade() else { return };
-            let items: Vec<_> = this.hunk_item(row).into_iter().collect();
+            // 選んだ行・その hunk・その行の Stage（Unstage）と Discard（macOS 版と同じ）。
+            let mut items: Vec<_> = Vec::new();
+            for (title, rows, discard) in this.diff.stage_menu(row) {
+                let weak = Rc::downgrade(&this);
+                items.push(crate::menu::action(title, move || {
+                    let Some(this) = weak.upgrade() else { return };
+                    if discard {
+                        Inner::discard_rows(&this, rows.clone());
+                    } else {
+                        Inner::set_rows(&this, rows.clone(), None);
+                    }
+                }));
+            }
+            items.extend(this.hunk_item(row));
             if !items.is_empty() {
                 crate::menu::popup(&this.diff, x, y, items);
             }
@@ -2734,6 +2838,22 @@ impl Inner {
         let Some(repo) = this.repo() else { return };
         let whitespace = this.whitespace.whitespace();
         let side = this.side.get();
+        let opened: Vec<amonhen_core::diff::GapOpen> = this
+            .open_gaps
+            .borrow()
+            .get(&(side, entry.path.clone()))
+            .map(|m| {
+                m.iter()
+                    .map(|(&gap, &(top, bottom))| amonhen_core::diff::GapOpen { gap, top, bottom })
+                    .collect()
+            })
+            .unwrap_or_default();
+        let openings = this
+            .open_gaps
+            .borrow()
+            .get(&(side, entry.path.clone()))
+            .cloned()
+            .unwrap_or_default();
         let generation = this.generation.get() + 1;
         this.generation.set(generation);
         this.path.set_text(&entry.path);
@@ -2750,6 +2870,7 @@ impl Inner {
             Side::All => false,
         };
         if nothing {
+            this.whole_file.set_visible(false);
             this.conflict_buttons.set_visible(false);
             this.show_line_endings(None);
             this.current.replace(None);
@@ -2776,7 +2897,10 @@ impl Inner {
                                 "All can’t be shown while whitespace is ignored. See Unstaged and Staged."
                             ));
                         }
-                        match repo.working_diff_combined(&entry, &profile).map_err(unreadable)? {
+                        match repo
+                            .working_diff_combined_context(&entry, 3, Some(&opened), &profile)
+                            .map_err(unreadable)?
+                        {
                             Some(d) => d,
                             None => {
                                 return Err(tr!(
@@ -2786,7 +2910,14 @@ impl Inner {
                         }
                     }
                     side => repo
-                        .working_diff_ws(&entry, side == Side::Staged, whitespace, &profile)
+                        .working_diff_context(
+                            &entry,
+                            side == Side::Staged,
+                            3,
+                            Some(&opened),
+                            whitespace,
+                            &profile,
+                        )
                         .map_err(unreadable)?,
                 };
                 let empty =
@@ -2830,6 +2961,17 @@ impl Inner {
                     let w = working.0.as_ref();
                     this.show_line_endings(w.and_then(|w| w.line_endings.as_ref()));
                     let checks = w.is_some_and(|w| w.combined.is_some());
+                    // 隙間の数と、まだ隠している行のある隙間があるか（ファイル全体を表示の印）。
+                    let (gaps, folded) = w.map_or((0, 0), |w| {
+                        let rows = w.file.lines.iter().filter(|l| l.kind == DiffRow::HUNK);
+                        let folded = rows.clone().filter(|l| l.old_no > 0).count();
+                        (rows.count(), folded)
+                    });
+                    this.whole_file.set_visible(gaps > 0);
+                    this.whole_file.set_active(gaps > 0 && folded == 0);
+                    let split = (!checks).then_some(side == Side::Staged);
+                    this.diff
+                        .set_folds(true, openings, split, crate::settings::line_stage_bar());
                     this.conflict_buttons.set_visible(false);
                     this.current.replace(Some(working));
                     this.diff.show_working(view, same, checks);
@@ -2887,7 +3029,11 @@ impl Inner {
         if w.staged {
             return;
         }
-        let rows = this.diff.selected_rows();
+        let rows = if crate::settings::line_stage_bar() {
+            this.diff.selected_rows()
+        } else {
+            Vec::new()
+        };
         if !rows.is_empty() {
             if !this.exact() {
                 this.diff.error_bell();
@@ -2901,6 +3047,23 @@ impl Inner {
         // ファイル全体を一度に捨てるときは確かめる（行の単位は選んで押すので、そのまま。macOS 版と同じ）。
         let entry = w.entry.clone();
         Inner::discard_file(this, &entry);
+    }
+
+    /// 差分の `rows` 行目の変更を作業ツリーから捨てる（hunk の見出し・右クリック）。
+    fn discard_rows(this: &Rc<Self>, rows: Vec<usize>) {
+        let Some(current) = this.current.borrow().clone() else {
+            return;
+        };
+        if rows.is_empty() || current.0.as_ref().is_none_or(|w| w.staged) {
+            return;
+        }
+        if !this.exact() {
+            this.diff.error_bell();
+            return;
+        }
+        Inner::perform(this, move |repo| {
+            repo.discard_rows(current.0.as_ref().expect("working diff"), &rows)
+        });
     }
 
     /// 一覧の行のボタン: 1 ファイルの変更を捨てる（確かめてから）。作業ツリーを index の内容に戻すので、
@@ -3783,7 +3946,10 @@ impl Inner {
         };
         // 選んだファイルがなければ、ファイルの操作は出さない（macOS 版と同じ）。
         let chosen = self.selected.borrow().is_some();
-        self.lines.set_visible(!conflict && chosen);
+        // 「選んでから」の形では、選んだ行の操作は hunk の見出しの行と Space・右クリックで（帯のボタンは出さない）。
+        let select_style = !crate::settings::line_stage_bar();
+        let selected = if select_style { 0 } else { selected };
+        self.lines.set_visible(!conflict && chosen && !select_style);
         self.lines.set_label(if unstage {
             "Unstage Lines"
         } else {

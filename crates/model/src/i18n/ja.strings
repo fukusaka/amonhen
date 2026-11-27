@@ -2561,3 +2561,15 @@
 "All can’t be shown while whitespace is ignored. See Unstaged and Staged." = "空白を無視している間は All を出せない。Unstaged と Staged で見る";
 "This file’s staged and unstaged changes can’t be shown in one diff. See Unstaged and Staged." = "このファイルの staged と unstaged の変更は 1 本の差分で出せない。Unstaged と Staged で見る";
 "Split the list into Staged and Unstaged, like git status (a partly staged file is in both)" = "git status のように一覧を Staged と Unstaged に分ける（一部だけ stage したファイルは両方に出る）";
+"{n} lines selected" = "{n} 行を選択";
+"{n} unchanged lines" = "変更のない {n} 行";
+"{n} unchanged lines shown" = "変更のない {n} 行（表示中）";
+"{n} lines" = "{n} 行";
+"{n} Selected Lines" = "選んだ {n} 行";
+"This Line" = "この行";
+"Diff" = "差分";
+"Staging lines" = "行の Stage の仕方";
+"Select lines, then use the hunk header" = "行を選んでから、hunk の見出しで";
+"Click the change bar or line numbers" = "変更の帯・行番号を押して";
+"How lines are staged and unstaged in the Working Copy diff. Space and the right-click menu work either way." = "Working Copy の差分で、行を stage・unstage する形。Space と右クリックのメニューはどちらでも使える";
+"Open every unchanged part of the file (each part also opens from its own row)" = "変更のない所をすべて開く（1 つずつなら、その所の行から開く）";
