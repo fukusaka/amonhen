@@ -23,6 +23,376 @@
   ],
   "main": "./dist/extension.js",
   "contributes": {
+    "icons": {
+      "amonhen-account": {
+        "description": "Amon Hen: account",
+        "default": { "fontPath": "media/amonhen-icons.ttf", "fontCharacter": "\\E000" }
+      },
+      "amonhen-activity": {
+        "description": "Amon Hen: activity",
+        "default": { "fontPath": "media/amonhen-icons.ttf", "fontCharacter": "\\E001" }
+      },
+      "amonhen-ahead-behind": {
+        "description": "Amon Hen: ahead-behind",
+        "default": { "fontPath": "media/amonhen-icons.ttf", "fontCharacter": "\\E002" }
+      },
+      "amonhen-ai": {
+        "description": "Amon Hen: ai",
+        "default": { "fontPath": "media/amonhen-icons.ttf", "fontCharacter": "\\E003" }
+      },
+      "amonhen-appearance": {
+        "description": "Amon Hen: appearance",
+        "default": { "fontPath": "media/amonhen-icons.ttf", "fontCharacter": "\\E004" }
+      },
+      "amonhen-back": {
+        "description": "Amon Hen: back",
+        "default": { "fontPath": "media/amonhen-icons.ttf", "fontCharacter": "\\E005" }
+      },
+      "amonhen-bad-signature": {
+        "description": "Amon Hen: bad-signature",
+        "default": { "fontPath": "media/amonhen-icons.ttf", "fontCharacter": "\\E006" }
+      },
+      "amonhen-branch": {
+        "description": "Amon Hen: branch",
+        "default": { "fontPath": "media/amonhen-icons.ttf", "fontCharacter": "\\E007" }
+      },
+      "amonhen-cancelled": {
+        "description": "Amon Hen: cancelled",
+        "default": { "fontPath": "media/amonhen-icons.ttf", "fontCharacter": "\\E008" }
+      },
+      "amonhen-cannot-verify": {
+        "description": "Amon Hen: cannot-verify",
+        "default": { "fontPath": "media/amonhen-icons.ttf", "fontCharacter": "\\E009" }
+      },
+      "amonhen-changed-pixels": {
+        "description": "Amon Hen: changed-pixels",
+        "default": { "fontPath": "media/amonhen-icons.ttf", "fontCharacter": "\\E00A" }
+      },
+      "amonhen-checkerboard": {
+        "description": "Amon Hen: checkerboard",
+        "default": { "fontPath": "media/amonhen-icons.ttf", "fontCharacter": "\\E00B" }
+      },
+      "amonhen-ci-cancelled": {
+        "description": "Amon Hen: ci-cancelled",
+        "default": { "fontPath": "media/amonhen-icons.ttf", "fontCharacter": "\\E00C" }
+      },
+      "amonhen-ci-failed": {
+        "description": "Amon Hen: ci-failed",
+        "default": { "fontPath": "media/amonhen-icons.ttf", "fontCharacter": "\\E00D" }
+      },
+      "amonhen-ci-none": {
+        "description": "Amon Hen: ci-none",
+        "default": { "fontPath": "media/amonhen-icons.ttf", "fontCharacter": "\\E00E" }
+      },
+      "amonhen-ci-passed": {
+        "description": "Amon Hen: ci-passed",
+        "default": { "fontPath": "media/amonhen-icons.ttf", "fontCharacter": "\\E00F" }
+      },
+      "amonhen-ci-running": {
+        "description": "Amon Hen: ci-running",
+        "default": { "fontPath": "media/amonhen-icons.ttf", "fontCharacter": "\\E010" }
+      },
+      "amonhen-clean": {
+        "description": "Amon Hen: clean",
+        "default": { "fontPath": "media/amonhen-icons.ttf", "fontCharacter": "\\E011" }
+      },
+      "amonhen-collapse-all": {
+        "description": "Amon Hen: collapse-all",
+        "default": { "fontPath": "media/amonhen-icons.ttf", "fontCharacter": "\\E012" }
+      },
+      "amonhen-conflict": {
+        "description": "Amon Hen: conflict",
+        "default": { "fontPath": "media/amonhen-icons.ttf", "fontCharacter": "\\E013" }
+      },
+      "amonhen-current-branch": {
+        "description": "Amon Hen: current-branch",
+        "default": { "fontPath": "media/amonhen-icons.ttf", "fontCharacter": "\\E014" }
+      },
+      "amonhen-disconnected": {
+        "description": "Amon Hen: disconnected",
+        "default": { "fontPath": "media/amonhen-icons.ttf", "fontCharacter": "\\E015" }
+      },
+      "amonhen-display-options": {
+        "description": "Amon Hen: display-options",
+        "default": { "fontPath": "media/amonhen-icons.ttf", "fontCharacter": "\\E016" }
+      },
+      "amonhen-edit-mode": {
+        "description": "Amon Hen: edit-mode",
+        "default": { "fontPath": "media/amonhen-icons.ttf", "fontCharacter": "\\E017" }
+      },
+      "amonhen-edited-worktree": {
+        "description": "Amon Hen: edited-worktree",
+        "default": { "fontPath": "media/amonhen-icons.ttf", "fontCharacter": "\\E018" }
+      },
+      "amonhen-editor": {
+        "description": "Amon Hen: editor",
+        "default": { "fontPath": "media/amonhen-icons.ttf", "fontCharacter": "\\E019" }
+      },
+      "amonhen-expand-all": {
+        "description": "Amon Hen: expand-all",
+        "default": { "fontPath": "media/amonhen-icons.ttf", "fontCharacter": "\\E01A" }
+      },
+      "amonhen-expand": {
+        "description": "Amon Hen: expand",
+        "default": { "fontPath": "media/amonhen-icons.ttf", "fontCharacter": "\\E01B" }
+      },
+      "amonhen-expired-key": {
+        "description": "Amon Hen: expired-key",
+        "default": { "fontPath": "media/amonhen-icons.ttf", "fontCharacter": "\\E01C" }
+      },
+      "amonhen-failed": {
+        "description": "Amon Hen: failed",
+        "default": { "fontPath": "media/amonhen-icons.ttf", "fontCharacter": "\\E01D" }
+      },
+      "amonhen-favorite": {
+        "description": "Amon Hen: favorite",
+        "default": { "fontPath": "media/amonhen-icons.ttf", "fontCharacter": "\\E01E" }
+      },
+      "amonhen-fetch": {
+        "description": "Amon Hen: fetch",
+        "default": { "fontPath": "media/amonhen-icons.ttf", "fontCharacter": "\\E01F" }
+      },
+      "amonhen-files": {
+        "description": "Amon Hen: files",
+        "default": { "fontPath": "media/amonhen-icons.ttf", "fontCharacter": "\\E020" }
+      },
+      "amonhen-filter": {
+        "description": "Amon Hen: filter",
+        "default": { "fontPath": "media/amonhen-icons.ttf", "fontCharacter": "\\E021" }
+      },
+      "amonhen-folder": {
+        "description": "Amon Hen: folder",
+        "default": { "fontPath": "media/amonhen-icons.ttf", "fontCharacter": "\\E022" }
+      },
+      "amonhen-go-to-head": {
+        "description": "Amon Hen: go-to-head",
+        "default": { "fontPath": "media/amonhen-icons.ttf", "fontCharacter": "\\E023" }
+      },
+      "amonhen-history": {
+        "description": "Amon Hen: history",
+        "default": { "fontPath": "media/amonhen-icons.ttf", "fontCharacter": "\\E024" }
+      },
+      "amonhen-list": {
+        "description": "Amon Hen: list",
+        "default": { "fontPath": "media/amonhen-icons.ttf", "fontCharacter": "\\E025" }
+      },
+      "amonhen-main-worktree": {
+        "description": "Amon Hen: main-worktree",
+        "default": { "fontPath": "media/amonhen-icons.ttf", "fontCharacter": "\\E026" }
+      },
+      "amonhen-merge": {
+        "description": "Amon Hen: merge",
+        "default": { "fontPath": "media/amonhen-icons.ttf", "fontCharacter": "\\E027" }
+      },
+      "amonhen-missing-key": {
+        "description": "Amon Hen: missing-key",
+        "default": { "fontPath": "media/amonhen-icons.ttf", "fontCharacter": "\\E028" }
+      },
+      "amonhen-modified": {
+        "description": "Amon Hen: modified",
+        "default": { "fontPath": "media/amonhen-icons.ttf", "fontCharacter": "\\E029" }
+      },
+      "amonhen-new-branch-row": {
+        "description": "Amon Hen: new-branch-row",
+        "default": { "fontPath": "media/amonhen-icons.ttf", "fontCharacter": "\\E02A" }
+      },
+      "amonhen-new-branch": {
+        "description": "Amon Hen: new-branch",
+        "default": { "fontPath": "media/amonhen-icons.ttf", "fontCharacter": "\\E02B" }
+      },
+      "amonhen-not-checked-out": {
+        "description": "Amon Hen: not-checked-out",
+        "default": { "fontPath": "media/amonhen-icons.ttf", "fontCharacter": "\\E02C" }
+      },
+      "amonhen-onion-skin": {
+        "description": "Amon Hen: onion-skin",
+        "default": { "fontPath": "media/amonhen-icons.ttf", "fontCharacter": "\\E02D" }
+      },
+      "amonhen-partial": {
+        "description": "Amon Hen: partial",
+        "default": { "fontPath": "media/amonhen-icons.ttf", "fontCharacter": "\\E02E" }
+      },
+      "amonhen-performance": {
+        "description": "Amon Hen: performance",
+        "default": { "fontPath": "media/amonhen-icons.ttf", "fontCharacter": "\\E02F" }
+      },
+      "amonhen-pop": {
+        "description": "Amon Hen: pop",
+        "default": { "fontPath": "media/amonhen-icons.ttf", "fontCharacter": "\\E030" }
+      },
+      "amonhen-preview": {
+        "description": "Amon Hen: preview",
+        "default": { "fontPath": "media/amonhen-icons.ttf", "fontCharacter": "\\E031" }
+      },
+      "amonhen-publish": {
+        "description": "Amon Hen: publish",
+        "default": { "fontPath": "media/amonhen-icons.ttf", "fontCharacter": "\\E032" }
+      },
+      "amonhen-pull-request": {
+        "description": "Amon Hen: pull-request",
+        "default": { "fontPath": "media/amonhen-icons.ttf", "fontCharacter": "\\E033" }
+      },
+      "amonhen-pull": {
+        "description": "Amon Hen: pull",
+        "default": { "fontPath": "media/amonhen-icons.ttf", "fontCharacter": "\\E034" }
+      },
+      "amonhen-push": {
+        "description": "Amon Hen: push",
+        "default": { "fontPath": "media/amonhen-icons.ttf", "fontCharacter": "\\E035" }
+      },
+      "amonhen-range-diff": {
+        "description": "Amon Hen: range-diff",
+        "default": { "fontPath": "media/amonhen-icons.ttf", "fontCharacter": "\\E036" }
+      },
+      "amonhen-rebase": {
+        "description": "Amon Hen: rebase",
+        "default": { "fontPath": "media/amonhen-icons.ttf", "fontCharacter": "\\E037" }
+      },
+      "amonhen-reflog": {
+        "description": "Amon Hen: reflog",
+        "default": { "fontPath": "media/amonhen-icons.ttf", "fontCharacter": "\\E038" }
+      },
+      "amonhen-refresh": {
+        "description": "Amon Hen: refresh",
+        "default": { "fontPath": "media/amonhen-icons.ttf", "fontCharacter": "\\E039" }
+      },
+      "amonhen-remote-conflict": {
+        "description": "Amon Hen: remote-conflict",
+        "default": { "fontPath": "media/amonhen-icons.ttf", "fontCharacter": "\\E03A" }
+      },
+      "amonhen-remote": {
+        "description": "Amon Hen: remote",
+        "default": { "fontPath": "media/amonhen-icons.ttf", "fontCharacter": "\\E03B" }
+      },
+      "amonhen-repositories": {
+        "description": "Amon Hen: repositories",
+        "default": { "fontPath": "media/amonhen-icons.ttf", "fontCharacter": "\\E03C" }
+      },
+      "amonhen-restore": {
+        "description": "Amon Hen: restore",
+        "default": { "fontPath": "media/amonhen-icons.ttf", "fontCharacter": "\\E03D" }
+      },
+      "amonhen-revoked-key": {
+        "description": "Amon Hen: revoked-key",
+        "default": { "fontPath": "media/amonhen-icons.ttf", "fontCharacter": "\\E03E" }
+      },
+      "amonhen-search": {
+        "description": "Amon Hen: search",
+        "default": { "fontPath": "media/amonhen-icons.ttf", "fontCharacter": "\\E03F" }
+      },
+      "amonhen-settings": {
+        "description": "Amon Hen: settings",
+        "default": { "fontPath": "media/amonhen-icons.ttf", "fontCharacter": "\\E040" }
+      },
+      "amonhen-shallow": {
+        "description": "Amon Hen: shallow",
+        "default": { "fontPath": "media/amonhen-icons.ttf", "fontCharacter": "\\E041" }
+      },
+      "amonhen-side-by-side": {
+        "description": "Amon Hen: side-by-side",
+        "default": { "fontPath": "media/amonhen-icons.ttf", "fontCharacter": "\\E042" }
+      },
+      "amonhen-sidebar": {
+        "description": "Amon Hen: sidebar",
+        "default": { "fontPath": "media/amonhen-icons.ttf", "fontCharacter": "\\E043" }
+      },
+      "amonhen-signed": {
+        "description": "Amon Hen: signed",
+        "default": { "fontPath": "media/amonhen-icons.ttf", "fontCharacter": "\\E044" }
+      },
+      "amonhen-signer-mismatch": {
+        "description": "Amon Hen: signer-mismatch",
+        "default": { "fontPath": "media/amonhen-icons.ttf", "fontCharacter": "\\E045" }
+      },
+      "amonhen-sparse": {
+        "description": "Amon Hen: sparse",
+        "default": { "fontPath": "media/amonhen-icons.ttf", "fontCharacter": "\\E046" }
+      },
+      "amonhen-stacked": {
+        "description": "Amon Hen: stacked",
+        "default": { "fontPath": "media/amonhen-icons.ttf", "fontCharacter": "\\E047" }
+      },
+      "amonhen-stash": {
+        "description": "Amon Hen: stash",
+        "default": { "fontPath": "media/amonhen-icons.ttf", "fontCharacter": "\\E048" }
+      },
+      "amonhen-stashes": {
+        "description": "Amon Hen: stashes",
+        "default": { "fontPath": "media/amonhen-icons.ttf", "fontCharacter": "\\E049" }
+      },
+      "amonhen-submodule": {
+        "description": "Amon Hen: submodule",
+        "default": { "fontPath": "media/amonhen-icons.ttf", "fontCharacter": "\\E04A" }
+      },
+      "amonhen-subtree": {
+        "description": "Amon Hen: subtree",
+        "default": { "fontPath": "media/amonhen-icons.ttf", "fontCharacter": "\\E04B" }
+      },
+      "amonhen-swipe": {
+        "description": "Amon Hen: swipe",
+        "default": { "fontPath": "media/amonhen-icons.ttf", "fontCharacter": "\\E04C" }
+      },
+      "amonhen-tag": {
+        "description": "Amon Hen: tag",
+        "default": { "fontPath": "media/amonhen-icons.ttf", "fontCharacter": "\\E04D" }
+      },
+      "amonhen-terminal": {
+        "description": "Amon Hen: terminal",
+        "default": { "fontPath": "media/amonhen-icons.ttf", "fontCharacter": "\\E04E" }
+      },
+      "amonhen-theme": {
+        "description": "Amon Hen: theme",
+        "default": { "fontPath": "media/amonhen-icons.ttf", "fontCharacter": "\\E04F" }
+      },
+      "amonhen-translate": {
+        "description": "Amon Hen: translate",
+        "default": { "fontPath": "media/amonhen-icons.ttf", "fontCharacter": "\\E050" }
+      },
+      "amonhen-tree": {
+        "description": "Amon Hen: tree",
+        "default": { "fontPath": "media/amonhen-icons.ttf", "fontCharacter": "\\E051" }
+      },
+      "amonhen-trust-unknown": {
+        "description": "Amon Hen: trust-unknown",
+        "default": { "fontPath": "media/amonhen-icons.ttf", "fontCharacter": "\\E052" }
+      },
+      "amonhen-undo": {
+        "description": "Amon Hen: undo",
+        "default": { "fontPath": "media/amonhen-icons.ttf", "fontCharacter": "\\E053" }
+      },
+      "amonhen-unknown-file": {
+        "description": "Amon Hen: unknown-file",
+        "default": { "fontPath": "media/amonhen-icons.ttf", "fontCharacter": "\\E054" }
+      },
+      "amonhen-upstream-gone": {
+        "description": "Amon Hen: upstream-gone",
+        "default": { "fontPath": "media/amonhen-icons.ttf", "fontCharacter": "\\E055" }
+      },
+      "amonhen-whitespace": {
+        "description": "Amon Hen: whitespace",
+        "default": { "fontPath": "media/amonhen-icons.ttf", "fontCharacter": "\\E056" }
+      },
+      "amonhen-working-copy": {
+        "description": "Amon Hen: working-copy",
+        "default": { "fontPath": "media/amonhen-icons.ttf", "fontCharacter": "\\E057" }
+      },
+      "amonhen-wrap-lines": {
+        "description": "Amon Hen: wrap-lines",
+        "default": { "fontPath": "media/amonhen-icons.ttf", "fontCharacter": "\\E058" }
+      },
+      "amonhen-zoom-fit": {
+        "description": "Amon Hen: zoom-fit",
+        "default": { "fontPath": "media/amonhen-icons.ttf", "fontCharacter": "\\E059" }
+      },
+      "amonhen-zoom-in": {
+        "description": "Amon Hen: zoom-in",
+        "default": { "fontPath": "media/amonhen-icons.ttf", "fontCharacter": "\\E05A" }
+      },
+      "amonhen-zoom-out": {
+        "description": "Amon Hen: zoom-out",
+        "default": { "fontPath": "media/amonhen-icons.ttf", "fontCharacter": "\\E05B" }
+      }
+    },
     "viewsContainers": {
       "activitybar": [
         {
