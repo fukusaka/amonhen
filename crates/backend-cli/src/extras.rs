@@ -8,6 +8,12 @@ use crate::Git;
 
 impl Git {
     pub fn commit_extras(&self, commit: &Oid) -> Result<CommitExtras> {
+        self.commit_extras_with(commit, true)
+    }
+
+    /// `commit_extras` の、行数（`--numstat`）を数えるかを選べるもの。partial clone で中身が手元にないコミットは
+    /// 数えない（git は数えるために中身を取ってくる。読む画面は利用者が頼むまで取らない）。
+    pub fn commit_extras_with(&self, commit: &Oid, stats: bool) -> Result<CommitExtras> {
         let hex = commit.to_string();
         let gpg = self.gpg_without_key_fetch();
         // この git が確かめられない署名は、git に検証を頼まずに notes だけ読む。
@@ -35,6 +41,13 @@ impl Git {
         };
         // 最初の親と比べる（merge でも、変わったファイルの一覧と同じ比べ方にする）。`--diff-merges` は git 2.31
         // から。それより前は `-m --first-parent` が同じ意味になる（新しい git では両方の親と比べてしまう）。
+        if !stats {
+            return Ok(CommitExtras {
+                signature,
+                notes,
+                stats: Vec::new(),
+            });
+        }
         let mut args = vec![
             "diff-tree",
             "-r",

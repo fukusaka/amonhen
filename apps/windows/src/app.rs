@@ -1671,6 +1671,8 @@ enum Message {
     FitDetails(f64),
     /// 帯の変更／すべてのファイル。
     AllFiles(bool),
+    /// partial clone で手元にない中身の帯の「取ってくる」（コミットの差分か、すべてのファイルで開いたファイル）。
+    FetchMissing,
     /// すべてのファイルの一覧で選んだ行（フォルダなら開く・畳む、ファイルならその時点の中身を開く）。
     AllFilesRow(Option<usize>),
     /// 開いたファイルから一覧に戻る・そのファイルの変更を見る。
@@ -8794,7 +8796,29 @@ impl Root {
             }
             Message::RepoSettingsChoice(_, None) => {}
             Message::SidebarFilter(text) => self.sidebar_filter = text,
-            Message::Form(form) => self.form = form,
+            Message::Form(form) => {
+                // partial clone なら、すべてのファイルで開く前に中身が手元にあるかを確かめる。
+                let partial = form.partial.is_some();
+                self.with_history(|h| h.session.data.partial = partial);
+                // 形が変わったら木を作り直す（同じ形の木に差し替えるだけだと、WinUI は開いた子の行を前の項目のまま
+                // 残し、History の行の印とツールチップが付かない）。
+                if self.form != form {
+                    self.sidebar_epoch += 1;
+                }
+                self.form = form;
+            }
+            Message::FetchMissing => {
+                // 押したときだけ取る（読む画面は勝手に取りに行かない）。帯はすべてのファイルでは開いたファイルの、
+                // 変更ではコミットの差分のもの。
+                let files_mode = self.files_mode;
+                self.with_history(|h| {
+                    if files_mode {
+                        h.session.data.fetch_file_missing();
+                    } else {
+                        h.session.data.fetch_commit_missing();
+                    }
+                });
+            }
             Message::IgnoredLoaded(repo, reply) => {
                 let paths: Vec<String> = reply["info"]["paths"]
                     .as_array()
@@ -9675,6 +9699,7 @@ impl Root {
                 StackPanel::new().grid_row(1).children((
                     self.diff_bar(context),
                     self.files_path_bar(context),
+                    self.missing_band(context),
                     self.diff_find_bar(context),
                 )),
                 // 差分（変更ファイルは差分のファイルの見出し）。すべてのファイルでは、ファイルを開くまで木の一覧を
@@ -17734,6 +17759,89 @@ impl Root {
             ))
     }
 
+    /// partial clone で中身が手元にないときの帯（macOS 版の `MissingContentsBand`）: 「N 個のファイルの中身がまだ
+    /// 手元にありません［取ってくる］」。変更ではコミットの差分の、すべてのファイルでは開いたファイルのもの。読む
+    /// 画面は勝手に取りに行かず、押したときだけ取る。取っている間は「取ってきています…」、取れなければその理由
+    /// （ボタンはまた押せる）。
+    fn missing_band(&self, context: &ViewContext<Self>) -> View {
+        use crate::data::Fetch;
+        if self.page == Page::WorkingCopy {
+            return View::empty();
+        }
+        let files_mode = self.files_mode;
+        let mut band = None;
+        self.with_history(|h| {
+            let data = &h.session.data;
+            band = if files_mode {
+                data.file_missing
+                    .as_ref()
+                    .filter(|_| data.show_file)
+                    .map(|_| {
+                        (
+                            tr!("This file’s contents aren’t here yet (partial clone)."),
+                            data.file_fetch.clone(),
+                        )
+                    })
+            } else {
+                let files = data.missing_files();
+                (files > 0).then(|| {
+                    (
+                        tr!(
+                            "The contents of {count} files aren’t here yet (partial clone).",
+                            count = files
+                        ),
+                        data.commit_fetch.clone(),
+                    )
+                })
+            };
+        });
+        let Some((message, fetch)) = band else {
+            return View::empty();
+        };
+        let label = match &fetch {
+            Fetch::Idle => message.clone(),
+            Fetch::Fetching => tr!("Fetching the contents…"),
+            Fetch::Failed(e) => tr!("Couldn’t fetch the contents: {error}", error = e),
+        };
+        // 黄色を薄く敷く（macOS 版の systemYellow の 12%）。
+        Border::new()
+            .background(Brush::Solid(Color::argb(0x1f, 0xff, 0xcc, 0x00)))
+            .border_thickness(Thickness::new(0.0, 0.0, 0.0, 1.0))
+            .border_brush(Brush::Solid(crate::palette::border()))
+            .content(
+                Grid::new()
+                    .columns([GridLength::Auto, GridLength::Star(1.0), GridLength::Auto])
+                    .column_spacing(8.0)
+                    .margin(Thickness::new(10.0, 3.0, 10.0, 3.0))
+                    .children((
+                        Border::new()
+                            .grid_column(0)
+                            .opacity(0.6)
+                            .vertical_alignment(VerticalAlignment::Center)
+                            .content(crate::icons::icon("partial", 16.0)),
+                        // 取れなかったときは、もとの文をツールチップに（macOS 版と同じ）。
+                        Border::new()
+                            .grid_column(1)
+                            .vertical_alignment(VerticalAlignment::Center)
+                            .content(
+                                TextBlock::new()
+                                    .text(label)
+                                    .font_size(12.0)
+                                    .text_trimming(TextTrimming::CharacterEllipsis)
+                                    .tooltip(message),
+                            ),
+                        Button::new()
+                            .grid_column(2)
+                            .is_enabled(fetch != Fetch::Fetching)
+                            .on_click(context.callback(|()| Message::FetchMissing))
+                            .content(TextBlock::new().text(tr!("Fetch Contents")).font_size(12.0))
+                            .tooltip(tr!(
+                                "Fetch just these contents from the remote, in one go, and show them."
+                            )),
+                    )),
+            )
+    }
+
     /// すべてのファイルの、開いたファイルのパスの帯。
     fn files_path_bar(&self, context: &ViewContext<Self>) -> View {
         match &self.browser {
@@ -18044,6 +18152,24 @@ impl Root {
         if !self.files_mode || self.page == Page::WorkingCopy {
             return View::empty();
         }
+        // 開いたファイルの中身が手元にない（partial clone）: 中身の代わりに知らせる（上の帯で取ってくる）。
+        let mut missing = false;
+        self.with_history(|h| {
+            missing = h.session.data.show_file && h.session.data.file_missing.is_some();
+        });
+        if browser.open.is_some() && missing {
+            return Border::new()
+                .background(Brush::Solid(crate::palette::background()))
+                .content(
+                    TextBlock::new()
+                        .text(tr!("This file’s contents aren’t here yet."))
+                        .opacity(0.6)
+                        .text_wrapping(TextWrapping::Wrap)
+                        .horizontal_alignment(HorizontalAlignment::Center)
+                        .vertical_alignment(VerticalAlignment::Center)
+                        .margin(16.0),
+                );
+        }
         // 開いた Markdown は、整形して重ねる（テキストにすれば差分の欄の中身）。
         if let Some(path) = &browser.open {
             if !amonhen_core::markdown::is_markdown(path) || self.markdown_text {
@@ -18245,6 +18371,10 @@ impl Root {
         self.with_history(|h| {
             h.session.data.show_file = on && open.is_some();
             h.diff_replaced();
+            // 変更に戻った: すべてのファイルで取った中身でそろったファイルの差分を取る（取りには行かない）。
+            if !on {
+                h.session.data.refresh_commit_missing();
+            }
         });
     }
 
@@ -18349,14 +18479,16 @@ impl Root {
         }
         let mut shown = None;
         self.with_history(|h| {
-            shown = h
-                .session
-                .data
-                .commit
-                .as_ref()
-                .map(|c| (c.totals(), c.all_open(), c.collapsed_folders.is_empty()));
+            shown = h.session.data.commit.as_ref().map(|c| {
+                (
+                    c.totals(),
+                    c.stacked.missing_files() > 0,
+                    c.all_open(),
+                    c.collapsed_folders.is_empty(),
+                )
+            });
         });
-        let Some(((files, added, removed), all_open, folders_open)) = shown else {
+        let Some(((files, added, removed), missing, all_open, folders_open)) = shown else {
             return View::empty();
         };
         let small = |text: String| TextBlock::new().text(text).font_size(12.0);
@@ -18394,6 +18526,16 @@ impl Root {
                     }))
                     .content(small(tr!("All Files"))),
             ));
+        // 中身が手元にないファイルがある間は、行の数の合計が定まらないのでファイルの数だけ（macOS 版の
+        // `updateBarTotals`）。
+        let counts: View = if missing {
+            View::empty()
+        } else {
+            View::fragment((
+                small(format!("+{added}")).foreground(Brush::Solid(Color::rgb(0x2e, 0xa0, 0x43))),
+                small(format!("−{removed}")).foreground(Brush::Solid(Color::rgb(0xdc, 0x38, 0x33))),
+            ))
+        };
         let totals = StackPanel::new()
             .grid_column(1)
             .orientation(Orientation::Horizontal)
@@ -18401,8 +18543,7 @@ impl Root {
             .vertical_alignment(VerticalAlignment::Center)
             .children((
                 small(tr!("{count} files", count = files)).opacity(0.55),
-                small(format!("+{added}")).foreground(Brush::Solid(Color::rgb(0x2e, 0xa0, 0x43))),
-                small(format!("−{removed}")).foreground(Brush::Solid(Color::rgb(0xdc, 0x38, 0x33))),
+                counts,
             ));
         let tree_switch = StackPanel::new()
             .orientation(Orientation::Horizontal)
@@ -21190,6 +21331,20 @@ impl HistoryView {
             self.diff.scroll_y = 0.0;
             self.diff.dirty = true;
             // Markdown の整形は画面の部品で見せるので、組み直してもらう。
+            self.sender.send(Message::DiffFilesToggled);
+        }
+        // 取ってきた中身でコミットの差分を作り直した: 同じ所のまま描き直し、帯（ファイルの数と合計）も出し直す
+        // （macOS 版の `reshowStacked(keepScroll: true)`）。
+        if std::mem::take(&mut s.data.commit_refetched) && !self.working_page {
+            s.renderer.forget_diff();
+            self.diff.dirty = true;
+            let rows = self.diff_rows();
+            self.diff.scroll_by(0.0, rows);
+            self.sender.send(Message::DiffFilesToggled);
+        }
+        let s = &mut self.session;
+        // 「取ってくる」の帯の様子が変わった（取っている・取れなかった・出す・消す）: 帯を出し直す。
+        if std::mem::take(&mut s.data.missing_changed) {
             self.sender.send(Message::DiffFilesToggled);
         }
         if std::mem::take(&mut s.data.syntax_changed) && !self.working_page {

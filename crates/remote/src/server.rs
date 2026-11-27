@@ -323,6 +323,7 @@ fn handle(
         Request::ChangesBetween(old, new) => encode(&backend.changes_between(old.as_ref(), &new)?),
         Request::Blob(id) => encode(&Bytes(backend.blob(&id)?.to_vec())),
         Request::PrefetchBlobs(ids) => encode(&backend.prefetch_blobs(&ids)?),
+        Request::MissingBlobs(ids) => encode(&backend.missing_blobs(&ids)?),
         Request::ContentsToFetch { tips, scope, limit } => {
             encode(
                 &backend

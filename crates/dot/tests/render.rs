@@ -1746,6 +1746,38 @@ fn dot_diskless_runs_the_edge_back_on_the_right_as_in_graphviz() {
     assert!(xs[..xs.len() - 1].iter().all(|&x| x < back), "{xs:?}");
 }
 
+/// 初めの並びはノードを宣言した順に左右される（Graphviz と同じく、宣言の早いノードから向きを問わずたどった順で、入る辺の
+/// ないノードから歩き始める）。
+#[test]
+fn dot_declaration_order_decides_the_first_order_as_in_graphviz() {
+    let order = |src: &str| x_order(&render(src).unwrap().svg, &["a", "e"]);
+    assert_eq!(order("digraph { r -> a -> b; e -> b }"), ["a", "e"]);
+    assert_eq!(order("digraph { a; r -> a -> b; e -> b }"), ["e", "a"]);
+    assert_eq!(order("digraph { e; r -> a -> b; e -> b }"), ["e", "a"]);
+    assert_eq!(order("digraph { b; r -> a -> b; e -> b }"), ["a", "e"]);
+    assert_eq!(
+        order("digraph { subgraph cluster0 { a -> b } r -> a; e -> b }"),
+        ["e", "a"]
+    );
+    assert_eq!(
+        order("digraph { r -> a; subgraph cluster0 { a -> b } e -> b }"),
+        ["a", "e"]
+    );
+}
+
+/// 入れ子のクラスタは外側から並べる（Graphviz の例の図で、Graphviz と同じ並び: Ext_3 はクラスタの左、内側のクラスタの
+/// Act_23 -> Act_24 は右から左）。
+#[test]
+fn dot_nested_clusters_are_ordered_from_the_outside_as_in_graphviz() {
+    let src = "digraph G { style=bold; subgraph cluster_outer { Act_1 -> Act_21; Act_1 -> Act_23; Act_25 -> Act_3; subgraph cluster_inner { label = \"                          Act_2\"; {Act_21 -> Act_22 [minlen=2]; rank=same;} Act_22 -> Act_23; Act_22 -> Act_24; {Act_23 -> Act_24 [minlen=2]; rank=same;} Act_23 -> Act_25; Act_24 -> Act_25; } } Ext_1 -> Act_1; Act_3 -> Ext_2; Ext_3 -> Act_24; }";
+    let order = |names: &[&str]| x_order(&render(src).unwrap().svg, names);
+    assert_eq!(
+        order(&["Ext_3", "Act_21", "Act_22"]),
+        ["Ext_3", "Act_21", "Act_22"]
+    );
+    assert_eq!(order(&["Act_23", "Act_24"]), ["Act_24", "Act_23"]);
+}
+
 /// 辺のラベルは線のすぐ脇にある（Graphviz の絵と同じく、線はラベルの仮のノードの脇を通る）。
 #[test]
 fn dot_edge_labels_sit_beside_their_line() {

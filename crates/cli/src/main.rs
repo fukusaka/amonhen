@@ -544,6 +544,24 @@ fn cache_dir() -> Option<PathBuf> {
 }
 
 /// コアの命令（`run_json`）を実行し、結果を返す。失敗なら Err。
+/// 窓口の `commitDiff`。partial clone で手元にない中身があれば、git の `show`・`diff` と同じく取ってから差分を
+/// 取り直す（アプリの画面は利用者が頼むまで取らないが、CLI は git と同じ動きにする）。
+pub(crate) fn commit_diff(
+    front: &dyn Front,
+    request: serde_json::Value,
+) -> Result<amonhen_front::Reply> {
+    let reply = call(front, request.clone())?;
+    let missing = &reply.json["missing"];
+    if missing.as_array().is_none_or(Vec::is_empty) {
+        return Ok(reply);
+    }
+    command(
+        front,
+        serde_json::json!({"op": "fetchContents", "ids": missing}),
+    )?;
+    call(front, request)
+}
+
 pub(crate) fn command(front: &dyn Front, json: serde_json::Value) -> Result<serde_json::Value> {
     let response = front
         .call(serde_json::json!({"op": "run", "command": json}))?

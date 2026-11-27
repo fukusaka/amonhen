@@ -3460,3 +3460,74 @@ body.monospace-message .details-head pre.body {
 .markdown .md-math-error {
   color: var(--vscode-errorForeground);
 }
+
+/* どの FE でも同じ形のアイコン（media/amonhen-icons.ttf。package.json の contributes.icons と同じ字） */
+@font-face {
+  font-family: 'amonhen-icons';
+  src: url('amonhen-icons.ttf') format('truetype');
+}
+
+.shared-icon {
+  font-family: 'amonhen-icons';
+  font-style: normal;
+  font-weight: normal;
+  line-height: 1;
+  speak: never;
+}
+
+.shared-icon.partial::before {
+  content: '\E02E';
+}
+
+/* partial clone で中身が手元にないときの「取ってくる」の帯（アプリと同じ黄色みの背景） */
+.missing-band {
+  flex: none;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 4px 12px;
+  border-bottom: 1px solid var(--vscode-panel-border);
+  background: color-mix(in srgb, var(--vscode-charts-yellow, #cca700) 12%, transparent);
+  font-size: 0.92em;
+}
+
+.missing-band[hidden] {
+  display: none;
+}
+
+.missing-band .shared-icon {
+  font-size: 16px;
+  color: var(--vscode-descriptionForeground);
+}
+
+.missing-band .missing-text {
+  min-width: 0;
+  overflow: hidden;
+  white-space: nowrap;
+  text-overflow: ellipsis;
+}
+
+.missing-band .missing-spacer {
+  flex: 1;
+}
+
+.missing-band button {
+  flex: none;
+  padding: 1px 8px;
+}
+
+.missing-band button:disabled {
+  opacity: 0.6;
+  cursor: default;
+}
+
+/* 中身が手元にないファイルの見出しの添え書き */
+.diff-head .missing-note {
+  color: var(--vscode-descriptionForeground);
+  font-style: italic;
+  font-size: 0.9em;
+}
+
+.missing-band-slot {
+  flex: none;
+}

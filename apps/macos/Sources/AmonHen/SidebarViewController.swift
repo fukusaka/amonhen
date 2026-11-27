@@ -966,7 +966,7 @@ final class SidebarViewController: NSViewController, NSOutlineViewDataSource, NS
         guard let form else { return [] }
         if node === historyNode {
             return [form.shallow ? ("scissors", L("Shallow clone: older history isn’t fetched"), .tertiaryLabelColor) : nil,
-                    form.partial.map { ("icloud.and.arrow.down", L("Partial clone: file contents are fetched when needed (%@)", $0.filter ?? "?"), .tertiaryLabelColor) }]
+                    form.partial.map { ("icloud.and.arrow.down", L("Partial clone: file contents are fetched when you ask for them or an operation needs them (%@)", $0.filter ?? "?"), .tertiaryLabelColor) }]
                 .compactMap { $0 }
         }
         if node === workingCopyNode, let sparse = form.sparse {
