@@ -18366,6 +18366,10 @@ impl Root {
         self.with_history(|h| {
             h.session.data.show_file = on && open.is_some();
             h.diff_replaced();
+            // 変更に戻った: すべてのファイルで取った中身でそろったファイルの差分を取る（取りには行かない）。
+            if !on {
+                h.session.data.refresh_commit_missing();
+            }
         });
     }
 
@@ -18470,14 +18474,16 @@ impl Root {
         }
         let mut shown = None;
         self.with_history(|h| {
-            shown = h
-                .session
-                .data
-                .commit
-                .as_ref()
-                .map(|c| (c.totals(), c.all_open(), c.collapsed_folders.is_empty()));
+            shown = h.session.data.commit.as_ref().map(|c| {
+                (
+                    c.totals(),
+                    c.stacked.missing_files() > 0,
+                    c.all_open(),
+                    c.collapsed_folders.is_empty(),
+                )
+            });
         });
-        let Some(((files, added, removed), all_open, folders_open)) = shown else {
+        let Some(((files, added, removed), missing, all_open, folders_open)) = shown else {
             return View::empty();
         };
         let small = |text: String| TextBlock::new().text(text).font_size(12.0);
@@ -18515,6 +18521,16 @@ impl Root {
                     }))
                     .content(small(tr!("All Files"))),
             ));
+        // 中身が手元にないファイルがある間は、行の数の合計が定まらないのでファイルの数だけ（macOS 版の
+        // `updateBarTotals`）。
+        let counts: View = if missing {
+            View::empty()
+        } else {
+            View::fragment((
+                small(format!("+{added}")).foreground(Brush::Solid(Color::rgb(0x2e, 0xa0, 0x43))),
+                small(format!("−{removed}")).foreground(Brush::Solid(Color::rgb(0xdc, 0x38, 0x33))),
+            ))
+        };
         let totals = StackPanel::new()
             .grid_column(1)
             .orientation(Orientation::Horizontal)
@@ -18522,8 +18538,7 @@ impl Root {
             .vertical_alignment(VerticalAlignment::Center)
             .children((
                 small(tr!("{count} files", count = files)).opacity(0.55),
-                small(format!("+{added}")).foreground(Brush::Solid(Color::rgb(0x2e, 0xa0, 0x43))),
-                small(format!("−{removed}")).foreground(Brush::Solid(Color::rgb(0xdc, 0x38, 0x33))),
+                counts,
             ));
         let tree_switch = StackPanel::new()
             .orientation(Orientation::Horizontal)

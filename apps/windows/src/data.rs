@@ -815,8 +815,9 @@ impl CommitShown {
         }
     }
 
-    /// 「取ってくる」で取り直したファイルの差分（`files`。ファイルの番号と差分）を入れる。まだ手元になかった
-    /// ファイルだけを入れ替え、広げた前後・ファイル全体にしていたものはその形で取り直す。変えたら true。
+    /// 「取ってくる」や、ほかの画面で取った中身で取り直したファイルの差分（`files`。ファイルの番号と差分）を
+    /// 入れる。まだ手元になかったファイルだけを入れ替える（まだ足りないものは、足りない中身を狭めた印のまま）。
+    /// 差分を取れたもののうち、広げた前後・ファイル全体にしていたものはその形で取り直す。変えたら true。
     fn take_fetched(
         &mut self,
         files: Vec<(usize, amonhen_core::diff::FileDiff)>,
@@ -832,6 +833,7 @@ impl CommitShown {
             return false;
         };
         let mut taken = Vec::new();
+        let mut changed = false;
         for (file, diff) in files {
             let Some((_, old)) = stacked.files.get_mut(file) else {
                 continue;
@@ -840,6 +842,10 @@ impl CommitShown {
                 continue;
             }
             *old = diff;
+            changed = true;
+            if !old.missing.is_empty() {
+                continue;
+            }
             if let Some(mark) = self.file_marks.get_mut(file) {
                 *mark = change_mark(old);
             }
@@ -857,7 +863,7 @@ impl CommitShown {
                 }
             }
         }
-        !taken.is_empty()
+        changed
     }
 
     /// `file` 番目のファイルをファイル全体で見せているか（見出しの ⋯ の Show Whole File）。
@@ -1212,9 +1218,11 @@ enum Event {
     FileMissing(u64, Vec<amonhen_model::Oid>),
     /// すべてのファイルで開いたファイルの、手元になかった中身を取ってきた（`want_file_at` の番号、失敗の文）。
     FileFetched(u64, Result<(), String>),
-    /// コミットの差分の、手元になかった中身を取ってきた（差分の番号、取り直したファイルの番号と差分）。
+    /// コミットの差分の、手元になかった中身を取ってきた・その後そろったものの差分を取った（差分の番号、取ってこずに
+    /// 見直しただけか、取り直したファイルの番号と差分）。
     StackedFetched(
         u64,
+        bool,
         Result<Vec<(usize, amonhen_core::diff::FileDiff)>, String>,
     ),
     Failed(String),
@@ -2294,15 +2302,19 @@ impl Data {
                         changed = true;
                     }
                 }
-                Event::StackedFetched(id, result) => {
+                Event::StackedFetched(id, refresh, result) => {
                     if self.commit.as_ref().is_some_and(|c| c.id == id) {
                         match result {
                             Ok(files) => {
-                                self.commit_fetch = Fetch::Idle;
+                                if !refresh {
+                                    self.commit_fetch = Fetch::Idle;
+                                }
                                 let repo = self.repo.clone();
                                 self.relayout(|commit| commit.take_fetched(files, repo.as_deref()));
                                 self.commit_refetched = true;
                             }
+                            // 見直しに失敗しても、帯はそのまま（押せば取ってくる）。
+                            Err(e) if refresh => eprintln!("手元にそろった中身を見直せない: {e}"),
                             Err(e) => self.commit_fetch = Fetch::Failed(e),
                         }
                         self.missing_changed = true;
@@ -2586,39 +2598,54 @@ impl Data {
     /// 帯の「取ってくる」（コミットの差分）: 手元になかった中身をまとめて 1 回で取り、それらのファイルの差分を
     /// 取る（裏で。届いたら同じ所のまま出し直す）。
     pub fn fetch_commit_missing(&mut self) {
+        if self.repo.is_none() || self.commit_fetch == Fetch::Fetching || self.missing_files() == 0
+        {
+            return;
+        }
+        self.commit_fetch = Fetch::Fetching;
+        self.missing_changed = true;
+        self.update_stacked_missing(false);
+    }
+
+    /// すべてのファイルから変更に戻った: 差分にまだ手元にないファイルがあれば、その後（すべてのファイルで）取って
+    /// そろったものの差分を裏で取る（取りには行かない。macOS 版の `setFilesMode`）。
+    pub fn refresh_commit_missing(&mut self) {
+        if self.commit_fetch == Fetch::Fetching || self.missing_files() == 0 {
+            return;
+        }
+        self.update_stacked_missing(true);
+    }
+
+    /// 出しているコミットの差分の、手元になかったファイルを裏で取り直す（`refresh` なら取ってこずに見直すだけ）。
+    /// 取っている間も今の差分を見せるので、写したものに取る（手元にない中身が変わったファイルだけを戻す）。
+    fn update_stacked_missing(&mut self, refresh: bool) {
         let (Some(repo), Some(commit)) = (self.repo.clone(), self.commit.as_ref()) else {
             return;
         };
-        if self.commit_fetch == Fetch::Fetching || commit.stacked.missing_files() == 0 {
-            return;
-        }
-        // 取っている間も今の差分を見せるので、写したものに取る（取り直したファイルだけを戻す）。
         let mut stacked = StackedDiff {
             files: commit.stacked.files.clone(),
         };
         let id = commit.id;
-        self.commit_fetch = Fetch::Fetching;
-        self.missing_changed = true;
         let (tx, wake) = (self.tx.clone(), self.wake.clone());
         std::thread::spawn(move || {
-            let before: Vec<bool> = stacked
-                .files
-                .iter()
-                .map(|(_, d)| !d.missing.is_empty())
-                .collect();
-            let result = repo
-                .fetch_stacked_missing(&mut stacked)
+            let before: Vec<usize> = stacked.files.iter().map(|(_, d)| d.missing.len()).collect();
+            let done = if refresh {
+                repo.refresh_stacked_missing(&mut stacked)
+            } else {
+                repo.fetch_stacked_missing(&mut stacked)
+            };
+            let result = done
                 .map(|()| {
                     stacked
                         .files
                         .into_iter()
                         .enumerate()
-                        .filter(|(i, (_, d))| before[*i] && d.missing.is_empty())
+                        .filter(|(i, (_, d))| before[*i] > 0 && d.missing.len() != before[*i])
                         .map(|(i, (_, d))| (i, d))
                         .collect()
                 })
                 .map_err(|e| e.to_string());
-            let _ = tx.send(Event::StackedFetched(id, result));
+            let _ = tx.send(Event::StackedFetched(id, refresh, result));
             wake();
         });
     }
