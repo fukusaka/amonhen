@@ -659,11 +659,10 @@ struct Root {
     search_opened: u64,
     /// Working Copy の一覧で選んでいるファイル（パス）。
     working_file: Option<String>,
-    /// 両側に変更があって 1 本の差分で表せないファイルで、stage 済みの側を見るか（GTK4 版の Unstaged / Staged の
-    /// 切り替え。別のファイルを選ぶと作業ツリーの側に戻す）。
-    working_staged: bool,
-    /// 切り替えを出すなら、出している側（stage 済みなら true）。
-    working_sides: Option<bool>,
+    /// 見る側（Unstaged・Staged・All。Working Copy で 1 つで、ファイルを替えても保つ。macOS 版・GTK4 版と同じ）。
+    working_side: crate::data::WorkingSide,
+    /// 差分の代わりに出している一言（その側に変更がない・All で出せない）。
+    working_note: Option<String>,
     /// 走っている操作（ステータスバーに出す）。
     busy: Option<String>,
     /// Range Diff の画面（開いている間だけ。サイドバーに行を出す）と、比べた回数（古い答えを捨てる）。
@@ -690,7 +689,11 @@ struct Root {
     working_collapsed: std::collections::HashSet<String>,
     /// Working Copy の一覧の見せ方と、切り替えのボタンを押した回数。
     working_layout: crate::workcopy::Layout,
-    layout_clicks: u64,
+    /// コミットの入力を件名の 1 行に畳んでいるか（覚える）。
+    commit_collapsed: bool,
+    /// 一覧を Staged・Unstaged の節に分けるか（覚える）と、節ごとの行数（Staged, Unstaged）。
+    working_sections: bool,
+    split_stats: Option<(crate::workcopy::LineStats, crate::workcopy::LineStats)>,
     /// Working Copy のファイルごとの行数（`workingStats`。status が替わるたびに読み直す）。
     working_stats: std::collections::HashMap<String, (Option<u64>, Option<u64>)>,
     /// 最近のコミットの（メッセージ, 作者, メール）。最近のメッセージと Co-authored-by の候補。
@@ -1284,6 +1287,12 @@ enum Message {
     CleanUpCheck(usize, bool),
     /// Working Copy の一覧の見せ方を替える。
     WorkingLayout(crate::workcopy::Layout),
+    /// コミットの入力を件名の 1 行に畳む・開く。
+    CommitCollapse,
+    /// 一覧の節分けを切り替える。
+    WorkingSections,
+    /// 節ごとの行数を読んだ（読んだ status の generation と、Staged・Unstaged の行数）。
+    SplitStats(u64, crate::workcopy::LineStats, crate::workcopy::LineStats),
     /// ディレクトリの中のファイルをまとめて含める・外す。
     StageAll(Vec<String>, bool),
     /// Working Copy のファイルごとの行数を読んだ（読んだ status の generation と、パスごとの行数）。
@@ -1312,9 +1321,9 @@ enum Message {
     DiffRowsAt(Option<(Vec<usize>, bool)>),
     /// 行を捨て終えた（失敗ならそのわけ）。
     LinesDiscarded(Option<String>),
-    /// 出した差分の側（切り替えを出すなら Some）。
-    WorkingSides(Option<bool>),
-    /// 切り替えで選んだ側（stage 済みなら true）。
+    /// 差分の代わりの一言が替わった（なければ None）。
+    WorkingNote(Option<String>),
+    /// 切り替えで選んだ側（Unstaged・Staged・All の番号）。
     WorkingSide(Option<usize>),
     /// 差分のファイルの見出しのメニュー（GTK4 版の `commitfiles` の見出しのメニュー）。
     DiffFileMenu(String),
@@ -1818,7 +1827,9 @@ impl Component for Root {
             working_layout: crate::workcopy::Layout::from_name(
                 &crate::prefs::string(crate::prefs::WORKING_COPY_LAYOUT).unwrap_or_default(),
             ),
-            layout_clicks: 0,
+            commit_collapsed: crate::prefs::bool(crate::prefs::WORKING_COPY_COMMIT_COLLAPSED),
+            working_sections: crate::prefs::bool(crate::prefs::WORKING_COPY_SECTIONS),
+            split_stats: None,
             working_collapsed: Default::default(),
             working_stats: Default::default(),
             draft_key: None,
@@ -1915,8 +1926,8 @@ impl Component for Root {
             mixed_used: RefCell::default(),
             search_opened: 0,
             working_file: None,
-            working_staged: false,
-            working_sides: None,
+            working_side: Default::default(),
+            working_note: None,
             busy: None,
             dialog_input: ElementRef::new(),
             tab_host: ElementRef::new(),
@@ -5682,6 +5693,9 @@ impl Root {
                     });
                 }
                 self.status = Some(status);
+                if self.working_sections {
+                    self.load_split_stats(context);
+                }
                 // 途中の操作も読み直す（merge・rebase などは status と一緒に変わる）。
                 if let Some(repo) = self.repo.clone() {
                     context.spawn_background(move |_| {
@@ -5883,30 +5897,39 @@ impl Root {
                     let path = self.status.as_ref().and_then(|s| {
                         let visible =
                             crate::workcopy::visible(&s.status.entries, &self.working_filter);
-                        match crate::workcopy::rows(
+                        match crate::workcopy::list_rows(
                             &visible,
                             self.working_layout,
                             &self.working_collapsed,
+                            self.working_sections,
                         )
                         .get(index)
                         {
-                            Some(crate::workcopy::Row::File { entry, .. }) => {
-                                Some(Ok(entry.path.clone()))
+                            Some(crate::workcopy::Row::File { entry, section, .. }) => {
+                                Some(Ok((entry.path.clone(), *section)))
                             }
                             Some(crate::workcopy::Row::Dir { path, .. }) => Some(Err(path.clone())),
-                            None => None,
+                            Some(crate::workcopy::Row::Section { .. }) | None => None,
                         }
+                    });
+                    // 節の見出しを選んだときは何もしない。
+                    let Some(path) = path else { return };
+                    // 節の行を選んだら、その節の側で見る（GTK4 版と同じ）。
+                    let path = path.map(|(path, section)| {
+                        if let Some(side) = section {
+                            self.working_side = side;
+                        }
+                        path
                     });
                     // ディレクトリの行を選んだら、畳む・開く（差分は前のファイルのまま）。
                     let path = match path {
-                        Some(Err(dir)) => {
+                        Err(dir) => {
                             if !self.working_collapsed.remove(&dir) {
                                 self.working_collapsed.insert(dir);
                             }
                             return;
                         }
-                        Some(Ok(path)) => Some(path),
-                        None => None,
+                        Ok(path) => Some(path),
                     };
                     // コンフリクトのあるファイルを選び直したら、マージエディタで開く（GTK4 版・macOS 版は右の列に
                     // 埋め込む）。同じファイルの選び直しの知らせでは開き直さない（閉じた後にまた開かないように）。
@@ -5928,9 +5951,6 @@ impl Root {
                         }
                         self.merge = None;
                         self.page = Page::WorkingCopy;
-                    }
-                    if changed {
-                        self.working_staged = false;
                     }
                     self.working_file = path.clone();
                     self.load_working_diff();
@@ -8884,8 +8904,29 @@ impl Root {
                     b.1 = on;
                 }
             }
+            Message::WorkingSections => {
+                self.working_sections = !self.working_sections;
+                let _ = crate::prefs::set_bool(
+                    crate::prefs::WORKING_COPY_SECTIONS,
+                    self.working_sections,
+                );
+                if self.working_sections {
+                    self.load_split_stats(context);
+                }
+            }
+            Message::SplitStats(generation, staged, unstaged) => {
+                if self.status.as_ref().map(|s| s.generation) == Some(generation) {
+                    self.split_stats = Some((staged, unstaged));
+                }
+            }
+            Message::CommitCollapse => {
+                self.commit_collapsed = !self.commit_collapsed;
+                let _ = crate::prefs::set_bool(
+                    crate::prefs::WORKING_COPY_COMMIT_COLLAPSED,
+                    self.commit_collapsed,
+                );
+            }
             Message::WorkingLayout(layout) => {
-                self.layout_clicks += 1;
                 if layout != self.working_layout {
                     self.working_layout = layout;
                     let _ =
@@ -8945,19 +8986,18 @@ impl Root {
                 self.diff_file = file;
                 self.diff_rows = None;
             }
-            Message::WorkingSides(sides) => {
-                self.working_sides = sides;
-                if let Some(staged) = sides {
-                    self.working_staged = staged;
-                }
+            Message::WorkingNote(note) => {
+                self.working_note = note;
             }
             Message::WorkingSide(index) => {
-                let Some(index) = index else { return };
-                let staged = index == 1;
-                if self.working_sides == Some(staged) {
+                let Some(side) = index.and_then(|i| crate::data::WorkingSide::ALL.get(i).copied())
+                else {
+                    return;
+                };
+                if side == self.working_side {
                     return;
                 }
-                self.working_staged = staged;
+                self.working_side = side;
                 self.load_working_diff();
             }
             Message::LinesDiscarded(failed) => {
@@ -9674,9 +9714,8 @@ impl Root {
                     | Page::Repositories
                     | Page::RepoSettings
             );
+        let (working_copy, working_message) = self.working_copy_view(context);
         let right = Grid::new()
-            .element_ref(&self.right_column)
-            .opacity(if right_covered { 0.0 } else { 1.0 })
             .rows(if self.page == Page::WorkingCopy {
                 [GridLength::Auto, GridLength::Auto, GridLength::Star(1.0)]
             } else if self.details_expanded {
@@ -9693,7 +9732,6 @@ impl Root {
                     GridLength::Star(1.0),
                 ]
             })
-            .grid_column(2)
             .children((
                 self.top_of_diff(context),
                 StackPanel::new().grid_row(1).children((
@@ -9720,7 +9758,26 @@ impl Root {
                             )),
                         self.files_list(context),
                         self.svg_notes(),
+                        self.working_note_view(),
                     )),
+            ));
+        // Working Copy では、差分の上にコミットの入力を置く（macOS 版・GTK4 版と同じ）。
+        let working = self.page == Page::WorkingCopy;
+        let right = Grid::new()
+            .element_ref(&self.right_column)
+            .opacity(if right_covered { 0.0 } else { 1.0 })
+            .grid_column(2)
+            .rows([
+                if working {
+                    GridLength::Auto
+                } else {
+                    GridLength::Pixel(0.0)
+                },
+                GridLength::Star(1.0),
+            ])
+            .children((
+                Border::new().grid_row(0).content(working_message),
+                Border::new().grid_row(1).content(right),
             ));
         // タイトルバー: 左にリポジトリの切り替え、続けてツールバー（macOS 版と同じく、アイコンの下に名前）、右に
         // ≡（メニューバーの中身すべて）。メニューバーとツールバーの段はなくし、タブは下の段に置く。ツールバーの右の
@@ -9912,7 +9969,6 @@ impl Root {
         } else {
             View::empty()
         };
-        let working_copy = self.working_copy_view(context);
         // サイドバーを隠しているか、Repositories のタブなら、その列の幅は 0。
         let sidebar_width = if self.sidebar_hidden || crate::tabs::current_is_repositories() {
             0.0
@@ -17524,6 +17580,35 @@ impl Root {
             .content(view)
     }
 
+    /// 節ごとの行数を裏で読む（`workingStatsSplit`。GTK4 版の `load_split_stats`）。
+    fn load_split_stats(&self, context: &ComponentContext<Self>) {
+        let (Some(repo), Some(generation)) = (
+            self.repo.clone(),
+            self.status.as_ref().map(|s| s.generation),
+        ) else {
+            return;
+        };
+        context.spawn_background(move |_| {
+            let reply: Value =
+                serde_json::from_str(&repo.run_json(r#"{"op":"workingStatsSplit"}"#))
+                    .unwrap_or_default();
+            let side = |key: &str| -> crate::workcopy::LineStats {
+                reply["info"][key]
+                    .as_array()
+                    .into_iter()
+                    .flatten()
+                    .filter_map(|s| {
+                        Some((
+                            s["path"].as_str()?.to_owned(),
+                            (s["added"].as_u64(), s["removed"].as_u64()),
+                        ))
+                    })
+                    .collect()
+            };
+            Message::SplitStats(generation, side("staged"), side("unstaged"))
+        });
+    }
+
     /// Working Copy で選んでいるファイルの差分を読む（なくなっていれば消す）。
     fn load_working_diff(&self) {
         let entry = self.working_file.as_ref().and_then(|path| {
@@ -17535,8 +17620,8 @@ impl Root {
                 .find(|e| &e.path == path)
                 .cloned()
         });
-        let staged = self.working_staged;
-        self.with_history(|h| h.session.data.want_working(entry, staged));
+        let side = self.working_side;
+        self.with_history(|h| h.session.data.want_working(entry, side));
     }
 
     /// 欄の中身を、開いている worktree の下書きとして覚える（どちらも空なら消す。GTK4 版の `save_draft`）。
@@ -17730,22 +17815,50 @@ impl Root {
                         )),
                 ));
         }
-        let sides: View = match self.working_sides {
-            Some(staged) => RadioButtons::new()
-                .max_columns(2)
-                .margin(Thickness::new(10.0, 0.0, 10.0, 0.0))
-                .items_source(vec!["Unstaged".to_owned(), "Staged".to_owned()])
-                .selected_index(usize::from(staged))
-                .on_selection_changed(context.callback(Message::WorkingSide))
-                .into(),
-            None => View::empty(),
+        // 差分の帯: 左にファイルのパス、右に空白・折り返し・検索、見る側（Unstaged・Staged・All。Working Copy で
+        // 1 つ）、Discard File（macOS 版・GTK4 版と同じ並び）。
+        let side_button = |side: crate::data::WorkingSide, index: usize| -> View {
+            crate::small::toggle(side.title(), self.working_side == side, |b| {
+                b.on_click(context.callback(move |()| Message::WorkingSide(Some(index))))
+            })
         };
-        // 差分の中を探すボタンは右上に（Working Copy の差分にも）。
+        // 小さな切り替えは Button なので、押しても自分では切り替わらない（作り直さずに見た目だけ替える）。
+        let sides: View = StackPanel::new()
+            .orientation(Orientation::Horizontal)
+            .spacing(2.0)
+            .vertical_alignment(VerticalAlignment::Center)
+            .children((
+                side_button(crate::data::WorkingSide::Unstaged, 0),
+                side_button(crate::data::WorkingSide::Staged, 1),
+                side_button(crate::data::WorkingSide::All, 2),
+            ));
+        let path = self.working_file.clone().unwrap_or_default();
+        // いつも置いておき、ファイルを選んでいなければ押せない（出し入れすると reactor が差し込む位置を誤る）。
+        let discard: View = {
+            {
+                let path = self.working_file.clone();
+                crate::small::button("Discard File", |b| {
+                    b.margin(Thickness::new(6.0, 0.0, 0.0, 0.0))
+                        .is_enabled(path.is_some())
+                        .on_click(context.callback(move |()| {
+                            Message::DiscardFile(path.clone().unwrap_or_default())
+                        }))
+                })
+                .tooltip(tr!(
+                    "Discard the working tree changes (return to the content of the index)"
+                ))
+            }
+        };
         Grid::new()
             .grid_row(0)
             .columns([GridLength::Star(1.0), GridLength::Auto])
             .children((
-                sides,
+                TextBlock::new()
+                    .text(path.clone())
+                    .vertical_alignment(VerticalAlignment::Center)
+                    .text_trimming(TextTrimming::CharacterEllipsis)
+                    .margin(Thickness::new(10.0, 0.0, 8.0, 0.0))
+                    .tooltip(path),
                 StackPanel::new()
                     .grid_column(1)
                     .orientation(Orientation::Horizontal)
@@ -17755,6 +17868,8 @@ impl Root {
                         self.whitespace_picker(context),
                         self.wrap_button(context),
                         self.diff_find_button(context),
+                        sides,
+                        discard,
                     )),
             ))
     }
@@ -18710,10 +18825,27 @@ impl Root {
             ))
     }
 
-    fn working_copy_view(&self, context: &mut ViewContext<Self>) -> View {
+    /// Working Copy の差分の代わりの一言（その側に変更がない・All で出せない）。差分の欄を覆う。
+    fn working_note_view(&self) -> View {
+        match (&self.working_note, self.page == Page::WorkingCopy) {
+            (Some(note), true) => Border::new()
+                .background(Brush::Solid(crate::palette::background()))
+                .content(
+                    TextBlock::new()
+                        .text(note.clone())
+                        .opacity(0.6)
+                        .text_wrapping(TextWrapping::Wrap)
+                        .margin(Thickness::new(12.0, 10.0, 12.0, 0.0)),
+                ),
+            _ => View::empty(),
+        }
+    }
+
+    /// Working Copy の一覧（まん中の列を覆う）と、右の列の上に置くコミットの入力。
+    fn working_copy_view(&self, context: &mut ViewContext<Self>) -> (View, View) {
         // マージエディタは Working Copy の右の列に埋め込む（一覧は左に残す。macOS 版・GTK4 版と同じ）。
         if self.page != Page::WorkingCopy && !self.merge_embedded() {
-            return View::empty();
+            return (View::empty(), View::empty());
         }
         let callbacks = crate::workcopy::Callbacks {
             summary: context.callback(Message::Summary),
@@ -18726,7 +18858,11 @@ impl Root {
             }),
             selected: context.callback(Message::WorkingFile),
             filter: context.callback(Message::WorkingFilter),
-            layout: Box::new(|layout| context.callback(move |_| Message::WorkingLayout(layout))),
+            layout: Box::new(|layout| context.callback(move |()| Message::WorkingLayout(layout))),
+            sections: context.callback(|()| Message::WorkingSections),
+            section_all: Box::new(|paths: Vec<String>, include: bool| {
+                context.callback(move |()| Message::StageAll(paths.clone(), include))
+            }),
             stage_all: Box::new(|paths: Vec<String>, include: bool| {
                 context.callback(move |_| Message::StageAll(paths.clone(), include))
             }),
@@ -18743,15 +18879,15 @@ impl Root {
             }),
             issue_menu: context.callback(Message::IssueMenu),
             issue_host: &self.issue_host,
+            collapse: context.callback(|()| Message::CommitCollapse),
         };
-        let view = crate::workcopy::view(
+        let parts = crate::workcopy::view(
             crate::workcopy::Input {
                 status: self.status.as_deref(),
                 filter: &self.working_filter,
                 sparse: self.form.sparse.as_deref(),
                 layout: self.working_layout,
                 collapsed: &self.working_collapsed,
-                layout_clicks: self.layout_clicks,
                 stats: &self.working_stats,
                 list_host: &self.working_list,
                 recent: &self.recent_messages,
@@ -18764,6 +18900,9 @@ impl Root {
                     .issue_offer
                     .as_ref()
                     .map_or(&[][..], |(_, _, _, items)| &items[..]),
+                commit_collapsed: self.commit_collapsed,
+                sections: self.working_sections,
+                split_stats: self.split_stats.as_ref(),
                 mixed: &|key: &str| {
                     self.mixed_used.borrow_mut().push(key.to_owned());
                     self.mixed_checks
@@ -18796,10 +18935,11 @@ impl Root {
             None
         });
         // まん中の列だけを覆う。右の列は差分の欄（詳細の行は畳む）。
-        Border::new()
+        let list = Border::new()
             .background(Brush::Solid(crate::palette::background()))
             .grid_column(1)
-            .content(view)
+            .content(parts.list);
+        (list, parts.message)
     }
 
     /// History の右クリックのメニュー（GTK4 版の `commitops::menu`、macOS 版の `HistoryViewController` と同じ並び）。
@@ -21352,12 +21492,8 @@ impl HistoryView {
             self.diff.dirty = true;
         }
         if std::mem::take(&mut s.data.working_changed) && self.working_page {
-            let sides = s.data.working.as_ref().and_then(|w| {
-                let d = &w.diff;
-                (d.combined.is_none() && d.entry.is_staged() && d.entry.is_unstaged())
-                    .then_some(d.staged)
-            });
-            self.sender.send(Message::WorkingSides(sides));
+            self.sender
+                .send(Message::WorkingNote(s.data.working_note.clone()));
             s.renderer.forget_diff();
             self.diff.scroll_y = 0.0;
             self.diff.dirty = true;

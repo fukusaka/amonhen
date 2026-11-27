@@ -14,8 +14,8 @@ use std::sync::mpsc::{Receiver, Sender, channel};
 use amonhen_backend_gix::GixBackend;
 use amonhen_core::diff::{DiffView, StackedDiff};
 use amonhen_core::{HistorySnapshot, RefsSnapshot, Repository, StatusSnapshot};
-use amonhen_layout::StrRef;
-use amonhen_model::{RefKind, Refs};
+use amonhen_layout::{DiffRow, StrRef};
+use amonhen_model::{RefKind, Refs, tr};
 use amonhen_projection::{ColumnSet, FrontendProfile, HistoryChunk, StringEncoding};
 
 pub const CHUNK_ROWS: u32 = 256;
@@ -403,6 +403,29 @@ fn syntax_of(view: &DiffView) -> HashMap<u32, Vec<(u32, u32, u8)>> {
     out
 }
 
+/// Working Copy で見る側（Working Copy で 1 つ。macOS 版・GTK4 版と同じく Unstaged・Staged・All の順、初めは
+/// Unstaged）。All は HEAD と作業ツリーの 1 本の差分（行ごとに staged か）。
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub enum WorkingSide {
+    #[default]
+    Unstaged,
+    Staged,
+    All,
+}
+
+impl WorkingSide {
+    pub const ALL: [WorkingSide; 3] =
+        [WorkingSide::Unstaged, WorkingSide::Staged, WorkingSide::All];
+
+    pub fn title(self) -> &'static str {
+        match self {
+            WorkingSide::Unstaged => "Unstaged",
+            WorkingSide::Staged => "Staged",
+            WorkingSide::All => "All",
+        }
+    }
+}
+
 /// Working Copy で選んだファイルの差分（HEAD と作業ツリーの 1 本の差分か、片側の差分）。
 pub struct WorkingShown {
     pub path: String,
@@ -425,7 +448,8 @@ impl WorkingShown {
             highlights: &self.highlights,
             syntax: &self.syntax,
             file_rows: &[],
-            marks: self.diff.combined.is_some(),
+            // 行ごとの印は、空白を無視していなければどの側でも（片側では押すとその側から移す）。
+            marks: self.diff.file.whitespace == Whitespace::Exact,
             file_marks: &[],
             tree: self.tree.as_ref(),
             counts: None,
@@ -1205,7 +1229,9 @@ enum Event {
     File(Box<FileShown>),
     Extras(u64, u32, serde_json::Value),
     Status(Arc<StatusSnapshot>),
-    Working(Box<WorkingShown>),
+    Working(Box<WorkingShown>, u64),
+    /// Working Copy の差分の代わりの一言（頼んだ回の番号）。
+    WorkingNote(String, u64),
     /// History の検索の答え（History の世代、問い合わせ、一致した行）。
     Search(u64, String, Result<Vec<u32>, String>),
     /// 一致したコミットだけの History（元の History の世代、作った History、その行の ref の印、元の一致）。
@@ -1309,7 +1335,10 @@ pub struct Data {
     /// 最後に読んだ差分（空白の扱いを変えたとき、同じものを読み直す）。
     last_want: Option<Want>,
     /// Working Copy で読んだファイルと、両側に変更があるとき stage 済みの側を読んだか（空白の扱いを変えたら読み直す）。
-    working_entry: Option<(amonhen_model::StatusEntry, bool)>,
+    working_entry: Option<(amonhen_model::StatusEntry, WorkingSide)>,
+    /// 差分の代わりに出す一言（その側に変更がない・All で出せない）と、頼んだ回の番号（古い答えを捨てる）。
+    pub working_note: Option<String>,
+    working_seq: u64,
     /// 行を比べるときに無視する空白（差分の帯で選ぶ。覚えない。macOS 版・GTK4 版と同じ）。
     pub whitespace: Whitespace,
     /// すべてのファイルで開いた SVG の見せ方と、モバイルで見る部品（パスの帯で選ぶ。覚えない）。
@@ -1693,6 +1722,8 @@ impl Data {
             commit_wanted: None,
             last_want: None,
             working_entry: None,
+            working_note: None,
+            working_seq: 0,
             whitespace: Whitespace::Exact,
             svg_view: SvgView::Picture,
             mobile_renderer: amonhen_core::svglint::Target::Android,
@@ -1813,13 +1844,16 @@ impl Data {
         });
     }
 
-    /// Working Copy のファイルの差分を裏で読む。1 本の差分で表せれば HEAD と作業ツリーの差分、表せなければ変更の
-    /// ある側（両方なら作業ツリーの側）。`None` なら出さない。
-    /// `prefer_staged`: 両側に変更があって 1 本の差分で表せないとき、stage 済みの側を読むか。
-    pub fn want_working(&mut self, entry: Option<amonhen_model::StatusEntry>, prefer_staged: bool) {
+    /// Working Copy のファイルの差分を、見る側（`side`）で裏で読む。その側に変更がなければ、読まずに一言（macOS 版・
+    /// GTK4 版と同じ）。All は HEAD と作業ツリーの 1 本の差分で、表せないとき・空白を無視しているときは一言で
+    /// Unstaged と Staged へ案内する。`None` なら出さない。
+    pub fn want_working(&mut self, entry: Option<amonhen_model::StatusEntry>, side: WorkingSide) {
+        self.working_seq += 1;
+        let seq = self.working_seq;
         let Some(entry) = entry else {
             self.working_wanted = None;
             self.working = None;
+            self.working_note = None;
             self.working_entry = None;
             self.working_changed = true;
             return;
@@ -1828,46 +1862,69 @@ impl Data {
             return;
         };
         self.working_wanted = Some(entry.path.clone());
-        self.working_entry = Some((entry.clone(), prefer_staged));
+        self.working_entry = Some((entry.clone(), side));
+        let nothing = match side {
+            WorkingSide::Unstaged => {
+                (!entry.is_unstaged()).then(|| tr!("No unstaged changes in this file"))
+            }
+            WorkingSide::Staged => {
+                (!entry.is_staged()).then(|| tr!("No staged changes in this file"))
+            }
+            WorkingSide::All => None,
+        };
+        if let Some(note) = nothing {
+            self.working = None;
+            self.working_note = Some(note);
+            self.working_changed = true;
+            return;
+        }
         let whitespace = self.whitespace;
         let (tx, wake) = (self.tx.clone(), self.wake.clone());
         std::thread::spawn(move || {
-            // 空白を無視する間は 1 本の差分（行ごとのチェック）にせず、選んだ側の差分（macOS 版と同じ）。
-            let combined = if whitespace == Whitespace::Exact {
-                repo.working_diff_combined(&entry, &PROFILE).ok().flatten()
-            } else {
-                None
-            };
-            let diff = match combined {
-                Some(diff) => Ok(diff),
-                // 1 本の差分で表せなければ、選んだ側（片側にしか変更がなければその側。GTK4 版と同じ）。
-                None => {
-                    let staged = if entry.is_staged() && entry.is_unstaged() {
-                        prefer_staged
-                    } else {
-                        !entry.is_unstaged()
-                    };
-                    repo.working_diff_ws(&entry, staged, whitespace, &PROFILE)
-                }
+            let diff = match side {
+                WorkingSide::All if whitespace != Whitespace::Exact => Err(tr!(
+                    "All can’t be shown while whitespace is ignored. See Unstaged and Staged."
+                )),
+                WorkingSide::All => match repo.working_diff_combined(&entry, &PROFILE) {
+                    Ok(Some(diff)) => Ok(diff),
+                    Ok(None) => Err(tr!(
+                        "This file’s staged and unstaged changes can’t be shown in one diff. See Unstaged and Staged."
+                    )),
+                    Err(e) => Err(tr!("Can’t read the diff: {e}", e = e)),
+                },
+                side => repo
+                    .working_diff_ws(&entry, side == WorkingSide::Staged, whitespace, &PROFILE)
+                    .map(|mut diff| {
+                        // stage 済みの側の変更は、どれも index に入っている（印を埋める）。
+                        if diff.staged {
+                            for row in &mut diff.view.rows {
+                                if matches!(row.kind, DiffRow::ADDED | DiffRow::REMOVED) {
+                                    row.flags |= DiffRow::STAGED;
+                                }
+                            }
+                        }
+                        diff
+                    })
+                    .map_err(|e| tr!("Can’t read the diff: {e}", e = e)),
             };
             let event = match diff {
                 Ok(diff) => {
                     let (highlights, syntax) = (highlights_of(&diff.view), syntax_of(&diff.view));
-                    Event::Working(Box::new(WorkingShown {
-                        path: entry.path.clone(),
-                        diff: Arc::new(diff),
-                        highlights,
-                        syntax,
-                        tree: None,
-                        wrap_cols: 0,
-                        selection: Default::default(),
-                        anchor: None,
-                    }))
+                    Event::Working(
+                        Box::new(WorkingShown {
+                            path: entry.path.clone(),
+                            diff: Arc::new(diff),
+                            highlights,
+                            syntax,
+                            tree: None,
+                            wrap_cols: 0,
+                            selection: Default::default(),
+                            anchor: None,
+                        }),
+                        seq,
+                    )
                 }
-                Err(e) => {
-                    eprintln!("{} の差分を読めない: {e}", entry.path);
-                    return;
-                }
+                Err(note) => Event::WorkingNote(note, seq),
             };
             let _ = tx.send(event);
             wake();
@@ -1877,15 +1934,20 @@ impl Data {
     /// Working Copy の差分の `row` 行目（変更の行）を、次のコミットに含める・外す（今と逆にする）。終わったら status を
     /// 読み直し、差分も読み直される。
     pub fn toggle_working_row(&self, row: usize) {
-        let Some(working) = &self.working else { return };
-        let Some(staged) = working
-            .diff
-            .combined
-            .as_ref()
-            .and_then(|c| c.get(row).copied())
-        else {
+        let Some(staged) = self.working_row_staged(row) else {
             return;
         };
+        self.stage_working_rows(vec![row], !staged);
+    }
+
+    /// Working Copy の差分の変わった行 `rows` を `stage`（含める・外す）にする。All（1 本の差分）は行ごとの状態を
+    /// そのまま、片側の差分はその側から移す（Unstaged なら含め、Staged なら外す。もう `stage` の側なら何もしない）。
+    /// 終わったら status を読み直す。
+    pub fn stage_working_rows(&self, rows: Vec<usize>, stage: bool) {
+        let Some(working) = &self.working else { return };
+        if rows.is_empty() || (working.diff.combined.is_none() && working.diff.staged == stage) {
+            return;
+        }
         let (Some(repo), diff, changed) = (
             self.repo.clone(),
             working.diff.clone(),
@@ -1894,7 +1956,12 @@ impl Data {
             return;
         };
         std::thread::spawn(move || {
-            if let Err(e) = repo.set_rows_staged(&diff, &[row], !staged) {
+            let result = if diff.combined.is_some() {
+                repo.set_rows_staged(&diff, &rows, stage)
+            } else {
+                repo.stage_rows(&diff, &rows)
+            };
+            if let Err(e) = result {
                 eprintln!("行を含められない: {e}");
             }
             let _ = changed.send(amonhen_watch::Changes::INDEX.0);
@@ -1909,73 +1976,34 @@ impl Data {
         if !matches!(kind, DiffRow::ADDED | DiffRow::REMOVED) {
             return None;
         }
-        working.diff.combined.as_ref()?.get(row).copied()
+        match working.diff.combined.as_ref() {
+            Some(combined) => combined.get(row).copied(),
+            // 片側の差分: stage 済みの側の行は含めている、作業ツリーの側の行は含めていない。
+            None => Some(working.diff.staged),
+        }
     }
 
     /// Working Copy の差分の `a`〜`b` の変わった行を、まとめて `stage`（含める・外す）にする（印の上を引いた
     /// ときと Shift+クリック。GTK4 版の印の範囲）。
     pub fn set_working_range(&self, a: usize, b: usize, stage: bool) {
-        use amonhen_layout::DiffRow;
-        let Some(working) = &self.working else { return };
-        let Some(combined) = working.diff.combined.as_ref() else {
-            return;
-        };
         let rows: Vec<usize> = (a.min(b)..=a.max(b))
-            .filter(|&r| {
-                working
-                    .diff
-                    .view
-                    .rows
-                    .get(r)
-                    .is_some_and(|x| matches!(x.kind, DiffRow::ADDED | DiffRow::REMOVED))
-                    && combined.get(r).copied() != Some(stage)
-            })
+            .filter(|&r| self.working_row_staged(r).is_some_and(|s| s != stage))
             .collect();
-        if rows.is_empty() {
-            return;
-        }
-        let (Some(repo), diff, changed) = (
-            self.repo.clone(),
-            working.diff.clone(),
-            self.changed_tx.clone(),
-        ) else {
-            return;
-        };
-        std::thread::spawn(move || {
-            if let Err(e) = repo.set_rows_staged(&diff, &rows, stage) {
-                eprintln!("行を含められない: {e}");
-            }
-            let _ = changed.send(amonhen_watch::Changes::INDEX.0);
-        });
+        self.stage_working_rows(rows, stage);
     }
 
     /// Working Copy の差分の hunk の見出し（`row`）の行をまとめて含める・外す（GTK4 版の hunk の印）。1 行でも
     /// 含めていなければすべて含め、すべて含めていればすべて外す。
     pub fn toggle_working_hunk(&self, row: usize) {
         let Some(working) = &self.working else { return };
-        let Some(combined) = working.diff.combined.as_ref() else {
-            return;
-        };
         let rows = hunk_rows(&working.diff.view.rows, row);
         if rows.is_empty() {
             return;
         }
         let stage = rows
             .iter()
-            .any(|&r| !combined.get(r).copied().unwrap_or(false));
-        let (Some(repo), diff, changed) = (
-            self.repo.clone(),
-            working.diff.clone(),
-            self.changed_tx.clone(),
-        ) else {
-            return;
-        };
-        std::thread::spawn(move || {
-            if let Err(e) = repo.set_rows_staged(&diff, &rows, stage) {
-                eprintln!("hunk を含められない: {e}");
-            }
-            let _ = changed.send(amonhen_watch::Changes::INDEX.0);
-        });
+            .any(|&r| !self.working_row_staged(r).unwrap_or(false));
+        self.stage_working_rows(rows, stage);
     }
 
     /// Working Copy の差分で右クリックした `row` の行（変わった行ならその行、hunk の見出しならその hunk の行）と、
@@ -2259,10 +2287,21 @@ impl Data {
                         changed = true;
                     }
                 }
-                Event::Working(shown) => {
-                    if self.working_wanted.as_deref() == Some(shown.path.as_str()) {
+                Event::Working(shown, seq) => {
+                    if seq == self.working_seq
+                        && self.working_wanted.as_deref() == Some(shown.path.as_str())
+                    {
                         self.working = Some(shown);
+                        self.working_note = None;
                         self.apply_wrap();
+                        self.working_changed = true;
+                        changed = true;
+                    }
+                }
+                Event::WorkingNote(note, seq) => {
+                    if seq == self.working_seq {
+                        self.working = None;
+                        self.working_note = Some(note);
                         self.working_changed = true;
                         changed = true;
                     }
@@ -3164,8 +3203,8 @@ impl Data {
             Some(Want::Selection(rows)) => self.want_selection(rows),
             None => self.restore = None,
         }
-        if let Some((entry, prefer_staged)) = self.working_entry.clone() {
-            self.want_working(Some(entry), prefer_staged);
+        if let Some((entry, side)) = self.working_entry.clone() {
+            self.want_working(Some(entry), side);
         }
     }
 
