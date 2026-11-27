@@ -2210,10 +2210,10 @@ impl Root {
                 .text(popover.status.label())
                 .font_weight(FontWeight::SEMI_BOLD),
             checks_view(&popover.sha, popover.checks.as_ref()),
-            Button::new()
-                .horizontal_alignment(HorizontalAlignment::Right)
-                .on_click(context.callback(|()| Message::OpenChecksOnGitHub))
-                .content(tr!("Open on GitHub")),
+            crate::small::button(tr!("Open on GitHub"), |b| {
+                b.horizontal_alignment(HorizontalAlignment::Right)
+                    .on_click(context.callback(|()| Message::OpenChecksOnGitHub))
+            }),
         ))
     }
 
@@ -2238,14 +2238,16 @@ impl Root {
                 // 次にできること（ダイアログでは下のボタン。macOS 版の吹き出しと同じく中に並べる）。
                 let buttons = actions.iter().enumerate().map(|(i, (key, label))| {
                     let key = key.clone();
-                    let button = Button::new()
-                        .on_click(context.callback(move |()| Message::MarkAction(key.clone())));
-                    let button = if i == 0 {
-                        button.style(ButtonStyle::Accent)
-                    } else {
-                        button
-                    };
-                    (format!("{i}"), button.content(label.clone()))
+                    let button = crate::small::button(label.clone(), |b| {
+                        let b = b
+                            .on_click(context.callback(move |()| Message::MarkAction(key.clone())));
+                        if i == 0 {
+                            b.style(ButtonStyle::Accent)
+                        } else {
+                            b
+                        }
+                    });
+                    (format!("{i}"), button)
                 });
                 StackPanel::new()
                     .spacing(8.0)
@@ -9942,7 +9944,7 @@ impl Root {
                 .children((
                     DropDownButton::new()
                         .grid_column(0)
-                        .content(TextBlock::new().text("🔍"))
+                        .content(crate::small::drop_text("🔍"))
                         .menu(Menu::new(scopes, context.callback(Message::SearchScope))),
                     TextBox::new()
                         .element_ref(&self.search_box)
@@ -9957,11 +9959,11 @@ impl Root {
                         .grid_column(2),
                     // 一致したコミットだけを出す（GTK4 版・macOS 版の検索の欄の切り替え。探すまでは押せない）。
                     crate::tip::holder(
-                        ToggleButton::new()
-                            .is_checked(self.search_only)
-                            .is_enabled(self.last_search.is_some())
-                            .on_is_checked_changed(context.callback(Message::SearchOnly))
-                            .content(TextBlock::new().text("⊟")),
+                        crate::small::toggle("⊟", self.search_only, |b| {
+                            let only = self.search_only;
+                            b.is_enabled(self.last_search.is_some())
+                                .on_click(context.callback(move |()| Message::SearchOnly(!only)))
+                        }),
                         tr!("Show Only Matching Commits"),
                         3,
                     ),
@@ -11958,6 +11960,7 @@ impl Root {
                         // 並べ替えた順は項目の Tag で知らされるので、ListViewItem に rev を持たせる。
                         let view = ListViewItem::new()
                             .tag(s.rev.clone())
+                            .min_height(crate::small::ROW_HEIGHT)
                             .content(
                                 TextBlock::new()
                                     .text(text)
@@ -11970,9 +11973,9 @@ impl Root {
                     })
                     .collect();
                 let put_last_view: View = match put_last.and_then(|i| sources.get(i).map(|s| (i, s))) {
-                    Some((i, s)) => Button::new()
-                        .on_click(context.callback(move |_| Message::MergeSeveralPutLast(i)))
-                        .content(tr!("Put {name} Last", name = &s.rev)),
+                    Some((i, s)) => crate::small::button(tr!("Put {name} Last", name = &s.rev), |b| {
+                        b.on_click(context.callback(move |_| Message::MergeSeveralPutLast(i)))
+                    }),
                     None => View::empty(),
                 };
                 let message = crate::merge_several::merge_message(sources, branch.as_deref());
@@ -12391,6 +12394,7 @@ impl Root {
                         key.clone(),
                         ListViewItem::new()
                             .tag(key)
+                            .min_height(crate::small::ROW_HEIGHT)
                             .content(TextBlock::new().text(c.label(recent))),
                     )
                 });
@@ -12538,6 +12542,7 @@ impl Root {
                         rows.push((
                             format!("b:{i}"),
                             CheckBox::new()
+                                .min_height(0.0)
                                 .is_checked(*on)
                                 .on_is_checked_changed(
                                     context.callback(move |v| Message::CleanUpCheck(i, v)),
@@ -14916,17 +14921,17 @@ impl Root {
                             .opacity(0.65)
                             .vertical_alignment(VerticalAlignment::Center),
                         DropDownButton::new()
-                            .content(TextBlock::new().text(tr!("Fetch More")).font_size(12.0))
+                            .content(crate::small::drop_text(tr!("Fetch More")))
                             .menu(Menu::new(more, context.callback(Message::ShallowFetch))),
-                        Button::new()
-                            .on_click(
+                        crate::small::button(tr!("Fetch All"), |b| {
+                            b.on_click(
                                 context
                                     .callback(|()| Message::ShallowFetch("unshallow".to_owned())),
                             )
-                            .content(TextBlock::new().text(tr!("Fetch All")).font_size(12.0))
-                            .tooltip(tr!(
-                                "Fetch the whole history from the remote (git fetch --unshallow)"
-                            )),
+                        })
+                        .tooltip(tr!(
+                            "Fetch the whole history from the remote (git fetch --unshallow)"
+                        )),
                     )),
             )
     }
@@ -14962,13 +14967,14 @@ impl Root {
         };
         let cancelled = failure.cancelled();
         let button = |title: String, accent: bool, on: Callback<()>| -> View {
-            let b = Button::new().on_click(on);
-            let b = if accent {
-                b.style(ButtonStyle::Accent)
-            } else {
-                b
-            };
-            b.content(TextBlock::new().text(title).font_size(12.0))
+            crate::small::button(title, |b| {
+                let b = b.on_click(on);
+                if accent {
+                    b.style(ButtonStyle::Accent)
+                } else {
+                    b
+                }
+            })
         };
         let mut buttons: Vec<(String, View)> = Vec::new();
         if !cancelled {
@@ -16137,13 +16143,11 @@ impl Root {
                             .vertical_alignment(VerticalAlignment::Center)
                             .grid_column(2)
                             .tooltip(reason.clone()),
-                        Button::new()
-                            .style(ButtonStyle::Accent)
-                            .grid_column(3)
-                            .on_click(
+                        crate::small::button(tr!("Reconnect"), |b| {
+                            b.style(ButtonStyle::Accent).grid_column(3).on_click(
                                 context.callback(|()| Message::Command("try-again".to_owned())),
                             )
-                            .content(TextBlock::new().text(tr!("Reconnect")).font_size(12.0)),
+                        }),
                     )),
             )
     }
@@ -17769,10 +17773,10 @@ impl Root {
                     .text(format!("History · {title}"))
                     .vertical_alignment(VerticalAlignment::Center)
                     .text_trimming(TextTrimming::CharacterEllipsis),
-                Button::new()
-                    .grid_column(1)
-                    .on_click(context.callback(|()| Message::Command("scope-all".to_owned())))
-                    .content(TextBlock::new().text(tr!("All Branches"))),
+                crate::small::button(tr!("All Branches"), |b| {
+                    b.grid_column(1)
+                        .on_click(context.callback(|()| Message::Command("scope-all".to_owned())))
+                }),
             ))
     }
 
@@ -17805,10 +17809,10 @@ impl Root {
                         .horizontal_alignment(HorizontalAlignment::Right)
                         .vertical_alignment(VerticalAlignment::Top)
                         .margin(Thickness::new(0.0, 4.0, 8.0, 0.0))
-                        .children((ToggleButton::new()
-                                .is_checked(self.details_expanded)
-                                .on_is_checked_changed(context.callback(Message::ExpandDetails))
-                                .content(TextBlock::new().text("⤢"))
+                        .children((crate::small::toggle("⤢", self.details_expanded, |b| {
+                                let expanded = self.details_expanded;
+                                b.on_click(context.callback(move |()| Message::ExpandDetails(!expanded)))
+                            })
                                 .tooltip(tr!(
                                     "Expand the commit details to fill the right column (click again to restore)."
                                 )),
@@ -17945,14 +17949,14 @@ impl Root {
                                     .text_trimming(TextTrimming::CharacterEllipsis)
                                     .tooltip(message),
                             ),
-                        Button::new()
-                            .grid_column(2)
-                            .is_enabled(fetch != Fetch::Fetching)
-                            .on_click(context.callback(|()| Message::FetchMissing))
-                            .content(TextBlock::new().text(tr!("Fetch Contents")).font_size(12.0))
-                            .tooltip(tr!(
-                                "Fetch just these contents from the remote, in one go, and show them."
-                            )),
+                        crate::small::button(tr!("Fetch Contents"), |b| {
+                            b.grid_column(2)
+                                .is_enabled(fetch != Fetch::Fetching)
+                                .on_click(context.callback(|()| Message::FetchMissing))
+                        })
+                        .tooltip(tr!(
+                            "Fetch just these contents from the remote, in one go, and show them."
+                        )),
                     )),
             )
     }
@@ -17966,12 +17970,14 @@ impl Root {
                     .as_deref()
                     .filter(|p| amonhen_core::markdown::is_markdown(p))
                     .map(|_| {
+                        // 今のものをもう一度押したときは何もしない。
+                        let current = self.markdown_text;
                         let pick = |text: bool| {
-                            context.callback(move |on: bool| {
-                                if on {
-                                    Message::MarkdownText(text)
-                                } else {
+                            context.callback(move |()| {
+                                if current == text {
                                     Message::DiffFilesToggled
+                                } else {
+                                    Message::MarkdownText(text)
                                 }
                             })
                         };
@@ -18024,17 +18030,17 @@ impl Root {
                       message: fn(Pick) -> Message,
                       pick: Pick|
          -> View {
-            ToggleButton::new()
-                .is_checked(on)
-                .on_is_checked_changed(context.callback(move |checked: bool| {
-                    if checked {
-                        message(pick)
-                    } else {
+            // 今のものをもう一度押したときは何もしない。
+            crate::small::toggle(title, on, |b| {
+                b.on_click(context.callback(move |()| {
+                    if on {
                         Message::DiffFilesToggled
+                    } else {
+                        message(pick)
                     }
                 }))
-                .content(TextBlock::new().text(title).font_size(12.0))
-                .tooltip(tooltip)
+            })
+            .tooltip(tooltip)
         };
         // VectorDrawable（`mobile` なし）は、絵とテキストの説明を替える。
         let (draw, source) = if mobile {
@@ -18525,13 +18531,11 @@ impl Root {
         } else {
             icon
         };
-        ToggleButton::new()
-            .is_checked(on)
-            .on_is_checked_changed(
-                context.callback(|_: bool| Message::Command("wrap-long-lines".to_owned())),
-            )
-            .content(icon)
-            .tooltip(tr!("Wrap Long Lines (Alt+Z)"))
+        // 折り返しているかは字の色で見せる（空白のボタンと同じ。アクセントの地に青い字は読めない）。
+        crate::small::icon_button(icon, |b| {
+            b.on_click(context.callback(|()| Message::Command("wrap-long-lines".to_owned())))
+        })
+        .tooltip(tr!("Wrap Long Lines (Alt+Z)"))
     }
 
     fn whitespace_picker(&self, context: &ViewContext<Self>) -> View {
@@ -18576,7 +18580,7 @@ impl Root {
             icon.foreground(Brush::Solid(Color::rgb(0x00, 0x78, 0xd4)))
         };
         DropDownButton::new()
-            .content(icon)
+            .content(crate::small::drop_icon(icon))
             .tooltip(format!(
                 "{}\n{}",
                 title(current),
@@ -18619,27 +18623,25 @@ impl Root {
             .grid_column(0)
             .orientation(Orientation::Horizontal)
             .children((
-                ToggleButton::new()
-                    .is_checked(!files_mode)
-                    .on_is_checked_changed(context.callback(|on: bool| {
-                        if on {
+                // 今のものをもう一度押したときは何もしない（開き直さない）。
+                crate::small::toggle(tr!("Changes"), !files_mode, |b| {
+                    b.on_click(context.callback(move |()| {
+                        if files_mode {
                             Message::AllFiles(false)
                         } else {
                             Message::DiffFilesToggled
                         }
                     }))
-                    .content(small(tr!("Changes"))),
-                ToggleButton::new()
-                    .is_checked(files_mode)
-                    .is_enabled(single)
-                    .on_is_checked_changed(context.callback(|on: bool| {
-                        if on {
-                            Message::AllFiles(true)
-                        } else {
+                }),
+                crate::small::toggle(tr!("All Files"), files_mode, |b| {
+                    b.is_enabled(single).on_click(context.callback(move |()| {
+                        if files_mode {
                             Message::DiffFilesToggled
+                        } else {
+                            Message::AllFiles(true)
                         }
                     }))
-                    .content(small(tr!("All Files"))),
+                }),
             ));
         // 中身が手元にないファイルがある間は、行の数の合計が定まらないのでファイルの数だけ（macOS 版の
         // `updateBarTotals`）。
@@ -18663,29 +18665,27 @@ impl Root {
         let tree_switch = StackPanel::new()
             .orientation(Orientation::Horizontal)
             .children((
-                ToggleButton::new()
-                    .is_checked(!tree)
-                    // 押して外したときは、そのまま（もう一方を押して切り替える）。
-                    .on_is_checked_changed(context.callback(|on: bool| {
-                        if on {
+                // 今のものをもう一度押したときは、そのまま（もう一方を押して切り替える）。
+                crate::small::icon_toggle(shared("list"), !tree, |b| {
+                    b.on_click(context.callback(move |()| {
+                        if tree {
                             Message::DiffFilesAsTree(false)
                         } else {
                             Message::DiffFilesToggled
                         }
                     }))
-                    .content(shared("list"))
-                    .tooltip(tr!("Show the changed files as a list")),
-                ToggleButton::new()
-                    .is_checked(tree)
-                    .on_is_checked_changed(context.callback(|on: bool| {
-                        if on {
-                            Message::DiffFilesAsTree(true)
-                        } else {
+                })
+                .tooltip(tr!("Show the changed files as a list")),
+                crate::small::icon_toggle(shared("tree"), tree, |b| {
+                    b.on_click(context.callback(move |()| {
+                        if tree {
                             Message::DiffFilesToggled
+                        } else {
+                            Message::DiffFilesAsTree(true)
                         }
                     }))
-                    .content(shared("tree"))
-                    .tooltip(tr!("Show the changed files as a tree")),
+                })
+                .tooltip(tr!("Show the changed files as a tree")),
             ));
         // フォルダをすべて開く・畳む（木のときだけ。macOS 版と同じ）。すべてのファイルでは、その木のフォルダ。
         let folders_open = if files_mode {
@@ -18694,35 +18694,36 @@ impl Root {
             folders_open
         };
         let folders: View = if tree {
-            Button::new()
-                .style(ButtonStyle::Subtle)
-                .on_click(context.callback(|()| Message::ToggleAllFolders))
-                .content(shared("folder"))
-                .tooltip(if folders_open {
-                    tr!("Collapse All Folders")
-                } else {
-                    tr!("Expand All Folders")
-                })
+            crate::small::icon_button(shared("folder"), |b| {
+                b.style(ButtonStyle::Subtle)
+                    .on_click(context.callback(|()| Message::ToggleAllFolders))
+            })
+            .tooltip(if folders_open {
+                tr!("Collapse All Folders")
+            } else {
+                tr!("Expand All Folders")
+            })
         } else {
             View::empty()
         };
-        let expand = Button::new()
-            .style(ButtonStyle::Subtle)
-            .on_click(context.callback(|()| Message::ToggleAllDiffs))
-            .content(icon(if all_open { "\u{E70E}" } else { "\u{E70D}" }))
+        let expand =
+            crate::small::icon_button(icon(if all_open { "\u{E70E}" } else { "\u{E70D}" }), |b| {
+                b.style(ButtonStyle::Subtle)
+                    .on_click(context.callback(|()| Message::ToggleAllDiffs))
+            })
             .tooltip(if all_open {
                 tr!("Collapse All Diffs")
             } else {
                 tr!("Expand All Diffs")
             });
         let whitespace = self.whitespace_picker(context);
-        let find = Button::new()
-            .style(ButtonStyle::Subtle)
-            .on_click(context.callback(|()| Message::DiffFindOpen(true)))
-            .content(shared("search"))
-            .tooltip(tr!("Find in the diff (Ctrl+F)"));
+        let find = crate::small::icon_button(shared("search"), |b| {
+            b.style(ButtonStyle::Subtle)
+                .on_click(context.callback(|()| Message::DiffFindOpen(true)))
+        })
+        .tooltip(tr!("Find in the diff (Ctrl+F)"));
         let options = DropDownButton::new()
-            .content(shared("display-options"))
+            .content(crate::small::drop_icon(shared("display-options")))
             .tooltip(tr!("View Options"))
             .menu(Menu::new(
                 self.view_options_items(),
@@ -18775,10 +18776,10 @@ impl Root {
 
     /// 差分の中を探す帯を開くボタン（GTK4 版の `find_button`。詳細の右上に置く）。
     fn diff_find_button(&self, context: &ViewContext<Self>) -> View {
-        Button::new()
-            .on_click(context.callback(|()| Message::DiffFindOpen(true)))
-            .content(TextBlock::new().text("🔍"))
-            .tooltip(tr!("Find in the diff (Ctrl+F)"))
+        crate::small::icon_button(TextBlock::new().text("🔍"), |b| {
+            b.on_click(context.callback(|()| Message::DiffFindOpen(true)))
+        })
+        .tooltip(tr!("Find in the diff (Ctrl+F)"))
     }
 
     /// 差分の中を探す帯（GTK4 版の `difffind`: 欄、件数、前・次、Done）。
@@ -18808,20 +18809,20 @@ impl Root {
                     .text(self.diff_find_status.clone())
                     .vertical_alignment(VerticalAlignment::Center)
                     .margin(Thickness::new(4.0, 0.0, 4.0, 0.0)),
-                Button::new()
-                    .grid_column(2)
-                    .on_click(context.callback(|()| Message::DiffFindStep(-1)))
-                    .content(TextBlock::new().text("↑"))
-                    .tooltip(tr!("Previous")),
-                Button::new()
-                    .grid_column(3)
-                    .on_click(context.callback(|()| Message::DiffFindStep(1)))
-                    .content(TextBlock::new().text("↓"))
-                    .tooltip(tr!("Next")),
-                Button::new()
-                    .grid_column(4)
-                    .on_click(context.callback(|()| Message::DiffFindOpen(false)))
-                    .content(TextBlock::new().text(tr!("Done"))),
+                crate::small::button("↑", |b| {
+                    b.grid_column(2)
+                        .on_click(context.callback(|()| Message::DiffFindStep(-1)))
+                })
+                .tooltip(tr!("Previous")),
+                crate::small::button("↓", |b| {
+                    b.grid_column(3)
+                        .on_click(context.callback(|()| Message::DiffFindStep(1)))
+                })
+                .tooltip(tr!("Next")),
+                crate::small::button(tr!("Done"), |b| {
+                    b.grid_column(4)
+                        .on_click(context.callback(|()| Message::DiffFindOpen(false)))
+                }),
             ))
     }
 

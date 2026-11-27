@@ -346,10 +346,9 @@ pub fn view(state: &State, callbacks: Callbacks) -> View {
         )
     };
     let button = |key: &'static str, title: String, enabled: bool| -> View {
-        Button::new()
-            .is_enabled(enabled)
-            .on_click((callbacks.button)(key))
-            .content(TextBlock::new().text(title))
+        crate::small::button(title, |b| {
+            b.is_enabled(enabled).on_click((callbacks.button)(key))
+        })
     };
     let has = ready && count > 0;
     let has_base = matches!(&state.sides, Some(Ok((_, _, Some(_)))));
@@ -363,7 +362,7 @@ pub fn view(state: &State, callbacks: Callbacks) -> View {
         View::empty()
     };
     let base_toggle: View = if has_base {
-        CheckBox::new()
+        crate::small::check(CheckBox::new())
             .is_checked(state.show_base)
             .on_is_checked_changed(callbacks.base.clone())
             .content(TextBlock::new().text("Base"))
@@ -427,9 +426,7 @@ pub fn view(state: &State, callbacks: Callbacks) -> View {
             if state.separate {
                 View::empty()
             } else {
-                Button::new()
-                    .on_click((callbacks.button)("popout"))
-                    .content(TextBlock::new().text("⧉"))
+                crate::small::button("⧉", |b| b.on_click((callbacks.button)("popout")))
                     .tooltip(tr!("Open in a Separate Window"))
             },
             TextBlock::new()
@@ -490,20 +487,18 @@ pub fn view(state: &State, callbacks: Callbacks) -> View {
                         0x14
                     };
                     let arrow: View = match (which, open) {
-                        (0, true) => Button::new()
-                            .on_click((callbacks.pick)(format!("ours:{i}")))
-                            .horizontal_alignment(HorizontalAlignment::Right)
-                            .vertical_alignment(VerticalAlignment::Top)
-                            .content(TextBlock::new().text("≫").font_size(11.0))
-                            .tooltip(amonhen_model::i18n::translate("Accept Current").into_owned()),
-                        (1, true) => Button::new()
-                            .on_click((callbacks.pick)(format!("theirs:{i}")))
-                            .horizontal_alignment(HorizontalAlignment::Left)
-                            .vertical_alignment(VerticalAlignment::Top)
-                            .content(TextBlock::new().text("≪").font_size(11.0))
-                            .tooltip(
-                                amonhen_model::i18n::translate("Accept Incoming").into_owned(),
-                            ),
+                        (0, true) => crate::small::button("≫", |b| {
+                            b.on_click((callbacks.pick)(format!("ours:{i}")))
+                                .horizontal_alignment(HorizontalAlignment::Right)
+                                .vertical_alignment(VerticalAlignment::Top)
+                        })
+                        .tooltip(amonhen_model::i18n::translate("Accept Current").into_owned()),
+                        (1, true) => crate::small::button("≪", |b| {
+                            b.on_click((callbacks.pick)(format!("theirs:{i}")))
+                                .horizontal_alignment(HorizontalAlignment::Left)
+                                .vertical_alignment(VerticalAlignment::Top)
+                        })
+                        .tooltip(amonhen_model::i18n::translate("Accept Incoming").into_owned()),
                         _ => View::empty(),
                     };
                     let body = lines[start..end].concat();
@@ -610,11 +605,10 @@ pub fn view(state: &State, callbacks: Callbacks) -> View {
     let banner: View = match &state.banner {
         Some(text) => {
             let forget: View = if state.rerere {
-                Button::new()
-                    .on_click((callbacks.button)("forget"))
-                    .vertical_alignment(VerticalAlignment::Center)
-                    .content(TextBlock::new().text(tr!("Forget This Resolution")))
-                    .tooltip(tr!(
+                crate::small::button(tr!("Forget This Resolution"), |b| {
+                    b.on_click((callbacks.button)("forget"))
+                })
+                .tooltip(tr!(
                         "Forgets what git rerere recorded for this file and brings its conflict back (git rerere forget). Undo brings back the file as it is now."
                     ))
             } else {
@@ -656,8 +650,11 @@ pub fn view(state: &State, callbacks: Callbacks) -> View {
                     DropDownButton::new()
                         .grid_column(1)
                         .vertical_alignment(VerticalAlignment::Center)
-                        .margin(Thickness::new(0.0, 6.0, 8.0, 6.0))
-                        .content(crate::icons::icon("display-options", 16.0))
+                        .margin(Thickness::new(0.0, 3.0, 8.0, 3.0))
+                        .content(crate::small::drop_icon(crate::icons::icon(
+                            "display-options",
+                            16.0,
+                        )))
                         .tooltip(tr!("View Options"))
                         .menu(Menu::new(view_options_items(), callbacks.option.clone())),
                 )),

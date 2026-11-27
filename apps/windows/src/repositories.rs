@@ -1857,22 +1857,20 @@ pub fn view(state: &State, callbacks: Callbacks) -> View {
                 .width(260.0)
                 .horizontal_alignment(HorizontalAlignment::Right)
                 .grid_column(1),
-            Button::new()
-                .on_click((callbacks.button)("add-repository"))
-                .grid_column(2)
-                .content(TextBlock::new().text(tr!("Add Local Repository…"))),
-            Button::new()
-                .on_click((callbacks.button)("add-ssh"))
-                .grid_column(3)
-                .content(TextBlock::new().text(tr!("Add SSH Connection…"))),
-            Button::new()
-                .on_click((callbacks.button)("add-scan-folder"))
-                .grid_column(4)
-                .content(TextBlock::new().text(tr!("Add Folder to Scan…"))),
-            Button::new()
-                .on_click((callbacks.button)("close"))
-                .grid_column(5)
-                .content(TextBlock::new().text(tr!("Close"))),
+            crate::small::button(tr!("Add Local Repository…"), |b| {
+                b.on_click((callbacks.button)("add-repository"))
+                    .grid_column(2)
+            }),
+            crate::small::button(tr!("Add SSH Connection…"), |b| {
+                b.on_click((callbacks.button)("add-ssh")).grid_column(3)
+            }),
+            crate::small::button(tr!("Add Folder to Scan…"), |b| {
+                b.on_click((callbacks.button)("add-scan-folder"))
+                    .grid_column(4)
+            }),
+            crate::small::button(tr!("Close"), |b| {
+                b.on_click((callbacks.button)("close")).grid_column(5)
+            }),
         ));
     // 左: 分類と件数。
     let categories = state.categories();
@@ -1913,7 +1911,10 @@ pub fn view(state: &State, callbacks: Callbacks) -> View {
                 content.menu(Menu::new(category_menu(c, &state.data), (callbacks.menu)()));
             (
                 format!("{i}:{name}"),
-                ListViewItem::new().tag(name.clone()).content(content),
+                ListViewItem::new()
+                    .tag(name.clone())
+                    .min_height(crate::small::ROW_HEIGHT)
+                    .content(content),
             )
         });
     let side_key = state.side_key();

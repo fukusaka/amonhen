@@ -252,34 +252,32 @@ pub fn view(state: &State, callbacks: Callbacks) -> View {
                 .vertical_alignment(VerticalAlignment::Center)
                 .margin(Thickness::new(0.0, 0.0, 16.0, 0.0))
                 .grid_column(0),
-            RadioButtons::new()
-                .items_source(vec![
+            crate::small::picker(
+                &[
                     tr!("Operations"),
                     "History".to_owned(),
                     tr!("History Cache"),
                     tr!("Performance"),
                     tr!("Events"),
                     "Daemon".to_owned(),
-                ])
-                .selected_index(state.tab)
-                .max_columns(6)
-                .on_selection_changed(callbacks.tab.clone())
-                .grid_column(1),
+                ],
+                state.tab,
+                &callbacks.tab,
+                |p| p.grid_column(1),
+            ),
             StackPanel::new()
                 .orientation(Orientation::Horizontal)
                 .spacing(8.0)
                 .grid_column(2)
                 .children((
                     if state.tab == 0 {
-                        Button::new()
-                            .on_click(callbacks.export.clone())
-                            .content(TextBlock::new().text(tr!("Export JSON…")))
+                        crate::small::button(tr!("Export JSON…"), |b| {
+                            b.on_click(callbacks.export.clone())
+                        })
                     } else {
                         View::empty()
                     },
-                    Button::new()
-                        .on_click(callbacks.close.clone())
-                        .content(TextBlock::new().text(tr!("Close"))),
+                    crate::small::button(tr!("Close"), |b| b.on_click(callbacks.close.clone())),
                 )),
         ));
     let body: View = if state.tab == 5 {
@@ -830,12 +828,13 @@ fn operations_view(state: &State, callbacks: &Callbacks) -> View {
         .orientation(Orientation::Horizontal)
         .spacing(12.0)
         .children((
-            RadioButtons::new()
-                .items_source(vec![tr!("All"), "git".to_owned(), tr!("Commands")])
-                .selected_index(state.kind)
-                .max_columns(3)
-                .on_selection_changed(callbacks.kind.clone()),
-            CheckBox::new()
+            crate::small::picker(
+                &[tr!("All"), "git".to_owned(), tr!("Commands")],
+                state.kind,
+                &callbacks.kind,
+                |p| p,
+            ),
+            crate::small::check(CheckBox::new())
                 .is_checked(state.failures_only)
                 .on_is_checked_changed(callbacks.failures_only.clone())
                 .content(TextBlock::new().text(tr!("Failures Only"))),
@@ -875,15 +874,11 @@ fn operations_view(state: &State, callbacks: &Callbacks) -> View {
                     .vertical_alignment(VerticalAlignment::Center)
                     .grid_column(0),
                 if r.ok.is_none() && r.cancellable {
-                    Button::new()
-                        .on_click((callbacks.cancel)(r.seq))
-                        .margin(Thickness::new(6.0, 0.0, 0.0, 0.0))
-                        .grid_column(1)
-                        .content(
-                            TextBlock::new()
-                                .text(tr!("Cancel Operation"))
-                                .font_size(11.0),
-                        )
+                    crate::small::button(tr!("Cancel Operation"), |b| {
+                        b.on_click((callbacks.cancel)(r.seq))
+                            .margin(Thickness::new(6.0, 0.0, 0.0, 0.0))
+                            .grid_column(1)
+                    })
                 } else {
                     View::empty()
                 },
@@ -913,7 +908,10 @@ fn operations_view(state: &State, callbacks: &Callbacks) -> View {
         ));
         (
             r.seq.to_string(),
-            ListViewItem::new().tag(r.seq.to_string()).content(line),
+            ListViewItem::new()
+                .tag(r.seq.to_string())
+                .min_height(crate::small::ROW_HEIGHT)
+                .content(line),
         )
     });
     let selected = state
