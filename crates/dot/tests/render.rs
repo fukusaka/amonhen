@@ -1499,6 +1499,52 @@ fn edge_samples(curves: &[[(f64, f64); 4]]) -> Vec<(f64, f64)> {
         .collect()
 }
 
+/// 2 本の折れ線が交わるか。
+fn polylines_cross(a: &[(f64, f64)], b: &[(f64, f64)]) -> bool {
+    let side = |p: (f64, f64), q: (f64, f64), r: (f64, f64)| {
+        (q.0 - p.0) * (r.1 - p.1) - (q.1 - p.1) * (r.0 - p.0)
+    };
+    a.windows(2).any(|s| {
+        b.windows(2).any(|t| {
+            side(s[0], s[1], t[0]) * side(s[0], s[1], t[1]) < 0.0
+                && side(t[0], t[1], s[0]) * side(t[0], t[1], s[1]) < 0.0
+        })
+    })
+}
+
+/// 小さな図では、並べ替えが長い辺ごと動かさないと減らない並びに止まらず、Graphviz と同じく交差 1 つまで減る。
+/// ラベルのある線の隣の線はラベルの脇で横切らず、同じ向きからノードに着く線は外形の手前で合わさらない。
+#[test]
+fn dot_small_graphs_cross_as_little_as_graphviz() {
+    let src = "digraph disk_states {
+        Diskless -> Inconsistent [ label = \"ioctl_set_disk()\" ]
+        Diskless -> Consistent [ label = \"ioctl_set_disk()\" ]
+        Diskless -> Outdated [ label = \"ioctl_set_disk()\" ]
+        Consistent -> Outdated [ label = \"receive_param()\" ]
+        Consistent -> UpToDate [ label = \"receive_param()\" ]
+        Consistent -> Inconsistent [ label = \"start resync\" ]
+        Outdated -> Inconsistent [ label = \"start resync\" ]
+        UpToDate -> Inconsistent [ label = \"ioctl_replicate\" ]
+        Inconsistent -> UpToDate [ label = \"resync completed\" ]
+        Consistent -> Failed [ label = \"io completion error\" ]
+        Outdated -> Failed [ label = \"io completion error\" ]
+        UpToDate -> Failed [ label = \"io completion error\" ]
+        Inconsistent -> Failed [ label = \"io completion error\" ]
+        Failed -> Diskless [ label = \"sending notify to peer\" ]
+    }";
+    let svg = render(src).unwrap().svg;
+    let lines: Vec<Vec<(f64, f64)>> = edge_cubics(&svg).iter().map(|c| edge_samples(c)).collect();
+    let mut crossings = 0;
+    for i in 0..lines.len() {
+        for j in i + 1..lines.len() {
+            if polylines_cross(&lines[i], &lines[j]) {
+                crossings += 1;
+            }
+        }
+    }
+    assert!(crossings <= 1, "{crossings} {svg}");
+}
+
 /// 同じ 2 つのノードを結ぶ辺（相互の矢印・同じ向きの重複）は、1 本の線に重ならず、`nodesep` の 3/4 ずつ離れる
 /// （Graphviz の絵と同じ。書いた順に左から）。
 #[test]

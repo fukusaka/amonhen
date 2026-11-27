@@ -1469,6 +1469,65 @@ pub fn render(
             }
         }
     }
+    // 同じノードに同じ向きから着く線（または出る線）は、ノードの中心を目指すと外形の手前で合わさり、矢印も重なる。
+    // 向き（角度）の近い線どうしは、目指す点を向きと直角に `ARRIVAL_SPREAD` ずつ分ける（来る側の順に）。込んだ大きな
+    // 図ではずらした線がほかのノードにかかるので、線を選び直す図（`ROOMY_EDGES` まで）だけ
+    let mut end_shift: Vec<[P; 2]> = vec![[(0.0, 0.0); 2]; model.edges.len()];
+    if roomy {
+        // (ノード, 頭の端か) → (向きの角度, 辺)
+        let mut arrivals: HashMap<(usize, bool), Vec<(f64, usize)>> = HashMap::new();
+        for (ei, e) in model.edges.iter().enumerate() {
+            let Route::Path { points, .. } = &lay.routes[ei] else {
+                continue;
+            };
+            let a = &e.attrs;
+            let ported = [
+                a.get("tailport").or(e.tail_port.as_deref()),
+                a.get("headport").or(e.head_port.as_deref()),
+            ]
+            .into_iter()
+            .flatten()
+            .any(|p| !p.trim().is_empty());
+            if points.len() < 2 || e.tail == e.head || ported || bundle[ei].is_some() {
+                continue;
+            }
+            let last = points.len() - 1;
+            for (head, p, q) in [
+                (false, points[0], points[1]),
+                (true, points[last], points[last - 1]),
+            ] {
+                if meet[ei][usize::from(!head)].is_some() {
+                    continue;
+                }
+                let node = if head { e.head } else { e.tail };
+                arrivals
+                    .entry((node, head))
+                    .or_default()
+                    .push(((q.1 - p.1).atan2(q.0 - p.0), ei));
+            }
+        }
+        for ((_, head), mut list) in arrivals {
+            list.sort_by(|a, b| a.0.total_cmp(&b.0).then(a.1.cmp(&b.1)));
+            let mut i = 0;
+            while i < list.len() {
+                let mut j = i + 1;
+                while j < list.len() && list[j].0 - list[j - 1].0 < ARRIVAL_ANGLE {
+                    j += 1;
+                }
+                if j - i > 1 {
+                    let mid = (j - i - 1) as f64 / 2.0;
+                    let mean = list[i..j].iter().map(|x| x.0).sum::<f64>() / (j - i) as f64;
+                    // 向きと直角（角度の大きい側へ）
+                    let normal = (-mean.sin(), mean.cos());
+                    for (n, &(_, ei)) in list[i..j].iter().enumerate() {
+                        let d = (n as f64 - mid) * ARRIVAL_SPREAD;
+                        end_shift[ei][usize::from(head)] = (normal.0 * d, normal.1 * d);
+                    }
+                }
+                i = j;
+            }
+        }
+    }
     for (ei, e) in model.edges.iter().enumerate() {
         let a = &e.attrs;
         let scheme = a.get("colorscheme").map(str::to_owned);
@@ -1578,12 +1637,18 @@ pub fn render(
                     let start = match (meet_tail, tail_at) {
                         (_, Some(p)) if !p.0.is_nan() => p,
                         (Some((m, _)), _) => from_final(m),
-                        _ => pts[0],
+                        _ => {
+                            let (p, d) = (pts[0], end_shift[ei][0]);
+                            (p.0 + d.0, p.1 + d.1)
+                        }
                     };
                     let end = match (meet_head, head_at) {
                         (_, Some(p)) if !p.0.is_nan() => p,
                         (Some((m, _)), _) => from_final(m),
-                        _ => pts[pts.len() - 1],
+                        _ => {
+                            let (p, d) = (pts[pts.len() - 1], end_shift[ei][1]);
+                            (p.0 + d.0, p.1 + d.1)
+                        }
                     };
                     pts = spline::shortest(start, end, gates);
                     obstacles.avoid(&mut pts, &edge_skip(ei), false);
@@ -3189,6 +3254,10 @@ fn ratio_scale(
 }
 
 /// 線を大きく曲げた形を試す図の、辺の数の上限（線ごとにほかの線との交わりを調べるので）。
+/// 同じノードに着く線を同じ向きとみなす角度の差（ラジアン）と、そのときに目指す点を分ける間。
+const ARRIVAL_ANGLE: f64 = 0.35;
+const ARRIVAL_SPREAD: f64 = 8.0;
+
 const ROOMY_EDGES: usize = 120;
 
 /// `ratio` で伸ばす倍率の上限。
