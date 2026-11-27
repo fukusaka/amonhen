@@ -28,6 +28,9 @@ use crate::diff::{Decor, DiffWidget, FileInfo, Folder, Source, View};
 use crate::imagediff;
 use crate::menu::{self, Item};
 
+/// 変更がこの行数を超えるファイルは、最初は畳む（macOS 版の `collapseAbove`）。
+const COLLAPSE_ABOVE: u32 = 1000;
+
 /// 変更ファイルを木で見せるか（既定はパスの一覧）。
 pub const FILE_TREE: &str = "historyFileTree";
 /// 1 ファイルの変更がこの行数を超えたら、「差分をすべて開く」でも開かない（1 つずつなら開ける）。
@@ -918,7 +921,26 @@ impl Inner {
         }
         match restore {
             Some(restore) => Inner::apply_restore(this, restore),
-            None => Inner::apply_snapshot_options(this),
+            None => {
+                // 先頭から Settings > Diff & Merge > Files to open together の数だけ開く（変更が 1000 行を
+                // 超えるファイルは畳んだまま。macOS 版と同じ）。
+                let first: Vec<usize> = {
+                    let st = this.st.borrow();
+                    (0..count.min(crate::settings::diff_open_files()))
+                        .filter(|&f| {
+                            st.infos
+                                .get(f)
+                                .is_some_and(|i| i.pending || i.added + i.removed <= COLLAPSE_ABOVE)
+                        })
+                        .collect()
+                };
+                if !first.is_empty() {
+                    this.st.borrow_mut().open.extend(first.iter().copied());
+                    let ops = Inner::load_ops(this, &first);
+                    Inner::reshow(this, false, ops, None);
+                }
+                Inner::apply_snapshot_options(this);
+            }
         }
     }
 
