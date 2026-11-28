@@ -2082,7 +2082,12 @@ impl Data {
             };
             let repo = match opened {
                 Ok(repo) => Arc::new(repo),
-                Err(e) => return send(Event::Failed(format!("リポジトリを開けない: {e}"))),
+                Err(e) => {
+                    return send(Event::Failed(tr!(
+                        "Couldn’t open the repository: {error}",
+                        error = e
+                    )));
+                }
             };
             // 並び順は読む前にコアへ（既定の日付順なら何もしない。GTK4 版と同じ）。
             let order = order_of();
@@ -2131,7 +2136,12 @@ impl Data {
             }
             let history = match repo.load_history() {
                 Ok(history) => shape(history),
-                Err(e) => return send(Event::Failed(format!("History を読めない: {e}"))),
+                Err(e) => {
+                    return send(Event::Failed(tr!(
+                        "Couldn’t read History: {error}",
+                        error = e
+                    )));
+                }
             };
             send(Event::History(repo.clone(), history.clone(), false));
             let refs = |history: &HistorySnapshot| match repo.load_refs() {
@@ -2140,7 +2150,10 @@ impl Data {
                     let labels = labels(history, &refs.refs);
                     Some(Event::Refs(history.generation, refs, labels))
                 }
-                Err(e) => Some(Event::Failed(format!("ref を読めない: {e}"))),
+                Err(e) => Some(Event::Failed(tr!(
+                    "Couldn’t read the refs: {error}",
+                    error = e
+                ))),
             };
             if let Some(event) = refs(&history) {
                 send(event);
@@ -3671,7 +3684,10 @@ impl Data {
             let shown = match timed("Load diff", load) {
                 Ok(shown) => shown,
                 Err(e) => {
-                    let _ = tx.send(Event::Failed(format!("コミットを読めない: {e}")));
+                    let _ = tx.send(Event::Failed(tr!(
+                        "Couldn’t read the commit: {error}",
+                        error = e
+                    )));
                     return wake();
                 }
             };
@@ -3724,7 +3740,10 @@ impl Data {
             let shown = match load() {
                 Ok(shown) => shown,
                 Err(e) => {
-                    let _ = tx.send(Event::Failed(format!("stash を読めない: {e}")));
+                    let _ = tx.send(Event::Failed(tr!(
+                        "Couldn’t read the stash: {error}",
+                        error = e
+                    )));
                     return wake();
                 }
             };
@@ -3766,7 +3785,10 @@ impl Data {
             let shown = match load() {
                 Ok(shown) => shown,
                 Err(e) => {
-                    let _ = tx.send(Event::Failed(format!("差分を読めない: {e}")));
+                    let _ = tx.send(Event::Failed(tr!(
+                        "Couldn’t read the diff: {error}",
+                        error = e
+                    )));
                     return wake();
                 }
             };
@@ -3821,7 +3843,10 @@ impl Data {
             let shown = match load() {
                 Ok(shown) => shown,
                 Err(e) => {
-                    let _ = tx.send(Event::Failed(format!("差分を読めない: {e}")));
+                    let _ = tx.send(Event::Failed(tr!(
+                        "Couldn’t read the diff: {error}",
+                        error = e
+                    )));
                     return wake();
                 }
             };
@@ -3878,7 +3903,10 @@ impl Data {
             let shown = match load() {
                 Ok(shown) => shown,
                 Err(e) => {
-                    let _ = tx.send(Event::Failed(format!("差分を読めない: {e}")));
+                    let _ = tx.send(Event::Failed(tr!(
+                        "Couldn’t read the diff: {error}",
+                        error = e
+                    )));
                     return wake();
                 }
             };
@@ -4376,7 +4404,7 @@ fn current_chunk<T>(
     match chunk {
         Ok(chunk) => Ok(Some(chunk)),
         Err(_) if cached == Some(generation) => Ok(None),
-        Err(e) => Err(format!("件名を読めない: {e}")),
+        Err(e) => Err(tr!("Couldn’t read the subjects: {error}", error = e)),
     }
 }
 
@@ -4421,7 +4449,7 @@ mod tests {
         // 最新の History の行が読めなければ、これまでどおり失敗。
         assert_eq!(
             current_chunk(Some(2), None, 2, gone()),
-            Err("件名を読めない: commit not found".to_owned())
+            Err("Couldn’t read the subjects: commit not found".to_owned())
         );
         assert_eq!(current_chunk(Some(2), None, 2, Ok(7)), Ok(Some(7)));
         assert_eq!(current_chunk(Some(1), Some(1), 1, Ok(7)), Ok(Some(7)));

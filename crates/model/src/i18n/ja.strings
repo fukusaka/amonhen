@@ -2590,3 +2590,12 @@
 "Fetching the contents…" = "中身を取ってきています…";
 "This file’s contents aren’t here yet." = "このファイルの中身はまだ手元にありません。";
 "This file’s contents aren’t here yet (partial clone)." = "partial clone なので、このファイルの中身がまだ手元にありません。";
+
+/* Windows の FE: 読み込みの失敗 */
+"Couldn’t open the repository: {error}" = "リポジトリを開けませんでした: {error}";
+"Couldn’t read History: {error}" = "History を読めませんでした: {error}";
+"Couldn’t read the refs: {error}" = "ref を読めませんでした: {error}";
+"Couldn’t read the commit: {error}" = "コミットを読めませんでした: {error}";
+"Couldn’t read the stash: {error}" = "stash を読めませんでした: {error}";
+"Couldn’t read the diff: {error}" = "差分を読めませんでした: {error}";
+"Couldn’t read the subjects: {error}" = "件名を読めませんでした: {error}";

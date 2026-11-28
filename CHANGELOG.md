@@ -46,6 +46,7 @@ becomes the GitHub Release notes.
 - On macOS 26, a tinted toolbar's buttons take the tint too, instead of showing dark glass on the color.
 - Opening a repository with no commits no longer shows “Couldn’t read the commits to edit” (macOS).
 - Japanese error messages and notes end politely (“〜ません”) instead of the curt “〜ない”, such as “ファイルが見つかりません” for a file that isn’t there.
+- On Windows, a failure to open the repository or read History, refs, a commit, a stash or a diff is shown in the app’s language (it was always Japanese).
 
 ### [0.2.16] - 2026-11-27
 
