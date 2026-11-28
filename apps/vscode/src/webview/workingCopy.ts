@@ -3,7 +3,9 @@
  * 左の列いっぱいに変更ファイルの一覧、右の上にコミット欄（件名の行だけにたためる）、その下に選んだファイルの差分を出す
  * （アプリと同じ）。差分の行をクリック（Shift で範囲）して選び、ファイル・hunk・行単位で stage / unstage する。
  * エンジンがあれば、差分で見る側（Unstaged・Staged・All）を帯で選び、一覧を Mixed（1 つの一覧、チェックで次の
- * コミットに入れるか）と Staged・Unstaged の節で切り替える。なければ節の一覧で、差分は行の節の側
+ * コミットに入れるか）と Staged・Unstaged の節で切り替える。なければ節の一覧で、差分は行の節の側。
+ * エンジンがあれば、一覧の上の Changes・All Files で、作業ツリーのすべてのファイル（HEAD の木に status を重ねたもの）
+ * に替えられる。変えたファイルはファイル全体の差分、変えていないファイルは中身を出す（アプリと同じ）
  */
 import type { Change, ChangeGroup } from '../state/changes.ts';
 import type { HostMessage } from '../view/protocol.ts';
@@ -54,7 +56,10 @@ import {
 import { el, post, type View } from './api.ts';
 import { lineKey, renderDiffBody, whitespaceSelect, wrapButton } from './diffView.ts';
 import { gapRow, layoutGapRows } from './gapRow.ts';
-import type { DiffWhitespace } from '../history/protocol.ts';
+import type { DiffWhitespace, FileView, ImageBlob, TreeEntry } from '../history/protocol.ts';
+import { flatOrder, folderChildren, statusOverlay, type StatusOverlay, type TreeNode } from '../workingCopy/treeFiles.ts';
+import { renderLines, zoomableImage } from './allFiles.ts';
+import { renderImageDiff } from './imageDiff.ts';
 
 const GROUPS: { group: ChangeGroup; title: string }[] = [
   { group: 'conflicts', title: 'Conflicts' },
@@ -193,6 +198,22 @@ export function createWorkingCopyView(): View {
   });
   const layoutButtons = el('div', 'wc-layout');
   tools.append(filter, sectionsButton, layoutButtons);
+  // 一覧の上の Changes・All Files（エンジンがあるとき。覚えない。アプリと同じ）。⊟ と見せ方もこの段に移す
+  const contentRow = el('div', 'wc-tools wc-content-row');
+  const contentSwitch = el('div', 'wc-sides wc-content');
+  contentSwitch.setAttribute('role', 'group');
+  contentSwitch.setAttribute('aria-label', 'Changes or All Files');
+  for (const [value, label, title] of [
+    ['changes', 'Changes', 'Changed files, with checkboxes for the next commit'],
+    ['all', 'All Files', 'Every file in the working tree (ignored files are left out)'],
+  ] as const) {
+    const button = el('button', undefined, label);
+    button.title = title;
+    button.dataset.content = value;
+    button.addEventListener('click', () => setContent(value));
+    contentSwitch.append(button);
+  }
+  contentRow.append(contentSwitch, el('span', 'spacer'));
   let layout: FileLayout = 'list';
   for (const { layout: value, label, title } of LAYOUTS) {
     const button = el('button', undefined, label);
@@ -222,7 +243,7 @@ export function createWorkingCopyView(): View {
   const sparseNote = el('button', 'wc-sparse');
   sparseNote.hidden = true;
   sparseNote.addEventListener('click', () => post({ type: 'wcShowFolders' }));
-  left.append(tools, sparseNote, listHead, fileList);
+  left.append(contentRow, tools, sparseNote, listHead, fileList);
 
   let files: Change[] = [];
   let lastMessage = '';
@@ -284,6 +305,33 @@ export function createWorkingCopyView(): View {
   /** 並べた差分で畳んだファイル（選んだファイルの並びが変わったら、すべて開き直す。アプリと同じ） */
   let stackCollapsed = new Set<string>();
 
+  /** 一覧に変更のファイル（Changes）か、作業ツリーのすべてのファイル（All Files）か */
+  let content: 'changes' | 'all' = 'changes';
+  /** HEAD（All Files の木はこの木に status を重ねる。まだコミットがなければなし） */
+  let head: string | undefined;
+  /** リポジトリ（替わったら Changes に戻る） */
+  let repoRoot: string | undefined;
+  /** 読んだ HEAD のフォルダの中身と、読めなかったわけ、求めたフォルダ */
+  const treeEntries = new Map<string, TreeEntry[]>();
+  const treeErrors = new Map<string, string>();
+  const treeAsked = new Set<string>();
+  /** 木で開いたフォルダ（読み直しても開いたまま。どれも開いていなければ、変更を含むフォルダを開く。アプリと同じ） */
+  const treeOpen = new Set<string>();
+  /** All Files で選んだファイル */
+  let treeSelected: string | undefined;
+  /** All Files に出ている行（フォルダも。上から順。↑↓ で移る） */
+  let treeRows: TreeNode[] = [];
+  /** All Files で選んでいる行（フォルダも。ファイルなら、それを開いている。アプリのアウトラインと同じ） */
+  let treeCursor: string | undefined;
+  /** 木に重ねる status */
+  let overlay: StatusOverlay = statusOverlay([]);
+  /** All Files で開いた、変えていないファイルの中身 */
+  let treeView: { path: string; view: FileView } | undefined;
+  /** 変えた画像の比べる欄（差分の代わりに出す） */
+  let image:
+    | { path: string; group: ChangeGroup; side: DiffSide; svg: boolean; before?: ImageBlob; after?: ImageBlob; error?: string }
+    | undefined;
+
   // ---- ファイル一覧 ----
 
   function renderFiles(): void {
@@ -293,6 +341,11 @@ export function createWorkingCopyView(): View {
     sectionsButton.hidden = !engine;
     sectionsButton.classList.toggle('active', sectionsWanted);
     sectionsButton.setAttribute('aria-pressed', String(sectionsWanted));
+    placeTools();
+    if (content === 'all') {
+      renderTree();
+      return;
+    }
     listed = [];
     const parts: HTMLElement[] = [];
     const groups = sectioned()
@@ -571,6 +624,10 @@ export function createWorkingCopyView(): View {
    * なければ見る側の節の最初の行（アプリの WorkingCopyReselect と同じ）
    */
   function relist(): void {
+    if (content === 'all') {
+      renderTree();
+      return;
+    }
     const keptKeys = [...marked].map(parseKey);
     renderFiles();
     const rows = listed.map(keyOf);
@@ -617,6 +674,10 @@ export function createWorkingCopyView(): View {
   }
 
   fileList.addEventListener('keydown', (e) => {
+    if (content === 'all') {
+      treeKey(e);
+      return;
+    }
     const order = listed;
     const index = order.findIndex(isSelected);
     if (e.key === 'ArrowDown' || e.key === 'ArrowUp') {
@@ -698,6 +759,279 @@ export function createWorkingCopyView(): View {
     fileAnchor = selected ? keyText(selected) : undefined;
   }
 
+  // ---- All Files（作業ツリーのすべてのファイル。エンジンがあるとき） ----
+
+  /**
+   * 一覧の上の段: エンジンがあれば Changes・All Files と、⊟・見せ方（アプリと同じ）、絞り込みは次の段。なければ
+   * 今までどおり絞り込みの段に置く。All Files では絞り込みと見出し（含める数）を出さない（アプリと同じ）
+   */
+  function placeTools(): void {
+    contentRow.hidden = !engine;
+    if (engine) {
+      if (sectionsButton.parentElement !== contentRow) contentRow.append(sectionsButton, layoutButtons);
+    } else if (sectionsButton.parentElement !== tools) {
+      tools.append(sectionsButton, layoutButtons);
+    }
+    for (const button of contentSwitch.children as HTMLCollectionOf<HTMLElement>) {
+      const on = button.dataset.content === content;
+      button.classList.toggle('active', on);
+      button.setAttribute('aria-pressed', String(on));
+    }
+    tools.hidden = engine && content === 'all';
+    if (content === 'all') listHead.hidden = true;
+  }
+
+  /** Changes・All Files を切り替える */
+  function setContent(next: 'changes' | 'all'): void {
+    if (next === content || (next === 'all' && !engine)) return;
+    content = next;
+    post({ type: 'wcContent', allFiles: next === 'all' });
+    treeView = undefined;
+    image = undefined;
+    if (next === 'changes') {
+      backToChanges();
+      fileList.focus();
+      return;
+    }
+    // 差分に出していたファイルを、木でも選ぶ（変えたファイルはファイル全体の差分にする。アプリと同じ）
+    const path = stack ? undefined : selected?.path;
+    stack = undefined;
+    stackActive = undefined;
+    picked = new Set();
+    anchor = undefined;
+    reloadTree();
+    treeSelected = path;
+    treeCursor = path;
+    if (path) {
+      revealInTree(path);
+      post({ type: 'wcTreeOpen', path });
+    } else {
+      diff = undefined;
+      diffNote = undefined;
+      diffError = undefined;
+    }
+    renderFiles();
+    renderDiff();
+    fileList.focus();
+  }
+
+  /**
+   * Changes に戻る: 一覧で選んでいたファイル（All Files で変えたファイルを開いていれば、それ）の差分に戻す。
+   * いくつか選んでいれば並べ直す（アプリと同じ）
+   */
+  function backToChanges(): void {
+    diff = undefined;
+    diffNote = undefined;
+    diffError = undefined;
+    picked = new Set();
+    anchor = undefined;
+    renderFiles();
+    const rows = listed.map(keyOf);
+    const kept = reselectRows([...marked].map(parseKey), rows);
+    marked = new Set(kept.map((i) => keyText(rows[i]!)));
+    const target = reselectTarget(selected, rows, kept, side);
+    const row = target === undefined ? undefined : listed[target];
+    if (!row) {
+      selected = undefined;
+      marked = new Set();
+      renderFiles();
+      renderDiff();
+      return;
+    }
+    selected = keyOf(row);
+    if (!marked.has(keyText(row))) marked = new Set([keyText(row)]);
+    fileAnchor = keyText(row);
+    renderFiles();
+    renderDiff();
+    const many = stackCandidates(listed.filter((r) => marked.has(keyText(r))));
+    if (many.length >= 2) {
+      post({ type: 'wcSelectFiles', group: groupOf(row), path: row.path, paths: many });
+    } else {
+      post({ type: 'wcSelect', group: groupOf(row), path: row.path });
+    }
+  }
+
+  /** status を重ね直す（どのフォルダも開いていなければ、変更を含むフォルダを開く。アプリと同じ） */
+  function reloadTree(): void {
+    overlay = statusOverlay(files);
+    if (treeOpen.size === 0) for (const folder of overlay.folders) if (folder) treeOpen.add(folder);
+  }
+
+  /** フォルダの中身が届くたびに描き直す（まとめて 1 フレームに 1 回） */
+  let treeFrame = 0;
+  function scheduleTree(): void {
+    cancelAnimationFrame(treeFrame);
+    treeFrame = requestAnimationFrame(() => {
+      if (content === 'all') renderTree();
+    });
+  }
+
+  /** All Files の木（リスト・ファイル名なら、すべてのフォルダを読んでから並べる） */
+  function renderTree(): void {
+    const parts: HTMLElement[] = [];
+    treeRows = [];
+    if (layout === 'tree') {
+      walkTree('', true, 0, parts);
+    } else {
+      const all: TreeNode[] = [];
+      if (collectFiles('', true, all)) {
+        parts.push(treeNote(`Loading… (${all.length} files)`, 0));
+      } else {
+        for (const node of flatOrder(all, layout)) parts.push(treeRow(node, 0));
+      }
+    }
+    if (parts.length === 0) parts.push(el('div', 'empty', 'No files'));
+    fileList.replaceChildren(...parts);
+    updateCommitButton();
+  }
+
+  /** フォルダの中身（HEAD のフォルダで、まだ読んでいなければ求めて undefined） */
+  function childrenOf(folder: string, inHead: boolean): TreeNode[] | undefined {
+    let entries: TreeEntry[] = [];
+    if (inHead && head !== undefined) {
+      const got = treeEntries.get(folder);
+      if (!got) {
+        if (!treeAsked.has(folder)) {
+          treeAsked.add(folder);
+          post({ type: 'wcTreeEntries', path: folder });
+        }
+        return undefined;
+      }
+      entries = got;
+    }
+    return folderChildren(folder, entries, overlay);
+  }
+
+  function walkTree(folder: string, inHead: boolean, depth: number, parts: HTMLElement[]): void {
+    const nodes = childrenOf(folder, inHead);
+    if (!nodes) {
+      parts.push(treeNote('Loading…', depth));
+      return;
+    }
+    const error = treeErrors.get(folder);
+    if (error) parts.push(treeNote(error, depth));
+    for (const node of nodes) {
+      parts.push(treeRow(node, depth));
+      if (node.folder && treeOpen.has(node.path)) walkTree(node.path, node.inHead, depth + 1, parts);
+    }
+  }
+
+  /** folder の下のファイルをすべて out に集める。まだ読んでいないフォルダがあれば true */
+  function collectFiles(folder: string, inHead: boolean, out: TreeNode[]): boolean {
+    const nodes = childrenOf(folder, inHead);
+    if (!nodes) return true;
+    let pending = false;
+    for (const node of nodes) {
+      if (node.folder) pending = collectFiles(node.path, node.inHead, out) || pending;
+      else out.push(node);
+    }
+    return pending;
+  }
+
+  function treeNote(text: string, depth: number): HTMLElement {
+    const note = el('div', 'wc-tree-note', text);
+    note.style.paddingLeft = `${26 + depth * 14}px`;
+    return note;
+  }
+
+  /**
+   * 木の 1 行: 変えたファイルは一覧と同じ印（コンフリクトは ⚠）、消したファイルは取り消し線、変更を含むフォルダは ●。
+   * 変更のないものは薄く（アプリと同じ）
+   */
+  function treeRow(node: TreeNode, depth: number): HTMLElement {
+    const row = el('div', 'wc-file wc-tree-row');
+    if (depth > 0) row.style.paddingLeft = `${12 + depth * 14}px`;
+    row.title = node.submodule ? `${node.path} (submodule)` : node.path;
+    row.dataset.path = node.path;
+    row.classList.toggle('unchanged', !node.changes);
+    if (node.mark?.deleted) row.classList.add('deleted');
+    treeRows.push(node);
+    if (node.path === treeCursor) row.classList.add('selected');
+    if (node.folder) {
+      const open = treeOpen.has(node.path);
+      row.classList.add('wc-dir');
+      row.append(el('span', 'chevron', open ? '▾' : '▸'), el('span', 'name', `${node.name}/`));
+      if (node.changes) row.append(el('span', 'changed-dot', '●'));
+      // 押すと選んで開く・閉じる
+      row.addEventListener('click', () => {
+        treeCursor = node.path;
+        setFolderOpen(node.path, !open);
+      });
+      return row;
+    }
+    const slash = node.path.lastIndexOf('/');
+    row.append(el('span', 'name', layout === 'list' ? node.path : node.name));
+    // ファイル名の見せ方では、親のフォルダを薄く続け、印を右にそろえる（変更の一覧と同じ）
+    if (layout === 'flat') row.append(el('span', 'dir', slash >= 0 ? node.path.slice(0, slash) : ''));
+    if (node.mark) row.append(el('span', node.mark.conflict ? 'status conflict' : `status s-${node.mark.letter}`, node.mark.letter));
+    if (node.submodule) {
+      row.classList.add('disabled');
+      return row;
+    }
+    row.addEventListener('click', () => {
+      treeCursor = node.path;
+      openTree(node.path);
+    });
+    if (!node.mark?.deleted) row.addEventListener('dblclick', () => post({ type: 'wcOpenFile', path: node.path }));
+    return row;
+  }
+
+  /** All Files でファイルを開く（拡張が、差分か中身を送ってくる） */
+  function openTree(path: string): void {
+    if (path === treeSelected && (diff || treeView || image || diffNote || diffError)) {
+      renderTree();
+      return;
+    }
+    treeSelected = path;
+    renderTree();
+    post({ type: 'wcTreeOpen', path });
+  }
+
+  function setFolderOpen(path: string, open: boolean): void {
+    if (open) treeOpen.add(path);
+    else treeOpen.delete(path);
+    renderTree();
+  }
+
+  /** path の親のフォルダを開く（木で見えるように） */
+  function revealInTree(path: string): void {
+    for (let at = path.indexOf('/'); at >= 0; at = path.indexOf('/', at + 1)) treeOpen.add(path.slice(0, at));
+  }
+
+  /**
+   * All Files のキー（アプリのアウトラインと同じ）: ↑↓ でフォルダも含めて行を移る（ファイルなら開く）、→ でフォルダを
+   * 開く（開いていれば最初の子へ）、← で閉じる（閉じていれば親のフォルダへ）、Enter でファイルを開く・フォルダを開閉
+   */
+  function treeKey(e: KeyboardEvent): void {
+    const index = treeRows.findIndex((n) => n.path === treeCursor);
+    const node = treeRows[index];
+    const go = (next: TreeNode | undefined) => {
+      if (!next) return;
+      treeCursor = next.path;
+      if (!next.folder && !next.submodule) openTree(next.path);
+      else renderTree();
+      fileList.querySelector<HTMLElement>('.wc-tree-row.selected')?.scrollIntoView({ block: 'nearest' });
+    };
+    const parent = (path: string) => (path.includes('/') ? path.slice(0, path.lastIndexOf('/')) : '');
+    if (e.key === 'ArrowDown' || e.key === 'ArrowUp') {
+      e.preventDefault();
+      go(treeRows[index < 0 ? 0 : Math.min(treeRows.length - 1, Math.max(0, index + (e.key === 'ArrowDown' ? 1 : -1)))]);
+    } else if (e.key === 'ArrowRight' && node && layout === 'tree') {
+      e.preventDefault();
+      if (!node.folder) return;
+      if (!treeOpen.has(node.path)) setFolderOpen(node.path, true);
+      else if (treeRows[index + 1] && parent(treeRows[index + 1]!.path) === node.path) go(treeRows[index + 1]);
+    } else if (e.key === 'ArrowLeft' && node && layout === 'tree') {
+      e.preventDefault();
+      if (node.folder && treeOpen.has(node.path)) setFolderOpen(node.path, false);
+      else go(treeRows.find((n) => n.folder && n.path === parent(node.path)));
+    } else if (e.key === 'Enter' && node) {
+      e.preventDefault();
+      if (node.folder) setFolderOpen(node.path, !treeOpen.has(node.path));
+      else if (!node.submodule) openTree(node.path);
+    }
+  }
+
   /** 差分の帯の、見る側の切り替え（エンジンがあって、コンフリクトでないとき） */
   function sideBand(): HTMLElement {
     const band = el('div', 'wc-sides');
@@ -751,7 +1085,8 @@ export function createWorkingCopyView(): View {
     // ボタンの列を次の段に送る前にパスに残す幅。短いパスには、その長さの分だけ取る（上限は main.css の 8em）
     label.style.flexBasis = `min(${[...path].length}ch, 8em)`;
     head.append(label);
-    if (engine && group !== 'conflicts') head.append(sideBand());
+    // All Files では見る側を出さない（いつも HEAD → 作業ツリー。アプリと同じ）
+    if (engine && group !== 'conflicts' && content !== 'all') head.append(sideBand());
     if (lineEndings?.notable) {
       head.append(lineEndingsBadge(lineEndings));
     }
@@ -763,6 +1098,15 @@ export function createWorkingCopyView(): View {
   }
 
   function renderDiff(): void {
+    diffPane.classList.remove('wc-file-view');
+    if (content === 'all' && treeView) {
+      renderTreeView(treeView);
+      return;
+    }
+    if (image) {
+      renderImage(image);
+      return;
+    }
     if (stack) {
       // 並べた差分: 行を選んでいるファイルだけ描き直す（帯のボタンも）。ほかは描いたまま
       if (stackActive && stackActive.section.isConnected) {
@@ -781,7 +1125,13 @@ export function createWorkingCopyView(): View {
         return;
       }
       // 読めなかったときは、空の差分にせず理由を出す（アプリと同じ）
-      const text = diffError ? `Can’t read the diff: ${diffError}` : files.length ? 'Select a file to see its diff' : '';
+      const text = diffError
+        ? `Can’t read the diff: ${diffError}`
+        : content === 'all'
+          ? 'Select a file to see its diff or contents'
+          : files.length
+            ? 'Select a file to see its diff'
+            : '';
       diffPane.replaceChildren(el('div', 'empty', text));
       return;
     }
@@ -840,8 +1190,8 @@ export function createWorkingCopyView(): View {
     actions.append(open);
     head.append(actions);
 
-    const content: HTMLElement[] = [head];
-    content.push(
+    const parts: HTMLElement[] = [head];
+    parts.push(
       ...renderDiffBody(d, {
         picked,
         hunkActions: !exact ? [] : [
@@ -860,7 +1210,84 @@ export function createWorkingCopyView(): View {
         ],
       }),
     );
-    diffPane.replaceChildren(...content);
+    diffPane.replaceChildren(...parts);
+  }
+
+  /**
+   * 差分の帯のファイルの操作: 見る側にある変更の Stage File・Unstage File・Discard File と Open File（作業ツリーに
+   * あれば）
+   */
+  function fileActions(path: string, fside: FoldedSide, actions: HTMLElement): void {
+    const unstaged = files.find((x) => x.group === 'unstaged' && x.path === path);
+    const stagedFile = files.find((x) => x.group === 'staged' && x.path === path);
+    if (unstaged && fside !== 'staged') {
+      const stageFile = el('button', 'secondary', 'Stage File');
+      stageFile.addEventListener('click', () => stageFiles('stage', [unstaged]));
+      actions.append(stageFile);
+    }
+    if (stagedFile && fside !== 'unstaged') {
+      const unstageFile = el('button', 'secondary', 'Unstage File');
+      unstageFile.addEventListener('click', () => stageFiles('unstage', [stagedFile]));
+      actions.append(unstageFile);
+    }
+    if (unstaged && fside !== 'staged') {
+      const discardFile = el('button', 'secondary', 'Discard File');
+      discardFile.addEventListener('click', () => post({ type: 'wcDiscardFiles', paths: [path] }));
+      actions.append(discardFile);
+    }
+    const open = el('button', 'secondary', 'Open File');
+    open.addEventListener('click', () => post({ type: 'wcOpenFile', path }));
+    actions.append(open);
+  }
+
+  /** 変えた画像を、History と同じ比べる欄で（並べる・スワイプ・オニオンスキン・違うピクセル。SVG は Show as Text も） */
+  function renderImage(i: NonNullable<typeof image>): void {
+    const head = diffHead(i.path, i.group);
+    const actions = el('span', 'actions');
+    fileActions(i.path, i.side, actions);
+    head.append(actions);
+    const shown = i.error
+      ? el('div', 'empty', `Can’t read the image: ${i.error}`)
+      : renderImageDiff(i.before, i.after, i.svg ? { onShowText: () => post({ type: 'wcShowText', path: i.path }) } : {});
+    diffPane.classList.remove('bar-style');
+    diffPane.replaceChildren(head, shown);
+  }
+
+  /** All Files で開いた、変えていないファイルの中身（構文の色つきのテキスト・1 枚の絵。アプリと同じ） */
+  function renderTreeView(t: { path: string; view: FileView }): void {
+    const head = el('div', 'diff-head');
+    const label = el('span', 'path', t.path);
+    label.style.flexBasis = `min(${[...t.path].length}ch, 8em)`;
+    head.append(label);
+    if (t.view.kind === 'text') head.append(wrapButton());
+    if (t.view.kind !== 'error' && t.view.kind !== 'missing') {
+      const actions = el('span', 'actions');
+      const open = el('button', 'secondary', 'Open File');
+      open.addEventListener('click', () => post({ type: 'wcOpenFile', path: t.path }));
+      actions.append(open);
+      head.append(actions);
+    }
+    let shown: HTMLElement;
+    switch (t.view.kind) {
+      case 'text':
+        shown = renderLines(t.view.lines);
+        break;
+      case 'image':
+        shown = zoomableImage(t.view.image);
+        break;
+      case 'binary':
+        shown = el('div', 'empty', 'Binary file');
+        break;
+      case 'missing':
+        shown = el('div', 'empty', 'This file’s contents aren’t here yet.');
+        break;
+      case 'error':
+        shown = el('div', 'empty', t.view.message);
+        break;
+    }
+    diffPane.classList.remove('bar-style');
+    diffPane.classList.add('wc-file-view');
+    diffPane.replaceChildren(head, shown);
   }
 
   // ---- たたんだ差分（エンジンがあるとき） ----
@@ -915,26 +1342,7 @@ export function createWorkingCopyView(): View {
         actions.append(button);
       }
     }
-    const unstaged = files.find((x) => x.group === 'unstaged' && x.path === d.path);
-    const stagedFile = files.find((x) => x.group === 'staged' && x.path === d.path);
-    if (unstaged && fside !== 'staged') {
-      const stageFile = el('button', 'secondary', 'Stage File');
-      stageFile.addEventListener('click', () => stageFiles('stage', [unstaged]));
-      actions.append(stageFile);
-    }
-    if (stagedFile && fside !== 'unstaged') {
-      const unstageFile = el('button', 'secondary', 'Unstage File');
-      unstageFile.addEventListener('click', () => stageFiles('unstage', [stagedFile]));
-      actions.append(unstageFile);
-    }
-    if (unstaged && fside !== 'staged') {
-      const discardFile = el('button', 'secondary', 'Discard File');
-      discardFile.addEventListener('click', () => post({ type: 'wcDiscardFiles', paths: [d.path] }));
-      actions.append(discardFile);
-    }
-    const open = el('button', 'secondary', 'Open File');
-    open.addEventListener('click', () => post({ type: 'wcOpenFile', path: d.path }));
-    actions.append(open);
+    fileActions(d.path, fside, actions);
     // Show Whole File（すべての隙間を開く・閉じる。帯の ↩︎ の左）
     const whole = showsWholeFile(d.hunks);
     const wholeButton = el('button', whole ? 'bar-button whole-file on' : 'bar-button whole-file', '⇳');
@@ -942,7 +1350,8 @@ export function createWorkingCopyView(): View {
     wholeButton.setAttribute('aria-label', 'Show Whole File');
     wholeButton.setAttribute('aria-pressed', String(whole));
     wholeButton.addEventListener('click', () => setGaps(d, toggleWholeFile(d.hunks)));
-    head.insertBefore(wholeButton, head.querySelector('.wrap-button'));
+    // All Files ではいつもファイル全体（開く・畳むはない。アプリと同じ）
+    if (content !== 'all') head.insertBefore(wholeButton, head.querySelector('.wrap-button'));
     head.append(actions);
     const body = foldedBody(d, fside, picked);
     diffPane.classList.toggle('bar-style', bar);
@@ -967,6 +1376,7 @@ export function createWorkingCopyView(): View {
         return gapRow({
           hunk,
           index,
+          fixed: content === 'all',
           selected: selected.length,
           ops: !exact || bar ? [] : stageActions(fside, selected.length > 0 ? selected : inHunk, selected.length > 0 ? 'Lines' : 'Hunk'),
           onGap: (action) => {
@@ -1249,7 +1659,7 @@ export function createWorkingCopyView(): View {
     const h = d.hunks[hunk];
     if (h) context['hunk'] = hunk;
     const bar = lineStaging === 'bar';
-    if (gapEl && h?.gap) {
+    if (gapEl && h?.gap && content !== 'all') {
       context['gap'] = h.gap.index;
       const selectedHere = bar ? 0 : h.lines.filter((l) => l.kind !== ' ' && picked.has(lineKey(l))).length;
       for (const { action } of gapActions(h.gap, selectedHere > 0)) context[`wcGap${action[0]!.toUpperCase()}${action.slice(1)}`] = true;
@@ -1321,26 +1731,7 @@ export function createWorkingCopyView(): View {
         actions.append(discardLines);
       }
     }
-    const unstaged = files.find((x) => x.group === 'unstaged' && x.path === d.path);
-    const stagedFile = files.find((x) => x.group === 'staged' && x.path === d.path);
-    if (unstaged) {
-      const stageFile = el('button', 'secondary', 'Stage File');
-      stageFile.addEventListener('click', () => stageFiles('stage', [unstaged]));
-      actions.append(stageFile);
-    }
-    if (stagedFile) {
-      const unstageFile = el('button', 'secondary', 'Unstage File');
-      unstageFile.addEventListener('click', () => stageFiles('unstage', [stagedFile]));
-      actions.append(unstageFile);
-    }
-    if (unstaged) {
-      const discardFile = el('button', 'secondary', 'Discard File');
-      discardFile.addEventListener('click', () => post({ type: 'wcDiscardFiles', paths: [d.path] }));
-      actions.append(discardFile);
-    }
-    const open = el('button', 'secondary', 'Open File');
-    open.addEventListener('click', () => post({ type: 'wcOpenFile', path: d.path }));
-    actions.append(open);
+    fileActions(d.path, 'all', actions);
     head.append(actions);
     diffPane.replaceChildren(
       head,
@@ -1778,10 +2169,81 @@ export function createWorkingCopyView(): View {
         engine = m.engine;
         lineStaging = m.lineStaging;
         if (!lookApplied) applyLook(m);
+        // リポジトリが替わったら Changes に戻り、All Files の木を忘れる。HEAD が動いたら HEAD の木を読み直す
+        // （開いたフォルダ・選んだファイルは保つ。アプリと同じ）
+        if (m.root !== repoRoot) {
+          repoRoot = m.root;
+          content = 'changes';
+          treeOpen.clear();
+          treeSelected = undefined;
+          treeCursor = undefined;
+          treeView = undefined;
+          image = undefined;
+        }
+        if (m.head !== head) {
+          head = m.head;
+          treeEntries.clear();
+          treeErrors.clear();
+          treeAsked.clear();
+        }
+        if (content === 'all' && !engine) {
+          content = 'changes';
+          treeView = undefined;
+        }
+        if (content === 'all') {
+          // 拡張が All Files のつもりでなければ（開き直したなど）、伝え直す
+          if (!m.allFiles) {
+            post({ type: 'wcContent', allFiles: true });
+            if (treeSelected) post({ type: 'wcTreeOpen', path: treeSelected });
+          }
+          reloadTree();
+          renderFiles();
+          break;
+        }
         // 選び直す（stage して節が変わったものは、その節の行。消えたファイルは選びから外す）
         relist();
         break;
+      case 'wcTreeEntries':
+        if (m.head !== head) break;
+        treeEntries.set(m.path, m.entries);
+        if (m.error) treeErrors.set(m.path, m.error);
+        else treeErrors.delete(m.path);
+        scheduleTree();
+        break;
+      case 'wcTreeFile':
+        if (content !== 'all' || m.path !== treeSelected) break;
+        stack = undefined;
+        stackActive = undefined;
+        picked = new Set();
+        anchor = undefined;
+        diff = undefined;
+        diffNote = undefined;
+        diffError = undefined;
+        image = undefined;
+        treeView = { path: m.path, view: m.view };
+        renderDiff();
+        break;
+      case 'wcImage': {
+        stack = undefined;
+        stackActive = undefined;
+        picked = new Set();
+        anchor = undefined;
+        diff = undefined;
+        diffNote = undefined;
+        diffError = undefined;
+        treeView = undefined;
+        diffGroup = m.group;
+        const { type: _, ...shown } = m;
+        image = shown;
+        if (content !== 'all') side = m.side;
+        followShown(m.path, m.group);
+        renderFiles();
+        renderDiff();
+        break;
+      }
       case 'wcStack':
+        treeView = undefined;
+        image = undefined;
         side = m.side;
         whitespace = m.whitespace;
         followStack(m.paths);
@@ -1792,6 +2254,10 @@ export function createWorkingCopyView(): View {
         if (!m.diff) {
           // 変更がなくなって外したファイルが、もう別のファイルを選んだ後なら、そのまま
           if (m.gone !== undefined && selected !== undefined && selected.path !== m.gone) break;
+          // All Files では、拡張がそのファイルの中身を送ってくる
+          if (content === 'all') break;
+          treeView = undefined;
+          image = undefined;
           stack = undefined;
           stackActive = undefined;
           picked = new Set();
@@ -1804,6 +2270,8 @@ export function createWorkingCopyView(): View {
           renderDiff();
           break;
         }
+        treeView = undefined;
+        image = undefined;
         stack = undefined;
         stackActive = undefined;
         if (diff?.version !== m.diff.version || diff?.path !== m.diff.path) {
@@ -1816,12 +2284,15 @@ export function createWorkingCopyView(): View {
         diffGroup = m.group;
         whitespace = m.whitespace;
         gapOpen = m.open ?? [];
-        if (m.side) side = m.side;
+        // All Files の差分（HEAD → 作業ツリー）は、変更の一覧の見る側を替えない
+        if (m.side && content !== 'all') side = m.side;
         followShown(m.diff.path, m.group);
         renderFiles();
         renderDiff();
         break;
       case 'wcDiffNote':
+        treeView = undefined;
+        image = undefined;
         stack = undefined;
         stackActive = undefined;
         picked = new Set();
@@ -1831,12 +2302,14 @@ export function createWorkingCopyView(): View {
         diffGroup = m.group;
         diffNote = { path: m.path, group: m.group, note: m.note };
         whitespace = m.whitespace;
-        side = m.side;
+        if (content !== 'all') side = m.side;
         followShown(m.path, m.group);
         renderFiles();
         renderDiff();
         break;
       case 'wcDiffFailed':
+        treeView = undefined;
+        image = undefined;
         stack = undefined;
         stackActive = undefined;
         picked = new Set();

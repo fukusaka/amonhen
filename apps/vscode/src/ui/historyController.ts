@@ -165,16 +165,16 @@ function normalizePath(path: string): string | undefined {
   return out.join('/');
 }
 
-/** 詳細で比べる画像の、片側の大きさの上限 */
-const MAX_IMAGE_BYTES = 20 * 1024 * 1024;
+/** 詳細で比べる画像の、片側の大きさの上限（Working Copy の画像も） */
+export const MAX_IMAGE_BYTES = 20 * 1024 * 1024;
 
-/** 画像の拡張子の MIME の型 */
 /** Markdown のブロックに描いた図（描けなかったものも）があるか */
 function hasDiagrams(blocks: readonly unknown[]): boolean {
   return JSON.stringify(blocks).includes('"kind":"diagram"');
 }
 
-function imageType(path: string): string {
+/** 画像の拡張子の MIME の型 */
+export function imageType(path: string): string {
   const ext = path.slice(path.lastIndexOf('.') + 1).toLowerCase();
   const types: Record<string, string> = { jpg: 'image/jpeg', jpeg: 'image/jpeg', svg: 'image/svg+xml', ico: 'image/x-icon' };
   return types[ext] ?? `image/${ext}`;

@@ -3,7 +3,7 @@ import type { FileDiff, SelectedLine } from '../diff/fileDiff.ts';
 import type { Change, ChangeGroup } from '../state/changes.ts';
 import type { MessageParts } from './commitMessage.ts';
 import type { FileLayout } from './fileList.ts';
-import type { DiffWhitespace } from '../history/protocol.ts';
+import type { DiffWhitespace, FileView, ImageBlob, TreeEntry } from '../history/protocol.ts';
 import type { DiffSide, SideNote } from './sides.ts';
 import type { GapOpen } from './gaps.ts';
 
@@ -63,7 +63,22 @@ export type WorkingCopyHostMessage =
       layout: FileLayout;
       engine: boolean;
       lineStaging: LineStaging;
+      /** HEAD（40 桁。まだコミットがなければなし）。All Files の木は、これが変われば読み直す */
+      head?: string;
+      /** リポジトリ（替わったら、All Files をやめて変更の一覧に戻る） */
+      root?: string;
+      /** 拡張が All Files のつもりでいるか（Webview と食い違えば、Webview が伝え直す） */
+      allFiles: boolean;
     } & WorkingCopyLook)
+  /** All Files の木の、HEAD のフォルダ path の中身（error は読めなかったわけ） */
+  | { type: 'wcTreeEntries'; head: string | undefined; path: string; entries: TreeEntry[]; error?: string }
+  /** All Files で開いた、HEAD から変えていないファイルの中身（テキスト・画像・バイナリ・読めなかったわけ） */
+  | { type: 'wcTreeFile'; path: string; view: FileView }
+  /**
+   * 変えた画像の前と後（History と同じ比べる欄で出す。エンジンがあるとき）。group と side は差分と同じ。svg なら
+   * 帯の Show as Text でテキストの差分に替えられる。足した・消した画像は片方だけ
+   */
+  | { type: 'wcImage'; group: ChangeGroup; path: string; side: DiffSide; svg: boolean; before?: ImageBlob; after?: ImageBlob; error?: string }
   /** 行の Stage の形を設定で変えた */
   | { type: 'wcLineStaging'; lineStaging: LineStaging }
   /** 差分の右クリックの項目を選んだ（gap は隙間の番号、hunk は差分の hunk の位置、line は行の lineKey） */
@@ -157,4 +172,15 @@ export type WorkingCopyWebviewMessage =
   | { type: 'wcWhitespace'; whitespace: DiffWhitespace }
   /** コマンドからのコミットを、押せないので断った（reason は Commit のツールチップと同じ） */
   | { type: 'wcCommitRefused'; reason: string }
-  | { type: 'wcResolve'; path: string; action: 'merge' | 'current' | 'incoming' };
+  | { type: 'wcResolve'; path: string; action: 'merge' | 'current' | 'incoming' }
+  /** 一覧の上の Changes・All Files を切り替えた（エンジンがあるとき。覚えない。アプリと同じ） */
+  | { type: 'wcContent'; allFiles: boolean }
+  /** All Files の木で、HEAD のフォルダ path の中身を求める */
+  | { type: 'wcTreeEntries'; path: string }
+  /**
+   * All Files でファイルを開いた: 変えたファイルはファイル全体の HEAD → 作業ツリーの差分（行も stage できる）、
+   * コンフリクトは一覧で選んだときと同じ、変えていないファイルは中身
+   */
+  | { type: 'wcTreeOpen'; path: string }
+  /** 変えた SVG を、絵ではなくテキストの差分で見る（Show as Text。拡張が動いている間だけ覚える） */
+  | { type: 'wcShowText'; path: string };

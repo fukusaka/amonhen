@@ -1,4 +1,4 @@
-import { readFile } from 'node:fs/promises';
+import { readFile, stat } from 'node:fs/promises';
 import { homedir } from 'node:os';
 import { join } from 'node:path';
 import * as vscode from 'vscode';
@@ -7,13 +7,13 @@ import { groupChanges, type Change, type ChangeGroup } from '../state/changes.ts
 import { conflictStates } from '../state/conflicts.ts';
 import type { Repository } from '../state/repository.ts';
 import { daemonFor } from '../daemon/connection.ts';
-import { applySyntax, changedRows, readWorkingDiff, selectedRows, type DaemonDiff } from '../daemon/diff.ts';
+import { applySyntax, changedRows, readRowsOf, readWorkingDiff, selectedRows, textSyntaxByLine, type DaemonDiff } from '../daemon/diff.ts';
 import { applyDiffSelection, computeDiff, type ComputedDiff } from '../diff/fileDiff.ts';
 import { discardFiles, discardLines } from '../state/discard.ts';
 import { failureCause } from '../failure/cause.ts';
 import { templateFilePath } from '../settings/templateFile.ts';
 import { COMMIT_TYPES, fixupSubjects, templateMessage, type MessageParts } from '../workingCopy/commitMessage.ts';
-import type { DiffWhitespace } from '../history/protocol.ts';
+import type { DiffWhitespace, FileView, ImageBlob, TreeEntry } from '../history/protocol.ts';
 import type {
   DiffMenuAction,
   FileStat,
@@ -26,6 +26,7 @@ import { gapKey, type GapOpen } from '../workingCopy/gaps.ts';
 import { modeOf, sideNoteFor, stackedPaths, type DiffSide, type SideNote } from '../workingCopy/sides.ts';
 import { openTogether } from '../history/stackedFiles.ts';
 import { commitStaged } from './commit.ts';
+import { imageType, MAX_IMAGE_BYTES } from './historyController.ts';
 import { openConflict } from './diff.ts';
 import { commitDraft, fileLayout, setCommitDraft, setFileLayout, setWorkingCopyLook, workingCopyLook } from './preferences.ts';
 import { acceptConflicts, indexMode, showError, stageChanges } from './stageCommands.ts';
@@ -52,6 +53,10 @@ export function filesToOpenTogether(): number {
  */
 const openGaps = new Map<string, GapOpen[]>();
 
+/** 絵として比べる画像（SVG も。History の画像の差分と同じ） */
+const IMAGE_PATH = /\.(png|jpe?g|gif|webp|bmp|ico|avif|svg)$/i;
+const SVG_PATH = /\.svg$/i;
+
 export class WorkingCopyController implements vscode.Disposable {
   private readonly post: (message: WorkingCopyHostMessage) => void;
   private repo: Repository | undefined;
@@ -63,6 +68,15 @@ export class WorkingCopyController implements vscode.Disposable {
   private timer: NodeJS.Timeout | undefined;
   /** amend のときにメッセージ欄へ入れる、HEAD のメッセージ */
   private head: { oid: string; message: string } | undefined;
+  /**
+   * 一覧の上の All Files を見ている（エンジンがあるとき。覚えない。アプリと同じ）。その間、変えたファイルは
+   * ファイル全体の HEAD → 作業ツリーの差分（All）で出す（見る側は替えない）
+   */
+  private allFiles = false;
+  /** All Files で開いた、変えていないファイルと、読んだときの HEAD（変えたファイルを開いていれば selected） */
+  private treeFile: { path: string; head: string | undefined } | undefined;
+  /** 絵ではなくテキストの差分で見る SVG（Show as Text。拡張が動いている間だけ） */
+  private readonly svgText = new Set<string>();
 
   /** 最近のコミット（新しい順） */
   private factsReading = 0;
@@ -79,6 +93,8 @@ export class WorkingCopyController implements vscode.Disposable {
     this.stack = undefined;
     // 見る側は Working Copy で 1 つ。開き直したら Unstaged から（アプリと同じく覚えない）
     this.side = 'unstaged';
+    this.allFiles = false;
+    this.treeFile = undefined;
     this.head = undefined;
     this.recent = [];
     this.listeners = repo
@@ -144,6 +160,9 @@ export class WorkingCopyController implements vscode.Disposable {
       layout: fileLayout(),
       engine,
       lineStaging: lineStaging(),
+      ...(oid ? { head: oid } : {}),
+      ...(repo ? { root: repo.root } : {}),
+      allFiles: this.allFiles,
       ...workingCopyLook(),
     });
     if (repo) void this.sendEngineFacts(repo).catch(() => undefined);
@@ -293,6 +312,18 @@ export class WorkingCopyController implements vscode.Disposable {
    * アプリと同じ）
    */
   private async sendDiff(): Promise<void> {
+    if (this.allFiles && this.treeFile) {
+      // All Files で変えていないファイルを開いている: 変えたら差分に替える。HEAD が動いたら読み直す（でなければ、
+      // そのまま。作業ツリーで書き換えれば status が変わり、差分に替わる。アプリと同じ）
+      const path = this.treeFile.path;
+      const change = this.allFilesChange(path);
+      if (!change) {
+        if (this.treeFile.head !== this.repo?.current.status?.branch.oid) await this.sendTreeFile(path);
+        return;
+      }
+      this.treeFile = undefined;
+      this.selected = { group: change.group, path };
+    }
     if (this.stack) {
       const kept = this.stack.filter((p) => this.files.some((f) => f.path === p && f.group !== 'conflicts'));
       if (kept.length >= 2) {
@@ -316,6 +347,11 @@ export class WorkingCopyController implements vscode.Disposable {
       this.files.find((f) => f.path === selected.path);
     if (!change) {
       this.selected = undefined;
+      // All Files では、変更がなくなっても同じファイルの中身を出す（アプリと同じ）
+      if (this.allFiles) {
+        await this.sendTreeFile(selected.path);
+        return;
+      }
       this.post({ type: 'wcDiff', diff: undefined, gone: selected.path });
       return;
     }
@@ -334,9 +370,29 @@ export class WorkingCopyController implements vscode.Disposable {
     // 読んでいる間に空白の扱い・見る側・ファイルを選び直したら、この差分は送らない（選び直しで読み直した方を送る。
     // 古い差分に新しい扱いの札を付けない）
     const whitespace = this.whitespace;
-    const side = this.side;
+    // All Files では、見る側によらず HEAD → 作業ツリー（見る側は替えない）
+    const allFiles = this.allFiles;
+    const side = this.effectiveSide();
     const request = ++this.diffRequest;
-    const stale = () => request !== this.diffRequest || whitespace !== this.whitespace || side !== this.side;
+    const stale = () => request !== this.diffRequest || whitespace !== this.whitespace || side !== this.effectiveSide() || allFiles !== this.allFiles;
+    // 画像は History と同じ比べる欄で（SVG は Show as Text でテキストの差分に。アプリと同じ）。エンジンがあるとき
+    const svg = SVG_PATH.test(change.path);
+    if (IMAGE_PATH.test(change.path) && !(svg && this.svgText.has(change.path)) && change.group !== 'conflicts' && this.repo && (await daemonFor(this.repo.root))) {
+      const has = {
+        staged: this.files.some((f) => f.group === 'staged' && f.path === change.path),
+        unstaged: this.files.some((f) => f.group === 'unstaged' && f.path === change.path),
+      };
+      // 画像の比べ方は空白によらない
+      const note = sideNoteFor(side, has, false);
+      const group = side === 'all' ? change.group : side;
+      if (note) {
+        if (!stale()) this.post({ type: 'wcDiffNote', group, path: change.path, side, whitespace, note });
+        return;
+      }
+      const image = await this.workingImage(change.path, side);
+      if (!stale()) this.post({ type: 'wcImage', group, path: change.path, side, svg, ...image });
+      return;
+    }
     let shown: SideDiff | undefined;
     for (let attempt = 0; ; attempt++) {
       try {
@@ -353,7 +409,8 @@ export class WorkingCopyController implements vscode.Disposable {
         }
         if (this.selected?.path === change.path) {
           this.selected = undefined;
-          this.post({ type: 'wcDiff', diff: undefined, gone: change.path });
+          if (allFiles) await this.sendTreeFile(change.path);
+          else this.post({ type: 'wcDiff', diff: undefined, gone: change.path });
         }
         return;
       }
@@ -364,7 +421,7 @@ export class WorkingCopyController implements vscode.Disposable {
       return;
     }
     if (shown) {
-      const open = this.gapsOf(side === 'all' ? 'combined' : side, change.path);
+      const open = allFiles ? [] : this.gapsOf(side === 'all' ? 'combined' : side, change.path);
       const message = { type: 'wcDiff', group: shown.group, diff: shown.daemon.diff, whitespace, side, open } as const;
       this.post(message);
       void this.sendSyntax(shown.daemon, message, stale);
@@ -486,9 +543,140 @@ export class WorkingCopyController implements vscode.Disposable {
     }
     // HEAD → 作業ツリーの差分では空白を無視できない（コアが断る）
     const ws = mode !== 'combined' && whitespace !== 'exact' ? { whitespace } : {};
+    // All Files では、変えたファイルをファイル全体で見せる（変更のない所もすべて。隙間の行の Stage Hunk と帯は
+    // Changes と同じ。アプリと同じ）
+    if (this.allFiles && mode === 'combined') {
+      return readWorkingDiff(await client.call({ op: 'workingDiff', path: change.path, mode, context: 'all', open: [] }), true);
+    }
     // 変更のない所は隙間の行にたたみ、開いた分だけ見せる（stage・破棄の前の読み直しも、見せた差分と同じ開き方で）
     const open = this.gapsOf(mode, change.path);
     return readWorkingDiff(await client.call({ op: 'workingDiff', path: change.path, mode, ...ws, open }), true);
+  }
+
+  /** 差分で見る側（All Files では HEAD → 作業ツリー） */
+  private effectiveSide(): DiffSide {
+    return this.allFiles ? 'all' : this.side;
+  }
+
+  /** All Files で path を開いたときの変更（コンフリクトが先、次に作業ツリーの側、なければ index の側） */
+  private allFilesChange(path: string): Change | undefined {
+    const of = (group: ChangeGroup) => this.files.find((f) => f.group === group && f.path === path);
+    return of('conflicts') ?? of('unstaged') ?? of('staged');
+  }
+
+  /**
+   * 変えた画像の前と後（History の sendCommitImage と同じく、大きすぎるものは送らない）: Unstaged は index と作業
+   * ツリー、Staged は HEAD と index、All は HEAD と作業ツリー。足した側・消した側は片方だけ
+   */
+  private async workingImage(path: string, side: DiffSide): Promise<{ before?: ImageBlob; after?: ImageBlob; error?: string }> {
+    const repo = this.repo!;
+    const staged = this.files.find((f) => f.group === 'staged' && f.path === path);
+    const unstaged = this.files.find((f) => f.group === 'unstaged' && f.path === path);
+    const blob = (data: Buffer | undefined): ImageBlob | undefined => {
+      if (!data) return undefined;
+      if (data.length > MAX_IMAGE_BYTES) throw new Error(`The image is larger than ${MAX_IMAGE_BYTES / 1024 / 1024} MB`);
+      return { url: `data:${imageType(path)};base64,${data.toString('base64')}`, bytes: data.length };
+    };
+    const object = async (rev: string) => blob((await repo.backend.object(rev))?.data);
+    const worktree = async () => blob(await readFile(join(repo.root, path)));
+    const head = `HEAD:${staged?.origPath ?? path}`;
+    try {
+      switch (side) {
+        case 'unstaged':
+          return {
+            ...(unstaged?.letter === 'U' ? {} : { before: await object(`:${path}`) }),
+            ...(unstaged?.letter === 'D' ? {} : { after: await worktree() }),
+          };
+        case 'staged':
+          return {
+            ...(staged?.letter === 'A' ? {} : { before: await object(head) }),
+            ...(staged?.letter === 'D' ? {} : { after: await object(`:${path}`) }),
+          };
+        case 'all': {
+          const added = unstaged?.letter === 'U' || staged?.letter === 'A';
+          const deleted = unstaged?.letter === 'D' || (staged?.letter === 'D' && !unstaged);
+          return {
+            ...(added ? {} : { before: await object(head) }),
+            ...(deleted ? {} : { after: await worktree() }),
+          };
+        }
+      }
+    } catch (err) {
+      return { error: failureCause(err instanceof Error ? err.message : String(err)) };
+    }
+  }
+
+  /** All Files の木の、HEAD のフォルダ path の中身を送る（まだコミットがなければ空） */
+  private async sendTreeEntries(path: string): Promise<void> {
+    const repo = this.repo;
+    const head = repo?.current.status?.branch.oid;
+    const client = repo && (await daemonFor(repo.root));
+    if (!repo || !client) return;
+    if (!head) {
+      this.post({ type: 'wcTreeEntries', head, path, entries: [] });
+      return;
+    }
+    const reply = await client.call({ op: 'run', command: { op: 'treeEntries', oid: head, path } });
+    if (repo !== this.repo) return;
+    const info = reply.json['info'] as { entries?: TreeEntry[] } | undefined;
+    if (reply.json['ok'] !== true || !info?.entries) {
+      this.post({ type: 'wcTreeEntries', head, path, entries: [], error: String(reply.json['error'] ?? 'Can’t read the folder') });
+      return;
+    }
+    this.post({ type: 'wcTreeEntries', head, path, entries: info.entries.map((e) => ({ name: e.name, kind: e.kind })) });
+  }
+
+  /**
+   * All Files で開いた、HEAD から変えていないファイルの中身を送る: テキストは HEAD の中身（`treeFile` の plain。
+   * 構文の色は History の All Files と同じ）、画像は 1 枚の絵、そのほかのバイナリはそう言う（アプリと同じ）
+   */
+  private async sendTreeFile(path: string): Promise<void> {
+    const repo = this.repo;
+    const client = repo && (await daemonFor(repo.root));
+    if (!repo || !client) return;
+    const head = repo.current.status?.branch.oid;
+    this.treeFile = { path, head };
+    const request = ++this.diffRequest;
+    const send = (view: FileView) => {
+      if (request === this.diffRequest && this.treeFile?.path === path && repo === this.repo) this.post({ type: 'wcTreeFile', path, view });
+    };
+    try {
+      if (!head) {
+        send({ kind: 'error', message: `${path} isn’t in HEAD` });
+        return;
+      }
+      // partial clone で中身が手元になければ、取りに行かずにそう言う
+      const missing = (await client.call({ op: 'run', command: { op: 'fileContentsMissing', oid: head, path } }).catch(() => undefined))?.json;
+      const absent = missing?.['ok'] === true && ((missing['info'] as { missing?: string[] } | undefined)?.missing?.length ?? 0) > 0;
+      if (IMAGE_PATH.test(path)) {
+        // 変えていないので、作業ツリーのファイルは HEAD と同じ（なければ HEAD から。sparse checkout で外したもの）
+        let data: Buffer | undefined = await readFile(join(repo.root, path)).catch(() => undefined);
+        if (!data && !absent) data = (await repo.backend.object(`HEAD:${path}`))?.data;
+        if (!data) {
+          send({ kind: 'error', message: absent ? 'This file’s contents aren’t here yet.' : `Can’t read ${path}` });
+          return;
+        }
+        if (data.length > MAX_IMAGE_BYTES) throw new Error(`The image is larger than ${MAX_IMAGE_BYTES / 1024 / 1024} MB`);
+        send({ kind: 'image', image: { url: `data:${imageType(path)};base64,${data.toString('base64')}`, bytes: data.length } });
+        return;
+      }
+      if (absent) {
+        send({ kind: 'error', message: 'This file’s contents aren’t here yet.' });
+        return;
+      }
+      const reply = await client.call({ op: 'treeFile', oid: head, path, plain: true });
+      if (reply.json['binary'] === true) {
+        const bytes = (await stat(join(repo.root, path)).catch(() => undefined))?.size ?? 0;
+        send({ kind: 'binary', bytes });
+        return;
+      }
+      const texts = readRowsOf(reply).map((r) => r.text);
+      const colored = await client.call({ op: 'textSyntax', path, text: texts.join('\n') }).catch(() => undefined);
+      const syntax = colored ? textSyntaxByLine(colored, texts) : undefined;
+      send({ kind: 'text', lines: texts.map((text, i) => (syntax?.[i]?.length ? { text, syntax: syntax[i] } : { text })) });
+    } catch (err) {
+      send({ kind: 'error', message: failureCause(err instanceof Error ? err.message : String(err)) });
+    }
   }
 
   /** mode の差分の、path の隙間の開き方 */
@@ -582,6 +770,36 @@ export class WorkingCopyController implements vscode.Disposable {
     }
     const find = (group: ChangeGroup, path: string) => this.files.find((f) => f.group === group && f.path === path);
     switch (message.type) {
+      case 'wcContent':
+        this.allFiles = message.allFiles;
+        // 並べた差分・開いていたファイルはやめる（Webview が選び直す。変更の一覧に戻ったら、そこで選んでいたもの）
+        this.stack = undefined;
+        this.treeFile = undefined;
+        if (!message.allFiles) this.diffRequest++;
+        break;
+      case 'wcTreeEntries':
+        await this.sendTreeEntries(message.path).catch((err) =>
+          this.post({ type: 'wcTreeEntries', head: repo.current.status?.branch.oid, path: message.path, entries: [], error: failureCause(String(err)) }),
+        );
+        break;
+      case 'wcTreeOpen': {
+        this.allFiles = true;
+        this.stack = undefined;
+        const change = this.allFilesChange(message.path);
+        if (change) {
+          this.treeFile = undefined;
+          this.selected = { group: change.group, path: change.path };
+          await this.sendDiff();
+        } else {
+          this.selected = undefined;
+          await this.sendTreeFile(message.path);
+        }
+        break;
+      }
+      case 'wcShowText':
+        this.svgText.add(message.path);
+        await this.sendDiff();
+        break;
       case 'wcSelect':
         this.selected = { group: message.group, path: message.path };
         this.stack = undefined;
