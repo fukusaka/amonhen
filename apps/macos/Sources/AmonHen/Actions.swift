@@ -209,14 +209,14 @@ final class Actions {
         return value.isEmpty ? nil : value
     }
 
-    /// 命令を実行して `text` を受け取る（メッセージの初期値など）。
-    private func text(_ command: [String: Any]) async -> String? {
+    /// 命令を実行して `text` を受け取る（メッセージの初期値など）。`quiet` なら失敗を知らせない（裏で読むとき）。
+    private func text(_ command: [String: Any], quiet: Bool = false) async -> String? {
         let repository = self.repository
         do {
             let json = try Repository.json(command)
             return try await Task.detached { try repository.run(json: json).text }.value
         } catch {
-            await alert(L("Couldn’t read the commits to edit"), "\(error)")
+            if !quiet { await alert(L("Couldn’t read the commits to edit"), "\(error)") }
             return nil
         }
     }
@@ -246,7 +246,17 @@ final class Actions {
 
     /// HEAD から first-parent で辿ったコミット（新しい順、merge を越えて）と、merge かどうか（History の編集モード）。
     func firstParentCommits() async -> [(oid: String, merge: Bool)] {
-        (await text(["op": "editableCommits", "throughMerges": true])?.split(separator: "\n") ?? []).map { line in
+        Self.firstParentLine(await text(["op": "editableCommits", "throughMerges": true]))
+    }
+
+    /// `firstParentCommits` を裏で読む（右クリックのメニューの準備）。読めなければ知らせずに nil。
+    func firstParentCommitsQuietly() async -> [(oid: String, merge: Bool)]? {
+        guard let text = await text(["op": "editableCommits", "throughMerges": true], quiet: true) else { return nil }
+        return Self.firstParentLine(text)
+    }
+
+    private nonisolated static func firstParentLine(_ text: String?) -> [(oid: String, merge: Bool)] {
+        (text?.split(separator: "\n") ?? []).map { line in
             let parts = line.split(separator: " ")
             return (String(parts[0]), parts.count > 1)
         }

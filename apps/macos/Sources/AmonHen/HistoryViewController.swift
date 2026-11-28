@@ -2199,7 +2199,8 @@ final class HistoryViewController: NSViewController, NSTableViewDataSource, NSTa
         firstParentRequest += 1
         let request = firstParentRequest
         Task { @MainActor in
-            let line = await actions.firstParentCommits()
+            // 読めなければ（ほかのツールが書いている途中など）知らせずに nil に戻す（項目を出し、押してから確かめる）。
+            let line = await actions.firstParentCommitsQuietly()
             guard request == firstParentRequest else { return }
             firstParentLine = line
         }
