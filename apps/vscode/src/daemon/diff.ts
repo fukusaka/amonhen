@@ -56,9 +56,11 @@ export function readRowsOf(reply: Reply): Row[] {
   return rows;
 }
 
-/** 行を hunk に分けた差分。version は中身から作る（表示した差分と今の差分が同じかを確かめる） */
 /**
- * index があれば、daemon の差分の行の番号（indices[i] が rows[i] の番号。なければ i）→ 作った行を入れる
+ * 行を hunk に分けた差分。version は変更の行（追加・削除）から作る（表示した差分と今の差分が同じかを確かめる）。
+ * 変わらない行は入れないので、隙間を開いても閉じても version は変わらない（選んだ行はそのまま）。
+ * index があれば、daemon の差分の行の番号（indices[i] が rows[i] の番号。なければ i）→ 作った行を入れる。
+ * folded なら、HUNK の行は `@@` の見出しではなく隙間の行（old が隠した行数、new が見せている行数、文字が関数名）
  */
 export function toFileDiff(
   path: string,
@@ -67,22 +69,53 @@ export function toFileDiff(
   combined = false,
   index?: Map<number, DiffLine>,
   indices?: readonly number[],
+  folded = false,
 ): FileDiff {
   const version = createHash('sha1')
     .update(path)
     .update('\0')
-    .update(rows.map((r) => `${r.kind}:${r.old}:${r.new}:${r.text}`).join('\n'))
+    .update(
+      rows
+        .filter((r) => r.kind === ADDED || r.kind === REMOVED)
+        .map((r) => `${r.kind}:${r.old}:${r.new}:${r.text}`)
+        .join('\n'),
+    )
     .digest('hex');
   if (binary) {
     return { path, version, hunks: [], binary: true };
   }
+  const isChange = (r: Row) => r.kind === ADDED || r.kind === REMOVED;
+  const first = rows.findIndex(isChange);
+  let last = rows.length - 1;
+  while (last >= 0 && !isChange(rows[last]!)) last--;
   const hunks: DiffHunk[] = [];
+  let gaps = 0;
   for (const [k, r] of rows.entries()) {
     if (r.kind === HUNK) {
-      hunks.push({ header: r.text, lines: [] });
+      hunks.push(
+        folded
+          ? {
+              header: '',
+              lines: [],
+              gap: {
+                index: gaps++,
+                hidden: r.old,
+                shown: r.new,
+                function: r.text,
+                leading: first < 0 || k < first,
+                trailing: last < 0 || k > last,
+              },
+            }
+          : { header: r.text, lines: [] },
+      );
       continue;
     }
-    const hunk = hunks.at(-1);
+    // たたんだ差分では、最初の隙間の行より前の行（ファイルの頭の隙間を上から開いた行）も捨てない
+    let hunk = hunks.at(-1);
+    if (!hunk && folded) {
+      hunk = { header: '', lines: [] };
+      hunks.push(hunk);
+    }
     if (!hunk) {
       continue;
     }
@@ -96,15 +129,16 @@ export function toFileDiff(
     hunk.lines.push(line);
     index?.set(indices?.[k] ?? k, line);
   }
-  return { path, version, hunks, ...(combined ? { combined: true } : {}) };
+  return { path, version, hunks, ...(combined ? { combined: true } : {}), ...(folded ? { folded: true } : {}) };
 }
 
-/** `workingDiff` の答え */
-export function readWorkingDiff(reply: Reply): DaemonDiff {
+/** `workingDiff` の答え。folded は open を渡して頼んだ（隙間の行にたたんだ）差分 */
+export function readWorkingDiff(reply: Reply, folded = false): DaemonDiff {
   const rows = readRowsOf(reply);
   const path = String(reply.json['path']);
   const lines = new Map<number, DiffLine>();
-  const diff = toFileDiff(path, rows, reply.json['binary'] === true, reply.json['mode'] === 'combined', lines);
+  const combined = reply.json['mode'] === 'combined';
+  const diff = toFileDiff(path, rows, reply.json['binary'] === true, combined, lines, undefined, folded);
   const le = reply.json['lineEndings'] as Record<string, unknown> | null | undefined;
   if (le) {
     diff.lineEndings = {

@@ -14,7 +14,14 @@ import { failureCause } from '../failure/cause.ts';
 import { templateFilePath } from '../settings/templateFile.ts';
 import { COMMIT_TYPES, fixupSubjects, templateMessage, type MessageParts } from '../workingCopy/commitMessage.ts';
 import type { DiffWhitespace } from '../history/protocol.ts';
-import type { FileStat, WorkingCopyHostMessage, WorkingCopyWebviewMessage } from '../workingCopy/protocol.ts';
+import type {
+  DiffMenuAction,
+  FileStat,
+  LineStaging,
+  WorkingCopyHostMessage,
+  WorkingCopyWebviewMessage,
+} from '../workingCopy/protocol.ts';
+import { gapKey, type GapOpen } from '../workingCopy/gaps.ts';
 import { modeOf, sideNoteFor, type DiffSide, type SideNote } from '../workingCopy/sides.ts';
 import { commitStaged } from './commit.ts';
 import { openConflict } from './diff.ts';
@@ -26,6 +33,17 @@ import { acceptConflicts, indexMode, showError, stageChanges } from './stageComm
  * 変更ファイルの一覧と、選んだファイルの差分を送り、ファイル・hunk・行単位の stage とコミットを受け持つ。
  */
 const RECENT_COMMITS = 30;
+
+/** 行の Stage の形（設定 `amonhen.diff.lineStaging`） */
+export function lineStaging(): LineStaging {
+  return vscode.workspace.getConfiguration('amonhen').get<string>('diff.lineStaging') === 'bar' ? 'bar' : 'select';
+}
+
+/**
+ * たたんだ差分の、隙間の開き方（リポジトリ・見る側・ファイルごと）。拡張が動いている間だけ覚える（メインビューを
+ * 閉じて開き直しても同じ。アプリと同じく保存はしない）
+ */
+const openGaps = new Map<string, GapOpen[]>();
 
 export class WorkingCopyController implements vscode.Disposable {
   private readonly post: (message: WorkingCopyHostMessage) => void;
@@ -115,6 +133,7 @@ export class WorkingCopyController implements vscode.Disposable {
       lastMessage,
       layout: fileLayout(),
       engine,
+      lineStaging: lineStaging(),
       ...workingCopyLook(),
     });
     if (repo) void this.sendEngineFacts(repo).catch(() => undefined);
@@ -317,7 +336,8 @@ export class WorkingCopyController implements vscode.Disposable {
       return;
     }
     if (shown) {
-      const message = { type: 'wcDiff', group: shown.group, diff: shown.daemon.diff, whitespace, side } as const;
+      const open = this.gapsOf(side === 'all' ? 'combined' : side, change.path);
+      const message = { type: 'wcDiff', group: shown.group, diff: shown.daemon.diff, whitespace, side, open } as const;
       this.post(message);
       void this.sendSyntax(shown.daemon, message, stale);
       return;
@@ -386,7 +406,25 @@ export class WorkingCopyController implements vscode.Disposable {
     }
     // HEAD → 作業ツリーの差分では空白を無視できない（コアが断る）
     const ws = mode !== 'combined' && whitespace !== 'exact' ? { whitespace } : {};
-    return readWorkingDiff(await client.call({ op: 'workingDiff', path: change.path, mode, ...ws }));
+    // 変更のない所は隙間の行にたたみ、開いた分だけ見せる（stage・破棄の前の読み直しも、見せた差分と同じ開き方で）
+    const open = this.gapsOf(mode, change.path);
+    return readWorkingDiff(await client.call({ op: 'workingDiff', path: change.path, mode, ...ws, open }), true);
+  }
+
+  /** mode の差分の、path の隙間の開き方 */
+  private gapsOf(mode: 'unstaged' | 'staged' | 'combined', path: string): GapOpen[] {
+    if (!this.repo) return [];
+    return openGaps.get(gapKey(this.repo.root, mode === 'combined' ? 'all' : mode, path)) ?? [];
+  }
+
+  /** 差分の右クリックの項目（package.json の webview/context）。選んだ行や hunk は Webview が知っているので、頼み返す */
+  diffAction(action: DiffMenuAction, at: { gap?: number; hunk?: number; line?: string }): void {
+    this.post({ type: 'wcDiffAction', action, ...at });
+  }
+
+  /** 行の Stage の形を設定で変えた */
+  lineStagingChanged(): void {
+    this.post({ type: 'wcLineStaging', lineStaging: lineStaging() });
   }
 
   private async loadDiff(change: Change): Promise<ComputedDiff> {
@@ -470,6 +508,13 @@ export class WorkingCopyController implements vscode.Disposable {
           await this.sendDiff();
         }
         break;
+      case 'wcGaps': {
+        const key = gapKey(repo.root, message.side, message.path);
+        if (message.open.length > 0) openGaps.set(key, message.open);
+        else openGaps.delete(key);
+        if (this.selected?.path === message.path && message.side === this.side) await this.sendDiff();
+        break;
+      }
       case 'wcStageFiles': {
         const changes = message.files.flatMap((f) => find(f.group, f.path) ?? []);
         await stageChanges(repo, changes, message.op);

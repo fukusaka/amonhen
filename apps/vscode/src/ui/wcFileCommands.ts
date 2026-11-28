@@ -1,12 +1,37 @@
 /**
  * Working Copy のファイルの右クリック（package.json の webview/context、wcFile）のうち、一覧の操作と同じもの:
  * Stage・Unstage、Discard…・Delete File…（untracked）、Open File、OS のファイルマネージャーで見せる（アプリの
- * ファイルの右クリックと同じ並び）
+ * ファイルの右クリックと同じ並び）。差分の右クリック（wcDiff）も
  */
 import { join } from 'node:path';
 import * as vscode from 'vscode';
 import type { RepositoryManager } from '../state/manager.ts';
+import type { DiffMenuAction } from '../workingCopy/protocol.ts';
 import { MainPanel } from './mainPanel.ts';
+
+/** 差分の右クリック（wcDiff）の項目。コマンド ID は `amonhen.wcDiff.<項目>` */
+const DIFF_ACTIONS: DiffMenuAction[] = [
+  'gapDown',
+  'gapUp',
+  'gapAll',
+  'gapCollapse',
+  'stageSelected',
+  'unstageSelected',
+  'discardSelected',
+  'stageHunk',
+  'unstageHunk',
+  'discardHunk',
+  'stageLine',
+  'unstageLine',
+  'discardLine',
+];
+
+/** 差分の行・隙間の行の data-vscode-context */
+interface WcDiffContext {
+  gap?: number;
+  hunk?: number;
+  line?: string;
+}
 
 /** ファイルの行の data-vscode-context */
 interface WcFileContext {
@@ -46,5 +71,11 @@ export function registerWcFileCommands(manager: RepositoryManager): vscode.Dispo
     vscode.commands.registerCommand('amonhen.wcFile.revealInFinder', reveal),
     vscode.commands.registerCommand('amonhen.wcFile.revealInExplorer', reveal),
     vscode.commands.registerCommand('amonhen.wcFile.openContainingFolder', reveal),
+    // 差分の右クリック: 隙間の開く・畳むと、選んだ行・その hunk・その行の Stage・Unstage・Discard（Webview がする）
+    ...DIFF_ACTIONS.map((action) =>
+      vscode.commands.registerCommand(`amonhen.wcDiff.${action}`, (ctx?: WcDiffContext) =>
+        MainPanel.active?.workingCopy.diffAction(action, { gap: ctx?.gap, hunk: ctx?.hunk, line: ctx?.line }),
+      ),
+    ),
   );
 }

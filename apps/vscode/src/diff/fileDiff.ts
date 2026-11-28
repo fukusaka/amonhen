@@ -23,6 +23,27 @@ export interface DiffLine {
 export interface DiffHunk {
   header: string;
   lines: DiffLine[];
+  /**
+   * たたんだ差分（FileDiff の folded）で、hunk の上の隙間の行（変更のない所）。ファイルの頭の隙間を上から開いた
+   * 行（最初の隙間の行より前の行）は、gap のない最初の hunk に入る
+   */
+  gap?: DiffGap;
+}
+
+/** 隙間の行（変更のない所をたたんだ行。`workingDiff` の open の答えの HUNK の行） */
+export interface DiffGap {
+  /** 隙間の番号（0 から、隙間の行の順。`workingDiff` の open の gap） */
+  index: number;
+  /** 隠している行数 */
+  hidden: number;
+  /** 見せている行数（上と下から開いた分） */
+  shown: number;
+  /** 下の hunk の関数名（なければ空） */
+  function: string;
+  /** ファイルの頭の隙間（前に変更がない） */
+  leading: boolean;
+  /** ファイルの末尾の隙間（後ろに変更がない） */
+  trailing: boolean;
 }
 
 export interface FileDiff {
@@ -36,6 +57,8 @@ export interface FileDiff {
   lineEndings?: LineEndings;
   /** HEAD → 作業ツリーの 1 つの差分で、変更の行に staged の印がある（Working Copy、エンジンがあるとき） */
   combined?: boolean;
+  /** 変更のない所を隙間の行にたたんだ差分（Working Copy、エンジンがあるとき）。`@@` の見出しはない */
+  folded?: boolean;
 }
 
 /** 選んだ行。kind と、その側の行番号 */

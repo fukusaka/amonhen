@@ -252,6 +252,37 @@ test('shows working diffs as hunks and discards lines that the extension can und
   }
 });
 
+test('reads a folded working diff with the top of the file opened, and stages its rows', { skip }, async () => {
+  const client = await DaemonClient.open(daemon, repo);
+  const lines = Array.from({ length: 30 }, (_, i) => `l${i + 1}`);
+  const start = git('rev-parse', 'HEAD').trim();
+  try {
+    writeFileSync(join(repo, 'f.txt'), `${lines.join('\n')}\n`);
+    git('add', 'f.txt');
+    git('commit', '-q', '-m', 'add f.txt');
+    writeFileSync(join(repo, 'f.txt'), `${lines.map((l) => (l === 'l25' ? 'L25' : l)).join('\n')}\n`);
+    // 頭の隙間（0 番、21 行）を上から 2 行開く: 開いた 2 行は最初の隙間の行の前にあり、捨てない。関数名は git の
+    // 既定の見方（txt では hunk の手前の行）
+    const reply = await client.call({ op: 'workingDiff', path: 'f.txt', mode: 'unstaged', open: [{ gap: 0, top: 2 }] });
+    const d = readWorkingDiff(reply, true);
+    assert.equal(d.diff.folded, true);
+    assert.deepEqual(d.diff.hunks[0]!.lines.map((l) => l.text), ['l1', 'l2']);
+    assert.equal(d.diff.hunks[0]!.gap, undefined);
+    assert.deepEqual(d.diff.hunks[1]!.gap, { index: 0, hidden: 19, shown: 2, function: 'l21', leading: true, trailing: false });
+    // 開いていない差分と version は同じ（隙間を開いても選んだ行が残る）
+    const closed = readWorkingDiff(await client.call({ op: 'workingDiff', path: 'f.txt', mode: 'unstaged', open: [] }), true);
+    assert.equal(closed.diff.version, d.diff.version);
+    // たたんだ差分の行の番号で stage する
+    const rows = selectedRows(d.rows, [{ kind: '-', old: 25 }, { kind: '+', new: 25 }]);
+    assert.equal(rows.length, 2);
+    await client.call({ op: 'stageRows', diff: d.handle, rows });
+    assert.match(git('diff', '--cached', '--', 'f.txt'), /\+L25/);
+  } finally {
+    client.dispose();
+    git('reset', '-q', '--hard', start);
+  }
+});
+
 test('saves and applies patches through the daemon, recording one undo entry each', { skip }, async () => {
   const client = await DaemonClient.open(daemon, repo);
   const inner = await CliBackend.open(new GitExecutor('git'), repo);

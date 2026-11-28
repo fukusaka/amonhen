@@ -418,6 +418,19 @@
           "default": false,
           "markdownDescription": "Wrap lines wider than the diff instead of scrolling sideways, in every diff and file of the main view (History, Working Copy). **Wrap Long Lines** (Alt+Z in the main view) and the ↩︎ button above the diff switch it."
         },
+        "amonhen.diff.lineStaging": {
+          "type": "string",
+          "default": "select",
+          "enum": [
+            "select",
+            "bar"
+          ],
+          "enumDescriptions": [
+            "Select lines, then use the hunk header: Stage Hunk and Discard Hunk on the row above each hunk act on the lines selected in it.",
+            "Click the change bar or line numbers: the bar left of a block of changes stages the block, a line number that line, and dragging over line numbers the range."
+          ],
+          "markdownDescription": "How lines are staged in the Working Copy diff (with the engine), as in the app's Settings > Diff & Merge > Staging lines."
+        },
         "amonhen.diagrams.colors": {
           "type": "string",
           "default": "mermaid",
@@ -1039,6 +1052,71 @@
       {
         "command": "amonhen.wcFile.openContainingFolder",
         "title": "Open Containing Folder",
+        "category": "Amon Hen"
+      },
+      {
+        "command": "amonhen.wcDiff.gapDown",
+        "title": "↓ 20 lines",
+        "category": "Amon Hen"
+      },
+      {
+        "command": "amonhen.wcDiff.gapUp",
+        "title": "↑ 20 lines",
+        "category": "Amon Hen"
+      },
+      {
+        "command": "amonhen.wcDiff.gapAll",
+        "title": "All",
+        "category": "Amon Hen"
+      },
+      {
+        "command": "amonhen.wcDiff.gapCollapse",
+        "title": "Collapse",
+        "category": "Amon Hen"
+      },
+      {
+        "command": "amonhen.wcDiff.stageSelected",
+        "title": "Stage Selected Lines",
+        "category": "Amon Hen"
+      },
+      {
+        "command": "amonhen.wcDiff.unstageSelected",
+        "title": "Unstage Selected Lines",
+        "category": "Amon Hen"
+      },
+      {
+        "command": "amonhen.wcDiff.discardSelected",
+        "title": "Discard Selected Lines",
+        "category": "Amon Hen"
+      },
+      {
+        "command": "amonhen.wcDiff.stageHunk",
+        "title": "Stage Hunk",
+        "category": "Amon Hen"
+      },
+      {
+        "command": "amonhen.wcDiff.unstageHunk",
+        "title": "Unstage Hunk",
+        "category": "Amon Hen"
+      },
+      {
+        "command": "amonhen.wcDiff.discardHunk",
+        "title": "Discard Hunk",
+        "category": "Amon Hen"
+      },
+      {
+        "command": "amonhen.wcDiff.stageLine",
+        "title": "Stage This Line",
+        "category": "Amon Hen"
+      },
+      {
+        "command": "amonhen.wcDiff.unstageLine",
+        "title": "Unstage This Line",
+        "category": "Amon Hen"
+      },
+      {
+        "command": "amonhen.wcDiff.discardLine",
+        "title": "Discard This Line",
         "category": "Amon Hen"
       },
       {
@@ -2703,6 +2781,58 @@
           "when": "false"
         },
         {
+          "command": "amonhen.wcDiff.gapDown",
+          "when": "false"
+        },
+        {
+          "command": "amonhen.wcDiff.gapUp",
+          "when": "false"
+        },
+        {
+          "command": "amonhen.wcDiff.gapAll",
+          "when": "false"
+        },
+        {
+          "command": "amonhen.wcDiff.gapCollapse",
+          "when": "false"
+        },
+        {
+          "command": "amonhen.wcDiff.stageSelected",
+          "when": "false"
+        },
+        {
+          "command": "amonhen.wcDiff.unstageSelected",
+          "when": "false"
+        },
+        {
+          "command": "amonhen.wcDiff.discardSelected",
+          "when": "false"
+        },
+        {
+          "command": "amonhen.wcDiff.stageHunk",
+          "when": "false"
+        },
+        {
+          "command": "amonhen.wcDiff.unstageHunk",
+          "when": "false"
+        },
+        {
+          "command": "amonhen.wcDiff.discardHunk",
+          "when": "false"
+        },
+        {
+          "command": "amonhen.wcDiff.stageLine",
+          "when": "false"
+        },
+        {
+          "command": "amonhen.wcDiff.unstageLine",
+          "when": "false"
+        },
+        {
+          "command": "amonhen.wcDiff.discardLine",
+          "when": "false"
+        },
+        {
           "command": "amonhen.showRefs",
           "when": "false"
         },
@@ -3144,6 +3274,71 @@
           "command": "amonhen.wcFile.open",
           "when": "webviewId == 'amonhen.main' && webviewSection == 'wcFile' && !wcMulti && !wcDeleted",
           "group": "9_copy@3"
+        },
+        {
+          "command": "amonhen.wcDiff.gapDown",
+          "when": "webviewId == 'amonhen.main' && webviewSection == 'wcDiff' && wcGapDown",
+          "group": "0_gap@1"
+        },
+        {
+          "command": "amonhen.wcDiff.gapUp",
+          "when": "webviewId == 'amonhen.main' && webviewSection == 'wcDiff' && wcGapUp",
+          "group": "0_gap@2"
+        },
+        {
+          "command": "amonhen.wcDiff.gapAll",
+          "when": "webviewId == 'amonhen.main' && webviewSection == 'wcDiff' && wcGapAll",
+          "group": "0_gap@3"
+        },
+        {
+          "command": "amonhen.wcDiff.gapCollapse",
+          "when": "webviewId == 'amonhen.main' && webviewSection == 'wcDiff' && wcGapCollapse",
+          "group": "0_gap@4"
+        },
+        {
+          "command": "amonhen.wcDiff.stageSelected",
+          "when": "webviewId == 'amonhen.main' && webviewSection == 'wcDiff' && wcSelStage",
+          "group": "1_selected@1"
+        },
+        {
+          "command": "amonhen.wcDiff.unstageSelected",
+          "when": "webviewId == 'amonhen.main' && webviewSection == 'wcDiff' && wcSelUnstage",
+          "group": "1_selected@1"
+        },
+        {
+          "command": "amonhen.wcDiff.discardSelected",
+          "when": "webviewId == 'amonhen.main' && webviewSection == 'wcDiff' && wcSelDiscard",
+          "group": "1_selected@2"
+        },
+        {
+          "command": "amonhen.wcDiff.stageHunk",
+          "when": "webviewId == 'amonhen.main' && webviewSection == 'wcDiff' && wcHunkStage",
+          "group": "2_hunk@1"
+        },
+        {
+          "command": "amonhen.wcDiff.unstageHunk",
+          "when": "webviewId == 'amonhen.main' && webviewSection == 'wcDiff' && wcHunkUnstage",
+          "group": "2_hunk@1"
+        },
+        {
+          "command": "amonhen.wcDiff.discardHunk",
+          "when": "webviewId == 'amonhen.main' && webviewSection == 'wcDiff' && wcHunkDiscard",
+          "group": "2_hunk@2"
+        },
+        {
+          "command": "amonhen.wcDiff.stageLine",
+          "when": "webviewId == 'amonhen.main' && webviewSection == 'wcDiff' && wcLineStage",
+          "group": "3_line@1"
+        },
+        {
+          "command": "amonhen.wcDiff.unstageLine",
+          "when": "webviewId == 'amonhen.main' && webviewSection == 'wcDiff' && wcLineUnstage",
+          "group": "3_line@1"
+        },
+        {
+          "command": "amonhen.wcDiff.discardLine",
+          "when": "webviewId == 'amonhen.main' && webviewSection == 'wcDiff' && wcLineDiscard",
+          "group": "3_line@2"
         },
         {
           "command": "amonhen.exportArchive",

@@ -33,7 +33,7 @@ import { basename, dirname, join, resolve } from 'node:path';
 import * as vscode from 'vscode';
 import { DaemonClient } from '../src/daemon/client.ts';
 import { type EditRow, planSteps } from '../src/history/editPlan.ts';
-import type { SelectedLine } from '../src/diff/fileDiff.ts';
+import type { DiffLine, FileDiff, SelectedLine } from '../src/diff/fileDiff.ts';
 import { settingsFile } from '../src/git/choice.ts';
 import { samePath } from '../src/git/worktrees.ts';
 import type { activate } from '../src/extension.ts';
@@ -2398,6 +2398,132 @@ async function workingSidesFlow(): Promise<void> {
     git('reset', '-q', '--hard', start);
     rmSync(file, { force: true });
     rmSync(other, { force: true });
+    await vscode.commands.executeCommand('amonhen.refresh');
+  }
+}
+
+/**
+ * Working Copy のたたんだ差分（エンジン）: 変更のない所は隙間の行にたたまれ、20 行ずつ・すべて開ける。開いても
+ * version は変わらないので、開く前に選んだ行の stage が「ファイルが変わった」と断られない。Show Whole File（すべての
+ * 隙間を開く）の行でも stage でき、All の帯（Webview は stage: false で頼む）で外せる
+ */
+async function workingFoldFlow(): Promise<void> {
+  const start = git('rev-parse', 'HEAD').trim();
+  const file = join(root, 'fold.txt');
+  const wc = (await showView('amonhen.showWorkingCopy')).workingCopy;
+  const lines = Array.from({ length: 80 }, (_, i) => `line ${i + 1}`);
+  const changedLines = (diff: FileDiff) => diff.hunks.flatMap((h) => h.lines).filter((l) => l.kind !== ' ');
+  const gapsOf = (diff: FileDiff) => diff.hunks.flatMap((h) => (h.gap ? [[h.gap.index, h.gap.hidden, h.gap.shown]] : []));
+  /** 変更の行を、選んだ行（wcStageLines の lines）に */
+  const selection = (lines: DiffLine[]): SelectedLine[] => lines.map((l) => (l.kind === '-' ? { kind: '-', old: l.old! } : { kind: '+', new: l.new! }));
+  /** 隙間の開き方を変えて、読み直した差分を待つ */
+  const setGaps = async (side: 'unstaged' | 'staged' | 'all', open: { gap: number; top: number; bottom: number }[]) => {
+    const at = posted.length;
+    await wc.handle({ type: 'wcGaps', path: 'fold.txt', side, open });
+    return (await waitPosted('wcDiff', at, (m) => m.diff?.path === 'fold.txt' && JSON.stringify(m.open) === JSON.stringify(open))).diff!;
+  };
+  try {
+    writeFileSync(file, `${lines.join('\n')}\n`);
+    git('add', 'fold.txt');
+    git('commit', '-q', '-m', 'add fold.txt');
+    writeFileSync(file, `${lines.map((l) => (l === 'line 10' ? 'LINE 10' : l === 'line 60' ? 'LINE 60' : l)).join('\n')}\n`);
+    let mark = posted.length;
+    await vscode.commands.executeCommand('amonhen.refresh');
+    await waitPosted('wcFiles', mark, (m) => m.engine && m.files.some((f) => f.path === 'fold.txt'));
+    mark = posted.length;
+    await wc.handle({ type: 'wcSelect', group: 'unstaged', path: 'fold.txt', side: 'unstaged' });
+    const closed = (await waitPosted('wcDiff', mark, (m) => m.diff?.path === 'fold.txt' && m.side === 'unstaged')).diff!;
+    // `@@` の見出しの代わりに隙間の行: 頭の 6 行、間の 43 行、末尾の 17 行
+    assert.equal(closed.folded, true);
+    assert.deepEqual(gapsOf(closed), [
+      [0, 6, 0],
+      [1, 43, 0],
+      [2, 17, 0],
+    ]);
+    assert.ok(closed.hunks.every((h) => !h.header.startsWith('@@')), JSON.stringify(closed.hunks.map((h) => h.header)));
+
+    // 間の隙間を下へ 20 行、末尾の隙間をすべて開く。変更の行も version も同じ
+    const down = await setGaps('unstaged', [{ gap: 1, top: 20, bottom: 0 }]);
+    assert.deepEqual(gapsOf(down), [
+      [0, 6, 0],
+      [1, 23, 20],
+      [2, 17, 0],
+    ]);
+    assert.equal(down.version, closed.version, '開いても version は変わらない');
+    const opened = await setGaps('unstaged', [
+      { gap: 1, top: 20, bottom: 0 },
+      { gap: 2, top: 0, bottom: 0xffffffff },
+    ]);
+    assert.deepEqual(gapsOf(opened)[2], [2, 0, 17]);
+    assert.ok(opened.hunks.at(-1)!.lines.some((l) => l.text === 'line 80'), '末尾まで見える');
+
+    // 開く前（closed）に選んだ 10 行目の書き換えを stage する: 断られず、その行だけが入る
+    let warned = false;
+    const setStatusBarMessage = () => {
+      warned = true;
+      return { dispose() {} };
+    };
+    const ten = changedLines(closed).slice(0, 2);
+    await withWindow({ setStatusBarMessage }, () =>
+      wc.handle({
+        type: 'wcStageLines',
+        group: 'unstaged',
+        path: 'fold.txt',
+        version: closed.version,
+        lines: selection(ten),
+      }),
+    );
+    assert.equal(warned, false, '「ファイルが変わった」と言わない');
+    await until('10 行目の stage', () => git('diff', '--cached', '--', 'fold.txt').includes('+LINE 10'));
+    assert.ok(!git('diff', '--cached', '--', 'fold.txt').includes('LINE 60'));
+    // 開き方はファイルと側ごとに覚える（読み直しても開いたまま）
+    mark = posted.length;
+    await vscode.commands.executeCommand('amonhen.refresh');
+    const kept = (await waitPosted('wcDiff', mark, (m) => m.diff?.path === 'fold.txt' && !changedLines(m.diff).some((l) => l.text === 'LINE 10'))).diff!;
+    assert.deepEqual(gapsOf(kept).at(-1), [gapsOf(kept).length - 1, 0, 17]);
+
+    // Show Whole File（すべての隙間を開く）の差分の行で、60 行目を stage する
+    const count = gapsOf(kept).length;
+    const whole = await setGaps(
+      'unstaged',
+      Array.from({ length: count }, (_, gap) => ({ gap, top: 0, bottom: 0xffffffff })),
+    );
+    assert.ok(gapsOf(whole).every(([, hidden]) => hidden === 0), JSON.stringify(gapsOf(whole)));
+    assert.equal(whole.hunks.flatMap((h) => h.lines).length, 81, 'ファイル全体（80 行と消した 1 行）');
+    const sixty = changedLines(whole);
+    await wc.handle({
+      type: 'wcStageLines',
+      group: 'unstaged',
+      path: 'fold.txt',
+      version: whole.version,
+      lines: selection(sixty),
+    });
+    await until('60 行目の stage', () => git('diff', '--cached', '--', 'fold.txt').includes('+LINE 60') && git('diff', '--', 'fold.txt') === '');
+
+    // All: 帯で 60 行目を外す（Webview は帯を押すと combined の stage: false で頼む）
+    mark = posted.length;
+    await wc.handle({ type: 'wcSide', side: 'all' });
+    const all = (await waitPosted('wcDiff', mark, (m) => m.diff?.path === 'fold.txt' && m.side === 'all')).diff!;
+    assert.equal(all.combined, true);
+    assert.equal(all.folded, true);
+    const allLines = changedLines(all);
+    assert.ok(allLines.every((l) => l.staged), JSON.stringify(allLines));
+    const sixtyAll = allLines.filter((l) => l.text.endsWith('60'));
+    await wc.handle({
+      type: 'wcStageLines',
+      group: 'staged',
+      path: 'fold.txt',
+      version: all.version,
+      lines: selection(sixtyAll),
+      stage: false,
+      combined: true,
+    });
+    await until('60 行目を外す', () => !git('diff', '--cached', '--', 'fold.txt').includes('LINE 60') && git('diff', '--', 'fold.txt').includes('+LINE 60'));
+  } finally {
+    await wc.handle({ type: 'wcSide', side: 'unstaged' });
+    for (const side of ['unstaged', 'staged', 'all'] as const) await wc.handle({ type: 'wcGaps', path: 'fold.txt', side, open: [] });
+    git('reset', '-q', '--hard', start);
+    rmSync(file, { force: true });
     await vscode.commands.executeCommand('amonhen.refresh');
   }
 }
@@ -5076,6 +5202,10 @@ suite('Amon Hen in VSCode', () => {
 
   test('shows the Unstaged, Staged or All side of the Working Copy diff through the daemon', async () => {
     await workingSidesFlow();
+  });
+
+  test('folds unchanged lines in the Working Copy diff and stages lines of an opened one through the daemon', async () => {
+    await workingFoldFlow();
   });
 
   test('shows git notes in the details through the daemon', async () => {

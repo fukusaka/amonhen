@@ -73,8 +73,9 @@ VSCode 上で快適に Git を操作するための自分用の拡張。Marketpl
 左の列いっぱいに変わったファイル、右の上にコミット欄、その下に選んだファイルの差分が出る。Summary の横の ▾ でコミット欄を Summary の行だけ（文字数と Commit も）に畳め、欄と差分の境目はドラッグで動かせる（ダブルクリックで中身に合わせ直す）。どちらも覚えておく。差分は hunk ごとに並び、変わった部分は単語単位で強調する。
 
 - エンジンがあるとき、ファイルは初めは 1 つの一覧で、行ごとに次のコミットに入れるかのチェックが付く（☑ すべて、▣ 一部の行、☐ 入れない。押すとファイルごと入れる・外す）。上にすべてのチェックと「入れる数 / 変わった数」、Tree ではフォルダにもチェックがある。⊟ で `git status` のような Staged と Unstaged の節に分け（一部だけ stage したファイルは両方にあり、それぞれの側の行数を出す）、それを覚える。エンジンがなければ、一覧はいつも Conflicts / Staged / Unstaged の節。
-- エンジンがあるとき、差分の上の帯で Unstaged（index → 作業ツリー）・Staged（HEAD → index）・All（HEAD → 作業ツリー）を選ぶ。見る側は Working Copy で 1 つで、ほかのファイルを選んでも変わらない（初めは Unstaged）。節の行を選ぶと、その節の側になる。All では変わった行と hunk ごとにチェックが付き、入れると stage、外すと unstage する。選んだ側に変更がないファイルはそう言い、stage した変更としていない変更を 1 つの差分にできないファイルと、空白を無視している間の All は、そう言って Unstaged と Staged へ案内する。エンジンがなければ、節のファイルはその節の側を出す。
-- 差分の行をクリックで選び（Shift+クリックで範囲）、Stage N Lines で選んだ行だけを stage する。Staged の側では同じ操作で unstage になる。
+- エンジンがあるとき、差分の上の帯で Unstaged（index → 作業ツリー）・Staged（HEAD → index）・All（HEAD → 作業ツリー）を選ぶ。見る側は Working Copy で 1 つで、ほかのファイルを選んでも変わらない（初めは Unstaged）。節の行を選ぶと、その節の側になる。All では変わった行の左に帯があり、stage した行は塗り、していない行は枠だけ。帯を押すとその行を stage・unstage する。選んだ側に変更がないファイルはそう言い、stage した変更としていない変更を 1 つの差分にできないファイルと、空白を無視している間の All は、そう言って Unstaged と Staged へ案内する。エンジンがなければ、節のファイルはその節の側を出す。
+- エンジンがあるとき、変更のない行は関数名と「⋯ 56 unchanged lines」のある破線の行にたたむ。マウスを乗せると ↓ 20 lines・↑ 20 lines・All・Collapse が出て、札を押すとすべて開く（ボタンが入りきらなければ、そのメニュー）。右クリックでもいつも出る。どこを開いたかはファイルと側ごとに、拡張が動いている間覚える。帯の ⇳ でファイル全体を見せる。その行には Stage Hunk・Discard Hunk（Staged では Unstage Hunk）もあり、hunk の行を選ぶ（クリック・ドラッグ・Shift+クリックで範囲・⌘ / Ctrl+クリックで足す）と Stage Lines・Discard Lines になる。`amonhen.diff.lineStaging` を `bar` にすると、変更のかたまりの左の帯でかたまりを、行番号でその行を、行番号のドラッグで範囲を stage し、帯に Stage Lines が出る。J・K で次・前の変更のかたまりを選び、Space で選んだ行を stage する。行の右クリックに、選んだ行・その hunk・その行がある。
+- エンジンがなければ、差分の行をクリックで選び（Shift+クリックで範囲）、Stage N Lines で選んだ行だけを stage する。Staged の側では同じ操作で unstage になる。
 - 一覧の上で、パスでファイルを絞り込み、List（パス）・Tree（フォルダ）・File Name（ファイル名を先に、フォルダは薄く）で見せ方を切り替える。最初は List。
 - hunk ごとの Stage Hunk、Stage File、一覧の `+` / `−`、Stage All でもできる。一覧では上下キーで選び、Space か Enter で stage / unstage する。
 - stage していない変更は、一覧の ↺、Discard File、Discard Hunk、Discard N Lines で変更を破棄できる。untracked のファイルは消す（Delete File…）。ファイルごとのときは確かめてから、選んだ行・hunk はすぐに破棄する。破棄した内容は Undo で戻せる。
