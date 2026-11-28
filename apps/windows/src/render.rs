@@ -192,6 +192,8 @@ pub struct GapLayout {
     /// 中央の札（0 行の見出しの行にはない）と、選んだ行の数を出しているか。
     pub pill: Option<(D2D_RECT_F, (IDWriteTextLayout, f32, f32))>,
     pub pill_selected: bool,
+    /// 札を押すと開く・畳むのメニューを開くか（入らない開く・畳むがある。全部入るなら、押すとすべて開く）。
+    pub pill_menu: bool,
     /// 札の右の開く・畳む（マウスが乗っているときだけ）と、右端の hunk の操作。
     pub buttons: Vec<(
         crate::data::GapAction,
@@ -202,6 +204,59 @@ pub struct GapLayout {
     pub function: Option<(f32, (IDWriteTextLayout, f32, f32))>,
     /// hunk の操作が効く行（選んだ行か、hunk の変更すべて）。
     pub target: Vec<usize>,
+}
+
+/// 隙間の行の札と、その右の開く・畳むの置き場所（`place_gap` の答え）。
+#[derive(Debug, PartialEq)]
+pub struct GapPlace {
+    /// 札の左端・幅と、短い札にしたか（入らなければ出さない）。
+    pub pill: Option<(f32, f32, bool)>,
+    /// 開く・畳むのそれぞれの左端（入らないものは None）。
+    pub chips: Vec<Option<f32>>,
+}
+
+/// 隙間の行の札と開く・畳むを置く（3 つの FE で同じ形）。札は自分の幅だけで中央（マウスが乗っても動かない）。
+/// `right` は右端の hunk の操作の左端で、札がその − 8 を越えるなら、越えないところまで左へずらす（左端は
+/// `text_x` + 8 まで）。それでも入らなければ短い札（`short`）、それも入らなければ札を出さない。開く・畳むは札の
+/// 右に入るものだけ（札がなければ出さない。入らないものは札を押したときと右クリックのメニューから）。
+pub fn place_gap(
+    text_x: f32,
+    width: f32,
+    right: f32,
+    full: f32,
+    short: Option<f32>,
+    chips: &[f32],
+) -> GapPlace {
+    let left = text_x + 8.0;
+    let limit = right - 8.0;
+    let pill = if left + full <= limit {
+        Some((full, false))
+    } else {
+        short.filter(|&w| left + w <= limit).map(|w| (w, true))
+    };
+    let Some((w, use_short)) = pill else {
+        return GapPlace {
+            pill: None,
+            chips: vec![None; chips.len()],
+        };
+    };
+    let centered = (text_x + (width - text_x - w) / 2.0).max(left);
+    let x = centered.min(limit - w).max(left);
+    let mut at = x + w + 6.0;
+    let chips = chips
+        .iter()
+        .map(|&cw| {
+            (at + cw < limit).then(|| {
+                let this = at;
+                at += cw + 6.0;
+                this
+            })
+        })
+        .collect();
+    GapPlace {
+        pill: Some((x, w, use_short)),
+        chips,
+    }
 }
 
 impl GapLayout {
@@ -3044,22 +3099,46 @@ impl Renderer {
             buttons.push((*action, rect(right - w, w), text));
             right -= w + 2.0;
         }
-        // 中央の札（自分の幅だけで中央に置く。ボタンが出ても動かない）と、その右の開く・畳む。
+        // 中央の札と、その右の開く・畳む（置き場所は `place_gap`）。
         let mut pill = None;
+        let mut pill_menu = false;
         if !info.pill.is_empty() {
-            let text = self.small_text(&info.pill, false)?;
-            let w = text.1 + 20.0;
-            let mut x = (text_x + (width - text_x - w) / 2.0).max(text_x + 8.0);
-            pill = Some((rect(x, w), text));
-            x += w + 6.0;
-            for (action, title) in &info.gap_actions {
-                let text = self.small_text(title, true)?;
-                let cw = text.1 + 16.0;
-                if x + cw >= right - 8.0 {
-                    break;
+            let full = self.small_text(&info.pill, false)?;
+            let short = if info.pill_short.is_empty() {
+                None
+            } else {
+                Some(self.small_text(&info.pill_short, false)?)
+            };
+            let chips = info
+                .gap_actions
+                .iter()
+                .map(|(action, title)| Ok((*action, self.small_text(title, true)?)))
+                .collect::<Result<Vec<_>>>()?;
+            let widths: Vec<f32> = chips.iter().map(|(_, t)| t.1 + 16.0).collect();
+            let place = place_gap(
+                text_x,
+                width,
+                right,
+                full.1 + 20.0,
+                short.as_ref().map(|t| t.1 + 20.0),
+                &widths,
+            );
+            if let Some((x, w, use_short)) = place.pill {
+                let text = match short {
+                    Some(short) if use_short => short,
+                    _ => full,
+                };
+                pill = Some((rect(x, w), text));
+            }
+            // 入らない開く・畳むがあれば、札を押すとメニュー（その隙間で出せるものすべて）。
+            pill_menu = place.pill.is_some() && place.chips.iter().any(Option::is_none);
+            if info.hovered {
+                for ((action, text), x) in chips.into_iter().zip(place.chips) {
+                    if let Some(x) = x {
+                        let cw = text.1 + 16.0;
+                        buttons.push((action, rect(x, cw), text));
+                    }
                 }
-                buttons.push((*action, rect(x, cw), text));
-                x += cw + 6.0;
             }
         }
         // 左の関数名（札にかかるなら出さない）。
@@ -3075,6 +3154,7 @@ impl Renderer {
         Ok(GapLayout {
             pill,
             pill_selected: info.selected,
+            pill_menu,
             buttons,
             function,
             target: info.target,
@@ -3689,5 +3769,47 @@ mod tests {
         // 次のファイルに入ったら、そのファイルの見出し。
         assert_eq!(sticky_header(&files, 12.0 * rh), Some((10, 0.0)));
         assert_eq!(sticky_header(&[], 5.0 * rh), None);
+    }
+
+    #[test]
+    fn gap_row_never_overlaps_hunk_actions() {
+        // 広ければ札は中央、開く・畳むはその右にすべて。
+        let wide = place_gap(80.0, 1200.0, 1000.0, 160.0, Some(60.0), &[70.0, 70.0, 40.0]);
+        assert_eq!(wide.pill, Some((560.0, 160.0, false)));
+        assert_eq!(wide.chips, vec![Some(726.0), Some(802.0), Some(878.0)]);
+        // 狭い: 札は中央のまま（開く・畳むの場所を空けるために寄せない）。入らない開く・畳むは出さない。
+        let narrow = place_gap(80.0, 640.0, 520.0, 160.0, Some(60.0), &[70.0, 70.0, 40.0]);
+        assert_eq!(narrow.pill, Some((280.0, 160.0, false)));
+        assert_eq!(narrow.chips, vec![None, None, Some(446.0)]);
+        // もっと狭い: 中央だと hunk の操作にかかるので、かからないところまで左へずらす。
+        let tight = place_gap(80.0, 420.0, 300.0, 160.0, Some(60.0), &[70.0, 70.0, 40.0]);
+        assert_eq!(tight.pill, Some((132.0, 160.0, false)));
+        assert_eq!(tight.chips.iter().flatten().count(), 0);
+        // 札が入らなければ短い札、それも入らなければ札も開く・畳むも出さない。
+        let shorter = place_gap(80.0, 340.0, 200.0, 160.0, Some(60.0), &[]);
+        assert_eq!(shorter.pill, Some((132.0, 60.0, true)));
+        let none = place_gap(80.0, 250.0, 120.0, 160.0, Some(60.0), &[20.0]);
+        assert_eq!(none.pill, None);
+        assert_eq!(none.chips, vec![None]);
+        // どの幅でも、札と開く・畳むは hunk の操作の左端 − 8 を越えない。
+        for right in (100..1000).step_by(7) {
+            let right = right as f32;
+            let place = place_gap(
+                80.0,
+                right + 200.0,
+                right,
+                160.0,
+                Some(60.0),
+                &[70.0, 70.0, 40.0],
+            );
+            if let Some((x, w, _)) = place.pill {
+                assert!(x >= 88.0 && x + w <= right - 8.0);
+            }
+            for (at, cw) in place.chips.iter().zip([70.0, 70.0, 40.0]) {
+                if let Some(at) = at {
+                    assert!(at + cw < right - 8.0);
+                }
+            }
+        }
     }
 }

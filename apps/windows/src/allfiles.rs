@@ -25,6 +25,8 @@ pub struct Node {
     pub path: String,
     pub is_dir: bool,
     pub kind: Option<ChangeKind>,
+    /// コンフリクトのファイル（Working Copy の「すべてのファイル」だけ）。印は変更の一覧と同じ U。
+    pub conflict: bool,
     pub contains_changes: bool,
 }
 
@@ -40,6 +42,8 @@ pub struct Browser {
     repo: Arc<Repository>,
     pub commit: Oid,
     changes: Vec<FileChange>,
+    /// コンフリクトのファイル（Working Copy の「すべてのファイル」だけ）。
+    conflicts: HashSet<String>,
     /// 変更ファイル（パス → 番号）と、変更を含むフォルダ、このコミットで消したファイル（親のフォルダ → パス）。
     changed: HashMap<String, usize>,
     changed_folders: HashSet<String>,
@@ -56,17 +60,28 @@ pub struct Browser {
 impl Browser {
     /// コミット `commit`（変更 `changes`）の木。変更を含むフォルダは開いておく（macOS 版と同じ）。
     pub fn new(repo: Arc<Repository>, commit: Oid, changes: Vec<FileChange>) -> Self {
-        Self::build(repo, commit, changes, false)
+        Self::build(repo, commit, changes, HashSet::new(), false)
     }
 
     /// Working Copy の「すべてのファイル」（GTK4 版の `Browser::new_working`）: `head` の木に作業ツリーの変更
     /// `changes` を重ねる。足したファイル（untracked を含む）は木にないので足し、消したファイルは木にあるので
-    /// 印を付けるだけ。
-    pub fn new_working(repo: Arc<Repository>, head: Oid, changes: Vec<FileChange>) -> Self {
-        Self::build(repo, head, changes, true)
+    /// 印を付けるだけ。コンフリクトのファイル `conflicts` には、変更の一覧と同じ印（U）を付ける。
+    pub fn new_working(
+        repo: Arc<Repository>,
+        head: Oid,
+        changes: Vec<FileChange>,
+        conflicts: HashSet<String>,
+    ) -> Self {
+        Self::build(repo, head, changes, conflicts, true)
     }
 
-    fn build(repo: Arc<Repository>, commit: Oid, changes: Vec<FileChange>, working: bool) -> Self {
+    fn build(
+        repo: Arc<Repository>,
+        commit: Oid,
+        changes: Vec<FileChange>,
+        conflicts: HashSet<String>,
+        working: bool,
+    ) -> Self {
         let mut changed = HashMap::new();
         let mut changed_folders = HashSet::new();
         let mut deleted: HashMap<String, Vec<String>> = HashMap::new();
@@ -100,6 +115,7 @@ impl Browser {
             repo,
             commit,
             changes,
+            conflicts,
             changed,
             changed_folders,
             deleted,
@@ -154,11 +170,13 @@ impl Browser {
                 let kind = self.change_of(&path).map(|c| c.kind);
                 let contains_changes =
                     kind.is_some() || (is_dir && self.changed_folders.contains(&path));
+                let conflict = !is_dir && self.conflicts.contains(&path);
                 Node {
                     name,
                     path,
                     is_dir,
                     kind,
+                    conflict,
                     contains_changes,
                 }
             })
@@ -169,6 +187,7 @@ impl Browser {
                 path: path.clone(),
                 is_dir: false,
                 kind: self.change_of(path).map(|c| c.kind),
+                conflict: self.conflicts.contains(path),
                 contains_changes: true,
             });
         }
@@ -181,6 +200,7 @@ impl Browser {
                     path: f.clone(),
                     is_dir: true,
                     kind: None,
+                    conflict: false,
                     contains_changes: true,
                 });
             }
@@ -324,17 +344,20 @@ pub fn list(
                 name.opacity(0.6).into()
             }
         };
-        let mark: View = match n.kind {
-            Some(kind) => {
-                let (mark, color) = kind_mark(kind);
-                TextBlock::new()
-                    .text(mark)
-                    .font_weight(FontWeight::BOLD)
-                    .font_size(11.0)
-                    .foreground(Brush::Solid(color))
-                    .margin(Thickness::new(6.0, 0.0, 0.0, 0.0))
-                    .into()
-            }
+        // コンフリクトのファイルは、変更の一覧と同じ U（色は macOS 版のコンフリクトの印と同じ赤）。
+        let mark = if n.conflict {
+            Some(("U", Color::rgb(0xdc, 0x38, 0x33)))
+        } else {
+            n.kind.map(kind_mark)
+        };
+        let mark: View = match mark {
+            Some((mark, color)) => TextBlock::new()
+                .text(mark)
+                .font_weight(FontWeight::BOLD)
+                .font_size(11.0)
+                .foreground(Brush::Solid(color))
+                .margin(Thickness::new(6.0, 0.0, 0.0, 0.0))
+                .into(),
             None if n.is_dir && n.contains_changes => TextBlock::new()
                 .text("●")
                 .font_size(8.0)

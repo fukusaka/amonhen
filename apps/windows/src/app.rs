@@ -666,6 +666,9 @@ struct Root {
     working_files: Vec<String>,
     /// Working Copy の一覧で選んでいるファイルの行の鍵（並べ替えたもの。作り直した一覧で選び直す）。
     working_tags: Vec<String>,
+    /// status が替わって一覧を作り直し、`working_tags` を選び直している間（この時まで）。作ったばかりの一覧は行を
+    /// 少しずつ作るので、選び直しが一部の行だけのことがある。すべて選び直せたら None。
+    working_restoring: Option<std::time::Instant>,
     /// Working Copy の一覧が最後に知らせた選んだ位置と、その一覧の鍵（同じ一覧の間は描くたびに渡す）。
     working_list_index: Option<(String, Option<usize>)>,
     /// Working Copy の一覧の代わりに出している、すべてのファイルの木（変更に戻すまで）。
@@ -1736,6 +1739,8 @@ enum Message {
     WorkingAllRow(Option<usize>),
     /// 作り直した Working Copy の一覧で、選んでいたファイルの行を選び直す（行ができてから）。
     WorkingReselect,
+    /// マウスが差分の欄から出た。
+    DiffPointerLeft,
     /// 新しいブランチの名前が変わった。
     BranchName(String),
     /// Pull のダイアログで、取り込み方を選んだ。
@@ -1956,6 +1961,7 @@ impl Component for Root {
             working_note: None,
             working_files: Vec::new(),
             working_tags: Vec::new(),
+            working_restoring: None,
             working_list_index: None,
             working_browser: None,
             busy: None,
@@ -5749,6 +5755,10 @@ impl Root {
                 // 選んでいるファイルの差分も読み直す（stage で行の印が、外での変更で中身が変わる）。
                 self.refresh_working_choice();
                 self.load_working_diff();
+                if self.working_tags.len() >= 2 {
+                    self.working_restoring =
+                        Some(std::time::Instant::now() + std::time::Duration::from_secs(1));
+                }
                 self.schedule_reselect(context);
             }
             Message::IssueCandidates(body, at, text, items) => {
@@ -5961,6 +5971,16 @@ impl Root {
                 self.set_working_all_files(on);
                 if !on {
                     self.schedule_reselect(context);
+                }
+            }
+            Message::DiffPointerLeft => {
+                // 画像の比べる欄を引いている間は、離すまでそのまま。
+                if IMAGE_DRAG.with(std::cell::Cell::get).is_none() {
+                    self.with_history(|h| {
+                        if h.working_page {
+                            working_hover(h, None);
+                        }
+                    });
                 }
             }
             Message::WorkingReselect => {
@@ -9863,15 +9883,25 @@ impl Root {
                     .grid_row(2)
                     .rows([GridLength::Star(1.0), GridLength::Auto])
                     .children((
-                        Grid::new()
-                            .background(Brush::Solid(Color::transparent()))
-                            .element_ref(&self.diff_area)
+                        // 差分の欄から出たら、乗っていた所のボタン・印を消す（macOS 版の `mouseExited`、GTK4 版の
+                        // `connect_leave`。reactor の Grid には出たときの知らせがないので、Border で包む）。
+                        Border::new()
                             .grid_column(1)
-                            .children((SwapChainPanel::new().element_ref(&self.diff_panel),))
-                            .menu(Menu::new(
-                                self.diff_file_menu(),
-                                context.callback(Message::DiffFileMenu),
-                            )),
+                            .on_pointer_exited(
+                                context.callback(|_: PointerEventInfo| Message::DiffPointerLeft),
+                            )
+                            .content(
+                                Grid::new()
+                                    .background(Brush::Solid(Color::transparent()))
+                                    .element_ref(&self.diff_area)
+                                    .children(
+                                        (SwapChainPanel::new().element_ref(&self.diff_panel),),
+                                    )
+                                    .menu(Menu::new(
+                                        self.diff_file_menu(),
+                                        context.callback(Message::DiffFileMenu),
+                                    )),
+                            ),
                         self.files_list(context),
                         self.svg_notes(),
                         self.working_note_view(),
@@ -13765,13 +13795,16 @@ impl Root {
             return items;
         }
         // Working Copy の差分: 選んだ行・その hunk・その行の Stage（Unstage）と Discard（GTK4 版の `stage_menu`）。
+        // 隙間の行では、先に開く・畳む（区切りを挟んで hunk の操作）。
         if !self.diff_rows.is_empty() {
-            return self
-                .diff_rows
-                .iter()
-                .enumerate()
-                .map(|(i, (title, _, _))| MenuItem::item(format!("stage-menu:{i}"), title.clone()))
-                .collect();
+            let mut items = Vec::new();
+            for (i, (title, _, action)) in self.diff_rows.iter().enumerate() {
+                if i > 0 && action.is_hunk() && !self.diff_rows[i - 1].2.is_hunk() {
+                    items.push(MenuItem::separator("-gap"));
+                }
+                items.push(MenuItem::item(format!("stage-menu:{i}"), title.clone()));
+            }
+            return items;
         }
         let Some(file) = &self.diff_file else {
             return Vec::new();
@@ -13907,7 +13940,12 @@ impl Root {
             else {
                 return beep();
             };
-            if action == crate::data::GapAction::Discard {
+            if !action.is_hunk() {
+                // 隙間の行の開く・畳む（行は隙間の行）。
+                if let Some(&index) = rows.first() {
+                    self.with_history(|h| working_gap_action(h, index as u32, action, Vec::new()));
+                }
+            } else if action == crate::data::GapAction::Discard {
                 self.discard_working_rows(rows, context);
             } else {
                 let mut done = false;
@@ -17874,27 +17912,26 @@ impl Root {
         tags.sort();
         // 作り直した一覧で選び直した（同じ行）なら、何もしない。
         if !tags.is_empty() && tags == self.working_tags {
+            self.working_restoring = None;
             return;
         }
-        let rows_files: Vec<(String, String)> = self.status.as_ref().map_or_else(Vec::new, |s| {
-            let visible = crate::workcopy::visible(&s.status.entries, &self.working_filter);
-            crate::workcopy::list_rows(
-                &visible,
-                self.working_layout,
-                &self.working_collapsed,
-                self.working_sections,
-            )
-            .iter()
-            .filter_map(|row| match row {
-                crate::workcopy::Row::File { entry, .. }
-                    if entry.kind != amonhen_model::StatusKind::Unmerged =>
-                {
-                    Some((crate::workcopy::row_key(row), entry.path.clone()))
-                }
-                _ => None,
-            })
-            .collect()
-        });
+        let rows_files = self.working_rows_files();
+        // 作り直した一覧で、まだ一部の行しか選び直せていない（残りの行もまだ一覧にある）: 選んでいたファイルの
+        // ままにして、もう一度選び直す（ここで 1 つに戻すと、並べた差分が 1 つのファイルになる）。
+        let restoring = !tags.is_empty()
+            && self
+                .working_restoring
+                .is_some_and(|until| std::time::Instant::now() < until)
+            && tags.iter().all(|t| self.working_tags.contains(t))
+            && self
+                .working_tags
+                .iter()
+                .any(|t| !tags.contains(t) && rows_files.iter().any(|(key, _)| key == t));
+        if restoring {
+            self.schedule_reselect(context);
+            return;
+        }
+        self.working_restoring = None;
         // 選んだファイル（一覧の順。ディレクトリ・節の見出しの行とコンフリクトは除く。両方の節に出るファイルは
         // 1 つ）。
         let mut files: Vec<String> = Vec::new();
@@ -17952,6 +17989,29 @@ impl Root {
             self.working_sections,
             self.working_browser.is_some()
         )
+    }
+
+    /// Working Copy の一覧のファイルの行（行の鍵とパス、一覧の順。コンフリクトは除く）。
+    fn working_rows_files(&self) -> Vec<(String, String)> {
+        self.status.as_ref().map_or_else(Vec::new, |s| {
+            let visible = crate::workcopy::visible(&s.status.entries, &self.working_filter);
+            crate::workcopy::list_rows(
+                &visible,
+                self.working_layout,
+                &self.working_collapsed,
+                self.working_sections,
+            )
+            .iter()
+            .filter_map(|row| match row {
+                crate::workcopy::Row::File { entry, .. }
+                    if entry.kind != amonhen_model::StatusKind::Unmerged =>
+                {
+                    Some((crate::workcopy::row_key(row), entry.path.clone()))
+                }
+                _ => None,
+            })
+            .collect()
+        })
     }
 
     /// Working Copy の一覧で、鍵が `key` の行の番号。
@@ -18068,7 +18128,17 @@ impl Root {
             }
         }
         let expanded = self.working_browser.as_ref().map(|b| b.expanded.clone());
-        let mut browser = crate::allfiles::Browser::new_working(repo, head, changes);
+        // コンフリクトのファイルには、変更の一覧と同じ印を付ける（macOS 版の `WorkingTreeFiles.reload` は一覧の
+        // 印の関数を使う）。
+        let conflicts = self
+            .status
+            .as_ref()
+            .map_or(&[][..], |s| &s.status.entries[..])
+            .iter()
+            .filter(|e| e.kind == amonhen_model::StatusKind::Unmerged)
+            .map(|e| e.path.clone())
+            .collect();
+        let mut browser = crate::allfiles::Browser::new_working(repo, head, changes, conflicts);
         if let Some(expanded) = expanded {
             browser.expanded = expanded;
         }
@@ -18137,6 +18207,29 @@ impl Root {
                 self.working_file = self.working_files.pop();
                 self.working_files.clear();
             }
+        }
+        // 節分けでは、行の鍵に節が入る。すべて stage した・外したファイルは別の節へ移るので、選んでいた行をその節の
+        // 行に替える（macOS 版はパスで選び直すので、別の節に移っても選んだまま）。
+        if self.working_sections && !self.working_tags.is_empty() {
+            let rows = self.working_rows_files();
+            let mut tags: Vec<String> = Vec::new();
+            for tag in &self.working_tags {
+                let key = if rows.iter().any(|(key, _)| key == tag) {
+                    Some(tag.clone())
+                } else {
+                    let path = tag.split_once(':').map_or(tag.as_str(), |(_, p)| p);
+                    rows.iter()
+                        .find(|(_, p)| p == path)
+                        .map(|(key, _)| key.clone())
+                };
+                if let Some(key) = key
+                    && !tags.contains(&key)
+                {
+                    tags.push(key);
+                }
+            }
+            tags.sort();
+            self.working_tags = tags;
         }
         if let Some(open) = self.working_browser.as_ref().map(|b| b.open.clone()) {
             self.rebuild_working_browser(open);
@@ -24814,12 +24907,23 @@ fn attach_input(element: &IInspectable, target: Target) -> windows_core_reactor:
                             h.sender.send(Message::WorkingHeaderAt(path));
                             return;
                         }
+                        // 隙間の行は、先に開く・畳むのメニュー（幅に関係なくいつも。札を押したときと同じ項目）。
+                        let bar = crate::prefs::line_stage_bar();
                         let items = h
                             .session
                             .data
                             .working
                             .as_ref()
-                            .map(|w| w.stage_menu(row))
+                            .map(|w| {
+                                let mut items = Vec::new();
+                                if w.diff.view.rows.get(row).map(|r| r.kind)
+                                    == Some(amonhen_layout::DiffRow::HUNK)
+                                {
+                                    items = w.gap_menu(row as u32, bar);
+                                }
+                                items.extend(w.stage_menu(row));
+                                items
+                            })
                             .unwrap_or_default();
                         if !items.is_empty() {
                             DIFF_AT.with(|a| *a.borrow_mut() = Some((source.clone(), at)));
@@ -25073,7 +25177,8 @@ fn working_press(
     let text_x = crate::render::text_left(marks, false);
     let kind = working.diff.view.rows[row].kind;
     let change = matches!(kind, DiffRow::ADDED | DiffRow::REMOVED);
-    // 隙間の行: ボタンならその操作、札ならすべて開く（すべて開いていれば畳む）。行のほかの所は何もしない。
+    // 隙間の行: ボタンならその操作、札ならすべて開く（すべて開いていれば畳む。入らない開く・畳むがあれば、
+    // それらすべてのメニュー）。行のほかの所は何もしない。
     if kind == DiffRow::HUNK {
         let gap = working.diff.view.rows[row];
         let Ok(layout) =
@@ -25085,6 +25190,13 @@ fn working_press(
         };
         let action = if let Some(a) = layout.button_at(x, y) {
             a
+        } else if layout.pill_menu && !layout.pill_selected && layout.on_pill(x, y) {
+            let items = working.gap_menu(row as u32, bar);
+            if !items.is_empty() {
+                DIFF_AT.with(|a| *a.borrow_mut() = Some((source.clone(), position)));
+                h.sender.send(Message::DiffRowsAt(items));
+            }
+            return;
         } else if !layout.pill_selected
             && layout.on_pill(x, y)
             && (gap.old_no > 0 || gap.new_no > 0)
