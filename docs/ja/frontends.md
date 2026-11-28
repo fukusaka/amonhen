@@ -220,13 +220,13 @@ GTK4 のアプリは macOS のアプリと同じふるまいをめざす。わ�
 
 | 機能 | macOS | GTK4 | Windows | VSCode | CLI | TUI | Notes |
 | --- | :-: | :-: | :-: | :-: | :-: | :-: | --- |
-| 1 つのチェックボックスの一覧（☑ ▣ ☐、見出し・フォルダーのチェック） | ✓ | ✓ | ✓ | ✓ | n/a | ✓ | VSCode: エンジンがあれば。なければ Staged と Unstaged の節で、Stage・Unstage のボタン。<br>TUI: ファイルごとに `[x]` `[-]` `[ ]`。`+` ですべて stage（フォルダはない）。 |
+| 1 つのチェックボックスの一覧（☑ ▣ ☐、見出し・フォルダーのチェック） | ✓ | ✓ | ✓ | ✓ | n/a | ✓ | VSCode: エンジンがあれば。なければ Staged と Unstaged の節で、節の行とフォルダにもチェック。<br>TUI: ファイルごとに `[x]` `[-]` `[ ]`。`+` ですべて stage（フォルダはない）。 |
 | List / Tree / File Name | ✓ | ✓ | ✓ | ✓ | n/a | ✓ | TUI: 一覧の `v` で順に切り替える。フォルダの行で中をまとめて stage し、Enter で畳む。 |
-| 一覧の Staged と Unstaged の節（1 つの一覧と切り替え） | ✓ | ✓ | ✓ | ✓ | n/a | — | VSCode: エンジンがあれば ⊟ で切り替える。なければいつも節。節の行はチェックの代わりに Stage・Unstage のボタン。 |
+| 一覧の Staged と Unstaged の節（1 つの一覧と切り替え） | ✓ | ✓ | ✓ | ✓ | n/a | — | VSCode: エンジンがあれば ⊟ で切り替える。なければいつも節。 |
 | 変更のあるファイルか、作業ツリーのすべてのファイルか | ✓ | ✓ | ✓ | ✓ | n/a | — | VSCode: エンジンがあるとき。変えたファイルは HEAD → 作業ツリーのファイル全体の差分（行も stage できる）、変えていないファイルは構文の色つきの中身、画像は 1 枚の絵。 |
 | パスで絞り込む | ✓ | ✓ | ✓ | ✓ | n/a | ✓ | TUI: 一覧の `/`。 |
 | 行ごとの +/− の数と、ホバーで Discard | ✓ | ✓ | ✓ | ✓ | △ | ✓ | VSCode: 行数はエンジンがあるときだけ。<br>CLI: `diff --stat`。<br>TUI: 数は各行の右の端に。ホバーの ↶ か `d` で捨てる。 |
-| Space で切り替え、⌫ で捨てる | ✓ | ✓ | ✓ | ✓ | n/a | ✓ | VSCode: 選んだファイルすべてに効く（⌘・Ctrl クリック、Shift クリック、Shift+↑↓ でいくつも選べ、行のボタンと Stash… も選んだものに効く）。<br>TUI: Space と `d`。 |
+| Space で切り替え、⌫ で捨てる | ✓ | ✓ | ✓ | ✓ | n/a | ✓ | VSCode: Space は選んだファイルすべてに効く（⌘・Ctrl クリック、Shift クリック、Shift+↑↓ でいくつも選べ、Stash… も選んだものに効く）。⌫ と行のチェック・↺ はその行だけ。行の右クリックには、その行の Stage か Unstage（チェックと同じ方）・Discard…、選んだ中の行なら選んだものすべての Stash… がある。untracked の Delete… は Delete File… という名前（VSCode のメニューの名前は固定）。<br>TUI: Space と `d`。 |
 | 上のコミットの欄、50/72 の数と本文の目安の線 | ✓ | ✓ | ✓ | ✓ | n/a | ✓ | macOS, GTK4, Windows, VSCode: 右上、差分の上。件名の 1 行に畳める。<br>VSCode: 列が 72 文字より狭いので、目安の線の代わりに、72 を超える本文の行の長さを出す。<br>TUI: 見出しに件名の行の文字数（50 を超えると黄色）。件名の 50 文字・本文の行の 72 文字を超えた分は黄色。 |
 | リポジトリごとの下書き、テンプレートから始める | ✓ | ✓ | ✓ | ✓ | n/a | ✓ | VSCode: `commit.template` だけで、共有のテンプレートは使わない。<br>TUI: 下書きは `<git dir>/amonhen/commit-draft` に置く。テンプレートは `commit.template`（リポジトリ専用のものは SSH 先でも）で、共有のテンプレートは使わない。 |
 | 最近のメッセージ（⌥↑ / ⌥↓・一覧） | ✓ | ✓ | ✓ | ✓ | n/a | ✓ | TUI: メッセージの欄の Alt-↑ / Alt-↓。一覧は Working Copy の `R`。 |
@@ -240,7 +240,7 @@ GTK4 のアプリは macOS のアプリと同じふるまいをめざす。わ�
 | Unstaged・Staged・All（見る側は Working Copy で 1 つ） | ✓ | ✓ | ✓ | ✓ | ✓ | △ | VSCode: エンジンがあれば。なければ Staged と Unstaged の節が、それぞれの側を出す。<br>CLI: `diff`・`diff --staged`・`diff --combined`。<br>TUI: 差分の `s` で側を切り替える。 |
 | 変更のない行を畳み、20 行ずつ・すべて開く | ✓ | ✓ | ✓ | ✓ | n/a | — | VSCode: エンジンがあれば。メニューは VSCode の右クリックのメニュー、Show Whole File は差分の帯のボタン。 |
 | hunk の見出しの Stage Hunk・Discard Hunk（選ぶと Lines）か変更の帯を、設定で選ぶ | ✓ | ✓ | ✓ | ✓ | n/a | — | VSCode: エンジンがあれば。設定は `amonhen.diff.lineStaging`。VSCode のメニューの名前は決まっているので、右クリックの項目は数を言わない（Stage Selected Lines）。エンジンがなければ `@@` の見出しに Stage Hunk・Discard Hunk。 |
-| 選んだいくつかのファイルの差分を並べる | ✓ | ✓ | ✓ | △ | n/a | — | macOS, GTK4, Windows: 一度に開いて並べるファイル（Settings > 差分とマージ）の数まで。<br>VSCode: エンジンがあるとき、`amonhen.diff.filesToOpenTogether` の数まで。見出しの ⋯ と右クリックに Stage（Unstage）・Discard…。選んだ行と J・K は、並べた中の 1 つのファイルの中だけ。 |
+| 選んだいくつかのファイルの差分を並べる | ✓ | ✓ | ✓ | ✓ | n/a | — | macOS, GTK4, Windows: 一度に開いて並べるファイル（Settings > 差分とマージ）の数まで。<br>VSCode: エンジンがあるとき、`amonhen.diff.filesToOpenTogether` の数まで。見出しの ⋯ と右クリックに Stage（Unstage）・Discard…。 |
 | 行の範囲の選択、J/K・⌥J/⌥K | ✓ | ✓ | ✓ | ✓ | n/a | ✓ | TUI: `v` で範囲を始め、`[` `]` で hunk の見出しへ。 |
 | 重ねられないファイルの Unstaged / Staged の切り替え | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | macOS, GTK4, VSCode: いつもあり、All もある（VSCode: エンジンがあれば。なければいつも別々に出す）。<br>CLI: `diff --staged`。<br>TUI: 初めは stage していない側。差分の `s` で替える。 |
 | 差分の表示の選択（unified/split・前後の行・折り返し） | △ | △ | △ | △ | n/a | △ | macOS・GTK4: 長い行の折り返しだけ（「長い行を折り返す」、すべての差分・ファイルの中身・マージエディタで）。左右に並べる表示はない。<br>Windows: 同じ。<br>VSCode: 長い行の折り返しだけ（`amonhen.wrapLongLines`、Alt+Z か差分の上の ↩︎。マージエディタは VSCode のもの）。<br>TUI: 長い行の折り返しだけ（Alt-z かコマンドの一覧の Wrap Long Lines。その回だけ）。左右に並べる表示はない。 |

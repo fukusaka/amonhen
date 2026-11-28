@@ -3214,22 +3214,22 @@
         },
         {
           "command": "amonhen.wcFile.stage",
-          "when": "webviewId == 'amonhen.main' && webviewSection == 'wcFile' && !wcMulti && wcUnstaged",
+          "when": "webviewId == 'amonhen.main' && webviewSection == 'wcFile' && !wcConflict && !wcChecked",
           "group": "0_change@1"
         },
         {
           "command": "amonhen.wcFile.unstage",
-          "when": "webviewId == 'amonhen.main' && webviewSection == 'wcFile' && !wcMulti && wcStaged",
+          "when": "webviewId == 'amonhen.main' && webviewSection == 'wcFile' && !wcConflict && wcChecked",
           "group": "0_change@1"
         },
         {
           "command": "amonhen.wcFile.discard",
-          "when": "webviewId == 'amonhen.main' && webviewSection == 'wcFile' && !wcMulti && wcUnstaged && !wcUntracked",
+          "when": "webviewId == 'amonhen.main' && webviewSection == 'wcFile' && !wcConflict && wcUnstaged && !wcUntracked",
           "group": "0_change@2"
         },
         {
           "command": "amonhen.wcFile.delete",
-          "when": "webviewId == 'amonhen.main' && webviewSection == 'wcFile' && !wcMulti && wcUnstaged && wcUntracked",
+          "when": "webviewId == 'amonhen.main' && webviewSection == 'wcFile' && !wcConflict && wcUnstaged && wcUntracked",
           "group": "0_change@2"
         },
         {
@@ -3239,52 +3239,52 @@
         },
         {
           "command": "amonhen.addToGitignore",
-          "when": "webviewId == 'amonhen.main' && webviewSection == 'wcFile' && !wcMulti && wcUntracked && amonhen.engine",
+          "when": "webviewId == 'amonhen.main' && webviewSection == 'wcFile' && wcUntracked && amonhen.engine",
           "group": "1_file@1"
         },
         {
           "command": "amonhen.addExtensionToGitignore",
-          "when": "webviewId == 'amonhen.main' && webviewSection == 'wcFile' && !wcMulti && wcUntracked && wcExtension && amonhen.engine",
+          "when": "webviewId == 'amonhen.main' && webviewSection == 'wcFile' && wcUntracked && wcExtension && amonhen.engine",
           "group": "1_file@2"
         },
         {
           "command": "amonhen.blame",
-          "when": "webviewId == 'amonhen.main' && webviewSection == 'wcFile' && !wcMulti && !wcUntracked && !wcDeleted && amonhen.engine",
+          "when": "webviewId == 'amonhen.main' && webviewSection == 'wcFile' && !wcUntracked && !wcDeleted && amonhen.engine",
           "group": "1_file@1"
         },
         {
           "command": "amonhen.fileHistory",
-          "when": "webviewId == 'amonhen.main' && webviewSection == 'wcFile' && !wcMulti && !wcUntracked && amonhen.engine",
+          "when": "webviewId == 'amonhen.main' && webviewSection == 'wcFile' && !wcUntracked && amonhen.engine",
           "group": "1_file@2"
         },
         {
           "command": "amonhen.forgetResolution",
-          "when": "webviewId == 'amonhen.main' && webviewSection == 'wcFile' && !wcMulti && wcRerere && amonhen.engine",
+          "when": "webviewId == 'amonhen.main' && webviewSection == 'wcFile' && wcRerere && amonhen.engine",
           "group": "2_conflict@1"
         },
         {
           "command": "amonhen.fileHistory.copyPath",
-          "when": "webviewId == 'amonhen.main' && webviewSection == 'wcFile' && !wcMulti",
+          "when": "webviewId == 'amonhen.main' && webviewSection == 'wcFile'",
           "group": "9_copy@1"
         },
         {
           "command": "amonhen.wcFile.revealInFinder",
-          "when": "webviewId == 'amonhen.main' && webviewSection == 'wcFile' && !wcMulti && !wcDeleted && !remoteName && isMac",
+          "when": "webviewId == 'amonhen.main' && webviewSection == 'wcFile' && !wcDeleted && !remoteName && isMac",
           "group": "9_copy@2"
         },
         {
           "command": "amonhen.wcFile.revealInExplorer",
-          "when": "webviewId == 'amonhen.main' && webviewSection == 'wcFile' && !wcMulti && !wcDeleted && !remoteName && isWindows",
+          "when": "webviewId == 'amonhen.main' && webviewSection == 'wcFile' && !wcDeleted && !remoteName && isWindows",
           "group": "9_copy@2"
         },
         {
           "command": "amonhen.wcFile.openContainingFolder",
-          "when": "webviewId == 'amonhen.main' && webviewSection == 'wcFile' && !wcMulti && !wcDeleted && !remoteName && isLinux",
+          "when": "webviewId == 'amonhen.main' && webviewSection == 'wcFile' && !wcDeleted && !remoteName && isLinux",
           "group": "9_copy@2"
         },
         {
           "command": "amonhen.wcFile.open",
-          "when": "webviewId == 'amonhen.main' && webviewSection == 'wcFile' && !wcMulti && !wcDeleted",
+          "when": "webviewId == 'amonhen.main' && webviewSection == 'wcFile' && !wcDeleted",
           "group": "9_copy@3"
         },
         {

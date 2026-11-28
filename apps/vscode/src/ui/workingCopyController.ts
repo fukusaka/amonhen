@@ -17,6 +17,7 @@ import type { DiffWhitespace, FileView, ImageBlob, TreeEntry } from '../history/
 import type {
   DiffMenuAction,
   FileStat,
+  LinePart,
   LineStaging,
   StackedFile,
   WorkingCopyHostMessage,
@@ -840,6 +841,10 @@ export class WorkingCopyController implements vscode.Disposable {
         }
         break;
       }
+      case 'wcLineParts':
+        if (this.whitespace !== 'exact') break;
+        await this.lineParts(repo, message.op, message.parts).catch((err) => showError(err, message.op === 'discard' ? { op: 'discard' } : {}));
+        break;
       case 'wcDiscardFiles': {
         const changes = message.paths.flatMap((p) => find('unstaged', p) ?? []);
         if (changes.length === 0) break;
@@ -991,24 +996,46 @@ export class WorkingCopyController implements vscode.Disposable {
       return;
     }
     const client = (await daemonFor(repo.root))!;
-    if (fresh.diff.combined) {
-      // HEAD → 作業ツリーの差分: 選んだ行を index に入れる・外す（すべて入れれば git add、すべて外せば git reset と同じ）
-      try {
-        await client.call({ op: 'stageRows', diff: fresh.handle, rows, stage });
-      } finally {
-        await repo.refresh();
+    try {
+      await stageRowsOf(client, change, fresh, rows, stage);
+    } finally {
+      await repo.refresh();
+    }
+  }
+
+  /**
+   * 並べた差分で選んだ行を、ファイルごとにそのファイルの差分で stage・unstage・破棄する（アプリと同じ）。先に
+   * すべてのファイルを読み直し、どれかの版が見せた差分と違えば、どれも当てずに読み直した差分を送る。当てた後に
+   * 1 回だけ読み直す
+   */
+  private async lineParts(repo: Repository, op: 'stage' | 'discard', parts: LinePart[]): Promise<void> {
+    // 並べた差分はエンジンがあるときだけ
+    const client = await daemonFor(repo.root);
+    if (!client) return;
+    const ready: { change: Change; fresh: DaemonDiff; rows: number[]; stage: boolean }[] = [];
+    for (const part of parts) {
+      const change = this.files.find((f) => f.group === (op === 'discard' ? 'unstaged' : part.group) && f.path === part.path);
+      if (!change) continue;
+      const mode = part.combined ? 'combined' : op === 'discard' || change.group !== 'staged' ? 'unstaged' : 'staged';
+      const fresh = await this.daemonDiff(change, mode);
+      if (!fresh) return;
+      if (fresh.diff.version !== part.version) {
+        vscode.window.setStatusBarMessage('The file changed, so the diff was updated. Select the lines again.', 4000);
+        await this.sendDiff();
+        return;
       }
+      const rows = selectedRows(fresh.rows, part.lines);
+      if (rows.length > 0) ready.push({ change, fresh, rows, stage: part.stage ?? true });
+    }
+    if (ready.length === 0) return;
+    if (op === 'discard') {
+      await this.discard(repo, async () => {
+        for (const { fresh, rows } of ready) await client.call({ op: 'discardRows', diff: fresh.handle, rows });
+      });
       return;
     }
-    const op = change.group === 'staged' ? 'unstage' : 'stage';
     try {
-      // すべての行を選んで中身が空になるなら、index のエントリごと戻す（削除の stage、新規ファイルの unstage）
-      const otherSideMissing = op === 'stage' ? change.letter === 'D' : change.letter === 'A';
-      if (otherSideMissing && rows.length === changedRows(fresh.rows).length) {
-        await client.call({ op, paths: [change.path] });
-      } else {
-        await client.call({ op: 'stageRows', diff: fresh.handle, rows });
-      }
+      for (const { change, fresh, rows, stage } of ready) await stageRowsOf(client, change, fresh, rows, stage);
     } finally {
       await repo.refresh();
     }
@@ -1017,6 +1044,32 @@ export class WorkingCopyController implements vscode.Disposable {
   dispose(): void {
     clearTimeout(this.timer);
     vscode.Disposable.from(...this.listeners).dispose();
+  }
+}
+
+/**
+ * エンジンで読んだ差分 fresh の rows 行目を stage する（Staged の差分なら unstage、HEAD → 作業ツリーの差分なら
+ * stage で入れるか外すか）。読み直しは呼ぶ側で
+ */
+async function stageRowsOf(
+  client: NonNullable<Awaited<ReturnType<typeof daemonFor>>>,
+  change: Change,
+  fresh: DaemonDiff,
+  rows: number[],
+  stage: boolean,
+): Promise<void> {
+  if (fresh.diff.combined) {
+    // HEAD → 作業ツリーの差分: 選んだ行を index に入れる・外す（すべて入れれば git add、すべて外せば git reset と同じ）
+    await client.call({ op: 'stageRows', diff: fresh.handle, rows, stage });
+    return;
+  }
+  const op = change.group === 'staged' ? 'unstage' : 'stage';
+  // すべての行を選んで中身が空になるなら、index のエントリごと戻す（削除の stage、新規ファイルの unstage）
+  const otherSideMissing = op === 'stage' ? change.letter === 'D' : change.letter === 'A';
+  if (otherSideMissing && rows.length === changedRows(fresh.rows).length) {
+    await client.call({ op, paths: [change.path] });
+  } else {
+    await client.call({ op: 'stageRows', diff: fresh.handle, rows });
   }
 }
 
