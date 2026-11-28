@@ -319,3 +319,4 @@ macOS アプリに追いつく（1 つの機能を 1 つの pull request で、�
 - [x] 95. 同期とブランチの操作の小さな差: メインビューなしでも Fast-Forward を尋ねる、いくつも消すときは未マージのコミットを添えて 1 度だけ尋ねる、上流のないブランチの Force Push は Publish、今のブランチの Rename Branch…、octopus merge の Change the Order…
 - [x] 96. すべてのファイルで Mermaid・DOT の図・数式・Android の VectorDrawable の絵を描く（エンジンの隣に同梱した絵の手伝い `amonhen-render` で。エンジンは絵の機能を持たない）
 - [x] 97. 絵の下の市松模様と整形した Markdown の検索: 絵の色から選ぶ明るい・暗い市松模様と切り替えのボタン、すべてのファイルの Markdown のプレビューの ⌘F（キーの札・表のマスも）
+- [x] 98. Working Copy をアプリの並べ方に（一部はエンジンがあれば）: 一覧は左の列いっぱい、コミットの欄は右上（差分の上）で件名の行だけに畳め、高さを覚える。⊟ で一覧を Mixed（☑ ▣ ☐ の 1 つの一覧）と Staged・Unstaged の節（それぞれの側の行数）で切り替える。差分の帯で Unstaged・Staged・All を選び（見る側は Working Copy で 1 つ）、選んだ側に変更がない・All で出せないときはそう言う
