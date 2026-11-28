@@ -440,10 +440,10 @@
 "Never" = "しない";
 "Every %ld minutes" = "%ld 分ごと";
 "These settings are kept in this app only (not written to the git config). The display name appears in windows, tabs and the repository list. Automatic fetch runs only while this repository is open." = "このアプリの中だけの設定（git の設定には書かない）。表示名はウィンドウ・タブ・リポジトリの一覧に出る。自動の fetch は、このリポジトリを開いている間だけ。";
-"core.hooksPath (%@) is outside the working tree, so its contents can’t be shown." = "core.hooksPath（%@）は作業ツリーの外なので、中を見られない";
+"core.hooksPath (%@) is outside the working tree, so its contents can’t be shown." = "core.hooksPath（%@）は作業ツリーの外なので、中を見られません";
 "Enabled" = "有効";
 "Installed (filter.lfs is set)" = "入っている（filter.lfs が設定されている）";
-"No LFS patterns in .gitattributes." = ".gitattributes に LFS で扱うパターンはない";
+"No LFS patterns in .gitattributes." = ".gitattributes に LFS で扱うパターンはありません";
 "%ld: %@ — no matching files" = "%ld: %@　— 合うファイルなし";
 "%ld: %@ — %ld files" = "%ld: %@　— %ld 個";
 "%@ (%@)" = "%@（%@）";
@@ -888,7 +888,7 @@
 "Not included in the next commit (click to include)" = "次のコミットに含めない（クリックで含める）";
 
 /* RepositoryWindow.swift */
-"Metal isn’t available." = "Metal を使えない";
+"Metal isn’t available." = "Metal を使えません";
 "Loading History… %@ received" = "History を読み込んでいます… %@ 受信";
 "the repository is on this Mac" = "リポジトリがこの Mac にある";
 "chosen in Settings" = "設定で選択";
@@ -916,8 +916,8 @@
 "Upstream of %@" = "%@ の上流";
 "The remote branch that Pull brings in from and Push sends to." = "pull で取り込み、push で送るリモートのブランチ";
 "Set" = "設定";
-"Can’t read pull requests: %@" = "プルリクエストを読めない: %@";
-"Can’t read the CI status: %@" = "CI の状態を読めない: %@";
+"Can’t read pull requests: %@" = "プルリクエストを読めません: %@";
+"Can’t read the CI status: %@" = "CI の状態を読めません: %@";
 "Pull Request Created" = "プルリクエストを作りました";
 "Automatic fetch" = "自動の fetch";
 "Automatic fetch failed: %@" = "自動の fetch に失敗: %@";
@@ -1082,10 +1082,10 @@
 "Committer email" = "コミッターのメール";
 "Tagger email" = "タガーのメール";
 "Tag %@" = "タグ %@";
-"Listed on the key (%@)" = "鍵に登録されている（%@）";
-"Listed on the key (%@), but that user ID isn’t confirmed" = "鍵に登録されている（%@）。ただし、そのユーザー ID は確認されていない";
-"Not listed on the key (%@)" = "鍵に登録されていない（%@）";
-"Can’t check: the key’s email addresses can’t be read" = "鍵のメールアドレスを読めず、確かめられない";
+"Listed on the key (%@)" = "鍵に登録されています（%@）";
+"Listed on the key (%@), but that user ID isn’t confirmed" = "鍵に登録されています（%@）。ただし、そのユーザー ID は確認されていません";
+"Not listed on the key (%@)" = "鍵に登録されていません（%@）";
+"Can’t check: the key’s email addresses can’t be read" = "鍵のメールアドレスを読めず、確かめられません";
 "%@ (revoked)" = "%@（失効）";
 "%@ (expired)" = "%@（期限切れ）";
 "Other IDs on the key" = "鍵のほかの ID";
@@ -2029,7 +2029,7 @@
 "Ignore whitespace at the end of lines (git diff --ignore-space-at-eol)" = "行末の空白を無視する（git diff --ignore-space-at-eol）";
 "Ignore changes in the amount of whitespace (git diff -b)" = "空白の量の違いを無視する（git diff -b）";
 "Ignore all whitespace when comparing lines (git diff -w)" = "行を比べるときにすべての空白を無視する（git diff -w）";
-"Can’t stage or discard lines while whitespace is ignored" = "空白を無視している間は、行ごとに stage・破棄できない";
+"Can’t stage or discard lines while whitespace is ignored" = "空白を無視している間は、行ごとに stage・破棄できません";
 "Wrap Long Lines" = "長い行を折り返す";
 "Wrap lines wider than the diff instead of scrolling sideways (in every diff)" = "差分の幅に収まらない行を、横にスクロールせずに折り返す（すべての差分で）";
 "Context:" = "前後:";
@@ -2087,8 +2087,8 @@
 "Text" = "テキスト";
 "Show the SVG source" = "SVG のソースを見る";
 "Mobile" = "モバイル";
-"Nothing known to break on Android VectorDrawable, iOS (CoreSVG), flutter_svg or react-native-svg." = "Android VectorDrawable・iOS（CoreSVG）・flutter_svg・react-native-svg で崩れると知られている機能はない。";
-"Nothing known to break" = "崩れると知られている機能はない";
+"Nothing known to break on Android VectorDrawable, iOS (CoreSVG), flutter_svg or react-native-svg." = "Android VectorDrawable・iOS（CoreSVG）・flutter_svg・react-native-svg で崩れると知られている機能はありません。";
+"Nothing known to break" = "崩れると知られている機能はありません";
 "Draw the SVG" = "SVG を描く";
 "Draw the VectorDrawable" = "VectorDrawable を描く";
 "Show the XML source" = "XML のソースを見る";
@@ -2133,8 +2133,8 @@
 "%ld unchanged lines shown" = "変更のない %ld 行（表示中）";
 "%ld lines" = "%ld 行";
 "Every change from HEAD to the working tree (the bar on the left of each line shows whether it’s staged)" = "HEAD から working tree までのすべての変更（行の左の帯で staged かどうかを示す）";
-"No staged changes in this file" = "このファイルに staged の変更はない";
-"No unstaged changes in this file" = "このファイルに unstaged の変更はない";
+"No staged changes in this file" = "このファイルに staged の変更はありません";
+"No unstaged changes in this file" = "このファイルに unstaged の変更はありません";
 "All can’t be shown while whitespace is ignored. See Unstaged and Staged." = "空白を無視している間は All を出せない。Unstaged と Staged で見る";
 "This file’s staged and unstaged changes can’t be shown in one diff. See Unstaged and Staged." = "このファイルの staged と unstaged の変更は 1 本の差分で出せない。Unstaged と Staged で見る";
 "Staged and Unstaged" = "Staged と Unstaged";
@@ -2143,8 +2143,8 @@
 "Files to open together" = "一度に開いて並べるファイル";
 "When a diff lists several files (a commit in History, files selected in Working Copy), this many are shown open from the top." = "複数のファイルを並べた差分（History のコミット、Working Copy で選んだファイル）で、上からこの数だけ開いて並べる";
 "(showing the first %ld)" = "（上から %ld 個を表示）";
-"No staged changes in these files" = "選んだファイルに staged の変更はない";
-"No unstaged changes in these files" = "選んだファイルに unstaged の変更はない";
+"No staged changes in these files" = "選んだファイルに staged の変更はありません";
+"No unstaged changes in these files" = "選んだファイルに unstaged の変更はありません";
 "%ld lines selected" = "%ld 行を選択";
 "%ld Selected Lines" = "選んだ %ld 行";
 "This Line" = "この行";
