@@ -223,7 +223,7 @@ GTK4 のアプリは macOS のアプリと同じふるまいをめざす。わ�
 | 1 つのチェックボックスの一覧（☑ ▣ ☐、見出し・フォルダーのチェック） | ✓ | ✓ | ✓ | ✓ | n/a | ✓ | VSCode: Staged と Changes が別のグループ。<br>TUI: ファイルごとに `[x]` `[-]` `[ ]`。`+` ですべて stage（フォルダはない）。 |
 | List / Tree / File Name | ✓ | ✓ | ✓ | ✓ | n/a | ✓ | TUI: 一覧の `v` で順に切り替える。フォルダの行で中をまとめて stage し、Enter で畳む。 |
 | 一覧の Staged と Unstaged の節（1 つの一覧と切り替え） | ✓ | ✓ | ✓ | ✓ | n/a | — | VSCode: いつも Staged と Changes が別のグループ。 |
-| 変更のあるファイルか、作業ツリーのすべてのファイルか | ✓ | ✓ | △ | — | n/a | — | Windows: Markdown は整形せずテキストで出す。コンフリクトのファイルはマージエディタではなく差分で開く。 |
+| 変更のあるファイルか、作業ツリーのすべてのファイルか | ✓ | ✓ | ✓ | — | n/a | — |  |
 | パスで絞り込む | ✓ | ✓ | ✓ | ✓ | n/a | ✓ | TUI: 一覧の `/`。 |
 | 行ごとの +/− の数と、ホバーで Discard | ✓ | ✓ | ✓ | ✓ | △ | ✓ | VSCode: 行数はエンジンがあるときだけ。<br>CLI: `diff --stat`。<br>Windows: ↶ はマウスを最後に載せた行に残る。<br>TUI: 数は各行の右の端に。ホバーの ↶ か `d` で捨てる。 |
 | Space で切り替え、⌫ で捨てる | ✓ | ✓ | ✓ | ✓ | n/a | ✓ | VSCode: 選んだファイルすべてに効く（⌘・Ctrl クリック、Shift クリック、Shift+↑↓ でいくつも選べ、行のボタンと Stash… も選んだものに効く）。<br>TUI: Space と `d`。 |
@@ -240,7 +240,7 @@ GTK4 のアプリは macOS のアプリと同じふるまいをめざす。わ�
 | Unstaged・Staged・All（見る側は Working Copy で 1 つ） | ✓ | ✓ | ✓ | △ | ✓ | △ | VSCode: Changes と Staged のグループが、それぞれの側を出す。<br>CLI: `diff`・`diff --staged`・`diff --combined`。<br>TUI: 差分の `s` で側を切り替える。 |
 | 変更のない行を畳み、20 行ずつ・すべて開く | ✓ | ✓ | ✓ | — | n/a | — |  |
 | hunk の見出しの Stage Hunk・Discard Hunk（選ぶと Lines）か変更の帯を、設定で選ぶ | ✓ | ✓ | ✓ | — | n/a | — |  |
-| 選んだいくつかのファイルの差分を並べる | ✓ | ✓ | △ | — | n/a | — | macOS, GTK4, Windows: 一度に開いて並べるファイル（Settings > 差分とマージ）の数まで。<br>Windows: ファイルの見出しに ⋯ がない。押すと畳む・開くだけで、ファイルの操作は一覧の右クリックにある。 |
+| 選んだいくつかのファイルの差分を並べる | ✓ | ✓ | ✓ | — | n/a | — | macOS, GTK4, Windows: 一度に開いて並べるファイル（Settings > 差分とマージ）の数まで。 |
 | 行の範囲の選択、J/K・⌥J/⌥K | ✓ | ✓ | ✓ | ✓ | n/a | ✓ | TUI: `v` で範囲を始め、`[` `]` で hunk の見出しへ。 |
 | 重ねられないファイルの Unstaged / Staged の切り替え | ✓ | ✓ | ✓ | n/a | ✓ | ✓ | macOS, GTK4: いつもあり、All もある。<br>VSCode: いつも別々に出す。<br>CLI: `diff --staged`。<br>TUI: 初めは stage していない側。差分の `s` で替える。 |
 | 差分の表示の選択（unified/split・前後の行・折り返し） | △ | △ | △ | △ | n/a | △ | macOS・GTK4: 長い行の折り返しだけ（「長い行を折り返す」、すべての差分・ファイルの中身・マージエディタで）。左右に並べる表示はない。<br>Windows: 同じ。<br>VSCode: 長い行の折り返しだけ（`amonhen.wrapLongLines`、Alt+Z か差分の上の ↩︎。マージエディタは VSCode のもの）。<br>TUI: 長い行の折り返しだけ（Alt-z かコマンドの一覧の Wrap Long Lines。その回だけ）。左右に並べる表示はない。 |
