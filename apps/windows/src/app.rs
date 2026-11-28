@@ -1739,6 +1739,8 @@ enum Message {
     WorkingAllRow(Option<usize>),
     /// 作り直した Working Copy の一覧で、選んでいたファイルの行を選び直す（行ができてから）。
     WorkingReselect,
+    /// マウスが差分の欄から出た。
+    DiffPointerLeft,
     /// 新しいブランチの名前が変わった。
     BranchName(String),
     /// Pull のダイアログで、取り込み方を選んだ。
@@ -5971,6 +5973,16 @@ impl Root {
                     self.schedule_reselect(context);
                 }
             }
+            Message::DiffPointerLeft => {
+                // 画像の比べる欄を引いている間は、離すまでそのまま。
+                if IMAGE_DRAG.with(std::cell::Cell::get).is_none() {
+                    self.with_history(|h| {
+                        if h.working_page {
+                            working_hover(h, None);
+                        }
+                    });
+                }
+            }
             Message::WorkingReselect => {
                 if self.working_browser.is_none()
                     && self.page == Page::WorkingCopy
@@ -9871,15 +9883,25 @@ impl Root {
                     .grid_row(2)
                     .rows([GridLength::Star(1.0), GridLength::Auto])
                     .children((
-                        Grid::new()
-                            .background(Brush::Solid(Color::transparent()))
-                            .element_ref(&self.diff_area)
+                        // 差分の欄から出たら、乗っていた所のボタン・印を消す（macOS 版の `mouseExited`、GTK4 版の
+                        // `connect_leave`。reactor の Grid には出たときの知らせがないので、Border で包む）。
+                        Border::new()
                             .grid_column(1)
-                            .children((SwapChainPanel::new().element_ref(&self.diff_panel),))
-                            .menu(Menu::new(
-                                self.diff_file_menu(),
-                                context.callback(Message::DiffFileMenu),
-                            )),
+                            .on_pointer_exited(
+                                context.callback(|_: PointerEventInfo| Message::DiffPointerLeft),
+                            )
+                            .content(
+                                Grid::new()
+                                    .background(Brush::Solid(Color::transparent()))
+                                    .element_ref(&self.diff_area)
+                                    .children(
+                                        (SwapChainPanel::new().element_ref(&self.diff_panel),),
+                                    )
+                                    .menu(Menu::new(
+                                        self.diff_file_menu(),
+                                        context.callback(Message::DiffFileMenu),
+                                    )),
+                            ),
                         self.files_list(context),
                         self.svg_notes(),
                         self.working_note_view(),
