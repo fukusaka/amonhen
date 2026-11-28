@@ -1971,13 +1971,16 @@ impl Inner {
         let wanted = this.selected.borrow().clone();
         let row_of = |i: usize| this.row_entries.borrow().iter().position(|&r| r == Some(i));
         // 差分に出していたファイルがなくなれば、ほかに選んでいて一覧に残ったファイル。節分けでは、今見ている
-        // 側の節の行を選ぶ（なければもう一方の節）。
+        // 側の節の行を選ぶ（なければもう一方の節）。All なら前に選んでいた行の節。
         let side = this.side.get();
         let found = wanted
             .as_ref()
             .and_then(|p| {
+                let preferred = reselect_section(side, p, &kept);
                 (0..entries.len())
-                    .find(|&i| entries[i].path == *p && sections[i] == Some(side))
+                    .find(|&i| {
+                        entries[i].path == *p && preferred.is_some() && sections[i] == preferred
+                    })
                     .or_else(|| entries.iter().position(|e| e.path == *p))
             })
             .or_else(|| {
@@ -2006,10 +2009,12 @@ impl Inner {
                     .scroll_to(row as u32, gtk::ListScrollFlags::FOCUS, None);
             }
             this.rebuilding.set(false);
-            // 選び直しでは選択の変化を扱わないので、差分は自分で読み直す。
-            if let Some(Some(s)) = this.entry_sections.borrow().get(index).copied() {
-                this.side.set(s);
-            }
+            // 選び直しでは選択の変化を扱わないので、差分は自分で読み直す。利用者が行を押したのではないので、
+            // 見る側が All なら All のまま。Unstaged・Staged なら、選んでいた行がもう一方の節へ移ったとき
+            // （すべて stage した・外した）だけ、その節の側に替える。
+            let reselected = this.entry_sections.borrow().get(index).copied().flatten();
+            this.side
+                .set(side_after_reload(this.side.get(), reselected));
             this.sync_side_buttons();
             let entry = this.entries.borrow()[index].clone();
             let same = this.selected.borrow().as_deref() == Some(entry.path.as_str());
@@ -5091,6 +5096,29 @@ fn rows_to_reselect(kept: &[RowKey], rows: &[Row]) -> Vec<usize> {
         .collect()
 }
 
+/// 読み直した後に選び直す、パス `path` の行の節の好み: 見る側 `side` の節。All なら前に選んでいた行 `kept` の
+/// うち同じパスの節（読み直しで選んだ行を別の節へ動かさない）。macOS 版の `WorkingCopyReselect.preferredSection`。
+fn reselect_section(side: Side, path: &str, kept: &[RowKey]) -> Option<Side> {
+    if side != Side::All {
+        return Some(side);
+    }
+    kept.iter().find_map(|k| match k {
+        RowKey::File(p, section) if p == path => *section,
+        _ => None,
+    })
+}
+
+/// 読み直した後の見る側。読み直しは利用者が行を押したのではないので、All なら替えない。Unstaged・Staged なら、
+/// 選び直した行の節 `reselected`（前の行が同じ節に残っていれば同じ側、なくなってもう一方の節へ移っていればその
+/// 側。節分けでなければ None で替えない）。macOS 版の `WorkingCopyReselect.side`。
+fn side_after_reload(side: Side, reselected: Option<Side>) -> Side {
+    if side == Side::All {
+        side
+    } else {
+        reselected.unwrap_or(side)
+    }
+}
+
 /// 前に選んでいた行 `kept` に、パスが `path` のファイルの行があったか（どの節の行でも）。
 fn kept_file(kept: &[RowKey], path: &str) -> bool {
     kept.iter()
@@ -5539,6 +5567,43 @@ mod tests {
             .map(|i| rows[i].key())
             .collect();
         assert_eq!(picked, kept);
+    }
+
+    /// 読み直しでは、見る側が All なら選び直した行がどちらの節でも All のまま。Unstaged・Staged なら、選んで
+    /// いた行がもう一方の節へ移ったとき（すべて stage した・外した）だけその側に替える。
+    #[test]
+    fn reload_keeps_all_and_follows_a_moved_file() {
+        for reselected in [Some(Side::Staged), Some(Side::Unstaged), None] {
+            assert_eq!(side_after_reload(Side::All, reselected), Side::All);
+        }
+        assert_eq!(
+            side_after_reload(Side::Unstaged, Some(Side::Staged)),
+            Side::Staged
+        );
+        assert_eq!(
+            side_after_reload(Side::Staged, Some(Side::Unstaged)),
+            Side::Unstaged
+        );
+        assert_eq!(
+            side_after_reload(Side::Unstaged, Some(Side::Unstaged)),
+            Side::Unstaged
+        );
+        assert_eq!(side_after_reload(Side::Staged, None), Side::Staged);
+    }
+
+    /// All で選び直す行は、前に選んでいた行の節（一部を stage して両方の節にあっても動かさない）。
+    #[test]
+    fn reselect_section_under_all_is_the_selected_row() {
+        let kept = vec![RowKey::File("a".into(), Some(Side::Unstaged))];
+        assert_eq!(
+            reselect_section(Side::All, "a", &kept),
+            Some(Side::Unstaged)
+        );
+        assert_eq!(reselect_section(Side::All, "b", &kept), None);
+        assert_eq!(
+            reselect_section(Side::Staged, "a", &kept),
+            Some(Side::Staged)
+        );
     }
 
     /// ディレクトリの中かは、名前の区切りで見る（`src` に `srcx/a` は入らない）。
