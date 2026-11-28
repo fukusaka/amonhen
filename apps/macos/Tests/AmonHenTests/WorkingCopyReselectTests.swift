@@ -1,0 +1,58 @@
+import Testing
+
+@testable import AmonHen
+
+/// Working Copy の一覧を読み直した後に選び直す行（GTK4 版の `rows_to_reselect` と同じ場合）。
+@MainActor
+struct WorkingCopyReselectTests {
+    private let staged = 1
+    private let unstaged = 0
+
+    private func key(_ path: String, _ section: Int?) -> WorkingCopyReselect.Key {
+        WorkingCopyReselect.Key(path: path, section: section)
+    }
+
+    @Test func keepsTheSameRows() {
+        let rows = [key("a", staged), key("a", unstaged), key("b", unstaged)]
+        #expect(WorkingCopyReselect.rows(kept: [key("a", unstaged), key("b", unstaged)], in: rows) == [1, 2])
+    }
+
+    @Test func followsAFileThatMovedToTheOtherSection() {
+        // a をすべて stage した: Unstaged の a はなくなり、Staged の a を選ぶ。
+        let rows = [key("a", staged), key("b", unstaged)]
+        #expect(WorkingCopyReselect.rows(kept: [key("a", unstaged), key("b", unstaged)], in: rows) == [0, 1])
+    }
+
+    @Test func doesNotAddTheOtherSectionOfAPartlyStagedFile() {
+        // a は一部だけ stage してある（両方の節にある）。b の hunk を stage しても、Staged の a は選ばない。
+        let rows = [key("a", staged), key("b", staged), key("a", unstaged), key("b", unstaged)]
+        #expect(WorkingCopyReselect.rows(kept: [key("a", unstaged), key("b", unstaged)], in: rows) == [2, 3])
+    }
+
+    @Test func dropsAFileThatIsGone() {
+        let rows = [key("b", unstaged)]
+        #expect(WorkingCopyReselect.rows(kept: [key("a", unstaged), key("b", unstaged)], in: rows) == [0])
+    }
+
+    @Test func withoutSectionsMatchesByPath() {
+        let rows = [key("a", nil), key("b", nil), key("c", nil)]
+        #expect(WorkingCopyReselect.rows(kept: [key("a", nil), key("c", nil)], in: rows) == [0, 2])
+    }
+
+    @Test func firstPrefersTheViewedSection() {
+        let rows = [key("a", staged), key("a", unstaged), key("b", unstaged)]
+        #expect(WorkingCopyReselect.first(in: rows, side: unstaged) == 1)
+        #expect(WorkingCopyReselect.first(in: rows, side: staged) == 0)
+    }
+
+    @Test func firstFallsBackToTheFirstRow() {
+        #expect(WorkingCopyReselect.first(in: [key("a", staged)], side: unstaged) == 0)
+        #expect(WorkingCopyReselect.first(in: [key("a", nil), key("b", nil)], side: unstaged) == 0)
+        #expect(WorkingCopyReselect.first(in: [], side: unstaged) == nil)
+    }
+
+    @Test func firstKeepsConflictsFirst() {
+        let rows = [key("c", nil), key("a", staged), key("b", unstaged)]
+        #expect(WorkingCopyReselect.first(in: rows, side: unstaged) == 0)
+    }
+}
