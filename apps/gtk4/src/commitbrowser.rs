@@ -26,6 +26,8 @@ struct Node {
     /// 読んだ子（フォルダで、まだ読んでいなければ None）。
     children: RefCell<Option<Vec<Rc<Node>>>>,
     kind: Option<ChangeKind>,
+    /// コンフリクトのファイル（Working Copy の「すべてのファイル」だけ）。印は変更の一覧と同じ。
+    conflict: bool,
     contains_changes: bool,
 }
 
@@ -39,6 +41,8 @@ struct Tree {
     changed_folders: HashSet<String>,
     /// このコミットで消したファイル（親のフォルダ → パス。木にはないので足して赤で出す）。
     deleted_files: HashMap<String, Vec<String>>,
+    /// コンフリクトのファイル（Working Copy の「すべてのファイル」だけ）。
+    conflicts: HashSet<String>,
 }
 
 fn parent_of(path: &str) -> &str {
@@ -52,10 +56,12 @@ fn name_of(path: &str) -> &str {
 impl Tree {
     /// `working` なら Working Copy の「すべてのファイル」: `commit` は HEAD、`changes` は作業ツリーの変更で、HEAD の
     /// 木にない足したファイル（untracked を含む）を足す（消したファイルは木にあるので、印を付けるだけ）。
+    /// `conflicts` はコンフリクトのファイルで、変更の一覧と同じ印を付ける。
     fn new(
         repo: Arc<Repository>,
         commit: Oid,
         changes: Option<Arc<Vec<FileChange>>>,
+        conflicts: HashSet<String>,
         working: bool,
     ) -> Self {
         let mut tree = Self {
@@ -65,6 +71,7 @@ impl Tree {
             changed_files: HashMap::new(),
             changed_folders: HashSet::new(),
             deleted_files: HashMap::new(),
+            conflicts,
         };
         for (i, change) in changes.iter().flat_map(|c| c.iter()).enumerate() {
             tree.changed_files.insert(change.path.clone(), i);
@@ -124,6 +131,7 @@ impl Tree {
                 let kind = self.change(&path).map(|(_, c)| c.kind);
                 let contains_changes =
                     kind.is_some() || (is_dir && self.changed_folders.contains(&path));
+                let conflict = !is_dir && self.conflicts.contains(&path);
                 Rc::new(Node {
                     name,
                     path,
@@ -131,6 +139,7 @@ impl Tree {
                     oid: e["oid"].as_str().and_then(Oid::from_hex),
                     children: RefCell::new(None),
                     kind,
+                    conflict,
                     contains_changes,
                 })
             })
@@ -146,6 +155,7 @@ impl Tree {
                     self.change(path)
                         .map_or(ChangeKind::Deleted, |(_, c)| c.kind),
                 ),
+                conflict: self.conflicts.contains(path),
                 contains_changes: true,
             }));
         }
@@ -163,6 +173,7 @@ impl Tree {
                     oid: None,
                     children: RefCell::new(None),
                     kind: None,
+                    conflict: false,
                     contains_changes: true,
                 }));
             }
@@ -420,20 +431,30 @@ impl Browser {
         flat: bool,
         pending: Rc<Cell<u32>>,
     ) -> Rc<Self> {
-        Self::build(repo, commit, changes, flat, pending, false)
+        Self::build(repo, commit, changes, HashSet::new(), flat, pending, false)
     }
 
     /// Working Copy の「すべてのファイル」の木（HEAD の木に作業ツリーの変更を重ねる。足したファイルも出す）。
-    /// ファイルを開くと、中身の欄を出さずに `open` を呼ぶ。
+    /// ファイルを開くと、中身の欄を出さずに `open` を呼ぶ。コンフリクトのファイル `conflicts` には、変更の一覧と
+    /// 同じ印を付ける（macOS 版の `WorkingTreeFiles.reload` は一覧の印の関数を使う）。
     pub fn new_working(
         repo: Arc<Repository>,
         head: Oid,
         changes: Vec<FileChange>,
+        conflicts: HashSet<String>,
         flat: bool,
         pending: Rc<Cell<u32>>,
         open: impl Fn(&str) + 'static,
     ) -> Rc<Self> {
-        let this = Self::build(repo, head, Some(Arc::new(changes)), flat, pending, true);
+        let this = Self::build(
+            repo,
+            head,
+            Some(Arc::new(changes)),
+            conflicts,
+            flat,
+            pending,
+            true,
+        );
         this.on_open_file.replace(Some(Rc::new(open)));
         this
     }
@@ -442,11 +463,12 @@ impl Browser {
         repo: Arc<Repository>,
         commit: Oid,
         changes: Option<Arc<Vec<FileChange>>>,
+        conflicts: HashSet<String>,
         flat: bool,
         pending: Rc<Cell<u32>>,
         working: bool,
     ) -> Rc<Self> {
-        let tree = Rc::new(Tree::new(repo, commit, changes, working));
+        let tree = Rc::new(Tree::new(repo, commit, changes, conflicts, working));
         let top = Rc::new(Node {
             name: String::new(),
             path: String::new(),
@@ -454,6 +476,7 @@ impl Browser {
             oid: None,
             children: RefCell::new(None),
             kind: None,
+            conflict: false,
             contains_changes: true,
         });
         tree.load(&top);
@@ -1497,7 +1520,7 @@ impl Browser {
 }
 
 /// 木・リストの行の文字: リストならフォルダを薄く添え、名前（変更を含まないものは薄く、消したものは赤の取り消し線）、
-/// 変更ファイルは種類の印、変更を含むフォルダは橙の点。
+/// 変更ファイルは種類の印（コンフリクトのファイルは変更の一覧と同じ ⚠）、変更を含むフォルダは橙の点。
 fn row_markup(node: &Node, flat: bool) -> String {
     let mut out = String::new();
     let folder = parent_of(&node.path);
@@ -1515,7 +1538,17 @@ fn row_markup(node: &Node, flat: bool) -> String {
     } else {
         out += &format!("<span alpha=\"60%\">{name}</span>");
     }
-    if let Some(kind) = node.kind {
+    if node.conflict {
+        // コンフリクトのファイルは、変更の一覧と同じ ⚠（一覧の印は `workcopy::state_letter`）。色も一覧と同じ
+        // libadwaita の @error_color（マークアップでは CSS の色を使えないので、明暗の値を選ぶ）。小さくすると
+        // 字が潰れるので、大きさは一覧と同じ。
+        let color = if adw::StyleManager::default().is_dark() {
+            "#ff7b63"
+        } else {
+            "#c01c28"
+        };
+        out += &format!("  <span foreground=\"{color}\" font_family=\"monospace\">⚠</span>");
+    } else if let Some(kind) = node.kind {
         let mark = crate::commitfiles::kind_mark(kind);
         out += &format!(
             "  <span foreground=\"{}\" font_family=\"monospace\" weight=\"bold\" size=\"small\">{mark}</span>",
