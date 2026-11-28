@@ -176,9 +176,13 @@ pub struct Folds<'a> {
 pub struct GapInfo {
     /// 中央の札（0 行の見出しの行では空）と、それが選んだ行の数か。
     pub pill: String,
+    /// 狭くて札が入らないときの短い札（隠した行の数だけ。なければ空）。
+    pub pill_short: String,
     pub selected: bool,
-    /// 札の右の開く・畳む（マウスが乗っているときだけ）と、右端の hunk の操作。
+    /// その隙間で出せる開く・畳む（札の右に並べるのはマウスが乗っているときだけ。入らないものがあるかは乗る前から
+    /// 決める）と、右端の hunk の操作。
     pub gap_actions: Vec<(GapAction, String)>,
+    pub hovered: bool,
     pub hunk_actions: Vec<(GapAction, String)>,
     /// 左の関数名（なければ空）。
     pub function: String,
@@ -920,6 +924,16 @@ impl WorkingShown {
         out
     }
 
+    /// 隙間の行 `index` の開く・畳むのメニュー（札を押したとき・右クリック。項目はその隙間で出せる開く・畳む
+    /// すべて。行を選んでいればない）。`stage_menu` と同じ形（題・行・操作）で、行は隙間の行。
+    pub fn gap_menu(&self, index: u32, bar: bool) -> Vec<(String, Vec<usize>, GapAction)> {
+        self.gap_info(index, bar)
+            .gap_actions
+            .into_iter()
+            .map(|(action, title)| (title, vec![index as usize], action))
+            .collect()
+    }
+
     /// 隙間の行 `index` に出すもの（左に関数名、中央に札、マウスが乗っていれば札の右に開く・畳む、右端に
     /// その下の hunk の操作）。hunk の行を選んでいれば、札は選んだ行の数になり、操作は選んだ行に効く。
     pub fn gap_info(&self, index: u32, bar: bool) -> GapInfo {
@@ -937,8 +951,14 @@ impl WorkingShown {
         } else {
             String::new()
         };
+        let pill_short = if !selected && hidden > 0 {
+            format!("⋯  {hidden}")
+        } else {
+            String::new()
+        };
+        let hovered = self.pointer.hovered_gap.is_some_and(|(r, _)| r == index);
         let mut gap_actions = Vec::new();
-        if self.pointer.hovered_gap.is_some_and(|(r, _)| r == index) && !selected {
+        if !selected {
             if hidden > GAP_STEP {
                 let step = tr!("{n} lines", n = GAP_STEP);
                 if !leading {
@@ -958,8 +978,10 @@ impl WorkingShown {
         let hunk_actions = self.stage_actions(&target, selected);
         GapInfo {
             pill,
+            pill_short,
             selected,
             gap_actions,
+            hovered,
             hunk_actions,
             function,
             target,

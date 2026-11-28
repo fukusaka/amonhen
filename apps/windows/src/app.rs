@@ -13795,13 +13795,16 @@ impl Root {
             return items;
         }
         // Working Copy の差分: 選んだ行・その hunk・その行の Stage（Unstage）と Discard（GTK4 版の `stage_menu`）。
+        // 隙間の行では、先に開く・畳む（区切りを挟んで hunk の操作）。
         if !self.diff_rows.is_empty() {
-            return self
-                .diff_rows
-                .iter()
-                .enumerate()
-                .map(|(i, (title, _, _))| MenuItem::item(format!("stage-menu:{i}"), title.clone()))
-                .collect();
+            let mut items = Vec::new();
+            for (i, (title, _, action)) in self.diff_rows.iter().enumerate() {
+                if i > 0 && action.is_hunk() && !self.diff_rows[i - 1].2.is_hunk() {
+                    items.push(MenuItem::separator("-gap"));
+                }
+                items.push(MenuItem::item(format!("stage-menu:{i}"), title.clone()));
+            }
+            return items;
         }
         let Some(file) = &self.diff_file else {
             return Vec::new();
@@ -13937,7 +13940,12 @@ impl Root {
             else {
                 return beep();
             };
-            if action == crate::data::GapAction::Discard {
+            if !action.is_hunk() {
+                // 隙間の行の開く・畳む（行は隙間の行）。
+                if let Some(&index) = rows.first() {
+                    self.with_history(|h| working_gap_action(h, index as u32, action, Vec::new()));
+                }
+            } else if action == crate::data::GapAction::Discard {
                 self.discard_working_rows(rows, context);
             } else {
                 let mut done = false;
@@ -24899,12 +24907,23 @@ fn attach_input(element: &IInspectable, target: Target) -> windows_core_reactor:
                             h.sender.send(Message::WorkingHeaderAt(path));
                             return;
                         }
+                        // 隙間の行は、先に開く・畳むのメニュー（幅に関係なくいつも。札を押したときと同じ項目）。
+                        let bar = crate::prefs::line_stage_bar();
                         let items = h
                             .session
                             .data
                             .working
                             .as_ref()
-                            .map(|w| w.stage_menu(row))
+                            .map(|w| {
+                                let mut items = Vec::new();
+                                if w.diff.view.rows.get(row).map(|r| r.kind)
+                                    == Some(amonhen_layout::DiffRow::HUNK)
+                                {
+                                    items = w.gap_menu(row as u32, bar);
+                                }
+                                items.extend(w.stage_menu(row));
+                                items
+                            })
                             .unwrap_or_default();
                         if !items.is_empty() {
                             DIFF_AT.with(|a| *a.borrow_mut() = Some((source.clone(), at)));
@@ -25158,7 +25177,8 @@ fn working_press(
     let text_x = crate::render::text_left(marks, false);
     let kind = working.diff.view.rows[row].kind;
     let change = matches!(kind, DiffRow::ADDED | DiffRow::REMOVED);
-    // 隙間の行: ボタンならその操作、札ならすべて開く（すべて開いていれば畳む）。行のほかの所は何もしない。
+    // 隙間の行: ボタンならその操作、札ならすべて開く（すべて開いていれば畳む。入らない開く・畳むがあれば、
+    // それらすべてのメニュー）。行のほかの所は何もしない。
     if kind == DiffRow::HUNK {
         let gap = working.diff.view.rows[row];
         let Ok(layout) =
@@ -25170,6 +25190,13 @@ fn working_press(
         };
         let action = if let Some(a) = layout.button_at(x, y) {
             a
+        } else if layout.pill_menu && !layout.pill_selected && layout.on_pill(x, y) {
+            let items = working.gap_menu(row as u32, bar);
+            if !items.is_empty() {
+                DIFF_AT.with(|a| *a.borrow_mut() = Some((source.clone(), position)));
+                h.sender.send(Message::DiffRowsAt(items));
+            }
+            return;
         } else if !layout.pill_selected
             && layout.on_pill(x, y)
             && (gap.old_no > 0 || gap.new_no > 0)
