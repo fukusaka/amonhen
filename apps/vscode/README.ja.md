@@ -80,7 +80,7 @@ VSCode 上で快適に Git を操作するための自分用の拡張。Marketpl
 - エンジンがあるとき、変えた画像は History と同じく比べる（2-Up・Swipe・Onion Skin・Difference・拡大縮小）。見ている側で、Unstaged は index と作業ツリー、Staged は HEAD と index、All は HEAD と作業ツリーを比べる。SVG は Show as Text でテキストの差分にできる。
 - エンジンがなければ、差分の行をクリックで選び（Shift+クリックで範囲）、Stage N Lines で選んだ行だけを stage する。Staged の側では同じ操作で unstage になる。
 - 一覧の上で、パスでファイルを絞り込み、List（パス）・Tree（フォルダ）・File Name（ファイル名を先に、フォルダは薄く）で見せ方を切り替える。最初は List。
-- hunk ごとの Stage Hunk、Stage File、一覧のチェック、Stage All でもできる。チェックは、いくつも選んでいても押した行（フォルダならその中身）だけに効く。一覧では上下キーで選び、Space か Enter で選んだファイルすべてを stage / unstage する。⌫ は差分に出しているファイルの変更を捨てる。
+- hunk ごとの Stage Hunk、Stage File、一覧のチェック、Stage All でもできる。チェックは、いくつも選んでいても押した行（フォルダならその中身）だけに効く。一覧では上下キーで選び、Space か Enter で選んだファイルすべてを stage / unstage する。⌫ は差分に出しているファイルの変更を捨てる。行の右クリックには、その行の Stage か Unstage（チェックと同じ方）・Discard… があり、選んだ中の行なら Stash… は選んだものすべてに効く。
 - stage していない変更は、一覧の ↺、Discard File、Discard Hunk、Discard N Lines で変更を破棄できる。untracked のファイルは消す（Delete File…）。ファイルごとのときは確かめてから、選んだ行・hunk はすぐに破棄する。破棄した内容は Undo で戻せる。
 - コミット欄は Summary と Description（複数行）。どちらかだけでもコミットできる。Amend にすると直前のコミットのメッセージが入る。`⌘Enter` / `Ctrl+Enter` でもコミットできる。Recent… で最近のコミットのメッセージを（Summary では ⌥↑ / ⌥↓）、Insert… で Conventional Commits の種類・Co-authored-by・Signed-off-by を入れる。Commit の隣の ▾ に Commit and Push（`⌘⇧Enter`）、Fixup Commit For…、Squash Commit For… がある。
 - コンフリクトしたファイルでは、Open in Merge Editor（標準の 3-way マージエディタ）、Take Current File、Take Incoming File、Mark as Resolved を選べる。片側で削除されたファイルも片側のファイルを取って解決できる。解決済みにするとき、エディタ（マージエディタの Result も）に保存していない変更があれば先に保存し、マーカーが残っていれば確認する。マーカーの残っていないファイル（git の rerere が前の解決を当てた、ほかのエディタで直した）は ✓ と「マーカーなし」か「rerere」を出して Mark as Resolved を先に勧め、Conflicts の見出しからまとめて解決済みにできる。そうしたファイルで片側を取るときと、エディタに保存していない変更があるときは、置き換える前に確認する。
