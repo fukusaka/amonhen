@@ -53,7 +53,7 @@
 "{name} not found" = "{name} が見つかりません";
 "The stash has no commit" = "stash のコミットがない";
 "Some commits are outside the editable range (not reachable from HEAD, or before a merge)" = "編集できる範囲の外のコミットがあります（HEAD から辿れないか、merge より前）";
-"File not found" = "ファイルがない";
+"File not found" = "ファイルが見つかりません";
 "That conflict no longer exists" = "そのコンフリクトはもうない";
 "{rev} isn’t in the History (reload it)" = "{rev} が History にない（読み直してください）";
 "Can’t cancel (it already finished, or it can’t be cancelled)" = "取り消せません（もう終わったか、取り消せない操作です）";
