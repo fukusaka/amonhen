@@ -31,6 +31,13 @@ export interface DiffOptions {
    * （行ごとに持たせると長い差分で重い）
    */
   lineContext?: (line: DiffLine) => Record<string, unknown>;
+  /**
+   * たたんだ差分（diff.folded）の隙間の行を作る（hunk の見出しの代わり）。hunk は diff.hunks の位置。たたんだ差分は
+   * hunk ごとの枠にせず、1 つの枠に隙間の行と行を並べる
+   */
+  gapRow?: (hunk: DiffHunk, index: number) => HTMLElement;
+  /** 行の左に帯の欄を置き、変更の行の帯の class（staged・unstaged・mark）を返す（Working Copy の All と「変更の帯」の形） */
+  bar?: (line: DiffLine) => string;
 }
 
 /** hunk の変更の行がどれだけ入っているか: all・some・none */
@@ -108,7 +115,18 @@ export function renderDiffBody(diff: FileDiff, opts: DiffOptions = {}): HTMLElem
   if (diff.tooLarge) return [el('div', 'empty', 'The file is too large to show its diff')];
   if (diff.hunks.length === 0) return [el('div', 'empty', 'No changes')];
   const later: Later = { budget: FIRST_LINES, queue: [] };
-  const parts = diff.hunks.map((hunk) => renderHunk(hunk, opts, later));
+  if (diff.folded && opts.gapRow) {
+    // たたんだ差分: 1 つの枠に、隙間の行とその下の行を並べる（アプリと同じく、ファイルを上から下へ読める）
+    const box = el('div', 'hunk folded');
+    if (opts.bar) box.classList.add('with-bar');
+    diff.hunks.forEach((hunk, i) => {
+      if (hunk.gap) box.append(opts.gapRow!(hunk, i));
+      box.append(renderLines(hunk, i, opts, later));
+    });
+    if (later.queue.length > 0) fillLater(later.queue);
+    return [box];
+  }
+  const parts = diff.hunks.map((hunk, i) => renderHunk(hunk, i, opts, later));
   if (later.queue.length > 0) fillLater(later.queue);
   return parts;
 }
@@ -147,7 +165,7 @@ function fillLater(queue: Later['queue']): void {
   setTimeout(step, 0);
 }
 
-function renderHunk(hunk: DiffHunk, opts: DiffOptions, later: Later): HTMLElement {
+function renderHunk(hunk: DiffHunk, index: number, opts: DiffOptions, later: Later): HTMLElement {
   const box = el('div', 'hunk');
   const head = el('div', 'hunk-head');
   const check = opts.check;
@@ -184,9 +202,15 @@ function renderHunk(hunk: DiffHunk, opts: DiffOptions, later: Later): HTMLElemen
     }
     head.append(actions);
   }
-  box.append(head);
+  box.append(head, renderLines(hunk, index, opts, later));
+  return box;
+}
 
+/** hunk の行の並び。index は diff.hunks の位置（行の data-hunk） */
+function renderLines(hunk: DiffHunk, index: number, opts: DiffOptions, later: Later): HTMLElement {
+  const check = opts.check;
   const table = el('div', 'lines');
+  table.dataset.hunk = String(index);
   const words = wordHighlighter(hunk.lines);
   const renderLine = (line: DiffLine, i: number): HTMLElement => {
     const row = el('div', `line ${line.kind === '+' ? 'add' : line.kind === '-' ? 'del' : 'ctx'}`);
@@ -196,6 +220,7 @@ function renderHunk(hunk: DiffHunk, opts: DiffOptions, later: Later): HTMLElemen
       row.classList.add('pickable');
       if (opts.picked.has(k)) row.classList.add('picked');
     }
+    if (opts.bar) row.append(el('span', line.kind === ' ' ? 'bar' : `bar ${opts.bar(line)}`));
     if (check) {
       // 変更の行のチェック（次のコミットに入れるか）。押すとその行だけ入れる・外す
       if (line.kind === ' ') {
@@ -248,8 +273,7 @@ function renderHunk(hunk: DiffHunk, opts: DiffOptions, later: Later): HTMLElemen
       if (line) row.dataset.vscodeContext = JSON.stringify(lineContext(line));
     });
   }
-  box.append(table);
-  return box;
+  return table;
 }
 
 /** 長い行を折り返しているか（設定。ボタンの見た目に使う） */

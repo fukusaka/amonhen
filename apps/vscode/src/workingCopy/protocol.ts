@@ -5,6 +5,29 @@ import type { MessageParts } from './commitMessage.ts';
 import type { FileLayout } from './fileList.ts';
 import type { DiffWhitespace } from '../history/protocol.ts';
 import type { DiffSide, SideNote } from './sides.ts';
+import type { GapOpen } from './gaps.ts';
+
+/**
+ * 行の Stage の形（設定 `amonhen.diff.lineStaging`。アプリと同じ）: 行を選んでから隙間の行の操作で（select）、
+ * 変更の帯・行番号を押して（bar）
+ */
+export type LineStaging = 'select' | 'bar';
+
+/** 差分の右クリック（package.json の webview/context、wcDiff）の項目。拡張が Webview に頼み返す */
+export type DiffMenuAction =
+  | 'gapDown'
+  | 'gapUp'
+  | 'gapAll'
+  | 'gapCollapse'
+  | 'stageSelected'
+  | 'unstageSelected'
+  | 'discardSelected'
+  | 'stageHunk'
+  | 'unstageHunk'
+  | 'discardHunk'
+  | 'stageLine'
+  | 'unstageLine'
+  | 'discardLine';
 
 export interface FileStat {
   path: string;
@@ -24,15 +47,27 @@ export interface WorkingCopyLook {
 
 export type WorkingCopyHostMessage =
   /** engine: エンジン（共有の daemon）で読んでいる（見る側の帯・Mixed の一覧・空白の無視はエンジンがあるときだけ） */
-  | ({ type: 'wcFiles'; files: Change[]; branch?: string; lastMessage?: string; layout: FileLayout; engine: boolean } & WorkingCopyLook)
+  | ({
+      type: 'wcFiles';
+      files: Change[];
+      branch?: string;
+      lastMessage?: string;
+      layout: FileLayout;
+      engine: boolean;
+      lineStaging: LineStaging;
+    } & WorkingCopyLook)
+  /** 行の Stage の形を設定で変えた */
+  | { type: 'wcLineStaging'; lineStaging: LineStaging }
+  /** 差分の右クリックの項目を選んだ（gap は隙間の番号、hunk は差分の hunk の位置、line は行の lineKey） */
+  | { type: 'wcDiffAction'; action: DiffMenuAction; gap?: number; hunk?: number; line?: string }
   /**
    * 選んでいるファイルの差分。group は差分の側のグループ（All なら今そのファイルがあるグループ）。whitespace は
    * エンジンで読んだときの、無視している空白（あれば帯で選べる。エンジンがなければ選べない）。side はエンジンで
-   * 読んだときの見る側
+   * 読んだときの見る側。open は、たたんだ差分（diff.folded）の隙間の開き方
    */
-  | { type: 'wcDiff'; group: ChangeGroup; diff: FileDiff; whitespace?: DiffWhitespace; side?: DiffSide }
+  | { type: 'wcDiff'; group: ChangeGroup; diff: FileDiff; whitespace?: DiffWhitespace; side?: DiffSide; open?: GapOpen[] }
   /** 差分を出さない。gone は変更がなくなったので選びを外したファイル */
-  | { type: 'wcDiff'; group?: undefined; diff: undefined; whitespace?: undefined; side?: undefined; gone?: string }
+  | { type: 'wcDiff'; group?: undefined; diff: undefined; whitespace?: undefined; side?: undefined; open?: undefined; gone?: string }
   /** 選んだ側の差分を出さず、わけを言う（その側に変更がない・All で出せない） */
   | { type: 'wcDiffNote'; group: ChangeGroup; path: string; side: DiffSide; whitespace: DiffWhitespace; note: SideNote }
   /** 節ごとの追加・削除の行数（HEAD → index と index → 作業ツリー。エンジンがあって節に分けているときだけ） */
@@ -70,6 +105,8 @@ export type WorkingCopyWebviewMessage =
   | { type: 'wcSelect'; group: ChangeGroup; path: string; side?: DiffSide }
   /** 差分で見る側を選び直した（エンジンがあるとき。覚えない） */
   | { type: 'wcSide'; side: DiffSide }
+  /** たたんだ差分の隙間の開き方を変えた（ファイルと側ごとに、拡張が動いている間だけ覚える） */
+  | { type: 'wcGaps'; path: string; side: DiffSide; open: GapOpen[] }
   /** 見た目の好みを変えた（覚える） */
   | ({ type: 'wcLook' } & Partial<WorkingCopyLook>)
   /** ファイル一覧の見せ方を変えた（次に開くときのために覚える） */

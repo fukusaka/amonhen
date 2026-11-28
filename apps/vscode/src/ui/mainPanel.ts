@@ -135,6 +135,7 @@ export class MainPanel implements vscode.Disposable {
       manager.onDidChangeCurrent((r) => this.watch(r)),
       vscode.workspace.onDidChangeConfiguration((e) => {
         if (e.affectsConfiguration('amonhen.wrapLongLines')) this.post({ type: 'wrapLines', wrap: wrapLongLines() });
+        if (e.affectsConfiguration('amonhen.diff.lineStaging')) this.workingCopy.lineStagingChanged();
         // 図・数式の設定を変えたら、「すべてのファイル」の絵を描き直す（テーマを変えたときと同じ）
         if (e.affectsConfiguration('amonhen.diagrams') || e.affectsConfiguration('amonhen.math')) this.post({ type: 'pictureSettings' });
       }),
@@ -309,6 +310,7 @@ export class MainPanel implements vscode.Disposable {
       case 'wcOpenFile':
       case 'wcCommitRefused':
       case 'wcWhitespace':
+      case 'wcGaps':
       case 'wcResolve':
         await this.workingCopy.handle(message);
         break;

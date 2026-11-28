@@ -3676,3 +3676,212 @@ body.monospace-message .details-head pre.body {
 .missing-band-slot {
   flex: none;
 }
+
+/*
+ * Working Copy のたたんだ差分（エンジンがあるとき）。hunk ごとの枠にせず、1 つの枠に隙間の行と行を並べる。
+ * 隙間の行は破線の上に、左に関数名、中央に札、マウスが乗ると札の右に開く・畳むのボタン、右端に hunk の操作
+ * （置く場所は gapRow.ts が決める）。札・ボタンの周りは差分の背景で囲み、破線を空ける
+ */
+.hunk.folded {
+  position: relative;
+}
+
+.gap-row {
+  position: relative;
+  height: 1.5em;
+  font-size: var(--vscode-editor-font-size);
+  line-height: 1.5;
+  user-select: none;
+}
+
+.gap-row::before {
+  content: '';
+  position: absolute;
+  left: calc(var(--gap-gutter, 0px) + 4px);
+  right: 4px;
+  top: 50%;
+  border-top: 1px dashed var(--vscode-panel-border);
+}
+
+.gap-row .gap-pill,
+.gap-row .gap-chip,
+.gap-row .gap-fn,
+.gap-row .gap-ops {
+  position: absolute;
+  top: 50%;
+  transform: translateY(-50%);
+  height: 16px;
+  font-family: var(--vscode-font-family);
+  font-size: 11px;
+  line-height: 16px;
+  white-space: nowrap;
+  box-shadow: 0 0 0 6px var(--vscode-editor-background);
+}
+
+.gap-row .gap-pill,
+.gap-row .gap-chip {
+  padding: 0;
+  border: none;
+  border-radius: 8px;
+  text-align: center;
+  cursor: pointer;
+}
+
+.gap-row .gap-pill {
+  color: var(--vscode-descriptionForeground);
+  background: color-mix(in srgb, var(--vscode-descriptionForeground) 12%, var(--vscode-editor-background));
+}
+
+.gap-row:hover .gap-pill:hover {
+  background: color-mix(in srgb, var(--vscode-descriptionForeground) 22%, var(--vscode-editor-background));
+}
+
+.gap-row .gap-pill.selected {
+  cursor: default;
+  color: var(--vscode-textLink-foreground);
+  background: color-mix(in srgb, var(--vscode-textLink-foreground) 18%, var(--vscode-editor-background));
+}
+
+.gap-row .gap-pill[hidden],
+.gap-row .gap-fn[hidden] {
+  display: none;
+}
+
+/* 開く・畳むのボタンは、入るものだけ（.fit）をマウスが乗ったときに出す */
+.gap-row .gap-chip {
+  display: none;
+  visibility: hidden;
+  font-weight: 600;
+  color: var(--vscode-textLink-foreground);
+  background: color-mix(in srgb, var(--vscode-textLink-foreground) 14%, var(--vscode-editor-background));
+}
+
+.gap-row .gap-chip.fit {
+  display: block;
+}
+
+.gap-row:hover .gap-chip.fit {
+  visibility: visible;
+}
+
+.gap-row .gap-chip:hover {
+  background: color-mix(in srgb, var(--vscode-textLink-foreground) 30%, var(--vscode-editor-background));
+}
+
+.gap-row .gap-fn {
+  color: var(--vscode-descriptionForeground);
+  opacity: 0.75;
+  box-shadow: 0 0 0 4px var(--vscode-editor-background);
+  background: var(--vscode-editor-background);
+}
+
+/* hunk の操作は文字だけ（乗ったら薄く塗る） */
+.gap-row .gap-ops {
+  right: 10px;
+  display: flex;
+  gap: 2px;
+  background: var(--vscode-editor-background);
+}
+
+.gap-row .gap-op {
+  height: 16px;
+  padding: 0 6px;
+  border: none;
+  border-radius: 4px;
+  font: inherit;
+  font-weight: 600;
+  color: var(--vscode-textLink-foreground);
+  background: transparent;
+  cursor: pointer;
+}
+
+.gap-row .gap-op:hover {
+  background: color-mix(in srgb, var(--vscode-textLink-foreground) 14%, transparent);
+}
+
+.gap-row .gap-op.discard {
+  color: var(--vscode-errorForeground);
+}
+
+.gap-row .gap-op.discard:hover {
+  background: color-mix(in srgb, var(--vscode-errorForeground) 14%, transparent);
+}
+
+/*
+ * 変更の行の左の帯（All: stage 済みは塗り、まだなら枠だけ。「変更の帯」の形: 変更のかたまりの印で、押すとかたまりごと
+ * stage する）。マウスが乗ったかたまり・行番号でドラッグしている行は .hot
+ */
+.line .bar {
+  flex: none;
+  position: relative;
+  width: 10px;
+}
+
+.line .bar.mark,
+.line .bar.staged,
+.line .bar.unstaged {
+  cursor: pointer;
+}
+
+.line .bar.mark::before,
+.line .bar.staged::before,
+.line .bar.unstaged::before {
+  content: '';
+  position: absolute;
+  top: 0;
+  bottom: 0;
+  left: 3px;
+  width: 4px;
+  box-sizing: border-box;
+}
+
+.line .bar.mark::before {
+  background: var(--vscode-textLink-foreground);
+  opacity: 0.55;
+}
+
+.line .bar.staged::before {
+  background: var(--vscode-textLink-foreground);
+}
+
+.line .bar.unstaged::before {
+  border: 1px solid var(--vscode-descriptionForeground);
+}
+
+.line.hot .bar::before {
+  left: 2px;
+  width: 6px;
+  opacity: 1;
+}
+
+.line.hot .no {
+  background: color-mix(in srgb, var(--vscode-textLink-foreground) 14%, transparent);
+}
+
+.wc-diff.bar-style .line[data-key] .no {
+  cursor: pointer;
+}
+
+.diff-head .whole-file {
+  flex: none;
+  padding: 0 6px;
+  color: var(--vscode-descriptionForeground);
+  background: transparent;
+}
+
+.diff-head .whole-file:hover {
+  background: var(--vscode-toolbar-hoverBackground, var(--vscode-list-hoverBackground));
+}
+
+.diff-head .whole-file.on {
+  color: var(--vscode-textLink-foreground);
+}
+
+.gap-row .gap-ops:empty {
+  display: none;
+}
+
+.wc-diff .diff-head .actions button:disabled {
+  opacity: 0.5;
+  cursor: default;
+}

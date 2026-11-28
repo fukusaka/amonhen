@@ -12,7 +12,19 @@ import type { Eol, LineEndings } from '../git/eol.ts';
 import { ignorePatterns } from '../workingCopy/ignore.ts';
 import { addTrailer, commitDisabledReason, composeMessage, lengthLevel, longestLine, messageLength, splitMessage, withType } from '../workingCopy/commitMessage.ts';
 import { filesUnder, filterByPath, makeFileTree, type FileDir, type FileLayout } from '../workingCopy/fileList.ts';
-import type { FileStat, WorkingCopyLook } from '../workingCopy/protocol.ts';
+import type { DiffMenuAction, FileStat, LineStaging, WorkingCopyLook } from '../workingCopy/protocol.ts';
+import {
+  changeBlocks,
+  gapActions,
+  openGap,
+  showsWholeFile,
+  stageActions,
+  toggleWholeFile,
+  type FoldedSide,
+  type GapAction,
+  type GapOpen,
+  type StageOp,
+} from '../workingCopy/gaps.ts';
 import {
   adoptSide,
   changeOf,
@@ -37,6 +49,7 @@ import {
 } from '../workingCopy/sides.ts';
 import { el, post, type View } from './api.ts';
 import { lineKey, renderDiffBody, whitespaceSelect, wrapButton } from './diffView.ts';
+import { gapRow, layoutGapRows } from './gapRow.ts';
 import type { DiffWhitespace } from '../history/protocol.ts';
 
 const GROUPS: { group: ChangeGroup; title: string }[] = [
@@ -242,6 +255,10 @@ export function createWorkingCopyView(): View {
   /** 選んでいる行。キーは `old:12` / `new:7` */
   let picked = new Set<string>();
   let anchor: string | undefined;
+  /** 行の Stage の形（設定。行を選んでから隙間の行の操作で・変更の帯と行番号を押して） */
+  let lineStaging: LineStaging = 'select';
+  /** たたんだ差分（diff.folded）の隙間の開き方（拡張が覚えているもの） */
+  let gapOpen: GapOpen[] = [];
   /** 木で畳んだディレクトリ（節とパス）。読み直しても畳んだままにする */
   const collapsed = new Set<string>();
   /** 一覧に出ている行（上から順。絞り込みと畳んだディレクトリの分を除く） */
@@ -600,6 +617,10 @@ export function createWorkingCopyView(): View {
       if (next) select(next);
       return;
     }
+    if (diff?.folded) {
+      moveBlock(forward);
+      return;
+    }
     const top = diffPane.getBoundingClientRect().top;
     const heads = [...diffPane.querySelectorAll<HTMLElement>('.hunk-head')].map((h) => h.getBoundingClientRect().top - top);
     // 見出しは差分の見出しの下に止まるので、少し余裕を見て比べる
@@ -718,6 +739,10 @@ export function createWorkingCopyView(): View {
       diffPane.replaceChildren(head, renderConflict(d));
       return;
     }
+    if (d.folded) {
+      renderFolded(d, head, actions);
+      return;
+    }
     if (d.combined) {
       renderCombined(d, head, actions);
       return;
@@ -782,6 +807,225 @@ export function createWorkingCopyView(): View {
       }),
     );
     diffPane.replaceChildren(...content);
+  }
+
+  // ---- たたんだ差分（エンジンがあるとき） ----
+
+  /** 出している差分の側（たたんだ差分の hunk の操作の名前を決める） */
+  function foldedSide(d: FileDiff): FoldedSide {
+    return d.combined ? 'all' : diffGroup === 'staged' ? 'staged' : 'unstaged';
+  }
+
+  /** 差分の変更の行（上から順）と、lineKey → 行・その hunk の位置・変更のかたまり */
+  function changesOf(d: FileDiff): { lines: DiffLine[]; byKey: Map<string, { line: DiffLine; hunk: number; block: number }> } {
+    const byKey = new Map<string, { line: DiffLine; hunk: number; block: number }>();
+    const blockOf = new Map<DiffLine, number>();
+    changeBlocks(d.hunks).forEach((block, i) => block.forEach((l) => blockOf.set(l, i)));
+    const lines: DiffLine[] = [];
+    d.hunks.forEach((h, hunk) => {
+      for (const line of h.lines) {
+        if (line.kind === ' ') continue;
+        lines.push(line);
+        byKey.set(lineKey(line), { line, hunk, block: blockOf.get(line)! });
+      }
+    });
+    return { lines, byKey };
+  }
+
+  /** 空白を無視していない（行・hunk を stage・破棄できる） */
+  const exactDiff = () => (whitespace ?? 'exact') === 'exact';
+
+  /**
+   * 変更のない所を隙間の行にたたんだ差分（エンジンがあるとき。アプリと同じ）。hunk の見出しの行はなく、隙間の行の
+   * 右端に hunk の操作を置く。「変更の帯」の形では、行の左の帯と行番号で stage する。All では帯が stage 済み（塗り）
+   * か、まだか（枠だけ）を示す
+   */
+  function renderFolded(d: FileDiff, head: HTMLElement, actions: HTMLElement): void {
+    const fside = foldedSide(d);
+    const exact = exactDiff();
+    const bar = lineStaging === 'bar';
+    const { lines: changed, byKey } = changesOf(d);
+    const pickedLines = changed.filter((l) => picked.has(lineKey(l)));
+    // 「変更の帯」の形では、選んだ行の操作を帯に置く（「選んでから」の形では隙間の行と右クリック・Space で）
+    if (bar) {
+      const ops =
+        pickedLines.length > 0
+          ? stageActions(fside, pickedLines, 'Lines')
+          : [{ op: fside === 'staged' ? ('unstage' as const) : ('stage' as const), label: fside === 'staged' ? 'Unstage Lines' : 'Stage Lines' }];
+      for (const { op, label } of ops) {
+        const button = el('button', op === 'discard' ? 'secondary' : undefined, label);
+        button.disabled = pickedLines.length === 0 || !exact;
+        if (!exact) button.title = 'Can’t stage or discard lines while whitespace is ignored';
+        else if (pickedLines.length === 0) button.title = 'Select lines to stage them (or click the change bar or line numbers)';
+        button.addEventListener('click', () => runOp(op, pickedLines));
+        actions.append(button);
+      }
+    }
+    const unstaged = files.find((x) => x.group === 'unstaged' && x.path === d.path);
+    const stagedFile = files.find((x) => x.group === 'staged' && x.path === d.path);
+    if (unstaged && fside !== 'staged') {
+      const stageFile = el('button', 'secondary', 'Stage File');
+      stageFile.addEventListener('click', () => stageFiles('stage', [unstaged]));
+      actions.append(stageFile);
+    }
+    if (stagedFile && fside !== 'unstaged') {
+      const unstageFile = el('button', 'secondary', 'Unstage File');
+      unstageFile.addEventListener('click', () => stageFiles('unstage', [stagedFile]));
+      actions.append(unstageFile);
+    }
+    if (unstaged && fside !== 'staged') {
+      const discardFile = el('button', 'secondary', 'Discard File');
+      discardFile.addEventListener('click', () => post({ type: 'wcDiscardFiles', paths: [d.path] }));
+      actions.append(discardFile);
+    }
+    const open = el('button', 'secondary', 'Open File');
+    open.addEventListener('click', () => post({ type: 'wcOpenFile', path: d.path }));
+    actions.append(open);
+    // Show Whole File（すべての隙間を開く・閉じる。帯の ↩︎ の左）
+    const whole = showsWholeFile(d.hunks);
+    const wholeButton = el('button', whole ? 'bar-button whole-file on' : 'bar-button whole-file', '⇳');
+    wholeButton.title = `${whole ? 'Showing the whole file' : 'Show Whole File'}\nOpen every unchanged part of the file (each part also opens from its own row)`;
+    wholeButton.setAttribute('aria-label', 'Show Whole File');
+    wholeButton.setAttribute('aria-pressed', String(whole));
+    wholeButton.addEventListener('click', () => setGaps(d, toggleWholeFile(d.hunks)));
+    head.insertBefore(wholeButton, head.querySelector('.wrap-button'));
+    head.append(actions);
+    const body = renderDiffBody(d, {
+      picked,
+      ...(bar || fside === 'all' ? { bar: (line: DiffLine) => (fside === 'all' ? (line.staged ? 'staged' : 'unstaged') : 'mark') } : {}),
+      gapRow: (hunk, index) => {
+        const inHunk = hunk.lines.filter((l) => l.kind !== ' ');
+        const selected = bar ? [] : inHunk.filter((l) => picked.has(lineKey(l)));
+        return gapRow({
+          hunk,
+          index,
+          selected: selected.length,
+          ops: !exact || bar ? [] : stageActions(fside, selected.length > 0 ? selected : inHunk, selected.length > 0 ? 'Lines' : 'Hunk'),
+          onGap: (action) => applyGap(d, hunk.gap!.index, action),
+          onOp: (op) => runOp(op, selected.length > 0 ? selected : inHunk),
+          onMenu: (row, pill) => {
+            // 札の下に、開く・畳むだけのメニュー（package.json の webview/context）
+            pillMenu = true;
+            const r = pill.getBoundingClientRect();
+            row.dispatchEvent(new MouseEvent('contextmenu', { bubbles: true, cancelable: true, clientX: r.left, clientY: r.bottom, button: 2 }));
+            pillMenu = false;
+          },
+        });
+      },
+    });
+    diffPane.classList.toggle('bar-style', bar);
+    diffPane.replaceChildren(head, ...body);
+    folded = { diff: d, byKey };
+    layoutGaps();
+  }
+
+  /** 今のたたんだ差分（マウス・右クリック・J・K が使う） */
+  let folded: { diff: FileDiff; byKey: Map<string, { line: DiffLine; hunk: number; block: number }> } | undefined;
+  /** 札を押してメニューを開いている（開く・畳むだけを出す） */
+  let pillMenu = false;
+
+  /** 隙間の行の札とボタンを置き直す（描いた後と、幅が変わったとき） */
+  function layoutGaps(): void {
+    const box = diffPane.querySelector<HTMLElement>('.hunk.folded');
+    if (!box) return;
+    const code = box.querySelector<HTMLElement>('.line .code');
+    const gutter = code ? code.getBoundingClientRect().left - box.getBoundingClientRect().left : 0;
+    box.style.setProperty('--gap-gutter', `${gutter}px`);
+    layoutGapRows(box, gutter);
+  }
+  let layoutFrame = 0;
+  new ResizeObserver(() => {
+    cancelAnimationFrame(layoutFrame);
+    layoutFrame = requestAnimationFrame(layoutGaps);
+  }).observe(diffPane);
+
+  /** 隙間の開き方を変えて、拡張に覚えてもらう（差分を読み直して送ってくる） */
+  function setGaps(d: FileDiff, open: GapOpen[]): void {
+    gapOpen = open;
+    post({ type: 'wcGaps', path: d.path, side: foldedSide(d), open });
+  }
+
+  function applyGap(d: FileDiff, gap: number, action: GapAction): void {
+    setGaps(d, openGap(gapOpen, gap, action));
+  }
+
+  /** 変更の行 lines を、出している側で stage・unstage・破棄する（All は入れる・外す） */
+  function runOp(op: StageOp, lines: DiffLine[]): void {
+    if (!diff || lines.length === 0 || !exactDiff()) return;
+    if (diff.combined) {
+      if (op !== 'discard') checkLines(lines, op === 'stage');
+      else discard(lines.filter((l) => !l.staged).map(lineKey));
+      return;
+    }
+    if (op === 'discard') discard(lines.map(lineKey));
+    else stageLines(lines.map(lineKey));
+  }
+
+  /**
+   * 差分の右クリック（package.json の webview/context、wcDiff）に渡す情報。隙間の行では開く・畳む（札を押したときは
+   * それだけ）、それから選んだ行・その hunk・その行の Stage・Unstage・Discard（アプリと同じ）
+   */
+  function diffMenuContext(target: HTMLElement): { row: HTMLElement; context: Record<string, unknown> } | undefined {
+    if (!folded || !diff?.folded) return undefined;
+    const { diff: d, byKey } = folded;
+    const gapEl = target.closest<HTMLElement>('.gap-row');
+    const lineEl = gapEl ? undefined : target.closest<HTMLElement>('.line');
+    const row = gapEl ?? lineEl;
+    if (!row) return undefined;
+    const fside = foldedSide(d);
+    const context: Record<string, unknown> = { webviewSection: 'wcDiff', preventDefaultContextMenuItems: true };
+    const flag = (prefix: string, ops: { op: StageOp }[]) => {
+      for (const { op } of ops) context[`${prefix}${op[0]!.toUpperCase()}${op.slice(1)}`] = true;
+    };
+    const hunk = Number((gapEl ?? lineEl?.closest<HTMLElement>('.lines'))?.dataset.hunk);
+    const h = d.hunks[hunk];
+    if (h) context['hunk'] = hunk;
+    const bar = lineStaging === 'bar';
+    if (gapEl && h?.gap) {
+      context['gap'] = h.gap.index;
+      const selectedHere = bar ? 0 : h.lines.filter((l) => l.kind !== ' ' && picked.has(lineKey(l))).length;
+      for (const { action } of gapActions(h.gap, selectedHere > 0)) context[`wcGap${action[0]!.toUpperCase()}${action.slice(1)}`] = true;
+      if (pillMenu) return { row, context };
+    }
+    if (exactDiff()) {
+      const pickedLines = [...picked].flatMap((k) => byKey.get(k)?.line ?? []);
+      flag('wcSel', stageActions(fside, pickedLines, 'Lines'));
+      if (h) flag('wcHunk', stageActions(fside, h.lines.filter((l) => l.kind !== ' '), 'Hunk'));
+      const key = lineEl?.dataset.key;
+      const line = key ? byKey.get(key)?.line : undefined;
+      if (key && line) {
+        context['line'] = key;
+        flag('wcLine', stageActions(fside, [line], 'Lines'));
+      }
+    }
+    return { row, context };
+  }
+
+  // 右クリックした行の情報を、VSCode がメニューを出す前に（window で受ける前に）その行に置く
+  diffPane.addEventListener(
+    'contextmenu',
+    (e) => {
+      const found = diffMenuContext(e.target as HTMLElement);
+      if (found) found.row.dataset.vscodeContext = JSON.stringify(found.context);
+    },
+    true,
+  );
+
+  /** 右クリックの項目を選んだ（拡張から頼み返される） */
+  function diffAction(action: DiffMenuAction, at: { gap?: number; hunk?: number; line?: string }): void {
+    if (!folded || folded.diff !== diff) return;
+    const { diff: d, byKey } = folded;
+    const gapAction = ({ gapDown: 'down', gapUp: 'up', gapAll: 'all', gapCollapse: 'collapse' } as const)[action as 'gapDown'];
+    if (gapAction) {
+      if (at.gap !== undefined) applyGap(d, at.gap, gapAction);
+      return;
+    }
+    const op: StageOp = action.startsWith('discard') ? 'discard' : action.startsWith('unstage') ? 'unstage' : 'stage';
+    let lines: DiffLine[] = [];
+    if (action.endsWith('Selected')) lines = [...picked].flatMap((k) => byKey.get(k)?.line ?? []);
+    else if (action.endsWith('Hunk')) lines = d.hunks[at.hunk ?? -1]?.lines.filter((l) => l.kind !== ' ') ?? [];
+    else if (at.line) lines = byKey.get(at.line) ? [byKey.get(at.line)!.line] : [];
+    runOp(op, lines);
   }
 
   /**
@@ -918,34 +1162,185 @@ export function createWorkingCopyView(): View {
     post({ type: 'wcDiscardLines', path: diff.path, version: diff.version, lines: toLines(keys), ...(diff.combined ? { combined: true } : {}) });
   }
 
-  // 行をクリックして選ぶ。Shift で前に選んだ行からの範囲
-  diffPane.addEventListener('click', (e) => {
-    const row = (e.target as HTMLElement).closest<HTMLElement>('.line');
-    const k = row?.dataset.key;
-    if (!k) return;
-    if (e.shiftKey && anchor) {
-      const keys = [...diffPane.querySelectorAll<HTMLElement>('.line[data-key]')].map((r) => r.dataset.key!);
-      const [from, to] = [keys.indexOf(anchor), keys.indexOf(k)].sort((x, y) => x - y) as [number, number];
-      for (const x of keys.slice(from, to + 1)) picked.add(x);
-    } else if (picked.has(k)) {
-      picked.delete(k);
-    } else {
-      picked.add(k);
+  /**
+   * 行を押して選ぶ（アプリと同じ）: 押した行だけ、⌘・Ctrl で足し引き、Shift で前に押した行からの範囲。押したまま
+   * 動かすと、押した行からの範囲（⌘・Ctrl なら前に選んでいた行に足す）
+   */
+  let rowDrag: { anchor: number; base: Set<string>; rows: HTMLElement[] } | undefined;
+  /** 「変更の帯」の形で、行番号の上をドラッグしている（離したら、その間の変更の行を stage する） */
+  let numberDrag: { anchor: number; rows: HTMLElement[]; keys: string[] } | undefined;
+  /** 「変更の帯」の形で、マウスが乗っている帯のかたまり */
+  let hotBlock: number | undefined;
+
+  /** 今描いている差分の行（上から順） */
+  const lineRows = () => [...diffPane.querySelectorAll<HTMLElement>('.line')];
+
+  /** 行 first〜last（lineRows の位置）の、変更の行の lineKey */
+  const keysBetween = (rows: HTMLElement[], a: number, b: number) =>
+    rows.slice(Math.min(a, b), Math.max(a, b) + 1).flatMap((r) => (r.dataset.key ? [r.dataset.key] : []));
+
+  /** 選んだ行の印だけ付け直す（ドラッグの間。離したら描き直す） */
+  function markPicked(rows: HTMLElement[]): void {
+    for (const r of rows) if (r.dataset.key) r.classList.toggle('picked', picked.has(r.dataset.key));
+  }
+
+  /** 帯のかたまり block の行に印を付ける（undefined なら外す） */
+  function markBlock(block: number | undefined): void {
+    if (block === hotBlock) return;
+    hotBlock = block;
+    for (const r of diffPane.querySelectorAll<HTMLElement>('.line.hot')) r.classList.remove('hot');
+    if (block === undefined || !folded) return;
+    for (const r of diffPane.querySelectorAll<HTMLElement>('.line[data-key]')) {
+      if (folded.byKey.get(r.dataset.key!)?.block === block) r.classList.add('hot');
     }
-    anchor = k;
-    renderDiff();
+  }
+
+  diffPane.addEventListener('mousedown', (e) => {
+    if (e.button !== 0) return;
+    const target = e.target as HTMLElement;
+    if (target.closest('.gap-row, .diff-head')) return;
+    const row = target.closest<HTMLElement>('.line');
+    const k = row?.dataset.key;
+    if (!row || !k) return;
+    const info = folded?.diff === diff ? folded?.byKey.get(k) : undefined;
+    if (info && diff?.folded) {
+      const bar = lineStaging === 'bar';
+      // 帯: 「変更の帯」の形ならかたまりごと、All ならその行を入れる・外す
+      if (target.closest('.bar') && (bar || diff.combined)) {
+        e.preventDefault();
+        const lines = bar ? [...folded!.byKey.values()].filter((x) => x.block === info.block).map((x) => x.line) : [info.line];
+        runOp(stageOpFor(lines), lines);
+        return;
+      }
+      // 行番号（「変更の帯」の形）: 離したときに、押した行からドラッグした行までを stage する
+      if (bar && target.closest('.no')) {
+        e.preventDefault();
+        const rows = lineRows();
+        const at = rows.indexOf(row);
+        numberDrag = { anchor: at, rows, keys: [k] };
+        row.classList.add('hot');
+        return;
+      }
+    }
+    e.preventDefault();
+    diffPane.focus();
+    const rows = lineRows();
+    const at = rows.indexOf(row);
+    if (e.shiftKey && anchor && rows.some((r) => r.dataset.key === anchor)) {
+      const from = rows.findIndex((r) => r.dataset.key === anchor);
+      picked = new Set(keysBetween(rows, from, at));
+      rowDrag = { anchor: from, base: new Set(), rows };
+    } else if (e.metaKey || e.ctrlKey) {
+      const before = new Set(picked);
+      if (picked.has(k)) picked.delete(k);
+      else picked.add(k);
+      before.delete(k);
+      anchor = k;
+      rowDrag = { anchor: at, base: before, rows };
+    } else {
+      picked = new Set([k]);
+      anchor = k;
+      rowDrag = { anchor: at, base: new Set(), rows };
+    }
+    markPicked(rows);
   });
+
+  diffPane.addEventListener('mousemove', (e) => {
+    const target = e.target as HTMLElement;
+    const row = target.closest<HTMLElement>('.line');
+    if (numberDrag && e.buttons & 1) {
+      const at = row ? numberDrag.rows.indexOf(row) : -1;
+      if (at < 0) return;
+      numberDrag.keys = keysBetween(numberDrag.rows, numberDrag.anchor, at);
+      for (const r of numberDrag.rows) r.classList.toggle('hot', r.dataset.key !== undefined && numberDrag.keys.includes(r.dataset.key));
+      return;
+    }
+    if (rowDrag && e.buttons & 1) {
+      const at = row ? rowDrag.rows.indexOf(row) : -1;
+      if (at < 0) return;
+      picked = new Set([...rowDrag.base, ...keysBetween(rowDrag.rows, rowDrag.anchor, at)]);
+      markPicked(rowDrag.rows);
+      return;
+    }
+    // 「変更の帯」の形: 帯の上なら、そのかたまりに印を付ける（押すとかたまりごと）
+    const key = row?.dataset.key;
+    const onBar = lineStaging === 'bar' && diff?.folded && key && target.closest('.bar');
+    markBlock(onBar ? folded?.byKey.get(key)?.block : undefined);
+  });
+  diffPane.addEventListener('mouseleave', () => markBlock(undefined));
+
+  window.addEventListener('mouseup', () => {
+    if (numberDrag) {
+      const keys = numberDrag.keys;
+      numberDrag = undefined;
+      const lines = keys.flatMap((k) => folded?.byKey.get(k)?.line ?? []);
+      for (const r of diffPane.querySelectorAll<HTMLElement>('.line.hot')) r.classList.remove('hot');
+      hotBlock = undefined;
+      if (lines.length > 0) runOp(stageOpFor(lines), lines);
+      return;
+    }
+    if (rowDrag) {
+      rowDrag = undefined;
+      renderDiff();
+    }
+  });
+
+  /** 帯・行番号・Space で lines を: Staged なら unstage、All ならすべて入っていれば外し、でなければ入れる */
+  function stageOpFor(lines: DiffLine[]): StageOp {
+    if (diff?.combined) return lines.every((l) => l.staged) ? 'unstage' : 'stage';
+    return diffGroup === 'staged' ? 'unstage' : 'stage';
+  }
+
   diffPane.addEventListener('keydown', (e) => {
     if (e.key === 'Escape' && picked.size > 0) {
       picked = new Set();
       renderDiff();
-    } else if (e.key === ' ' && diff?.combined && picked.size > 0) {
+    } else if (e.key === ' ' && diff?.combined && !diff.folded && picked.size > 0) {
       // 選んだ行をまとめて入れる・外す（すべて入っていれば外す）
       e.preventDefault();
       const lines = diff.hunks.flatMap((h) => h.lines.filter((l) => l.kind !== ' ' && picked.has(lineKey(l))));
       checkLines(lines, !lines.every((l) => l.staged));
+    } else if (e.key === ' ' && diff?.folded && picked.size > 0) {
+      // 選んだ行を stage・unstage（All ではすべて入っていれば外す。アプリと同じ）
+      e.preventDefault();
+      const lines = diff.hunks.flatMap((h) => h.lines.filter((l) => l.kind !== ' ' && picked.has(lineKey(l))));
+      runOp(stageOpFor(lines), lines);
     }
   });
+
+  /** J・K（たたんだ差分）: 次・前の変更のかたまりを選び、上から 3 分の 1 あたりに出す（アプリと同じ） */
+  function moveBlock(forward: boolean): void {
+    if (!diff) return;
+    const blocks = changeBlocks(diff.hunks);
+    if (blocks.length === 0) return;
+    const indexOf = (key: string) => blocks.findIndex((b) => b.some((l) => lineKey(l) === key));
+    let target: number;
+    const current = [...picked].map(indexOf).filter((i) => i >= 0);
+    if (current.length > 0) {
+      target = (forward ? Math.max(...current) : Math.min(...current)) + (forward ? 1 : -1);
+    } else {
+      // 選んでいなければ、見えている一番上から: J はそこ以降の最初、K はそれより前の最後
+      const top = diffPane.getBoundingClientRect().top + (diffPane.querySelector<HTMLElement>('.diff-head')?.offsetHeight ?? 0);
+      const firstBelow = blocks.findIndex((b) => {
+        const r = diffPane.querySelector<HTMLElement>(`.line[data-key="${lineKey(b[0]!)}"]`);
+        return r !== null && r.getBoundingClientRect().top >= top;
+      });
+      target = forward ? (firstBelow < 0 ? blocks.length : firstBelow) : (firstBelow < 0 ? blocks.length : firstBelow) - 1;
+    }
+    const block = blocks[target];
+    if (!block) return;
+    picked = new Set(block.map(lineKey));
+    anchor = lineKey(block[0]!);
+    renderDiff();
+    const first = diffPane.querySelector<HTMLElement>(`.line[data-key="${anchor}"]`);
+    const last = diffPane.querySelector<HTMLElement>(`.line[data-key="${lineKey(block.at(-1)!)}"]`);
+    if (!first || !last) return;
+    const pane = diffPane.getBoundingClientRect();
+    const headHeight = diffPane.querySelector<HTMLElement>('.diff-head')?.offsetHeight ?? 0;
+    if (first.getBoundingClientRect().top < pane.top + headHeight || last.getBoundingClientRect().bottom > pane.bottom) {
+      diffPane.scrollBy({ top: first.getBoundingClientRect().top - pane.top - diffPane.clientHeight / 3 });
+    }
+  }
   diffPane.tabIndex = 0;
 
   // ---- コミット ----
@@ -1088,6 +1483,7 @@ export function createWorkingCopyView(): View {
         lastMessage = m.lastMessage ?? '';
         layout = m.layout;
         engine = m.engine;
+        lineStaging = m.lineStaging;
         if (!lookApplied) applyLook(m);
         // 選び直す（stage して節が変わったものは、その節の行。消えたファイルは選びから外す）
         relist();
@@ -1115,6 +1511,7 @@ export function createWorkingCopyView(): View {
         diff = m.diff;
         diffGroup = m.group;
         whitespace = m.whitespace;
+        gapOpen = m.open ?? [];
         if (m.side) side = m.side;
         followShown(m.diff.path, m.group);
         renderFiles();
@@ -1143,6 +1540,13 @@ export function createWorkingCopyView(): View {
         followShown(m.path, m.group);
         renderFiles();
         renderDiff();
+        break;
+      case 'wcLineStaging':
+        lineStaging = m.lineStaging;
+        renderDiff();
+        break;
+      case 'wcDiffAction':
+        diffAction(m.action, m);
         break;
       case 'wcSplitStats':
         splitStats = {
