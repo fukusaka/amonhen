@@ -2943,11 +2943,21 @@ impl Inner {
                 });
             }
         }
+        // コンフリクトのファイルには、変更の一覧と同じ印を付ける（macOS 版の `WorkingTreeFiles.reload` は一覧の
+        // 印の関数を使う）。
+        let conflicts = this
+            .all_entries
+            .borrow()
+            .iter()
+            .filter(|e| e.kind == StatusKind::Unmerged)
+            .map(|e| e.path.clone())
+            .collect();
         let weak = Rc::downgrade(this);
         let browser = crate::commitbrowser::Browser::new_working(
             repo,
             head,
             changes,
+            conflicts,
             this.layout.get() != Layout::Tree,
             this.pending.clone(),
             move |path| {
