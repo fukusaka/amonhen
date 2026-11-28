@@ -18,6 +18,16 @@ struct TextPosition: Comparable {
     static func < (a: Self, b: Self) -> Bool { (a.row, a.index) < (b.row, b.index) }
 }
 
+/// Space で含める・外した後に選ぶ hunk。
+enum NextHunk {
+    /// `rows`（切り替えた変更の行）の最後の行を含む hunk の次の番号。最後の hunk なら nil（何も選ばない）。
+    /// `hunks` は hunk の最初の行（昇順）。
+    nonisolated static func after(rows: [Int], hunks: [Int]) -> Int? {
+        guard let last = rows.max(), let index = hunks.lastIndex(where: { $0 <= last }) else { return nil }
+        return index + 1 < hunks.count ? index + 1 : nil
+    }
+}
+
 /// 差分の表示。スクロールは NSScrollView に任せ、見えている行だけを Metal で描く。
 final class DiffViewController: NSViewController, NSSearchFieldDelegate {
     let renderer: TextRenderer
@@ -657,7 +667,8 @@ final class DiffViewController: NSViewController, NSSearchFieldDelegate {
             redraw()
             if let hunk = hunkToSelectAfterShow {
                 hunkToSelectAfterShow = nil
-                selectHunk(min(hunk, max(0, hunkRows.count - 1)))
+                // 読み直しで hunk が減っていれば何も選ばない（いま扱った hunk を選び直さない）。
+                selectHunk(hunk)
             }
             return
         }
@@ -857,7 +868,7 @@ final class DiffViewController: NSViewController, NSSearchFieldDelegate {
 
     /// ⌥J・⌥K: 次・前のファイル（全ファイルを並べた差分なら見出しへ、そうでなければ持ち主に頼む）。
     var onMoveFile: ((Int) -> Void)?
-    /// 表示し直した後に選ぶ hunk の番号（含める・外すの後に次の hunk へ進むため）。
+    /// 表示し直した後に選ぶ hunk の番号（Space で含める・外した後に次の hunk へ進むため）。
     var hunkToSelectAfterShow: Int?
 
     /// hunk の見出しの行。隙間を開閉する差分では、変更のかたまり（続いた追加・削除の行）の最初の行。
@@ -961,17 +972,18 @@ final class DiffViewController: NSViewController, NSSearchFieldDelegate {
         row.kind == UInt8(AmonhenDiffRow_ADDED) || row.kind == UInt8(AmonhenDiffRow_REMOVED)
     }
 
-    /// `rows` の変更を、すべて含めていれば外し、そうでなければすべて含める。切り替えた後は、次の hunk へ進む。
-    fileprivate func toggleStaged(_ rows: [Int]) {
+    /// `rows` の変更を、すべて含めていれば外し、そうでなければすべて含める。
+    /// `selectNext` なら、読み直した後に次の hunk を選ぶ（Space だけ。最後の hunk なら何も選ばない）。
+    fileprivate func toggleStaged(_ rows: [Int], selectNext: Bool = false) {
         guard diff is WorkingFileDiff || diff is WorkingStackedDiff, !rows.isEmpty else { return }
-        let hunks = hunkRows
-        if let last = rows.max(), let index = hunks.lastIndex(where: { $0 <= last }) {
-            hunkToSelectAfterShow = index + 1 < hunks.count ? index + 1 : index
-        }
+        // マウスの操作でも前の予約を残さない（読み直せなかった Space の予約で選ばないように）。
+        hunkToSelectAfterShow = selectNext ? NextHunk.after(rows: rows, hunks: hunkRows) : nil
         onSetStaged?(rows, !rows.allSatisfy { rowIsStaged($0) })
     }
 
     /// Space: 選んだ変更の行（なければ何もしない）を含める・外す。扱ったら true。
+    /// 行ごとの印を出す表示（All）では、読み直した後に次の hunk を選ぶ（最後の hunk なら何も選ばない）。
+    /// マウスの操作（ボタン・帯・チェック・右クリック）では選ばない。
     fileprivate func toggleSelectedStaged() -> Bool {
         guard !selectedChangeRows.isEmpty else { return false }
         if !showsStageChecks, splitStageTitle != nil, let onStageRows {
@@ -979,7 +991,7 @@ final class DiffViewController: NSViewController, NSSearchFieldDelegate {
             return true
         }
         guard showsStageChecks else { return false }
-        toggleStaged(selectedChangeRows)
+        toggleStaged(selectedChangeRows, selectNext: true)
         return true
     }
 
