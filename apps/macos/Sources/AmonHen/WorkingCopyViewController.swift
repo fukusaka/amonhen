@@ -760,8 +760,8 @@ final class WorkingCopyViewController: NSSplitViewController, NSOutlineViewDataS
 
     /// 絞り込みと見せ方（一覧・木）に合わせて並べ直し、選んでいたファイルを選び直す。
     private func rebuildList() {
-        // 選んでいたファイル（いくつでも）。読み直しても、一覧に残っているものは選んだままにする。
-        let selectedPaths = Set(files.selectedRowIndexes.compactMap { (files.item(atRow: $0) as? Entry)?.item.path })
+        // 選んでいた行（いくつでも。パスと節分けの節）。読み直しても、一覧に残っているものは選んだままにする。
+        let selectedKeys = files.selectedRowIndexes.compactMap { (files.item(atRow: $0) as? Entry).map(Self.reselectKey) }
         let query = filterField.stringValue.trimmingCharacters(in: .whitespaces).lowercased()
         let filtered = query.isEmpty ? allEntries : allEntries.filter { $0.item.path.lowercased().contains(query) }
         if showsSections {
@@ -793,9 +793,12 @@ final class WorkingCopyViewController: NSSplitViewController, NSOutlineViewDataS
         // すべてのファイルを見ている間は、変更の一覧で選んでいるファイルの差分に替えない。
         guard !showsAllFiles else { return reloadTreeFiles() }
 
-        // 同じファイルを選び直す（いくつか選んでいれば、残っているものをすべて）。差分に出していたファイルが
-        // なくなれば、選んでいたほかのファイル、それもなければ最初のもの。
-        let kept = entries.filter { selectedPaths.contains($0.item.path) }
+        // 同じ行を選び直す（いくつか選んでいれば、残っているものをすべて。別の節へ移ったファイルはその節の行）。
+        // 差分に出していたファイルがなくなれば、選んでいたほかのファイル、それもなければ見る側の節の最初のもの。
+        let kept = WorkingCopyReselect.rows(kept: selectedKeys, in: entries.map(Self.reselectKey)).map { entries[$0] }
+        // いくつか選んで並べていたら、並べたまま読み直す。見る側は替えない（Unstaged の側で並べていて 1 つを
+        // すべて stage したら、そのファイルは Staged の節へ移っても選んだまま、並べた差分からは外れる）。
+        let staysMulti = multi != nil && Self.distinctFiles(kept.filter { !$0.isConflict }).count >= 2
         // 確かめる用（`--snapshot`）に `-AMHWorkingCopySelect <パス>` で最初に選ぶファイルを決められる。
         if selectedKey == nil, let path = UserDefaults.standard.string(forKey: "AMHWorkingCopySelect"),
            let entry = entries.first(where: { $0.item.path == path }) {
@@ -805,9 +808,10 @@ final class WorkingCopyViewController: NSSplitViewController, NSOutlineViewDataS
         let target = selectedKey.flatMap { key in
             entries.first { $0.item.path == key.path && ($0.section == nil || $0.section == diffSide) }
                 ?? entries.first { $0.item.path == key.path }
-        } ?? kept.first ?? entries.first
+        } ?? kept.first { $0.section == nil || $0.section == diffSide } ?? kept.first
+            ?? WorkingCopyReselect.first(in: entries.map(Self.reselectKey), side: diffSide.rawValue).map { entries[$0] }
         if let target {
-            adoptSection(of: target)
+            if !staysMulti { adoptSection(of: target) }
             let row = files.row(forItem: target)
             let others = IndexSet(kept.filter { $0 !== target }.map { files.row(forItem: $0) }.filter { $0 >= 0 })
             // 差分に出すファイルを最後に足し、選択の起点（selectedRow）にする。途中の選択の変化では差分を替えない。
@@ -818,8 +822,8 @@ final class WorkingCopyViewController: NSSplitViewController, NSOutlineViewDataS
             isRestoringSelection = false
             let keep = target.item.path == selectedKey?.path
             // いくつか選んでいれば、並べた差分のまま。
-            let chosen = files.selectedRowIndexes.compactMap { files.item(atRow: $0) as? Entry }.filter { !$0.isConflict }
-            if multi != nil, chosen.count >= 2 {
+            let chosen = chosenEntries()
+            if staysMulti, chosen.count >= 2 {
                 showMulti(chosen, keepScroll: true)
             } else {
                 showDiff(of: target, staged: side(for: target.item), keepScroll: keep)
@@ -847,6 +851,21 @@ final class WorkingCopyViewController: NSSplitViewController, NSOutlineViewDataS
         }
     }
     private var appliedSelectMany = false
+
+    private static func reselectKey(_ entry: Entry) -> WorkingCopyReselect.Key {
+        WorkingCopyReselect.Key(path: entry.item.path, section: entry.section?.rawValue)
+    }
+
+    /// 同じパスの行を 1 つにする（一部だけ stage したファイルの両方の節の行を選んでも、差分には 1 回だけ並べる）。
+    private static func distinctFiles(_ entries: [Entry]) -> [Entry] {
+        var seen: Set<String> = []
+        return entries.filter { seen.insert($0.item.path).inserted }
+    }
+
+    /// 一覧で選んでいるファイル（コンフリクトを除き、同じパスは 1 つ）。
+    private func chosenEntries() -> [Entry] {
+        Self.distinctFiles(files.selectedRowIndexes.compactMap { files.item(atRow: $0) as? Entry }.filter { !$0.isConflict })
+    }
 
     /// 節分けの一覧の行を選んだ: 差分の側をその節にそろえる。替えたら true。
     @discardableResult
@@ -1290,6 +1309,7 @@ final class WorkingCopyViewController: NSSplitViewController, NSOutlineViewDataS
     /// （Unstaged・Staged・All）は 1 ファイルのときと同じ。その側に変更のないファイルは並べない。
     private func showMulti(_ chosen: [Entry], keepScroll: Bool = false) {
         guard let status else { return }
+        let chosen = Self.distinctFiles(chosen)
         let side = diffSide
         let whitespace = whitespacePopUp.whitespace
         let candidates = chosen.filter { entry in
@@ -2528,7 +2548,7 @@ final class WorkingCopyViewController: NSSplitViewController, NSOutlineViewDataS
     func outlineViewSelectionDidChange(_ notification: Notification) {
         guard !isRestoringSelection else { return }
         // 2 つ以上選んだら、選んだファイルの差分を並べる（すべてのファイルを見ている間は 1 つ）。
-        let chosen = files.selectedRowIndexes.compactMap { files.item(atRow: $0) as? Entry }.filter { !$0.isConflict }
+        let chosen = chosenEntries()
         if !showsAllFiles, chosen.count >= 2 { return showMulti(chosen) }
         guard let entry = files.item(atRow: files.selectedRow) as? Entry else { return }
         let sideChanged = adoptSection(of: entry)
@@ -2854,4 +2874,29 @@ private final class SectionActionButton: NSButton {
     }
 
     @objc private func run() { handler?() }
+}
+
+/// Working Copy の一覧を読み直した後に選び直す行（画面に依らない部分）。GTK4 版の `rows_to_reselect` と同じ。
+enum WorkingCopyReselect {
+    /// 一覧の 1 行: パスと、節分けのときの節（Mixed とコンフリクトは nil）。
+    struct Key: Hashable {
+        let path: String
+        let section: Int?
+    }
+
+    /// 作り直した一覧 `rows` で、前に選んでいた行 `kept` に当たる行の添字。前の行（同じパス・同じ節）があれば
+    /// それ、なければ（すべて stage した・外したので別の節へ移った）同じパスの別の節の行。一部だけ stage して
+    /// 両方の節にあるファイルは、選んでいた節の行だけ。
+    static func rows(kept: [Key], in rows: [Key]) -> [Int] {
+        let present = Set(rows)
+        let keptKeys = Set(kept)
+        let moved = Set(kept.filter { !present.contains($0) }.map(\.path))
+        return rows.indices.filter { keptKeys.contains(rows[$0]) || moved.contains(rows[$0].path) }
+    }
+
+    /// 何も選んでいないときに最初に選ぶ行: 今の見る側 `side` の節の行を先に（その前のコンフリクトは先のまま）、
+    /// その節がなければ最初の行。
+    static func first(in rows: [Key], side: Int) -> Int? {
+        rows.firstIndex { $0.section == nil || $0.section == side } ?? (rows.isEmpty ? nil : 0)
+    }
 }
