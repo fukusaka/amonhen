@@ -7,7 +7,7 @@ import type { HostMessage, ViewName } from '../view/protocol.ts';
 import { el, getState, post, updateState, type View } from './api.ts';
 import { createBlameView } from './blame.ts';
 import { createDaemonView } from './daemon.ts';
-import { setDetailsLayout, showWholeFile, fileAction, openAtCommit, setDetailsStyle, detailsViewAction } from './details.ts';
+import { setDetailsLayout, showWholeFile, fileAction, openAtCommit, setDetailsStyle, detailsViewAction, setFilesToOpenTogether } from './details.ts';
 import { setWrapLines } from './diffView.ts';
 import { redrawPictures } from './allFiles.ts';
 import { createFileHistoryView } from './fileHistory.ts';
@@ -70,6 +70,10 @@ window.addEventListener('message', (event: MessageEvent<HostMessage>) => {
   }
   if (message.type === 'wrapLines') {
     setWrapLines(message.wrap);
+    return;
+  }
+  if (message.type === 'filesToOpenTogether') {
+    setFilesToOpenTogether(message.count);
     return;
   }
   if (message.type === 'pictureSettings') {

@@ -18,11 +18,13 @@ import type {
   DiffMenuAction,
   FileStat,
   LineStaging,
+  StackedFile,
   WorkingCopyHostMessage,
   WorkingCopyWebviewMessage,
 } from '../workingCopy/protocol.ts';
 import { gapKey, type GapOpen } from '../workingCopy/gaps.ts';
-import { modeOf, sideNoteFor, type DiffSide, type SideNote } from '../workingCopy/sides.ts';
+import { modeOf, sideNoteFor, stackedPaths, type DiffSide, type SideNote } from '../workingCopy/sides.ts';
+import { openTogether } from '../history/stackedFiles.ts';
 import { commitStaged } from './commit.ts';
 import { openConflict } from './diff.ts';
 import { commitDraft, fileLayout, setCommitDraft, setFileLayout, setWorkingCopyLook, workingCopyLook } from './preferences.ts';
@@ -39,6 +41,11 @@ export function lineStaging(): LineStaging {
   return vscode.workspace.getConfiguration('amonhen').get<string>('diff.lineStaging') === 'bar' ? 'bar' : 'select';
 }
 
+/** 設定「Files to open together」（`amonhen.diff.filesToOpenTogether`）。並べる差分の数の上限 */
+export function filesToOpenTogether(): number {
+  return openTogether(vscode.workspace.getConfiguration('amonhen').get('diff.filesToOpenTogether'));
+}
+
 /**
  * たたんだ差分の、隙間の開き方（リポジトリ・見る側・ファイルごと）。拡張が動いている間だけ覚える（メインビューを
  * 閉じて開き直しても同じ。アプリと同じく保存はしない）
@@ -51,6 +58,8 @@ export class WorkingCopyController implements vscode.Disposable {
   private listeners: vscode.Disposable[] = [];
   private files: Change[] = [];
   private selected: { group: ChangeGroup; path: string } | undefined;
+  /** いくつか選んで差分を並べているファイル（一覧の順。エンジンがあるときだけ） */
+  private stack: string[] | undefined;
   private timer: NodeJS.Timeout | undefined;
   /** amend のときにメッセージ欄へ入れる、HEAD のメッセージ */
   private head: { oid: string; message: string } | undefined;
@@ -67,6 +76,7 @@ export class WorkingCopyController implements vscode.Disposable {
     vscode.Disposable.from(...this.listeners).dispose();
     this.repo = repo;
     this.selected = undefined;
+    this.stack = undefined;
     // 見る側は Working Copy で 1 つ。開き直したら Unstaged から（アプリと同じく覚えない）
     this.side = 'unstaged';
     this.head = undefined;
@@ -277,8 +287,26 @@ export class WorkingCopyController implements vscode.Disposable {
   /** 差分を頼んだ回数（読む間に選び直したら、古い差分を送らない） */
   private diffRequest = 0;
 
-  /** 選んでいるファイルの差分を送る。stage してグループが変わっても、同じファイルを見続ける */
+  /**
+   * 選んでいるファイルの差分を送る。stage してグループが変わっても、同じファイルを見続ける。いくつか選んで並べて
+   * いれば、残っているファイル（コンフリクトを除く）が 2 つ以上あるうちは、並べたまま読み直す（見る側は替えない。
+   * アプリと同じ）
+   */
   private async sendDiff(): Promise<void> {
+    if (this.stack) {
+      const kept = this.stack.filter((p) => this.files.some((f) => f.path === p && f.group !== 'conflicts'));
+      if (kept.length >= 2) {
+        this.stack = kept;
+        await this.sendStack(kept);
+        return;
+      }
+      this.stack = undefined;
+      // 1 つになったら、その差分を出す（押した行がなくなっていれば、残ったもの）
+      if (kept.length === 1 && !this.files.some((f) => f.path === this.selected?.path)) {
+        const change = this.files.find((f) => f.path === kept[0]);
+        if (change) this.selected = { group: change.group, path: change.path };
+      }
+    }
     const selected = this.selected;
     if (!selected) {
       return;
@@ -345,6 +373,58 @@ export class WorkingCopyController implements vscode.Disposable {
     const { diff } = await this.loadDiff(change);
     if (stale()) return;
     this.post({ type: 'wcDiff', group: change.group, diff });
+  }
+
+  /**
+   * いくつか選んだファイルの差分を並べて送る: 見る側に変更のあるものを、上から Files to open together の数まで、
+   * ファイルごとに読む（行の stage・破棄はファイルごとの差分で頼む）。読めないファイルは並べない（アプリと同じ）
+   */
+  private async sendStack(paths: string[]): Promise<void> {
+    const whitespace = this.whitespace;
+    const side = this.side;
+    const request = ++this.diffRequest;
+    const stale = () => request !== this.diffRequest || whitespace !== this.whitespace || side !== this.side;
+    const has = (path: string, group: ChangeGroup) => this.files.some((f) => f.group === group && f.path === path);
+    const { shown, total } = stackedPaths(paths, has, side, filesToOpenTogether());
+    // HEAD → 作業ツリーの差分では空白を無視できない（1 つのときと同じく、黙って替えずにわけを言う）
+    const note: SideNote | undefined = side === 'all' && whitespace !== 'exact' ? 'allWhitespace' : undefined;
+    const read = note
+      ? []
+      : await Promise.all(
+          shown.map(async (path) => {
+            const change =
+              side === 'all'
+                ? (this.files.find((f) => f.group === 'unstaged' && f.path === path) ?? this.files.find((f) => f.group === 'staged' && f.path === path))
+                : this.files.find((f) => f.group === side && f.path === path);
+            if (!change) return undefined;
+            try {
+              const daemon = await this.daemonDiff(change, modeOf(side), whitespace);
+              return daemon && { group: side === 'all' ? change.group : side, daemon };
+            } catch {
+              return undefined;
+            }
+          }),
+        );
+    if (stale()) return;
+    const daemons = read.flatMap((r) => r ?? []);
+    const files: StackedFile[] = daemons.map(({ group, daemon }) => ({ group, diff: daemon.diff, open: this.gapsOf(modeOf(side), daemon.diff.path) }));
+    const message: WorkingCopyHostMessage = { type: 'wcStack', side, whitespace, paths, total, files, ...(note ? { note } : {}) };
+    this.post(message);
+    // 構文の色は後から。付いたら同じ差分を送り直す（選んだ行はそのまま）
+    void (async () => {
+      const client = this.repo && (await daemonFor(this.repo.root));
+      if (!client) return;
+      let touched = false;
+      for (const { daemon } of daemons) {
+        try {
+          touched = applySyntax(await client.call({ op: 'diffSyntax', diff: daemon.handle }), daemon.lines).size > 0 || touched;
+        } catch {
+          // 色なしのまま
+        }
+        if (stale()) return;
+      }
+      if (touched && !stale()) this.post(message);
+    })();
   }
 
   /**
@@ -420,6 +500,11 @@ export class WorkingCopyController implements vscode.Disposable {
   /** 差分の右クリックの項目（package.json の webview/context）。選んだ行や hunk は Webview が知っているので、頼み返す */
   diffAction(action: DiffMenuAction, at: { gap?: number; hunk?: number; line?: string }): void {
     this.post({ type: 'wcDiffAction', action, ...at });
+  }
+
+  /** 設定 Files to open together を変えた: 並べていれば、その数で読み直す */
+  filesToOpenTogetherChanged(): void {
+    if (this.stack) this.schedule();
   }
 
   /** 行の Stage の形を設定で変えた */
@@ -499,6 +584,14 @@ export class WorkingCopyController implements vscode.Disposable {
     switch (message.type) {
       case 'wcSelect':
         this.selected = { group: message.group, path: message.path };
+        this.stack = undefined;
+        if (message.side) this.side = message.side;
+        await this.sendDiff();
+        break;
+      case 'wcSelectFiles':
+        this.selected = { group: message.group, path: message.path };
+        // エンジンがなければ並べない（押した行の差分だけ）
+        this.stack = message.paths.length >= 2 && (await daemonFor(repo.root)) ? message.paths : undefined;
         if (message.side) this.side = message.side;
         await this.sendDiff();
         break;
@@ -512,7 +605,8 @@ export class WorkingCopyController implements vscode.Disposable {
         const key = gapKey(repo.root, message.side, message.path);
         if (message.open.length > 0) openGaps.set(key, message.open);
         else openGaps.delete(key);
-        if (this.selected?.path === message.path && message.side === this.side) await this.sendDiff();
+        const shown = this.stack ? this.stack.includes(message.path) : this.selected?.path === message.path;
+        if (shown && message.side === this.side) await this.sendDiff();
         break;
       }
       case 'wcStageFiles': {

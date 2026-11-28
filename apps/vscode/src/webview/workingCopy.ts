@@ -12,7 +12,8 @@ import type { Eol, LineEndings } from '../git/eol.ts';
 import { ignorePatterns } from '../workingCopy/ignore.ts';
 import { addTrailer, commitDisabledReason, composeMessage, lengthLevel, longestLine, messageLength, splitMessage, withType } from '../workingCopy/commitMessage.ts';
 import { filesUnder, filterByPath, makeFileTree, type FileDir, type FileLayout } from '../workingCopy/fileList.ts';
-import type { DiffMenuAction, FileStat, LineStaging, WorkingCopyLook } from '../workingCopy/protocol.ts';
+import type { DiffMenuAction, FileStat, LineStaging, StackedFile, WorkingCopyLook } from '../workingCopy/protocol.ts';
+import { lineCounts } from '../history/stackedFiles.ts';
 import {
   changeBlocks,
   gapActions,
@@ -40,6 +41,9 @@ import {
   sectionRows,
   SIDES,
   sideNoteText,
+  stackCandidates,
+  stackEmptyText,
+  stackTitle,
   toggleRequest,
   type Check,
   type DiffSide,
@@ -267,6 +271,18 @@ export function createWorkingCopyView(): View {
   let stats = new Map<string, { added: number | null; removed: number | null }>();
   /** 節ごとの行数（Staged は HEAD → index、Unstaged は index → 作業ツリー。節に分けたときに読む） */
   let splitStats: { staged: Map<string, FileStat>; unstaged: Map<string, FileStat> } | undefined;
+  /**
+   * いくつか選んで並べた差分（エンジンがあるとき。アプリと同じ）。paths は選んだファイル、total はその側に変更の
+   * ある数、files は並べたもの
+   */
+  let stack: { paths: string[]; total: number; files: StackEntry[]; note?: SideNote } | undefined;
+  /**
+   * 並べた差分で、いま行を選ぶ・操作するファイル（その差分が diff・diffGroup・gapOpen・folded に入る）。行の選択は
+   * このファイルだけ（ほかのファイルを押したら、前のファイルの選択は外す）
+   */
+  let stackActive: StackEntry | undefined;
+  /** 並べた差分で畳んだファイル（選んだファイルの並びが変わったら、すべて開き直す。アプリと同じ） */
+  let stackCollapsed = new Set<string>();
 
   // ---- ファイル一覧 ----
 
@@ -516,6 +532,13 @@ export function createWorkingCopyView(): View {
       marked = new Set([keyText(row)]);
       fileAnchor = keyText(row);
     }
+    // いくつかのファイルを選んだら、選んだ見る側で差分を並べる（エンジンがあるとき。アプリと同じ）
+    const many = engine ? stackCandidates(listed.filter((r) => marked.has(keyText(r)))) : [];
+    if (many.length >= 2) {
+      renderFiles();
+      post({ type: 'wcSelectFiles', group: groupOf(row), path: row.path, paths: many });
+      return;
+    }
     // 節の行を 1 つだけ選んだら、見る側をその節にそろえる（アプリと同じ）
     const before = side;
     if (engine && marked.size <= 1) side = adoptSide(row, side);
@@ -555,6 +578,13 @@ export function createWorkingCopyView(): View {
     marked = new Set(kept.map((i) => keyText(rows[i]!)));
     const target = reselectTarget(selected, rows, kept, side);
     const row = target === undefined ? undefined : listed[target];
+    // 並べていて、選んだファイルが 2 つ以上残っていれば、並べたまま（見る側は替えない。拡張が並べた差分を読み直す。
+    // アプリと同じ）
+    if (engine && stack && stackCandidates(kept.map((i) => listed[i]!)).length >= 2) {
+      if (row) selected = keyOf(row);
+      renderFiles();
+      return;
+    }
     if (!row || isSelected(row)) {
       renderFiles();
       return;
@@ -617,7 +647,7 @@ export function createWorkingCopyView(): View {
       if (next) select(next);
       return;
     }
-    if (diff?.folded) {
+    if (stack || diff?.folded) {
       moveBlock(forward);
       return;
     }
@@ -653,6 +683,19 @@ export function createWorkingCopyView(): View {
     selected = row ? keyOf(row) : { path, section: sectioned() ? group : null };
     marked = new Set([keyText(selected)]);
     fileAnchor = keyText(selected);
+  }
+
+  /** 拡張が並べた差分を送ってきたら、一覧でもそのファイルを選ぶ（見る側の節の行を先に） */
+  function followStack(paths: readonly string[]): void {
+    const now = stackCandidates(listed.filter((r) => marked.has(keyText(r))));
+    if (now.length === paths.length && now.every((p) => paths.includes(p))) return;
+    const rows = paths.flatMap((p) => listed.find((r) => r.path === p && (r.section === null || r.section === side)) ?? listed.find((r) => r.path === p) ?? []);
+    marked = new Set(rows.map(keyText));
+    if (!selected || !paths.includes(selected.path)) {
+      const last = rows.at(-1);
+      selected = last ? keyOf(last) : undefined;
+    }
+    fileAnchor = selected ? keyText(selected) : undefined;
   }
 
   /** 差分の帯の、見る側の切り替え（エンジンがあって、コンフリクトでないとき） */
@@ -720,6 +763,17 @@ export function createWorkingCopyView(): View {
   }
 
   function renderDiff(): void {
+    if (stack) {
+      // 並べた差分: 行を選んでいるファイルだけ描き直す（帯のボタンも）。ほかは描いたまま
+      if (stackActive && stackActive.section.isConnected) {
+        renderStackFile(stackActive);
+        renderStackBand();
+        layoutGaps();
+      } else {
+        renderStack();
+      }
+      return;
+    }
     if (!diff) {
       // 選んだ側に変更がない・All で出せないときは、帯を残してそう言う（アプリと同じ）
       if (diffNote && diffNote.path === selected?.path) {
@@ -890,20 +944,41 @@ export function createWorkingCopyView(): View {
     wholeButton.addEventListener('click', () => setGaps(d, toggleWholeFile(d.hunks)));
     head.insertBefore(wholeButton, head.querySelector('.wrap-button'));
     head.append(actions);
-    const body = renderDiffBody(d, {
-      picked,
+    const body = foldedBody(d, fside, picked);
+    diffPane.classList.toggle('bar-style', bar);
+    diffPane.replaceChildren(head, ...body);
+    folded = { diff: d, byKey };
+    layoutGaps();
+  }
+
+  /**
+   * たたんだ差分の本体（隙間の行と変更の行）。marks は描く選んだ行。enter は隙間の行の操作の前に呼ぶ（並べた
+   * 差分では、そのファイルを操作の相手にする）
+   */
+  function foldedBody(d: FileDiff, fside: FoldedSide, marks: ReadonlySet<string>, enter: () => void = () => undefined): HTMLElement[] {
+    const exact = exactDiff();
+    const bar = lineStaging === 'bar';
+    return renderDiffBody(d, {
+      picked: marks as Set<string>,
       ...(bar || fside === 'all' ? { bar: (line: DiffLine) => (fside === 'all' ? (line.staged ? 'staged' : 'unstaged') : 'mark') } : {}),
       gapRow: (hunk, index) => {
         const inHunk = hunk.lines.filter((l) => l.kind !== ' ');
-        const selected = bar ? [] : inHunk.filter((l) => picked.has(lineKey(l)));
+        const selected = bar ? [] : inHunk.filter((l) => marks.has(lineKey(l)));
         return gapRow({
           hunk,
           index,
           selected: selected.length,
           ops: !exact || bar ? [] : stageActions(fside, selected.length > 0 ? selected : inHunk, selected.length > 0 ? 'Lines' : 'Hunk'),
-          onGap: (action) => applyGap(d, hunk.gap!.index, action),
-          onOp: (op) => runOp(op, selected.length > 0 ? selected : inHunk),
+          onGap: (action) => {
+            enter();
+            applyGap(d, hunk.gap!.index, action);
+          },
+          onOp: (op) => {
+            enter();
+            runOp(op, selected.length > 0 ? selected : inHunk);
+          },
           onMenu: (row, pill) => {
+            enter();
             // 札の下に、開く・畳むだけのメニュー（package.json の webview/context）
             pillMenu = true;
             const r = pill.getBoundingClientRect();
@@ -913,11 +988,200 @@ export function createWorkingCopyView(): View {
         });
       },
     });
-    diffPane.classList.toggle('bar-style', bar);
-    diffPane.replaceChildren(head, ...body);
-    folded = { diff: d, byKey };
+  }
+
+  // ---- 並べた差分（いくつか選んだとき。エンジンがあるとき） ----
+
+  /** 並べた差分の 1 ファイル */
+  interface StackEntry {
+    path: string;
+    /** 差分の側のグループ（All なら、そのファイルが今あるグループ） */
+    group: ChangeGroup;
+    diff: FileDiff;
+    open: GapOpen[];
+    byKey: Map<string, { line: DiffLine; hunk: number; block: number }>;
+    section: HTMLElement;
+  }
+
+  /** 並べた差分を受け取った。同じファイルの並びなら、畳んだファイルと行を選んでいるファイル（中身が同じなら選んだ行も）を保つ */
+  function showStack(m: { paths: string[]; total: number; files: StackedFile[]; note?: SideNote }): void {
+    const same = stack !== undefined && stack.paths.join('\0') === m.paths.join('\0');
+    if (!same) stackCollapsed = new Set();
+    const before = stackActive;
+    const entries = m.files.map((f): StackEntry => ({
+      path: f.diff.path,
+      group: f.group,
+      diff: f.diff,
+      open: f.open,
+      byKey: changesOf(f.diff).byKey,
+      section: el('section', 'file-diff wc-stack-file'),
+    }));
+    stack = { paths: m.paths, total: m.total, files: entries, ...(m.note ? { note: m.note } : {}) };
+    diffNote = undefined;
+    diffError = undefined;
+    const again = same && before ? entries.find((e) => e.path === before.path) : undefined;
+    if (again) {
+      if (again.diff.version !== before!.diff.version) {
+        picked = new Set();
+        anchor = undefined;
+      }
+      stackActive = undefined;
+      enterStack(again, true);
+    } else {
+      stackActive = undefined;
+      diff = undefined;
+      folded = undefined;
+      picked = new Set();
+      anchor = undefined;
+    }
+    renderStack();
+  }
+
+  /**
+   * 並べた差分の entry を操作の相手にする（行の選択はそのファイルだけ）。keep なら選んだ行を残す（読み直した同じ
+   * ファイル）。前の相手のファイルに選んだ行があれば、外して描き直す
+   */
+  function enterStack(entry: StackEntry, keep = false): void {
+    if (stackActive === entry) return;
+    const before = stackActive;
+    stackActive = entry;
+    diff = entry.diff;
+    diffGroup = entry.group;
+    gapOpen = entry.open;
+    folded = { diff: entry.diff, byKey: entry.byKey };
+    if (keep) return;
+    const had = picked.size > 0;
+    picked = new Set();
+    anchor = undefined;
+    if (before && had && before.section.isConnected) renderStackFile(before);
+    if (had) renderStackBand();
+  }
+
+  /** 並べた差分の上の帯: 「N files」（多くて削ったら出した数）、見る側、空白、折り返し、選んだ行の操作（変更の帯の形） */
+  let stackBand: HTMLElement | undefined;
+  function renderStackBand(): void {
+    if (!stack) return;
+    const head = el('div', 'diff-head wc-stack-band');
+    const title = stackTitle(stack.paths.length, stack.total, stack.files.length);
+    head.append(el('span', 'path', title), sideBand());
+    if (whitespace) head.append(whitespaceSelect(whitespace, (w) => post({ type: 'wcWhitespace', whitespace: w })));
+    head.append(wrapButton());
+    // 「変更の帯」の形では、選んだ行の操作を帯に置く（「選んでから」の形では隙間の行と右クリック・Space で）。
+    // ファイルの Stage・Discard は見出しの ⋯ で（ファイル 1 つのボタンは出さない。アプリと同じ）
+    if (lineStaging === 'bar') {
+      const actions = el('span', 'actions');
+      const fside: FoldedSide = side;
+      const pickedLines = stackActive ? [...picked].flatMap((k) => stackActive!.byKey.get(k)?.line ?? []) : [];
+      const exact = exactDiff();
+      const ops =
+        pickedLines.length > 0
+          ? stageActions(fside, pickedLines, 'Lines')
+          : [{ op: fside === 'staged' ? ('unstage' as const) : ('stage' as const), label: fside === 'staged' ? 'Unstage Lines' : 'Stage Lines' }];
+      for (const { op, label } of ops) {
+        const button = el('button', op === 'discard' ? 'secondary' : undefined, label);
+        button.disabled = pickedLines.length === 0 || !exact;
+        if (!exact) button.title = 'Can’t stage or discard lines while whitespace is ignored';
+        else if (pickedLines.length === 0) button.title = 'Select lines to stage them (or click the change bar or line numbers)';
+        button.addEventListener('click', () => runOp(op, pickedLines));
+        actions.append(button);
+      }
+      head.append(actions);
+    }
+    if (stackBand?.isConnected) stackBand.replaceWith(head);
+    stackBand = head;
+  }
+
+  /** 並べた差分をすべて描く */
+  function renderStack(): void {
+    if (!stack) return;
+    stackBand = undefined;
+    renderStackBand();
+    diffPane.classList.toggle('bar-style', lineStaging === 'bar');
+    if (stack.files.length === 0) {
+      const text = stack.note ? sideNoteText(stack.note) : stackEmptyText(side);
+      diffPane.replaceChildren(stackBand!, el('div', 'empty side-note', text));
+      return;
+    }
+    for (const entry of stack.files) renderStackFile(entry);
+    diffPane.replaceChildren(stackBand!, ...stack.files.map((e) => e.section));
     layoutGaps();
   }
+
+  /** 並べた差分の 1 ファイルを描く: 見出し（押すと畳む・開く、⋯ と右クリックに Stage・Discard…）と差分 */
+  function renderStackFile(entry: StackEntry): void {
+    const d = entry.diff;
+    const section = entry.section;
+    section.dataset.path = entry.path;
+    const isCollapsed = stackCollapsed.has(entry.path);
+    section.classList.toggle('collapsed', isCollapsed);
+    const head = el('div', 'diff-head wc-stack-head');
+    head.title = entry.path;
+    head.append(el('span', 'chevron', isCollapsed ? '▸' : '▾'));
+    const letter = stackLetter(entry.path);
+    if (letter) head.append(el('span', `status s-${letter}`, letter));
+    const label = el('span', 'path');
+    const slash = entry.path.lastIndexOf('/');
+    if (slash >= 0) label.append(el('span', 'dir', entry.path.slice(0, slash + 1)));
+    label.append(entry.path.slice(slash + 1));
+    head.append(label);
+    const counts = lineCounts(d);
+    if (counts.added || counts.removed) {
+      const stat = el('span', 'stat');
+      if (counts.added) stat.append(el('span', 'added', `+${counts.added}`));
+      if (counts.removed) stat.append(el('span', 'removed', `−${counts.removed}`));
+      head.append(stat);
+    }
+    // ⋯ と右クリック: Stage（stage 済みだけなら Unstage）、Discard…（作業ツリーに変更があるとき）。アプリの fileMenu と同じ
+    const unstagedChange = files.find((f) => f.group === 'unstaged' && f.path === entry.path);
+    const stagedChange = files.find((f) => f.group === 'staged' && f.path === entry.path);
+    head.dataset.vscodeContext = JSON.stringify({
+      webviewSection: 'wcStackFile',
+      path: entry.path,
+      ...(stagedChange && !unstagedChange ? { wcStagedOnly: true } : {}),
+      ...(unstagedChange ? { wcUnstaged: true } : {}),
+      ...(unstagedChange?.letter === 'U' ? { wcUntracked: true } : {}),
+      preventDefaultContextMenuItems: true,
+    });
+    const more = el('button', 'head-button more', '⋯');
+    more.title = 'More actions for this file';
+    more.setAttribute('aria-label', 'More Actions');
+    more.addEventListener('click', (e) => {
+      e.stopPropagation();
+      const r = more.getBoundingClientRect();
+      head.dispatchEvent(new MouseEvent('contextmenu', { bubbles: true, cancelable: true, clientX: r.left, clientY: r.bottom, button: 2 }));
+    });
+    head.append(more);
+    head.addEventListener('click', (e) => {
+      if ((e.target as Element).closest('button')) return;
+      const now = !stackCollapsed.has(entry.path);
+      if (now) stackCollapsed.add(entry.path);
+      else stackCollapsed.delete(entry.path);
+      section.classList.toggle('collapsed', now);
+      head.querySelector('.chevron')!.textContent = now ? '▸' : '▾';
+      // 畳んで見出しが上に隠れたら、見出しが見えるところまで戻す
+      if (now && section.getBoundingClientRect().top < diffPane.getBoundingClientRect().top) section.scrollIntoView({ block: 'start' });
+      if (!now) layoutGaps();
+    });
+    const marks = entry === stackActive ? picked : new Set<string>();
+    const body = el('div', 'wc-stack-body');
+    body.append(...foldedBody(d, d.combined ? 'all' : entry.group === 'staged' ? 'staged' : 'unstaged', marks, () => enterStack(entry)));
+    section.replaceChildren(head, body);
+  }
+
+  /** 並べた差分の見出しの印: Staged・Unstaged はその側の、All はファイルとしての変化（一覧の Mixed の行と同じ） */
+  function stackLetter(path: string): string | undefined {
+    if (side === 'staged' || side === 'unstaged') return files.find((f) => f.group === side && f.path === path)?.letter;
+    return mixedRows(files).find((r) => r.path === path)?.letter;
+  }
+
+  /** 並べた差分で、要素 target のあるファイル */
+  function stackEntryAt(target: Element): StackEntry | undefined {
+    const section = target.closest<HTMLElement>('.wc-stack-file');
+    return section ? stack?.files.find((e) => e.section === section) : undefined;
+  }
+
+  /** 行を選ぶ・操作する範囲（並べた差分では、相手のファイル） */
+  const lineScope = (): HTMLElement => (stack && stackActive ? stackActive.section : diffPane);
 
   /** 今のたたんだ差分（マウス・右クリック・J・K が使う） */
   let folded: { diff: FileDiff; byKey: Map<string, { line: DiffLine; hunk: number; block: number }> } | undefined;
@@ -926,12 +1190,15 @@ export function createWorkingCopyView(): View {
 
   /** 隙間の行の札とボタンを置き直す（描いた後と、幅が変わったとき） */
   function layoutGaps(): void {
-    const box = diffPane.querySelector<HTMLElement>('.hunk.folded');
-    if (!box) return;
-    const code = box.querySelector<HTMLElement>('.line .code');
-    const gutter = code ? code.getBoundingClientRect().left - box.getBoundingClientRect().left : 0;
-    box.style.setProperty('--gap-gutter', `${gutter}px`);
-    layoutGapRows(box, gutter);
+    // 並べた差分では、見出しを上の帯の下に止める
+    if (stack && stackBand) diffPane.style.setProperty('--wc-stack-top', `${stackBand.offsetHeight}px`);
+    for (const box of diffPane.querySelectorAll<HTMLElement>('.hunk.folded')) {
+      if (box.offsetParent === null) continue;
+      const code = box.querySelector<HTMLElement>('.line .code');
+      const gutter = code ? code.getBoundingClientRect().left - box.getBoundingClientRect().left : 0;
+      box.style.setProperty('--gap-gutter', `${gutter}px`);
+      layoutGapRows(box, gutter);
+    }
   }
   let layoutFrame = 0;
   new ResizeObserver(() => {
@@ -942,6 +1209,7 @@ export function createWorkingCopyView(): View {
   /** 隙間の開き方を変えて、拡張に覚えてもらう（差分を読み直して送ってくる） */
   function setGaps(d: FileDiff, open: GapOpen[]): void {
     gapOpen = open;
+    if (stackActive?.diff === d) stackActive.open = open;
     post({ type: 'wcGaps', path: d.path, side: foldedSide(d), open });
   }
 
@@ -1005,6 +1273,10 @@ export function createWorkingCopyView(): View {
   diffPane.addEventListener(
     'contextmenu',
     (e) => {
+      // 並べた差分の見出しは、見出しのメニュー（Stage・Discard…）のまま
+      if (stack && (e.target as HTMLElement).closest('.wc-stack-head, .wc-stack-band')) return;
+      const entry = stack ? stackEntryAt(e.target as HTMLElement) : undefined;
+      if (entry) enterStack(entry);
       const found = diffMenuContext(e.target as HTMLElement);
       if (found) found.row.dataset.vscodeContext = JSON.stringify(found.context);
     },
@@ -1173,7 +1445,7 @@ export function createWorkingCopyView(): View {
   let hotBlock: number | undefined;
 
   /** 今描いている差分の行（上から順） */
-  const lineRows = () => [...diffPane.querySelectorAll<HTMLElement>('.line')];
+  const lineRows = () => [...lineScope().querySelectorAll<HTMLElement>('.line')];
 
   /** 行 first〜last（lineRows の位置）の、変更の行の lineKey */
   const keysBetween = (rows: HTMLElement[], a: number, b: number) =>
@@ -1185,15 +1457,19 @@ export function createWorkingCopyView(): View {
   }
 
   /** 帯のかたまり block の行に印を付ける（undefined なら外す） */
-  function markBlock(block: number | undefined): void {
-    if (block === hotBlock) return;
+  function markBlock(block: number | undefined, entry?: StackEntry): void {
+    if (block === hotBlock && entry === hotEntry) return;
     hotBlock = block;
+    hotEntry = entry;
     for (const r of diffPane.querySelectorAll<HTMLElement>('.line.hot')) r.classList.remove('hot');
-    if (block === undefined || !folded) return;
-    for (const r of diffPane.querySelectorAll<HTMLElement>('.line[data-key]')) {
-      if (folded.byKey.get(r.dataset.key!)?.block === block) r.classList.add('hot');
+    // 並べた差分では、マウスの下のファイルの帯（行の番号はファイルごとなので、そのファイルの中だけ）
+    const byKey = entry ? entry.byKey : folded?.byKey;
+    if (block === undefined || !byKey) return;
+    for (const r of (entry?.section ?? diffPane).querySelectorAll<HTMLElement>('.line[data-key]')) {
+      if (byKey.get(r.dataset.key!)?.block === block) r.classList.add('hot');
     }
   }
+  let hotEntry: StackEntry | undefined;
 
   diffPane.addEventListener('mousedown', (e) => {
     if (e.button !== 0) return;
@@ -1202,6 +1478,10 @@ export function createWorkingCopyView(): View {
     const row = target.closest<HTMLElement>('.line');
     const k = row?.dataset.key;
     if (!row || !k) return;
+    // 並べた差分: 押したファイルを操作の相手にする（前のファイルの選んだ行は外す）
+    const entry = stack ? stackEntryAt(row) : undefined;
+    if (stack && !entry) return;
+    if (entry) enterStack(entry);
     const info = folded?.diff === diff ? folded?.byKey.get(k) : undefined;
     if (info && diff?.folded) {
       const bar = lineStaging === 'bar';
@@ -1264,6 +1544,12 @@ export function createWorkingCopyView(): View {
     }
     // 「変更の帯」の形: 帯の上なら、そのかたまりに印を付ける（押すとかたまりごと）
     const key = row?.dataset.key;
+    if (stack) {
+      const entry = row ? stackEntryAt(row) : undefined;
+      const onBar = lineStaging === 'bar' && entry && key && target.closest('.bar');
+      markBlock(onBar ? entry.byKey.get(key)?.block : undefined, onBar ? entry : undefined);
+      return;
+    }
     const onBar = lineStaging === 'bar' && diff?.folded && key && target.closest('.bar');
     markBlock(onBar ? folded?.byKey.get(key)?.block : undefined);
   });
@@ -1276,6 +1562,7 @@ export function createWorkingCopyView(): View {
       const lines = keys.flatMap((k) => folded?.byKey.get(k)?.line ?? []);
       for (const r of diffPane.querySelectorAll<HTMLElement>('.line.hot')) r.classList.remove('hot');
       hotBlock = undefined;
+      hotEntry = undefined;
       if (lines.length > 0) runOp(stageOpFor(lines), lines);
       return;
     }
@@ -1310,7 +1597,13 @@ export function createWorkingCopyView(): View {
 
   /** J・K（たたんだ差分）: 次・前の変更のかたまりを選び、上から 3 分の 1 あたりに出す（アプリと同じ） */
   function moveBlock(forward: boolean): void {
+    // 並べた差分では、行を選んでいるファイルの中で（なければ最初の開いているファイル）
+    if (stack && !stackActive) {
+      const first = stack.files.find((e) => !stackCollapsed.has(e.path));
+      if (first) enterStack(first);
+    }
     if (!diff) return;
+    const scope = lineScope();
     const blocks = changeBlocks(diff.hunks);
     if (blocks.length === 0) return;
     const indexOf = (key: string) => blocks.findIndex((b) => b.some((l) => lineKey(l) === key));
@@ -1322,7 +1615,7 @@ export function createWorkingCopyView(): View {
       // 選んでいなければ、見えている一番上から: J はそこ以降の最初、K はそれより前の最後
       const top = diffPane.getBoundingClientRect().top + (diffPane.querySelector<HTMLElement>('.diff-head')?.offsetHeight ?? 0);
       const firstBelow = blocks.findIndex((b) => {
-        const r = diffPane.querySelector<HTMLElement>(`.line[data-key="${lineKey(b[0]!)}"]`);
+        const r = scope.querySelector<HTMLElement>(`.line[data-key="${lineKey(b[0]!)}"]`);
         return r !== null && r.getBoundingClientRect().top >= top;
       });
       target = forward ? (firstBelow < 0 ? blocks.length : firstBelow) : (firstBelow < 0 ? blocks.length : firstBelow) - 1;
@@ -1332,8 +1625,8 @@ export function createWorkingCopyView(): View {
     picked = new Set(block.map(lineKey));
     anchor = lineKey(block[0]!);
     renderDiff();
-    const first = diffPane.querySelector<HTMLElement>(`.line[data-key="${anchor}"]`);
-    const last = diffPane.querySelector<HTMLElement>(`.line[data-key="${lineKey(block.at(-1)!)}"]`);
+    const first = scope.querySelector<HTMLElement>(`.line[data-key="${anchor}"]`);
+    const last = scope.querySelector<HTMLElement>(`.line[data-key="${lineKey(block.at(-1)!)}"]`);
     if (!first || !last) return;
     const pane = diffPane.getBoundingClientRect();
     const headHeight = diffPane.querySelector<HTMLElement>('.diff-head')?.offsetHeight ?? 0;
@@ -1488,10 +1781,19 @@ export function createWorkingCopyView(): View {
         // 選び直す（stage して節が変わったものは、その節の行。消えたファイルは選びから外す）
         relist();
         break;
+      case 'wcStack':
+        side = m.side;
+        whitespace = m.whitespace;
+        followStack(m.paths);
+        renderFiles();
+        showStack(m);
+        break;
       case 'wcDiff':
         if (!m.diff) {
           // 変更がなくなって外したファイルが、もう別のファイルを選んだ後なら、そのまま
           if (m.gone !== undefined && selected !== undefined && selected.path !== m.gone) break;
+          stack = undefined;
+          stackActive = undefined;
           picked = new Set();
           anchor = undefined;
           diff = undefined;
@@ -1502,6 +1804,8 @@ export function createWorkingCopyView(): View {
           renderDiff();
           break;
         }
+        stack = undefined;
+        stackActive = undefined;
         if (diff?.version !== m.diff.version || diff?.path !== m.diff.path) {
           picked = new Set();
           anchor = undefined;
@@ -1518,6 +1822,8 @@ export function createWorkingCopyView(): View {
         renderDiff();
         break;
       case 'wcDiffNote':
+        stack = undefined;
+        stackActive = undefined;
         picked = new Set();
         anchor = undefined;
         diff = undefined;
@@ -1531,6 +1837,8 @@ export function createWorkingCopyView(): View {
         renderDiff();
         break;
       case 'wcDiffFailed':
+        stack = undefined;
+        stackActive = undefined;
         picked = new Set();
         anchor = undefined;
         diff = undefined;
@@ -1543,7 +1851,8 @@ export function createWorkingCopyView(): View {
         break;
       case 'wcLineStaging':
         lineStaging = m.lineStaging;
-        renderDiff();
+        if (stack) renderStack();
+        else renderDiff();
         break;
       case 'wcDiffAction':
         diffAction(m.action, m);

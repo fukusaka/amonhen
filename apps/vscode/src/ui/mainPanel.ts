@@ -14,7 +14,7 @@ import { RangeDiffController } from './rangeDiffController.ts';
 import { ReflogController } from './reflogController.ts';
 import { SettingsController } from './settingsController.ts';
 import { showError } from './stageCommands.ts';
-import { WorkingCopyController } from './workingCopyController.ts';
+import { filesToOpenTogether, WorkingCopyController } from './workingCopyController.ts';
 
 /** シートの Check Connection: 欄の URL へつないでみて、結果の文とつながったかを返す */
 export type SheetCheck = (url: string) => Promise<{ text: string; ok: boolean }>;
@@ -136,6 +136,10 @@ export class MainPanel implements vscode.Disposable {
       vscode.workspace.onDidChangeConfiguration((e) => {
         if (e.affectsConfiguration('amonhen.wrapLongLines')) this.post({ type: 'wrapLines', wrap: wrapLongLines() });
         if (e.affectsConfiguration('amonhen.diff.lineStaging')) this.workingCopy.lineStagingChanged();
+        if (e.affectsConfiguration('amonhen.diff.filesToOpenTogether')) {
+          this.post({ type: 'filesToOpenTogether', count: filesToOpenTogether() });
+          this.workingCopy.filesToOpenTogetherChanged();
+        }
         // 図・数式の設定を変えたら、「すべてのファイル」の絵を描き直す（テーマを変えたときと同じ）
         if (e.affectsConfiguration('amonhen.diagrams') || e.affectsConfiguration('amonhen.math')) this.post({ type: 'pictureSettings' });
       }),
@@ -246,6 +250,7 @@ export class MainPanel implements vscode.Disposable {
         this.ready = true;
         this.post({ type: 'detailsLayout', layout: detailsLayout() });
         this.post({ type: 'wrapLines', wrap: wrapLongLines() });
+        this.post({ type: 'filesToOpenTogether', count: filesToOpenTogether() });
         this.post({ type: 'messageFont', monospace: monospacedMessage() });
         this.post({ type: 'detailsStyle', style: detailsStyle() });
         if (this.pendingView) {
@@ -294,6 +299,7 @@ export class MainPanel implements vscode.Disposable {
         break;
       }
       case 'wcSelect':
+      case 'wcSelectFiles':
       case 'wcSide':
       case 'wcLook':
       case 'wcLayout':

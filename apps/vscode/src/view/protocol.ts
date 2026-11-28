@@ -39,6 +39,8 @@ export type HostMessage =
   | { type: 'show'; view: ViewName }
   /** 長い行を折り返すか（設定 `amonhen.wrapLongLines`。すべての差分とファイルの中身） */
   | { type: 'wrapLines'; wrap: boolean }
+  /** 設定「Files to open together」（`amonhen.diff.filesToOpenTogether`）: コミットを選んだら先頭から開くファイルの数 */
+  | { type: 'filesToOpenTogether'; count: number }
   /** 図・数式の設定（`amonhen.diagrams.*`・`amonhen.math.*`）が変わった（「すべてのファイル」の絵を描き直す） */
   | { type: 'pictureSettings' }
   /** コミット情報の見せ方（簡潔・標準・詳細。すべての詳細の欄） */

@@ -21,7 +21,7 @@ import type {
 } from '../history/protocol.ts';
 import { el, formatDate, getState, post, updateState } from './api.ts';
 import { type FileDir, makeFileTree } from '../workingCopy/fileList.ts';
-import { COLLAPSE_ABOVE, isGenerated, type LineCounts, lineCounts, renamedPath } from '../history/stackedFiles.ts';
+import { COLLAPSE_ABOVE, firstOpen, isGenerated, type LineCounts, lineCounts, OPEN_TOGETHER_DEFAULT, renamedPath } from '../history/stackedFiles.ts';
 import { renderDiffBody, whitespaceSelect, wrapButton } from './diffView.ts';
 import { isImagePath, renderImageDiff } from './imageDiff.ts';
 import { type AllFiles, createAllFiles } from './allFiles.ts';
@@ -158,6 +158,13 @@ export function openAtCommit(oid: string, path: string, line?: number): void {
   post({ type: 'openTreeFile', oid, path, ...(line ? { line } : {}) });
 }
 
+
+/** 設定「Files to open together」: コミットを選んだら、先頭からこの数だけ開く（拡張から受け取る） */
+let openTogether = OPEN_TOGETHER_DEFAULT;
+
+export function setFilesToOpenTogether(count: number): void {
+  openTogether = count;
+}
 
 /** 詳細に並べた 1 ファイル（差分の見出しが、変わったファイルの一覧を兼ねる） */
 interface FileSection {
@@ -390,7 +397,7 @@ export function createDetailsPane(onParent?: (oid: string) => void, images = fal
     shownExtras = undefined;
     renderHead(d);
     const missing = new Set(d.missingFiles ?? []);
-    fileSections(d.oid, missing.size > 0 ? d.files.map((f) => (missing.has(f.path) ? { ...f, missing: true } : f)) : d.files, true, d.oid);
+    fileSections(d.oid, missing.size > 0 ? d.files.map((f) => (missing.has(f.path) ? { ...f, missing: true } : f)) : d.files, true, d.oid, same);
     reopenFiles(reopen);
     if (same && top > 0) scroller.scrollTop = top;
     if (focus) {
@@ -691,6 +698,8 @@ export function createDetailsPane(onParent?: (oid: string) => void, images = fal
     items: readonly { path: string; origPath?: string; status?: string; added?: number; removed?: number; missing?: boolean }[],
     single: boolean,
     allOid?: string,
+    /** 同じものを出し直す（開いていたファイルを呼ぶ側が開き直すので、先頭から開かない） */
+    again = false,
   ): void {
     diffObserver?.disconnect();
     diffObserver = new IntersectionObserver(
@@ -768,7 +777,8 @@ export function createDetailsPane(onParent?: (oid: string) => void, images = fal
         if (before) before.before(note);
         else head.append(note);
       } else if (f.added !== undefined && f.removed !== undefined) setCounts(file, { added: f.added, removed: f.removed });
-      // 最初はすべて畳む（見出しが変わったファイルの一覧を兼ねる。アプリと同じ）
+      // 畳んで並べ、後で先頭から Files to open together の数だけ開く（見出しが変わったファイルの一覧を兼ねる。
+      // アプリと同じ）
       setCollapsed(file, true);
 
       head.addEventListener('click', (e) => {
@@ -781,6 +791,12 @@ export function createDetailsPane(onParent?: (oid: string) => void, images = fal
         renderBar();
       });
       diffObserver.observe(section);
+    }
+    // 先頭から Files to open together の数だけ開く。生成物と変わった行の多いものは畳んだまま（アプリと同じ）。
+    // 開いたものは自分で選んだことにしない（読んで大きいと分かれば畳む）
+    if (!again) {
+      const list = [...sections.values()];
+      for (const i of firstOpen(list, openTogether)) setCollapsed(list[i]!, false);
     }
     changedFiles = items.map((f) => ({ path: f.path, ...(f.status ? { status: f.status } : {}) }));
     allFiles = undefined;
@@ -938,7 +954,7 @@ export function createDetailsPane(onParent?: (oid: string) => void, images = fal
       parts.push(el('div', 'selection-note', `…and ${view.count - view.commits.length} more`));
     }
     place(parts);
-    fileSections(view.key, view.files, false);
+    fileSections(view.key, view.files, false, undefined, same);
     reopenFiles(reopen);
     if (same && top > 0) scroller.scrollTop = top;
     if (view.files.length === 0) scroller.replaceChildren(el('div', 'empty', 'No changes'));
