@@ -7,6 +7,7 @@ import Testing
 struct WorkingCopyReselectTests {
     private let staged = 1
     private let unstaged = 0
+    private let all = 2
 
     private func key(_ path: String, _ section: Int?) -> WorkingCopyReselect.Key {
         WorkingCopyReselect.Key(path: path, section: section)
@@ -54,5 +55,30 @@ struct WorkingCopyReselectTests {
     @Test func firstKeepsConflictsFirst() {
         let rows = [key("c", nil), key("a", staged), key("b", unstaged)]
         #expect(WorkingCopyReselect.first(in: rows, side: unstaged) == 0)
+    }
+
+    @Test func reloadKeepsAll() {
+        // 見る側が All なら、選び直した行がどちらの節でも All のまま。
+        #expect(WorkingCopyReselect.side(all, all: all, reselected: staged) == all)
+        #expect(WorkingCopyReselect.side(all, all: all, reselected: unstaged) == all)
+        #expect(WorkingCopyReselect.side(all, all: all, reselected: nil) == all)
+    }
+
+    @Test func reloadFollowsAFileThatMovedToTheOtherSection() {
+        // Unstaged で見ていた a をすべて stage した: Staged の節の a を選び直し、側も Staged。
+        #expect(WorkingCopyReselect.side(unstaged, all: all, reselected: staged) == staged)
+        #expect(WorkingCopyReselect.side(staged, all: all, reselected: unstaged) == unstaged)
+        // 同じ節に残っていればそのまま。節分けでなければ替えない。
+        #expect(WorkingCopyReselect.side(unstaged, all: all, reselected: unstaged) == unstaged)
+        #expect(WorkingCopyReselect.side(staged, all: all, reselected: nil) == staged)
+    }
+
+    @Test func preferredSectionUnderAllIsTheSelectedRow() {
+        // All で Unstaged の a を選んでいた: 一部を stage して両方の節にあっても、Unstaged の a を選び直す。
+        let kept = [key("a", unstaged)]
+        #expect(WorkingCopyReselect.preferredSection(side: all, all: all, path: "a", kept: kept) == unstaged)
+        #expect(WorkingCopyReselect.preferredSection(side: all, all: all, path: "b", kept: kept) == nil)
+        // Unstaged・Staged なら見る側の節。
+        #expect(WorkingCopyReselect.preferredSection(side: staged, all: all, path: "a", kept: kept) == staged)
     }
 }

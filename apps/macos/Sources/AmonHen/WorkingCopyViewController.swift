@@ -804,14 +804,26 @@ final class WorkingCopyViewController: NSSplitViewController, NSOutlineViewDataS
            let entry = entries.first(where: { $0.item.path == path }) {
             selectedKey = (path, side(for: entry.item))
         }
-        // 節分けでは、今見ている側の節の行を選ぶ（なければもう一方の節）。
+        // 節分けでは、今見ている側の節の行を選ぶ（なければもう一方の節）。All なら前に選んでいた行の節。
+        let preferred = selectedKey.flatMap { key in
+            WorkingCopyReselect.preferredSection(side: diffSide.rawValue, all: DiffSide.all.rawValue,
+                                                 path: key.path, kept: selectedKeys)
+        }
         let target = selectedKey.flatMap { key in
-            entries.first { $0.item.path == key.path && ($0.section == nil || $0.section == diffSide) }
+            entries.first { $0.item.path == key.path && ($0.section == nil || $0.section?.rawValue == preferred) }
                 ?? entries.first { $0.item.path == key.path }
         } ?? kept.first { $0.section == nil || $0.section == diffSide } ?? kept.first
             ?? WorkingCopyReselect.first(in: entries.map(Self.reselectKey), side: diffSide.rawValue).map { entries[$0] }
         if let target {
-            if !staysMulti { adoptSection(of: target) }
+            // 読み直しは利用者が行を押したのではないので、見る側が All なら All のまま。Unstaged・Staged なら、
+            // 選んでいた行がもう一方の節へ移ったとき（すべて stage した・外した）だけ、その節の側に替える。
+            if !staysMulti,
+               let side = DiffSide(rawValue: WorkingCopyReselect.side(diffSide.rawValue, all: DiffSide.all.rawValue,
+                                                                      reselected: target.section?.rawValue)),
+               side != diffSide {
+                diffSide = side
+                sideControl.selectedSegment = side.rawValue
+            }
             let row = files.row(forItem: target)
             let others = IndexSet(kept.filter { $0 !== target }.map { files.row(forItem: $0) }.filter { $0 >= 0 })
             // 差分に出すファイルを最後に足し、選択の起点（selectedRow）にする。途中の選択の変化では差分を替えない。
@@ -2892,6 +2904,19 @@ enum WorkingCopyReselect {
         let keptKeys = Set(kept)
         let moved = Set(kept.filter { !present.contains($0) }.map(\.path))
         return rows.indices.filter { keptKeys.contains(rows[$0]) || moved.contains(rows[$0].path) }
+    }
+
+    /// 読み直した後に選び直す、パス `path` の行の節の好み: 見る側 `side` の節。All（`all`）なら前に選んでいた
+    /// 行 `kept` のうち同じパスの節（読み直しで選んだ行を別の節へ動かさない）。
+    static func preferredSection(side: Int, all: Int, path: String, kept: [Key]) -> Int? {
+        side == all ? kept.first { $0.path == path }?.section : side
+    }
+
+    /// 読み直した後の見る側。読み直しは利用者が行を押したのではないので、All（`all`）なら替えない。Unstaged・
+    /// Staged なら、選び直した行の節 `reselected`（前の行が同じ節に残っていれば同じ側、なくなってもう一方の節へ
+    /// 移っていればその側。節分けでなければ nil で替えない）。
+    static func side(_ side: Int, all: Int, reselected section: Int?) -> Int {
+        side == all ? side : section ?? side
     }
 
     /// 何も選んでいないときに最初に選ぶ行: 今の見る側 `side` の節の行を先に（その前のコンフリクトは先のまま）、
