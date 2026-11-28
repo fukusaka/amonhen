@@ -8,7 +8,7 @@ import { connect, type Socket } from 'node:net';
 import { askpass } from '../git/askpass.ts';
 
 /** 窓口の取り決めの版（`amonhen_front::VERSION`） */
-export const FRONT_VERSION = 5;
+export const FRONT_VERSION = 6;
 
 const REQUEST = 1;
 const OK = 2;
