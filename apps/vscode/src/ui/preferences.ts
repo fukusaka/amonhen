@@ -4,6 +4,7 @@ import type { ArchiveFormat } from '../bundle/archiveBundle.ts';
 import type { DetailsStyle, DetailsLayout, HistoryItem, HistoryOrder } from '../history/protocol.ts';
 import type { MessageParts } from '../workingCopy/commitMessage.ts';
 import type { FileLayout } from '../workingCopy/fileList.ts';
+import type { WorkingCopyLook } from '../workingCopy/protocol.ts';
 
 let store: vscode.Memento | undefined;
 
@@ -17,6 +18,21 @@ export function fileLayout(): FileLayout {
 
 export async function setFileLayout(layout: FileLayout): Promise<void> {
   await store?.update('workingCopy.fileLayout', layout);
+}
+
+/** Working Copy の見た目（一覧の節分け・コミットの欄のたたみと高さ）。既定はアプリと同じく Mixed で、たたまない */
+export function workingCopyLook(): WorkingCopyLook {
+  const look = store?.get<Partial<WorkingCopyLook>>('workingCopy.look') ?? {};
+  return {
+    sections: look.sections ?? false,
+    commitCollapsed: look.commitCollapsed ?? false,
+    // 0 は「中身の高さに戻す」
+    ...(typeof look.commitHeight === 'number' && look.commitHeight > 0 ? { commitHeight: look.commitHeight } : {}),
+  };
+}
+
+export async function setWorkingCopyLook(patch: Partial<WorkingCopyLook>): Promise<void> {
+  await store?.update('workingCopy.look', { ...workingCopyLook(), ...patch });
 }
 
 /** リポジトリごとのコミットメッセージの下書き */

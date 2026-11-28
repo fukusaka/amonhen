@@ -70,13 +70,14 @@ VSCode 上で快適に Git を操作するための自分用の拡張。Marketpl
 
 ### Working Copy
 
-左の上にコミット欄、その下に Conflicts / Staged / Changes のファイル、右に選んだファイルの差分が出る。差分は hunk ごとに並び、変わった部分は単語単位で強調する。
+左の列いっぱいに変わったファイル、右の上にコミット欄、その下に選んだファイルの差分が出る。Summary の横の ▾ でコミット欄を Summary の行だけ（文字数と Commit も）に畳め、欄と差分の境目はドラッグで動かせる（ダブルクリックで中身に合わせ直す）。どちらも覚えておく。差分は hunk ごとに並び、変わった部分は単語単位で強調する。
 
-- エンジンがあるとき、ファイルの stage した変更としていない変更を HEAD との 1 つの差分に出し、変わった行と hunk ごとにチェックを付ける。チェックを入れると stage、外すと unstage する。
-- 差分の行をクリックで選び（Shift+クリックで範囲）、Stage N Lines で選んだ行だけを stage する。Staged のファイルでは同じ操作で unstage になる。
+- エンジンがあるとき、ファイルは初めは 1 つの一覧で、行ごとに次のコミットに入れるかのチェックが付く（☑ すべて、▣ 一部の行、☐ 入れない。押すとファイルごと入れる・外す）。上にすべてのチェックと「入れる数 / 変わった数」、Tree ではフォルダにもチェックがある。⊟ で `git status` のような Staged と Unstaged の節に分け（一部だけ stage したファイルは両方にあり、それぞれの側の行数を出す）、それを覚える。エンジンがなければ、一覧はいつも Conflicts / Staged / Unstaged の節。
+- エンジンがあるとき、差分の上の帯で Unstaged（index → 作業ツリー）・Staged（HEAD → index）・All（HEAD → 作業ツリー）を選ぶ。見る側は Working Copy で 1 つで、ほかのファイルを選んでも変わらない（初めは Unstaged）。節の行を選ぶと、その節の側になる。All では変わった行と hunk ごとにチェックが付き、入れると stage、外すと unstage する。選んだ側に変更がないファイルはそう言い、stage した変更としていない変更を 1 つの差分にできないファイルと、空白を無視している間の All は、そう言って Unstaged と Staged へ案内する。エンジンがなければ、節のファイルはその節の側を出す。
+- 差分の行をクリックで選び（Shift+クリックで範囲）、Stage N Lines で選んだ行だけを stage する。Staged の側では同じ操作で unstage になる。
 - 一覧の上で、パスでファイルを絞り込み、List（パス）・Tree（フォルダ）・File Name（ファイル名を先に、フォルダは薄く）で見せ方を切り替える。最初は List。
 - hunk ごとの Stage Hunk、Stage File、一覧の `+` / `−`、Stage All でもできる。一覧では上下キーで選び、Space か Enter で stage / unstage する。
-- Changes のファイルは、一覧の ↺、Discard File、Discard Hunk、Discard N Lines で変更を破棄できる。untracked のファイルは消す（Delete File…）。ファイルごとのときは確かめてから、選んだ行・hunk はすぐに破棄する。破棄した内容は Undo で戻せる。
+- stage していない変更は、一覧の ↺、Discard File、Discard Hunk、Discard N Lines で変更を破棄できる。untracked のファイルは消す（Delete File…）。ファイルごとのときは確かめてから、選んだ行・hunk はすぐに破棄する。破棄した内容は Undo で戻せる。
 - コミット欄は Summary と Description（複数行）。どちらかだけでもコミットできる。Amend にすると直前のコミットのメッセージが入る。`⌘Enter` / `Ctrl+Enter` でもコミットできる。Recent… で最近のコミットのメッセージを（Summary では ⌥↑ / ⌥↓）、Insert… で Conventional Commits の種類・Co-authored-by・Signed-off-by を入れる。Commit の隣の ▾ に Commit and Push（`⌘⇧Enter`）、Fixup Commit For…、Squash Commit For… がある。
 - コンフリクトしたファイルでは、Open in Merge Editor（標準の 3-way マージエディタ）、Take Current File、Take Incoming File、Mark as Resolved を選べる。片側で削除されたファイルも片側のファイルを取って解決できる。解決済みにするとき、エディタ（マージエディタの Result も）に保存していない変更があれば先に保存し、マーカーが残っていれば確認する。マーカーの残っていないファイル（git の rerere が前の解決を当てた、ほかのエディタで直した）は ✓ と「マーカーなし」か「rerere」を出して Mark as Resolved を先に勧め、Conflicts の見出しからまとめて解決済みにできる。そうしたファイルで片側を取るときと、エディタに保存していない変更があるときは、置き換える前に確認する。
 - エンジンがあるとき、rerere が解決したコンフリクトのファイルの右クリックに Forget Resolution があり、コンフリクトのマーカーに戻す（Undo でファイルは戻る）。Repository Settings > Operations の Forget All… で、覚えた解決をすべて忘れる。

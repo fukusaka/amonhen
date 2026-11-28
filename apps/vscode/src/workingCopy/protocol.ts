@@ -4,6 +4,7 @@ import type { Change, ChangeGroup } from '../state/changes.ts';
 import type { MessageParts } from './commitMessage.ts';
 import type { FileLayout } from './fileList.ts';
 import type { DiffWhitespace } from '../history/protocol.ts';
+import type { DiffSide, SideNote } from './sides.ts';
 
 export interface FileStat {
   path: string;
@@ -11,14 +12,31 @@ export interface FileStat {
   removed: number | null;
 }
 
+/** Working Copy の見た目の好み（覚える） */
+export interface WorkingCopyLook {
+  /** 一覧を Staged と Unstaged の節に分ける（でなければ Mixed の 1 つの一覧。エンジンがなければいつも節） */
+  sections: boolean;
+  /** コミットの欄を件名の行だけにたたむ */
+  commitCollapsed: boolean;
+  /** コミットの欄の高さ（欄と差分の境目を動かしたとき。なければ中身の高さ。0 を送ると中身の高さに戻す） */
+  commitHeight?: number;
+}
+
 export type WorkingCopyHostMessage =
-  | { type: 'wcFiles'; files: Change[]; branch?: string; lastMessage?: string; layout: FileLayout }
+  /** engine: エンジン（共有の daemon）で読んでいる（見る側の帯・Mixed の一覧・空白の無視はエンジンがあるときだけ） */
+  | ({ type: 'wcFiles'; files: Change[]; branch?: string; lastMessage?: string; layout: FileLayout; engine: boolean } & WorkingCopyLook)
   /**
-   * 選んでいるファイルの差分。group は今そのファイルがあるグループ。whitespace はエンジンで読んだときの、無視している
-   * 空白（あれば帯で選べる。エンジンがなければ選べない）
+   * 選んでいるファイルの差分。group は差分の側のグループ（All なら今そのファイルがあるグループ）。whitespace は
+   * エンジンで読んだときの、無視している空白（あれば帯で選べる。エンジンがなければ選べない）。side はエンジンで
+   * 読んだときの見る側
    */
-  | { type: 'wcDiff'; group: ChangeGroup; diff: FileDiff; whitespace?: DiffWhitespace }
-  | { type: 'wcDiff'; group?: undefined; diff: undefined; whitespace?: undefined }
+  | { type: 'wcDiff'; group: ChangeGroup; diff: FileDiff; whitespace?: DiffWhitespace; side?: DiffSide }
+  /** 差分を出さない。gone は変更がなくなったので選びを外したファイル */
+  | { type: 'wcDiff'; group?: undefined; diff: undefined; whitespace?: undefined; side?: undefined; gone?: string }
+  /** 選んだ側の差分を出さず、わけを言う（その側に変更がない・All で出せない） */
+  | { type: 'wcDiffNote'; group: ChangeGroup; path: string; side: DiffSide; whitespace: DiffWhitespace; note: SideNote }
+  /** 節ごとの追加・削除の行数（HEAD → index と index → 作業ツリー。エンジンがあって節に分けているときだけ） */
+  | { type: 'wcSplitStats'; staged: FileStat[]; unstaged: FileStat[] }
   /** 選んでいるファイルの差分を読めなかった。差分の場所に理由を出す */
   | { type: 'wcDiffFailed'; group: ChangeGroup; path: string; error: string }
   /** リポジトリを開いたときのコミット欄の中身（下書き、なければテンプレート） */
@@ -48,7 +66,12 @@ export type WorkingCopyHostMessage =
   | { type: 'wcCommitting'; committing: boolean };
 
 export type WorkingCopyWebviewMessage =
-  | { type: 'wcSelect'; group: ChangeGroup; path: string }
+  /** ファイルを選んだ。side は、節の行を選んで見る側をその節にそろえたとき */
+  | { type: 'wcSelect'; group: ChangeGroup; path: string; side?: DiffSide }
+  /** 差分で見る側を選び直した（エンジンがあるとき。覚えない） */
+  | { type: 'wcSide'; side: DiffSide }
+  /** 見た目の好みを変えた（覚える） */
+  | ({ type: 'wcLook' } & Partial<WorkingCopyLook>)
   /** ファイル一覧の見せ方を変えた（次に開くときのために覚える） */
   | { type: 'wcLayout'; layout: FileLayout }
   /** コミット欄を書き換えた（下書きとして覚える） */
@@ -60,12 +83,15 @@ export type WorkingCopyWebviewMessage =
   /** 型やトレーラーの一覧を出す */
   | { type: 'wcPickInsert' }
   | { type: 'wcStageFiles'; op: 'stage' | 'unstage'; files: { group: ChangeGroup; path: string }[] }
-  /** stage は HEAD → 作業ツリーの差分（combined）で、入れるか（true）外すか（false） */
-  | { type: 'wcStageLines'; group: ChangeGroup; path: string; version: string; lines: SelectedLine[]; stage?: boolean }
-  /** Changes（unstaged）のファイルを丸ごと破棄する */
+  /**
+   * 選んだ行を stage・unstage する。combined は行が HEAD → 作業ツリーの差分（All）のもので、stage はそこで入れるか
+   * （true）外すか（false）
+   */
+  | { type: 'wcStageLines'; group: ChangeGroup; path: string; version: string; lines: SelectedLine[]; stage?: boolean; combined?: boolean }
+  /** 作業ツリーの側（unstaged）のファイルを丸ごと破棄する */
   | { type: 'wcDiscardFiles'; paths: string[] }
-  /** Changes のファイルの、選んだ行だけを破棄する */
-  | { type: 'wcDiscardLines'; path: string; version: string; lines: SelectedLine[] }
+  /** 作業ツリーの側の、選んだ行だけを破棄する。combined は行が All の差分のもの */
+  | { type: 'wcDiscardLines'; path: string; version: string; lines: SelectedLine[]; combined?: boolean }
   /** コミットする。push なら続けて push する（上流がなければ Publish） */
   | { type: 'wcCommit'; message: string; amend: boolean; push?: boolean }
   /** Commit の続きの一覧を出す */

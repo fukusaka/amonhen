@@ -1469,6 +1469,10 @@ First release.
 
 #### Changed
 
+- Working Copy is laid out as the app's: the list takes the left column and the commit box sits above the diff,
+  collapsible to its subject line. With the engine, the diff shows Unstaged, Staged or All, and ⊟ switches the list
+  between one checkbox list and Staged and Unstaged sections.
+
 - The sidebar's icons are an icon font, so they take the theme's icon color, high contrast and the selected row's
   color like VSCode's own icons.
 - In a partial clone, the main view's commit diffs and All Files no longer fetch missing file contents by

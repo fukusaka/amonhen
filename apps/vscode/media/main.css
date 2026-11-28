@@ -1054,6 +1054,84 @@ button.sheet-list-item:hover {
   gap: 1px;
 }
 
+.wc-sections {
+  flex: none;
+  padding: 1px 6px;
+  color: var(--vscode-foreground);
+  background: transparent;
+}
+
+.wc-sections[hidden] {
+  display: none;
+}
+
+.wc-sections:hover {
+  background: var(--vscode-toolbar-hoverBackground, var(--vscode-list-hoverBackground));
+}
+
+.wc-sections.active {
+  color: var(--vscode-inputOption-activeForeground, var(--vscode-foreground));
+  background: var(--vscode-inputOption-activeBackground, var(--vscode-list-inactiveSelectionBackground));
+}
+
+/* 一覧の見出し: すべてのチェックと「含める数 / 全体の数」 */
+.wc-head {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 4px 8px 4px 12px;
+  border-bottom: 1px solid var(--vscode-panel-border);
+}
+
+.wc-head[hidden] {
+  display: none;
+}
+
+.wc-head .count {
+  font-size: 0.9em;
+  font-variant-numeric: tabular-nums;
+  color: var(--vscode-descriptionForeground);
+}
+
+.wc-check {
+  flex: none;
+  width: 14px;
+  height: 14px;
+  margin: 0;
+  accent-color: var(--vscode-checkbox-selectBackground, var(--vscode-focusBorder));
+}
+
+.wc-check.conflict {
+  width: auto;
+  height: auto;
+  color: var(--vscode-gitDecoration-conflictingResourceForeground, var(--vscode-errorForeground));
+}
+
+/* 差分で見る側: Unstaged | Staged | All */
+.wc-sides {
+  flex: none;
+  display: flex;
+  gap: 1px;
+  white-space: nowrap;
+}
+
+.wc-sides button {
+  padding: 1px 8px;
+  color: var(--vscode-foreground);
+  background: transparent;
+  border: 1px solid var(--vscode-panel-border);
+}
+
+.wc-sides button:hover {
+  background: var(--vscode-toolbar-hoverBackground, var(--vscode-list-hoverBackground));
+}
+
+.wc-sides button.active {
+  color: var(--vscode-inputOption-activeForeground, var(--vscode-foreground));
+  background: var(--vscode-inputOption-activeBackground, var(--vscode-list-inactiveSelectionBackground));
+  border-color: var(--vscode-inputOption-activeBorder, var(--vscode-focusBorder));
+}
+
 .wc-layout button {
   padding: 1px 6px;
   color: var(--vscode-foreground);
@@ -1223,12 +1301,76 @@ button.sheet-list-item:hover {
   background: var(--vscode-toolbar-hoverBackground, var(--vscode-list-hoverBackground));
 }
 
+/* 右の列: 上にコミットの欄、境目、下に差分 */
+.wc-right {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+}
+
 .wc-commit {
+  flex: none;
   display: flex;
   flex-direction: column;
   gap: 6px;
-  padding: 10px 12px;
+  min-height: 0;
+  padding: 8px 12px;
+  overflow: hidden;
+  box-sizing: border-box;
+}
+
+.wc-commit.collapsed {
+  padding: 6px 12px;
   border-bottom: 1px solid var(--vscode-panel-border);
+}
+
+.wc-commit-divider {
+  flex: none;
+  height: 4px;
+  cursor: row-resize;
+  border-top: 1px solid var(--vscode-panel-border);
+}
+
+.wc-commit-divider[hidden] {
+  display: none;
+}
+
+.wc-commit-divider:hover,
+body.resizing-rows .wc-commit-divider {
+  background: var(--vscode-sash-hoverBorder, var(--vscode-focusBorder));
+}
+
+.summary-row {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.summary-row input.subject {
+  flex: 1;
+  min-width: 0;
+}
+
+.summary-row .length {
+  flex: none;
+  font-size: 0.9em;
+  font-variant-numeric: tabular-nums;
+  color: var(--vscode-descriptionForeground);
+}
+
+.wc-collapse {
+  flex: none;
+  width: 20px;
+  height: 20px;
+  padding: 0;
+  color: var(--vscode-descriptionForeground);
+  background: transparent;
+}
+
+.wc-collapse:hover {
+  color: var(--vscode-foreground);
+  background: var(--vscode-toolbar-hoverBackground, var(--vscode-list-hoverBackground));
 }
 
 .wc-commit input.subject,
@@ -1243,7 +1385,9 @@ button.sheet-list-item:hover {
 }
 
 .wc-commit textarea {
-  resize: vertical;
+  flex: 1;
+  min-height: 2.6em;
+  resize: none;
   font-family: var(--vscode-editor-font-family);
 }
 
@@ -1318,7 +1462,8 @@ button.sheet-list-item:hover {
   padding: 0 6px;
 }
 
-.commit-row button:disabled {
+.commit-row button:disabled,
+.summary-row button:disabled {
   opacity: 0.5;
   cursor: default;
 }

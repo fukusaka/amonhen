@@ -3072,22 +3072,22 @@
         },
         {
           "command": "amonhen.wcFile.stage",
-          "when": "webviewId == 'amonhen.main' && webviewSection == 'wcFile' && !wcMulti && wcGroup == 'unstaged'",
+          "when": "webviewId == 'amonhen.main' && webviewSection == 'wcFile' && !wcMulti && wcUnstaged",
           "group": "0_change@1"
         },
         {
           "command": "amonhen.wcFile.unstage",
-          "when": "webviewId == 'amonhen.main' && webviewSection == 'wcFile' && !wcMulti && wcGroup == 'staged'",
+          "when": "webviewId == 'amonhen.main' && webviewSection == 'wcFile' && !wcMulti && wcStaged",
           "group": "0_change@1"
         },
         {
           "command": "amonhen.wcFile.discard",
-          "when": "webviewId == 'amonhen.main' && webviewSection == 'wcFile' && !wcMulti && wcGroup == 'unstaged' && !wcUntracked",
+          "when": "webviewId == 'amonhen.main' && webviewSection == 'wcFile' && !wcMulti && wcUnstaged && !wcUntracked",
           "group": "0_change@2"
         },
         {
           "command": "amonhen.wcFile.delete",
-          "when": "webviewId == 'amonhen.main' && webviewSection == 'wcFile' && !wcMulti && wcGroup == 'unstaged' && wcUntracked",
+          "when": "webviewId == 'amonhen.main' && webviewSection == 'wcFile' && !wcMulti && wcUnstaged && wcUntracked",
           "group": "0_change@2"
         },
         {

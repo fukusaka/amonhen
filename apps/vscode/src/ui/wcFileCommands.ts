@@ -5,20 +5,20 @@
  */
 import { join } from 'node:path';
 import * as vscode from 'vscode';
-import type { ChangeGroup } from '../state/changes.ts';
 import type { RepositoryManager } from '../state/manager.ts';
 import { MainPanel } from './mainPanel.ts';
 
 /** ファイルの行の data-vscode-context */
 interface WcFileContext {
   path?: string;
-  group?: ChangeGroup;
 }
 
 export function registerWcFileCommands(manager: RepositoryManager): vscode.Disposable {
+  // Stage は作業ツリーの側、Unstage は index の側の変更（Mixed の行は両方あることがある）
   const stage = (op: 'stage' | 'unstage') => async (ctx?: WcFileContext) => {
-    if (!ctx?.path || !ctx.group) return;
-    await MainPanel.active?.workingCopy.handle({ type: 'wcStageFiles', op, files: [{ group: ctx.group, path: ctx.path }] });
+    if (!ctx?.path) return;
+    const group = op === 'stage' ? 'unstaged' : 'staged';
+    await MainPanel.active?.workingCopy.handle({ type: 'wcStageFiles', op, files: [{ group, path: ctx.path }] });
   };
   // 確かめてから捨てる（untracked なら Delete と聞く。どちらも Undo で戻せる）
   const discard = async (ctx?: WcFileContext) => {
