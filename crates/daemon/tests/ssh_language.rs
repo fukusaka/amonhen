@@ -94,6 +94,6 @@ fn errors_from_an_ssh_host_opened_without_the_daemon_follow_the_app_language() {
     let resolve = |backend: &RemoteBackend| backend.operations().unwrap().resolve("nosuch");
     let japanese = resolve(&open(Lang::Ja)).unwrap_err().to_string();
     let english = resolve(&open(Lang::En)).unwrap_err().to_string();
-    assert_eq!(japanese, "nosuch が見つからない");
+    assert_eq!(japanese, "nosuch が見つかりません");
     assert_eq!(english, "nosuch not found");
 }

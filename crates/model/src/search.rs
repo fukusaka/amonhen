@@ -568,7 +568,7 @@ mod tests {
         let never = || false;
         let ids: Vec<Oid> = (0..10).map(oid).collect();
         let terms = [TextTerm::new(TextField::Author, "alice")];
-        let japanese = "コミット x が見つからない";
+        let japanese = "コミット x が見つかりません";
         crate::i18n::with(crate::i18n::Lang::Ja, || {
             let index = TextIndex::build(&ids, None, &read, &never).err().unwrap();
             assert_eq!(index.to_string(), japanese);
