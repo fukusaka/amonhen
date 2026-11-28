@@ -223,6 +223,15 @@ test('shows working diffs as hunks and discards lines that the extension can und
     // 改行の情報も届く（普段のファイルなので見せない）
     assert.equal(d.diff.lineEndings?.worktree, 'lf');
     assert.equal(d.diff.lineEndings?.notable, false);
+    // open を渡すと、見出しの代わりに隙間の行（kind 3、old は隠した行数、new は見せている行数、文字は関数名）。
+    // 頭から変わっているので、最初の hunk に隠した行が 0 の隙間の行がある
+    const folded = await client.call({ op: 'workingDiff', path: 'm.txt', mode: 'unstaged', open: [] });
+    const fr = folded.u32('rows');
+    const hunks = [];
+    for (let i = 0; i < fr.length / 4; i++) {
+      if ((fr[i * 4]! & 0xff) === 3) hunks.push([i, fr[i * 4 + 1], fr[i * 4 + 2], folded.u32('textLengths')[i]]);
+    }
+    assert.deepEqual(hunks, [[0, 0, 0, 0]]);
     // 「more」の行だけを捨てる。記録は拡張と同じ undo.json に入り、拡張の Undo で戻せる
     const rows = selectedRows(d.rows, [{ kind: '+', new: 2 }]);
     assert.equal(rows.length, 1);

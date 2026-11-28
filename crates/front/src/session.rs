@@ -401,10 +401,17 @@ impl Session {
                 Reply::json(json!({"remote": remote}))
             }
             // コミット `oid` の時点のファイル `path` の中身（History の All Files）。そのコミットで変わったファイルなら、
-            // 変わった行に印をつけたファイル全体（前後の行をすべて出した差分）。
+            // 変わった行に印をつけたファイル全体（前後の行をすべて出した差分）。`plain` なら印を付けず中身だけ
+            // （Working Copy の All Files で、HEAD の変えていないファイルを開く）。
             "treeFile" => {
                 let id = oid(str_arg(request, "oid")?)?;
                 let path = str_arg(request, "path")?.trim_matches('/').to_owned();
+                if request["plain"] == true {
+                    let view = repo.tree_file(&id, &path, &PROFILE)?;
+                    return Ok(diff_records(&view).finish(json!({
+                        "path": path, "changed": false, "binary": view.binary,
+                    })));
+                }
                 let changes = repo.commit_changes(&id)?;
                 let mut stacked = repo.stacked_diff_ws(&changes, Whitespace::Exact)?;
                 match stacked.files.iter().position(|(p, _)| *p == path) {
@@ -720,14 +727,24 @@ impl Session {
             .ok_or_else(|| tr!("File has no changes: {path}", path = path))?;
         let mode = request["mode"].as_str().unwrap_or("unstaged");
         let ws = whitespace_arg(request)?;
+        // 前後の行数（"all" ならファイル全体）と、変更のない所（隙間）の開き方（あれば、空でもたたんだ形）。
+        let context = match &request["context"] {
+            Value::Null => 3,
+            lines => lines_arg(lines)?,
+        };
+        let open = gap_open_arg(request)?;
         let diff = match mode {
-            "staged" => repo.working_diff_ws(entry, true, ws, &PROFILE)?,
-            "unstaged" => repo.working_diff_ws(entry, false, ws, &PROFILE)?,
+            "staged" => {
+                repo.working_diff_context(entry, true, context, open.as_deref(), ws, &PROFILE)?
+            }
+            "unstaged" => {
+                repo.working_diff_context(entry, false, context, open.as_deref(), ws, &PROFILE)?
+            }
             "combined" if ws != Whitespace::Exact => {
                 return Err(tr!("Can’t mark staged lines while whitespace is ignored").into());
             }
             "combined" => repo
-                .working_diff_combined(entry, &PROFILE)?
+                .working_diff_combined_context(entry, context, open.as_deref(), &PROFILE)?
                 .ok_or_else(|| tr!("This diff can’t be shown with staged marks (read the staged and unstaged diffs separately)"))?,
             other => return Err(tr!("Unknown mode: {other}", other = other).into()),
         };
@@ -940,16 +957,52 @@ fn contexts_arg(request: &Value) -> Result<Vec<(usize, u32)>> {
             let file = file
                 .parse()
                 .map_err(|_| tr!("Not a file number: {file}", file = file))?;
-            let lines = match lines {
-                Value::String(all) if all == "all" => u32::MAX,
-                lines => lines
-                    .as_u64()
-                    .map(|n| n.min(u64::from(u32::MAX)) as u32)
-                    .ok_or_else(|| tr!("Not a number of lines: {lines}", lines = lines))?,
-            };
-            Ok((file, lines))
+            Ok((file, lines_arg(lines)?))
         })
         .collect()
+}
+
+/// 前後の行数か "all"（ファイル全体、`u32::MAX`）。
+fn lines_arg(lines: &Value) -> Result<u32> {
+    match lines {
+        Value::String(all) if all == "all" => Ok(u32::MAX),
+        lines => lines
+            .as_u64()
+            .map(|n| n.min(u64::from(u32::MAX)) as u32)
+            .ok_or_else(|| tr!("Not a number of lines: {lines}", lines = lines).into()),
+    }
+}
+
+/// `open`: 変更のない所（隙間）の開き方 `[{gap, top, bottom}]`（`GapOpen`）。省けば None（たたまない）。
+fn gap_open_arg(request: &Value) -> Result<Option<Vec<amonhen_core::diff::GapOpen>>> {
+    let open = match &request["open"] {
+        Value::Null => return Ok(None),
+        Value::Array(open) => open,
+        other => return Err(tr!("Not a list of gaps: {open}", open = other).into()),
+    };
+    let field = |g: &Value, name: &str| -> Result<u32> {
+        match &g[name] {
+            Value::Null => Ok(0),
+            n => n
+                .as_u64()
+                .map(|n| n.min(u64::from(u32::MAX)) as u32)
+                .ok_or_else(|| tr!("Not a number of lines: {lines}", lines = n).into()),
+        }
+    };
+    open.iter()
+        .map(|g| {
+            let gap = g["gap"]
+                .as_u64()
+                .and_then(|n| u32::try_from(n).ok())
+                .ok_or_else(|| tr!("Not a gap number: {gap}", gap = g["gap"]))?;
+            Ok(amonhen_core::diff::GapOpen {
+                gap,
+                top: field(g, "top")?,
+                bottom: field(g, "bottom")?,
+            })
+        })
+        .collect::<Result<Vec<_>>>()
+        .map(Some)
 }
 
 fn whitespace_arg(request: &Value) -> Result<Whitespace> {
@@ -963,6 +1016,7 @@ fn whitespace_arg(request: &Value) -> Result<Whitespace> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use amonhen_layout::DiffRow;
     use std::path::Path;
 
     fn git(dir: &Path, args: &[&str]) -> String {
@@ -1111,6 +1165,182 @@ mod tests {
             &|| false,
         );
         assert!(bad.is_err());
+    }
+
+    /// 差分の行（種類・変更前・変更後の番号・文字）。
+    fn diff_rows(reply: &Reply) -> Vec<(u8, u32, u32, String)> {
+        let rows = reply.u32s("rows");
+        let lengths = reply.u32s("textLengths");
+        let text = reply.section("text");
+        rows.chunks(4)
+            .zip(lengths)
+            .map(|(r, len)| {
+                let at = r[3] as usize;
+                let s = String::from_utf8_lossy(&text[at..at + len as usize]).into_owned();
+                ((r[0] & 0xff) as u8, r[1], r[2], s)
+            })
+            .collect()
+    }
+
+    /// 30 行のファイルの 5 行目と 25 行目を作業ツリーで変えたリポジトリ。
+    fn working_session() -> (tempfile::TempDir, Session) {
+        let dir = tempfile::tempdir().unwrap();
+        git(dir.path(), &["init", "-q"]);
+        let mut lines: Vec<String> = (1..=30).map(|n| format!("line {n}")).collect();
+        std::fs::write(dir.path().join("a.txt"), lines.join("\n") + "\n").unwrap();
+        git(dir.path(), &["add", "a.txt"]);
+        commit(dir.path(), "first");
+        lines[4] = "five".into();
+        lines[24] = "twenty-five".into();
+        std::fs::write(dir.path().join("a.txt"), lines.join("\n") + "\n").unwrap();
+        let backend = amonhen_backend_gix::GixBackend::open(dir.path()).unwrap();
+        let session = Session::new(Arc::new(Repository::new(backend)));
+        (dir, session)
+    }
+
+    /// workingDiff の open: 変更のない所を隙間の行にたたみ、開いた分だけ見せる。context で前後の行数
+    #[test]
+    fn folds_and_opens_the_gaps_of_a_working_diff() {
+        let (_dir, session) = working_session();
+        let call = |request: Value| session.handle(&request, &|| false).unwrap();
+        // 隙間の行の文字は次の hunk の関数名（txt では git の既定の見方で手前の行）なので、ここでは数だけ見る。
+        let hunks = |request: Value| -> Vec<(u32, u32)> {
+            diff_rows(&call(request))
+                .into_iter()
+                .filter(|r| r.0 == DiffRow::HUNK)
+                .map(|r| (r.1, r.2))
+                .collect()
+        };
+        let base = json!({"op": "workingDiff", "path": "a.txt"});
+        let with = |extra: Value| {
+            let mut r = base.clone();
+            r.as_object_mut()
+                .unwrap()
+                .extend(extra.as_object().unwrap().clone());
+            r
+        };
+        // open なし: 今までどおり `@@` の見出し（old・new は 0）。
+        let plain: Vec<_> = diff_rows(&call(base.clone()))
+            .into_iter()
+            .filter(|r| r.0 == DiffRow::HUNK)
+            .collect();
+        assert_eq!(plain.len(), 2);
+        assert!(
+            plain
+                .iter()
+                .all(|h| h.1 == 0 && h.2 == 0 && h.3.starts_with("@@"))
+        );
+        // open: [] なら隙間の行（old は隠した行数、new は見せている行数）。頭の 1 行・間の 13 行・末尾の 2 行。
+        assert_eq!(
+            hunks(with(json!({"open": []}))),
+            vec![(1, 0), (13, 0), (2, 0)]
+        );
+        // 間の隙間（1 番）を上から 2 行・下から 1 行開く: 開いた上の分は隙間の行の前、下の分は後。
+        let opened = diff_rows(&call(with(
+            json!({"open": [{"gap": 1, "top": 2, "bottom": 1}]}),
+        )));
+        let at = opened
+            .iter()
+            .position(|r| r.0 == DiffRow::HUNK && r.1 == 10)
+            .unwrap();
+        assert_eq!(opened[at].2, 3);
+        assert_eq!(
+            (opened[at - 2].0, opened[at - 2].3.as_str()),
+            (DiffRow::CONTEXT, "line 9")
+        );
+        assert_eq!(opened[at - 1].3, "line 10");
+        assert_eq!(
+            (opened[at + 1].0, opened[at + 1].3.as_str()),
+            (DiffRow::CONTEXT, "line 21")
+        );
+        // context: "all" ならファイル全体（たたまない形: 見出し 1 つ、28 行と消えた 2 行・足した 2 行）。
+        let all = diff_rows(&call(with(json!({"context": "all"}))));
+        assert_eq!(all.len(), 33);
+        assert_eq!(all.iter().filter(|r| r.0 == DiffRow::HUNK).count(), 1);
+        // たたんだ形でも、隙間は 0 行の見出しだけ。
+        let all_folded = hunks(with(json!({"context": "all", "open": []})));
+        assert_eq!(all_folded, vec![(0, 0)]);
+        // 前後 1 行。
+        let one = diff_rows(&call(with(json!({"context": 1}))));
+        assert_eq!(one.len(), 2 * (1 + 1 + 2 + 1));
+        assert!(
+            session
+                .handle(&with(json!({"open": [{"top": 1}]})), &|| false)
+                .is_err()
+        );
+    }
+
+    /// たたんだ差分・ファイル全体の差分の行でも stageRows が効く
+    #[test]
+    fn stages_rows_of_a_folded_diff() {
+        let (dir, session) = working_session();
+        let call = |request: Value| session.handle(&request, &|| false).unwrap();
+        for (extra, line) in [
+            (json!({"open": [{"gap": 1, "top": 2, "bottom": 2}]}), "five"),
+            (json!({"context": "all", "open": []}), "twenty-five"),
+        ] {
+            let mut request = json!({"op": "workingDiff", "path": "a.txt"});
+            request
+                .as_object_mut()
+                .unwrap()
+                .extend(extra.as_object().unwrap().clone());
+            let reply = call(request);
+            let rows = diff_rows(&reply);
+            let added = rows
+                .iter()
+                .position(|r| r.0 == DiffRow::ADDED && r.3 == line)
+                .unwrap();
+            // 足した行と、そのすぐ前の消した行。
+            assert_eq!(rows[added - 1].0, DiffRow::REMOVED);
+            let diff = reply.json["diff"].as_u64().unwrap();
+            call(json!({"op": "stageRows", "diff": diff, "rows": [added - 1, added]}));
+        }
+        let staged = git(dir.path(), &["diff", "--cached", "--", "a.txt"]);
+        assert!(staged.contains("+five") && staged.contains("+twenty-five"));
+        assert!(git(dir.path(), &["diff", "--", "a.txt"]).is_empty());
+    }
+
+    /// たたんだ差分の行でも discardRows が効く
+    #[test]
+    fn discards_rows_of_a_folded_diff() {
+        let (dir, session) = working_session();
+        let call = |request: Value| session.handle(&request, &|| false).unwrap();
+        let reply =
+            call(json!({"op": "workingDiff", "path": "a.txt", "open": [{"gap": 0, "top": 1}]}));
+        let rows = diff_rows(&reply);
+        let added = rows
+            .iter()
+            .position(|r| r.0 == DiffRow::ADDED && r.3 == "five")
+            .unwrap();
+        let diff = reply.json["diff"].as_u64().unwrap();
+        call(json!({"op": "discardRows", "diff": diff, "rows": [added - 1, added]}));
+        let text = std::fs::read_to_string(dir.path().join("a.txt")).unwrap();
+        assert!(text.contains("line 5\n") && text.contains("twenty-five\n"));
+    }
+
+    /// treeFile の plain: そのコミットで変えたファイルでも、印を付けずに中身だけ
+    #[test]
+    fn a_plain_tree_file_has_no_marks() {
+        let dir = tempfile::tempdir().unwrap();
+        git(dir.path(), &["init", "-q"]);
+        std::fs::write(dir.path().join("a.txt"), "one\n").unwrap();
+        git(dir.path(), &["add", "a.txt"]);
+        commit(dir.path(), "first");
+        std::fs::write(dir.path().join("a.txt"), "one\ntwo\n").unwrap();
+        git(dir.path(), &["add", "a.txt"]);
+        let id = commit(dir.path(), "second");
+        let backend = amonhen_backend_gix::GixBackend::open(dir.path()).unwrap();
+        let session = Session::new(Arc::new(Repository::new(backend)));
+        let call = |request: Value| session.handle(&request, &|| false).unwrap();
+        let marked = call(json!({"op": "treeFile", "oid": id, "path": "a.txt"}));
+        assert_eq!(marked.json["changed"], true);
+        assert!(diff_rows(&marked).iter().any(|r| r.0 == DiffRow::ADDED));
+        let plain = call(json!({"op": "treeFile", "oid": id, "path": "a.txt", "plain": true}));
+        assert_eq!(plain.json["changed"], false);
+        let rows = diff_rows(&plain);
+        assert_eq!(rows.len(), 2);
+        assert!(rows.iter().all(|r| r.0 == DiffRow::CONTEXT));
+        assert_eq!(rows[1].3, "two");
     }
 
     /// コミットの差分と文の構文の色（diffSyntax・textSyntax）。差分なら行の番号と、その行の中の位置

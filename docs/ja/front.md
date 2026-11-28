@@ -65,8 +65,8 @@ History と差分は番号（`history`・`diff`）で持つ。FE がスクロー
 | `refs` | | headBranch・head・entries（kind・name・target・detail・ahead・behind・gone） | |
 | `status` | | generation・branch・upstream・ahead・behind・entries（kind・path・origPath・index・worktree・staged・unstaged・submodule。内容のコンフリクト（UU・AA）には、作業ツリーのファイルに残っているマーカーの数 markers と、git の rerere が前の解決を当てたか rerere も） | |
 | `commitDiff` | id か stash（ID）、または history・rows・pair?（forward・reverse・mergeBase）。whitespace?（exact・at-eol・change・all。行を比べるときに無視する空白で、`git diff --ignore-space-at-eol`・`-b`・`-w` と同じ）。contexts?（ファイルの番号の文字列 → 前後の行数か、ファイル全体なら "all"。ほかのファイルは 3 行） | files（path・oldPath・kind・added・removed・binary・generated。generated は `linguist-generated`、なければ lock ファイルや縮めたファイルで、アプリは最初は畳む）・changes・selection・rows・view（`diffSyntax` 用） | 差分の行（下） |
-| `workingDiff` | path・mode（unstaged・staged・combined）・whitespace?（`commitDiff` と同じ。combined とは使えず、空白を無視した差分は `stageRows`・`discardRows` に使えない） | diff・path・mode・binary・added・removed・rows・lineEndings（下） | 差分の行 |
-| `treeFile` | oid（40 桁）・path | path・changed・binary | 差分の行: そのコミットの時点のファイル（History の All Files）。そのコミットで変わったファイルなら、前後の行をすべて出したそのコミットの差分（先頭に見出しの行）で、変わった行に印がつく |
+| `workingDiff` | path・mode（unstaged・staged・combined）・whitespace?（`commitDiff` と同じ。combined とは使えず、空白を無視した差分は `stageRows`・`discardRows` に使えない）。context?（前後の行数か、ファイル全体なら "all"。省けば 3 行）。open?（`[{gap, top, bottom}]`。変更のない所を隙間の行にたたむ（下）。空の配列でもたたむ） | diff・path・mode・binary・added・removed・rows・lineEndings（下） | 差分の行 |
+| `treeFile` | oid（40 桁）・path・plain?（true なら、そのコミットの変更に印を付けずファイルの中身だけ。Working Copy の All Files で HEAD から変えていないファイルを開くのに使う） | path・changed・binary | 差分の行: そのコミットの時点のファイル（History の All Files）。そのコミットで変わったファイルなら、前後の行をすべて出したそのコミットの差分（先頭に見出しの行）で、変わった行に印がつく |
 | `setSignatureCheck` | local（daemon 越しに SSH 先で開いたリポジトリのコミットの署名を、true ならこの機械の鍵、false なら SSH 先の git と鍵で確かめる） | remote（効いたか。手元のリポジトリはいつも手元で確かめる） | — |
 | `conflict` | path | path・rows | 差分の行 |
 | `diffSyntax` | diff（`workingDiff` の）か view（`commitDiff` の） | spans | spans（row・start・end・kind の u32 × 4。差分の行、その行の文字列での位置（highlights と同じ）、キーワード 1・文字列 2・コメント 3・数 4 ほか `SyntaxSpan` の種類）。時間がかかることがあるので、差分を出してから頼む |
@@ -79,6 +79,8 @@ History と差分は番号（`history`・`diff`）で持つ。FE がスクロー
 | `connection` | | sent・received・closed・engine（SSH 先のつながりと、そこで使っているエンジンとその用意のしかた。手元なら null） | |
 
 差分の行のレコード: rows（差分の行 × 行の数）・textLengths u32・text（UTF-8）・highlights（行・始め・終わりの u32 × 3。変わった単語のバイト位置）。`commitDiff` は、ファイルごとに見出しの行（kind 8、text はパス、old・new は削除・追加の行数）から始まる。`workingDiff` の行の番号（0 始まり）が、`stageRows`・`discardRows` の rows で指す番号。
+
+`open` があると、`workingDiff` に `@@` の見出しの行はない。代わりに、1 行以上ある変更のない所（ファイルの頭・hunk の間・ファイルの末尾）ごとに隙間の行を 1 つ置く。隙間の行は kind が `HUNK`（3）で、old は隠している行数、new は見せている行数、文字は次の hunk の関数名（なければ空。末尾の隙間も空）。ファイルの最初の行から変わっているときも、最初の hunk に隠した行が 0 の隙間の行を置く。隙間は隙間の行の順に 0, 1, … と数え、`{gap, top, bottom}` はその隙間の上（前の変更のすぐ後）から `top` 行、下（次の変更のすぐ前）から `bottom` 行を見せる。見せた行は変わっていない行で、上の分は隙間の行より前、下の分は後に並ぶ。top と bottom の和が隙間の行数以上なら隙間をすべて見せる（隙間の行は隠した行 0 で残る）。たたんだ差分・ファイル全体の差分の行も `stageRows`・`discardRows` に使える。
 
 `workingDiff` の lineEndings（stage 済みの差分・サブモジュール・消したファイルでは null）: index・worktree・checkout は、それぞれ git に入っている形・作業ツリーのファイル・checkout したときの形の改行で、`none`・`lf`・`crlf`・`mixed` のどれか。rule はかかっている変換で、`git check-attr` と同じ書き方（`text=auto eol=crlf`・`-text`・`core.autocrlf=true`。ない・見せないときは空）。notable は、作業ツリーと git で改行が違うか、warning のとき true。warning は、改行が混ざっているか、作業ツリーが CRLF なのに checkout すると LF になるとき true。差分は両側を git に入れる形で比べるので、こうした違いは変わった行として出ない。FE は notable のとき差分のそばに見せる。
 
