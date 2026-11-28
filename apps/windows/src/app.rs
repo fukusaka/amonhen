@@ -5992,16 +5992,39 @@ impl Root {
                 if browser.open.as_deref() == Some(row.node.path.as_str()) {
                     return;
                 }
-                browser.open = Some(row.node.path.clone());
+                let entry = self.status.as_ref().and_then(|s| {
+                    s.status
+                        .entries
+                        .iter()
+                        .find(|e| e.path == row.node.path)
+                        .cloned()
+                });
+                // マージエディタを出している間に別のファイルを開いた: 直しかけなら離れない（一覧で選び直したときと
+                // 同じく確かめる）。でなければ閉じて、そのファイルへ。
+                if self.merge_embedded() {
+                    if self.merge.as_ref().is_some_and(crate::merge::State::dirty) {
+                        self.dialog = Some(Dialog::CloseMerge);
+                        return;
+                    }
+                    self.merge = None;
+                    self.page = Page::WorkingCopy;
+                }
+                if let Some(browser) = self.working_browser.as_mut() {
+                    browser.open = Some(row.node.path.clone());
+                }
                 // 変えたファイルなら、変更に戻ったときにも選んでおく（macOS 版・GTK4 版と同じ）。
-                let changed = self
-                    .status
+                let conflicted = entry
                     .as_ref()
-                    .is_some_and(|s| s.status.entries.iter().any(|e| e.path == row.node.path));
-                if changed {
-                    self.working_file = Some(row.node.path);
+                    .is_some_and(|e| e.kind == amonhen_model::StatusKind::Unmerged);
+                if entry.is_some() {
+                    self.working_file = Some(row.node.path.clone());
                 }
                 self.load_working_diff();
+                // コンフリクトのあるファイルは、変更の一覧で選んだときと同じくマージエディタで開く（macOS 版・
+                // GTK4 版も変更の一覧と同じ開き方）。
+                if conflicted {
+                    self.update(Message::OpenMerge(row.node.path), context);
+                }
             }
             Message::WorkingAllRow(None) => {}
             Message::Committed(failed, hooks) => {
