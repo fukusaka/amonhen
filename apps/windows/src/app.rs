@@ -1679,6 +1679,10 @@ enum Message {
     DiffFindCount(usize),
     /// Working Copy のファイルの行にマウスが載った。
     WorkingHover(String),
+    /// マウスが Working Copy の一覧の外へ出たかもしれない（中の行から出た知らせも上がってくる。位置は一覧の中）。
+    WorkingListLeft(PointerEventInfo),
+    /// マウスが Working Copy の一覧の外へ出た。行の ↶ を消す。
+    WorkingUnhover,
     /// 窓に落としたもの。
     Dropped(DroppedData),
     /// パッチのファイルを当てる（読んで、何を変えるかを見せてから）。
@@ -3665,6 +3669,36 @@ impl Root {
                 if self.working_hovered.as_deref() != Some(path.as_str()) {
                     self.working_hovered = Some(path);
                 }
+            }
+            Message::WorkingListLeft(info) => {
+                // ↶ を押している間（ボタンがマウスを取る）は、離すまでそのまま。
+                if self.working_hovered.is_none()
+                    || info.is_left_button_pressed
+                    || info.is_right_button_pressed
+                    || info.is_middle_button_pressed
+                {
+                    return;
+                }
+                // 中の行から出た知らせも包みに上がってくるので、一覧の外にいるときだけ消す（包みと一覧は同じ大きさ）。
+                let _ = self.working_list.request_native_element(move |result| {
+                    let Some(list) = result
+                        .ok()
+                        .and_then(|e| e.cast::<xaml::FrameworkElement>().ok())
+                    else {
+                        return;
+                    };
+                    let width = list.ActualWidth().unwrap_or(0.0);
+                    let height = list.ActualHeight().unwrap_or(0.0);
+                    let inside = info.x > 0.0 && info.y > 0.0 && info.x < width && info.y < height;
+                    if !inside {
+                        with_history(|h| {
+                            h.sender.send(Message::WorkingUnhover);
+                        });
+                    }
+                });
+            }
+            Message::WorkingUnhover => {
+                self.working_hovered = None;
             }
             Message::SearchOnly(on) => {
                 if self.search_only == on {
@@ -19556,6 +19590,7 @@ impl Root {
             hover: Box::new(|path: String| {
                 context.callback(move |_: PointerEventInfo| Message::WorkingHover(path.clone()))
             }),
+            left: context.callback(Message::WorkingListLeft),
             discard: Box::new(|path: String| {
                 context.callback(move |()| Message::DiscardFile(path.clone()))
             }),
