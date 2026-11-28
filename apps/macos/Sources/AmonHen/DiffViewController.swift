@@ -806,20 +806,19 @@ final class DiffViewController: NSViewController, NSSearchFieldDelegate {
     /// 行の右クリックの、隙間の開く・畳むを除いた項目（Stage・Unstage・Discard、この時点のファイル、AI の解説）。
     private func rowMenu(at point: NSPoint) -> NSMenu? {
         if stagesRows, let menu = stageMenu(at: point) { return menu }
-        if let onOpenAtCommit, let diff, !fileRows.isEmpty {
-            let row = rowAt(point.y)
-            if row >= 0, row < diff.rowCount, let file = fileRows.lastIndex(where: { $0 <= row }) {
-                let line = diff.withRows { Int($0[row].new_no) }
-                let menu = NSMenu()
-                menu.addItem(ClosureMenuItem(title: L("Open File at This Commit")) { onOpenAtCommit(file, line > 0 ? line : nil) })
-                return menu
-            }
-        }
-        guard let onExplainHunk, Assistant.isConfigured, let (path, text) = hunkText(containing: rowAt(point.y))
-        else { return nil }
+        let row = rowAt(point.y)
         let menu = NSMenu()
-        menu.addItem(ClosureMenuItem(title: L("Explain This Hunk with AI")) { onExplainHunk(path, text) })
-        return menu
+        if let onOpenAtCommit, let diff, !fileRows.isEmpty, row >= 0, row < diff.rowCount,
+           let file = fileRows.lastIndex(where: { $0 <= row }) {
+            let line = diff.withRows { Int($0[row].new_no) }
+            menu.addItem(ClosureMenuItem(title: L("Open File at This Commit")) { onOpenAtCommit(file, line > 0 ? line : nil) })
+        }
+        // AI の解説は、ファイルを開く項目の後ろに区切って足す（hunk の中の行だけ）。
+        if let onExplainHunk, Assistant.isConfigured, let (path, text) = hunkText(containing: row) {
+            if menu.numberOfItems > 0 { menu.addItem(.separator()) }
+            menu.addItem(ClosureMenuItem(title: L("Explain This Hunk with AI")) { onExplainHunk(path, text) })
+        }
+        return menu.numberOfItems > 0 ? menu : nil
     }
 
     /// `row` 行目を含む hunk の差分の文字（見出しから次の hunk・ファイルの手前まで）と、そのファイルのパス。
