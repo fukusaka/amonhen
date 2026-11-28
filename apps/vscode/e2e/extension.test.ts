@@ -198,6 +198,33 @@ function waitPosted<T extends HostMessage['type']>(
 }
 
 /**
+ * Webview への頼み（ファイルを選ぶなど）を送り、その答えを待つ。本物の Webview も読み直しのたびに自分で選び直して
+ * 頼むので、試験の頼みが後から来た Webview の頼みに替えられることがある（新しい頼みが勝つのが正しいふるまい）。
+ * そのときは頼み直す
+ */
+async function sendAndWait<T extends HostMessage['type']>(
+  send: () => Promise<unknown>,
+  type: T,
+  match: (m: Message<T>) => boolean,
+): Promise<Message<T>> {
+  for (let attempt = 0; ; attempt++) {
+    const at = posted.length;
+    await send();
+    const last = attempt === 2;
+    try {
+      return await until(
+        `${type} のメッセージ`,
+        () => posted.slice(at).find((m): m is Message<T> => m.type === type && match(m as Message<T>)),
+        last ? WAIT : WAIT / 4,
+        () => posted.slice(at).map((m) => m.type).join(', ') || 'なし',
+      );
+    } catch (err) {
+      if (last) throw err;
+    }
+  }
+}
+
+/**
  * 拡張が spawn・execFile で起動した子プロセスを記録する（呼び出し元が拡張の dist/extension.js のものだけ）。
  * 拡張は child_process の関数を呼ぶたびに引くので、モジュールの関数を差し替えれば拡張の呼び出しも通る
  */
@@ -2331,9 +2358,13 @@ async function workingSidesFlow(): Promise<void> {
     await waitPosted('wcFiles', mark, (m) => m.engine && m.files.some((f) => f.group === 'staged' && f.path === 'sides.txt'));
 
     // 最初は Unstaged（index → 作業ツリー）
-    mark = posted.length;
-    await wc.handle({ type: 'wcSelect', group: 'unstaged', path: 'sides.txt', side: 'unstaged' });
-    const unstagedDiff = (await waitPosted('wcDiff', mark, (m) => m.diff?.path === 'sides.txt' && m.side === 'unstaged')).diff!;
+    const unstagedDiff = (
+      await sendAndWait(
+        () => wc.handle({ type: 'wcSelect', group: 'unstaged', path: 'sides.txt', side: 'unstaged' }),
+        'wcDiff',
+        (m) => m.diff?.path === 'sides.txt' && m.side === 'unstaged',
+      )
+    ).diff!;
     assert.deepEqual(changed(unstagedDiff).map((l) => [l.kind, l.text]), [['-', 'd'], ['+', 'D']]);
     assert.equal(unstagedDiff.combined, undefined);
 
@@ -2431,9 +2462,13 @@ async function workingFoldFlow(): Promise<void> {
     let mark = posted.length;
     await vscode.commands.executeCommand('amonhen.refresh');
     await waitPosted('wcFiles', mark, (m) => m.engine && m.files.some((f) => f.path === 'fold.txt'));
-    mark = posted.length;
-    await wc.handle({ type: 'wcSelect', group: 'unstaged', path: 'fold.txt', side: 'unstaged' });
-    const closed = (await waitPosted('wcDiff', mark, (m) => m.diff?.path === 'fold.txt' && m.side === 'unstaged')).diff!;
+    const closed = (
+      await sendAndWait(
+        () => wc.handle({ type: 'wcSelect', group: 'unstaged', path: 'fold.txt', side: 'unstaged' }),
+        'wcDiff',
+        (m) => m.diff?.path === 'fold.txt' && m.side === 'unstaged',
+      )
+    ).diff!;
     // `@@` の見出しの代わりに隙間の行: 頭の 6 行、間の 43 行、末尾の 17 行
     assert.equal(closed.folded, true);
     assert.deepEqual(gapsOf(closed), [
@@ -2465,6 +2500,8 @@ async function workingFoldFlow(): Promise<void> {
       return { dispose() {} };
     };
     const ten = changedLines(closed).slice(0, 2);
+    // stage した後の読み直しは、amonhen.refresh より先に届くことがある（そのときは refresh では送り直さない）
+    mark = posted.length;
     await withWindow({ setStatusBarMessage }, () =>
       wc.handle({
         type: 'wcStageLines',
@@ -2478,7 +2515,6 @@ async function workingFoldFlow(): Promise<void> {
     await until('10 行目の stage', () => git('diff', '--cached', '--', 'fold.txt').includes('+LINE 10'));
     assert.ok(!git('diff', '--cached', '--', 'fold.txt').includes('LINE 60'));
     // 開き方はファイルと側ごとに覚える（読み直しても開いたまま）
-    mark = posted.length;
     await vscode.commands.executeCommand('amonhen.refresh');
     const kept = (await waitPosted('wcDiff', mark, (m) => m.diff?.path === 'fold.txt' && !changedLines(m.diff).some((l) => l.text === 'LINE 10'))).diff!;
     assert.deepEqual(gapsOf(kept).at(-1), [gapsOf(kept).length - 1, 0, 17]);
@@ -2543,9 +2579,11 @@ async function workingStackFlow(): Promise<void> {
   const config = vscode.workspace.getConfiguration('amonhen');
   /** ファイルを選んで、並べた差分を待つ */
   const choose = async (paths: string[], match: (m: Message<'wcStack'>) => boolean = () => true) => {
-    const at = posted.length;
-    await wc.handle({ type: 'wcSelectFiles', group: 'unstaged', path: paths.at(-1)!, paths });
-    return waitPosted('wcStack', at, (m) => m.paths.join() === paths.join() && match(m));
+    return sendAndWait(
+      () => wc.handle({ type: 'wcSelectFiles', group: 'unstaged', path: paths.at(-1)!, paths }),
+      'wcStack',
+      (m) => m.paths.join() === paths.join() && match(m),
+    );
   };
   try {
     for (const name of names) writeFileSync(join(root, name), `${lines.join('\n')}\n`);
