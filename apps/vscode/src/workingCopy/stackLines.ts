@@ -57,3 +57,12 @@ export function nextBlock(blocks: readonly (readonly string[])[], picked: Readon
   if (current.length === 0) return undefined;
   return forward ? Math.max(...current) + 1 : Math.min(...current) - 1;
 }
+
+/**
+ * Space で選んだ行を入れる・外した（All）後に選ぶ変更のかたまり: toggled を含む最後のかたまりの次。最後のかたまり
+ * なら undefined（何も選ばない。アプリと同じ）。並べた差分ではファイルをまたいで次へ
+ */
+export function blockAfter(blocks: readonly (readonly string[])[], toggled: ReadonlySet<string>): number | undefined {
+  const next = nextBlock(blocks, toggled, true);
+  return next !== undefined && next < blocks.length ? next : undefined;
+}

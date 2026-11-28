@@ -15,7 +15,7 @@ import { ignorePatterns } from '../workingCopy/ignore.ts';
 import { addTrailer, commitDisabledReason, composeMessage, lengthLevel, longestLine, messageLength, splitMessage, withType } from '../workingCopy/commitMessage.ts';
 import { filesUnder, filterByPath, makeFileTree, type FileDir, type FileLayout } from '../workingCopy/fileList.ts';
 import type { DiffMenuAction, FileStat, LinePart, LineStaging, StackedFile, WorkingCopyLook } from '../workingCopy/protocol.ts';
-import { linesOf, nextBlock, parseStackLineKey, splitByFile, stackLineKey } from '../workingCopy/stackLines.ts';
+import { blockAfter, linesOf, nextBlock, parseStackLineKey, splitByFile, stackLineKey } from '../workingCopy/stackLines.ts';
 import { lineCounts } from '../history/stackedFiles.ts';
 import {
   changeBlocks,
@@ -285,6 +285,11 @@ export function createWorkingCopyView(): View {
    */
   let picked = new Set<string>();
   let anchor: string | undefined;
+  /**
+   * All で Space で入れる・外した後に選ぶ変更のかたまり（読み直した差分でも選び直す）。path は 1 つの差分のファイル
+   * （並べた差分では undefined で、keys にパスが付く）。マウス・ほかのキーを押したら忘れる
+   */
+  let spaceNext: { path: string | undefined; keys: string[] } | undefined;
   /** 行の Stage の形（設定。行を選んでから隙間の行の操作で・変更の帯と行番号を押して） */
   let lineStaging: LineStaging = 'select';
   /** たたんだ差分（diff.folded）の隙間の開き方（拡張が覚えているもの） */
@@ -2030,28 +2035,101 @@ export function createWorkingCopyView(): View {
     return (stack ? side === 'staged' : diffGroup === 'staged') ? 'unstage' : 'stage';
   }
 
+  // 次のかたまりへ進むのは Space だけ。マウス・ほかのキーを押したら、Space の後の選び直しを忘れる（アプリと同じ）
+  root.addEventListener('mousedown', () => (spaceNext = undefined), true);
+  root.addEventListener('keydown', () => (spaceNext = undefined), true);
+
   diffPane.addEventListener('keydown', (e) => {
     if (e.key === 'Escape' && picked.size > 0) {
       picked = new Set();
       renderDiff();
     } else if (e.key === ' ' && diff?.combined && !diff.folded && picked.size > 0) {
-      // 選んだ行をまとめて入れる・外す（すべて入っていれば外す）
+      // 選んだ行をまとめて入れる・外す（すべて入っていれば外す）。その後は次の hunk を選ぶ
       e.preventDefault();
-      const lines = diff.hunks.flatMap((h) => h.lines.filter((l) => l.kind !== ' ' && picked.has(lineKey(l))));
+      const d = diff;
+      const lines = d.hunks.flatMap((h) => h.lines.filter((l) => l.kind !== ' ' && picked.has(lineKey(l))));
+      const next = nextAfterSpace(d);
       checkLines(lines, !lines.every((l) => l.staged));
+      reserveNext(next);
     } else if (e.key === ' ' && stack && picked.size > 0) {
-      // 並べた差分: ファイルをまたいで選んだ行を、ファイルごとに
+      // 並べた差分: ファイルをまたいで選んだ行を、ファイルごとに。All なら、その後は次の（次のファイルの）かたまりを選ぶ
       e.preventDefault();
       const parts = pickedParts();
       const all = parts.flatMap((p) => p.lines);
+      const next = side === 'all' ? nextStackAfterSpace() : undefined;
       if (all.length > 0) runStackOp(stageOpFor(all), parts);
+      reserveNext(next);
     } else if (e.key === ' ' && diff?.folded && picked.size > 0) {
-      // 選んだ行を stage・unstage（All ではすべて入っていれば外す。アプリと同じ）
+      // 選んだ行を stage・unstage（All ではすべて入っていれば外す。アプリと同じ）。All なら、その後は次のかたまりを選ぶ
       e.preventDefault();
-      const lines = diff.hunks.flatMap((h) => h.lines.filter((l) => l.kind !== ' ' && picked.has(lineKey(l))));
+      const d = diff;
+      const lines = d.hunks.flatMap((h) => h.lines.filter((l) => l.kind !== ' ' && picked.has(lineKey(l))));
+      const next = d.combined ? nextAfterSpace(d) : undefined;
       runOp(stageOpFor(lines), lines);
+      reserveNext(next);
     }
   });
+
+  /**
+   * 1 つの差分（All）で、選んだ行の次の変更のかたまり（たたんだ差分）か hunk（たたまない差分）の行。最後なら
+   * undefined
+   */
+  function nextAfterSpace(d: FileDiff): { path: string | undefined; keys: string[] } | undefined {
+    const blocks = (
+      d.folded ? changeBlocks(d.hunks) : d.hunks.map((h) => h.lines.filter((l) => l.kind !== ' ')).filter((b) => b.length > 0)
+    ).map((b) => b.map(lineKey));
+    const at = blockAfter(blocks, picked);
+    return at === undefined ? undefined : { path: d.path, keys: blocks[at]! };
+  }
+
+  /** 並べた差分（All）で、選んだ行の次の変更のかたまり（ファイルをまたぐ。畳んだファイルは飛ばす。J と同じ） */
+  function nextStackAfterSpace(): { path: string | undefined; keys: string[] } | undefined {
+    if (!stack) return undefined;
+    const blocks = stack.files.flatMap((entry) =>
+      stackCollapsed.has(entry.path) ? [] : changeBlocks(entry.diff.hunks).map((b) => b.map((l) => stackLineKey(entry.path, lineKey(l)))),
+    );
+    const at = blockAfter(blocks, picked);
+    return at === undefined ? undefined : { path: undefined, keys: blocks[at]! };
+  }
+
+  /** Space の後に選ぶかたまりを覚えて、今の差分で選ぶ（読み直した差分が来たら、applySpaceNext で選び直す） */
+  function reserveNext(next: { path: string | undefined; keys: string[] } | undefined): void {
+    spaceNext = next;
+    applySpaceNext();
+  }
+
+  /** 覚えたかたまりの行を選び、見えていなければ上から 3 分の 1 あたりに出す。別のファイル・見る側なら忘れる */
+  function applySpaceNext(): void {
+    const next = spaceNext;
+    if (!next) return;
+    if (stack) {
+      if (next.path !== undefined || side !== 'all') {
+        spaceNext = undefined;
+        return;
+      }
+      const parts = pickedParts(next.keys);
+      const first = parts[0];
+      const last = parts.at(-1);
+      if (!first || !last) return;
+      picked = new Set(parts.flatMap((p) => p.lines.map((l) => stackLineKey(p.entry.path, lineKey(l)))));
+      anchor = next.keys[0];
+      enterStack(first.entry);
+      renderDiff();
+      revealBlock(first.entry.section, lineKey(first.lines[0]!), lineKey(last.lines.at(-1)!));
+      return;
+    }
+    if (!diff?.combined || diff.path !== next.path) {
+      spaceNext = undefined;
+      return;
+    }
+    const present = new Set(diff.hunks.flatMap((h) => h.lines.filter((l) => l.kind !== ' ').map(lineKey)));
+    const keys = next.keys.filter((k) => present.has(k));
+    if (keys.length === 0) return;
+    picked = new Set(keys);
+    anchor = keys[0];
+    renderDiff();
+    revealBlock(diffPane, keys[0]!, keys.at(-1)!);
+  }
 
   /** J・K（たたんだ差分）: 次・前の変更のかたまりを選び、上から 3 分の 1 あたりに出す（アプリと同じ） */
   function moveBlock(forward: boolean): void {
@@ -2347,6 +2425,7 @@ export function createWorkingCopyView(): View {
         followStack(m.paths);
         renderFiles();
         showStack(m);
+        applySpaceNext();
         break;
       case 'wcDiff':
         if (!m.diff) {
@@ -2389,6 +2468,8 @@ export function createWorkingCopyView(): View {
         followShown(m.diff.path, m.group);
         renderFiles();
         renderDiff();
+        // Space で入れる・外した後の読み直しなら、次のかたまりを選び直す
+        applySpaceNext();
         break;
       case 'wcDiffNote':
         treeView = undefined;
