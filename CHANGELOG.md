@@ -47,6 +47,7 @@ becomes the GitHub Release notes.
 - Opening a repository with no commits no longer shows “Couldn’t read the commits to edit” (macOS).
 - Japanese error messages and notes end politely (“〜ません”) instead of the curt “〜ない”, such as “ファイルが見つかりません” for a file that isn’t there.
 - On Windows, a failure to open the repository or read History, refs, a commit, a stash or a diff is shown in the app’s language (it was always Japanese).
+- Right-clicking a line of a commit’s diff offers “Explain This Hunk with AI” again, after “Open File at This Commit” (macOS).
 
 ### [0.2.16] - 2026-11-27
 
