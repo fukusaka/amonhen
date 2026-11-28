@@ -18068,7 +18068,17 @@ impl Root {
             }
         }
         let expanded = self.working_browser.as_ref().map(|b| b.expanded.clone());
-        let mut browser = crate::allfiles::Browser::new_working(repo, head, changes);
+        // コンフリクトのファイルには、変更の一覧と同じ印を付ける（macOS 版の `WorkingTreeFiles.reload` は一覧の
+        // 印の関数を使う）。
+        let conflicts = self
+            .status
+            .as_ref()
+            .map_or(&[][..], |s| &s.status.entries[..])
+            .iter()
+            .filter(|e| e.kind == amonhen_model::StatusKind::Unmerged)
+            .map(|e| e.path.clone())
+            .collect();
+        let mut browser = crate::allfiles::Browser::new_working(repo, head, changes, conflicts);
         if let Some(expanded) = expanded {
             browser.expanded = expanded;
         }
