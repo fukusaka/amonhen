@@ -1,8 +1,8 @@
 import AmonhenKit
 import AppKit
 
-/// History の見せ方を選ぶメニュー。View メニューの「History Items」「History Order」、History の上のバーの右端の
-/// ボタン、History のヘッダーの右クリックに同じものを出す（ボタンとヘッダーには 1 行表示・祖先の強調・折りたたみも）。
+/// History の見せ方を選ぶメニュー。History の上のバーの右端のボタンと History のヘッダーの右クリックに出す
+/// （並び順・項目のほか、1 行表示・祖先の強調・折りたたみも）。
 final class HistoryDisplayMenu: NSObject, NSMenuItemValidation {
     static let shared = HistoryDisplayMenu()
 
@@ -11,20 +11,6 @@ final class HistoryDisplayMenu: NSObject, NSMenuItemValidation {
         (.refs, "Branches and Tags"), (.author, "Author"), (.date, "Date"), (.id, "Commit ID"),
         (.signature, "Signature"), (.ci, "CI Status"),
     ]
-
-    /// 行に出す項目のメニュー（View メニューの「History Items」）。
-    func itemsMenu() -> NSMenu {
-        let menu = NSMenu(title: L("History Items"))
-        addItems(to: menu)
-        return menu
-    }
-
-    /// 並び順のメニュー（View メニューの「History Order」）。
-    func orderMenu() -> NSMenu {
-        let menu = NSMenu(title: L("History Order"))
-        addOrders(to: menu)
-        return menu
-    }
 
     /// 並び順・項目と、1 行表示・折りたたみ・祖先の強調をまとめたメニュー（バーのボタンとヘッダーの右クリック）。
     func displayMenu() -> NSMenu {
