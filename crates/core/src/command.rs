@@ -4512,7 +4512,10 @@ impl Repository {
                 ..Default::default()
             }),
             Command::EditableCommits { through_merges } => {
-                let text = if through_merges {
+                // まだコミットがなければ（git init の直後・orphan のブランチ）、編集できるコミットはない（失敗ではない）。
+                let text = if self.backend().head()?.is_none() {
+                    String::new()
+                } else if through_merges {
                     self.first_parent_chain()?
                         .iter()
                         .map(|(c, merge)| {
@@ -6176,6 +6179,23 @@ mod tests {
             .iter()
             .map(|c| c.status)
             .collect()
+    }
+
+    #[test]
+    fn lists_no_editable_commits_before_the_first_commit() {
+        // 空のリポジトリ（HEAD がまだない）では、失敗ではなく空の並び（History の右クリックの読みで警告を出さない）。
+        let tmp = tempfile::tempdir().unwrap();
+        let dir = tmp.path();
+        git(dir, &["init", "-q"]);
+        let repo = Repository::new(GixBackend::open(dir).unwrap());
+        for through in [true, false] {
+            let listed = run(
+                &repo,
+                &serde_json::json!({"op": "editableCommits", "throughMerges": through}).to_string(),
+            );
+            assert_eq!(listed["ok"], true, "{listed}");
+            assert_eq!(listed["text"], "", "{listed}");
+        }
     }
 
     #[test]
