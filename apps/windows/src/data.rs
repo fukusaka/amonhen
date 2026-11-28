@@ -503,7 +503,7 @@ pub struct WorkingShown {
     pub tree: Option<DiffTree>,
     pub wrap_cols: usize,
     /// 選んだ行（差分の行の番号）と、Shift で続けて選ぶ起点。差分を読み直したら外れる（macOS 版・GTK4 版と同じ。
-    /// 読み直すと行の番号が別の行を指すことがある）。
+    /// 読み直すと行の番号が別の行を指すことがある）。All で Space で含める・外した後だけ、次の変更のかたまりを選ぶ。
     pub selection: std::collections::BTreeSet<u32>,
     pub anchor: Option<u32>,
     /// 見ている側と、読んだときの隙間の開き方（隙間の番号ごとに、上・下から見せる行数）。
@@ -808,6 +808,16 @@ impl WorkingShown {
                 self.anchor = Some(row);
             }
         }
+    }
+
+    /// `index` 番目の変更のかたまりの行を選ぶ（macOS 版の `selectHunk`）。選んだ行（始め、終わりの次）。
+    pub fn select_block(&mut self, index: usize) -> Option<(u32, u32)> {
+        let rows = &self.diff.view.rows;
+        let &start = change_block_starts(rows).get(index)?;
+        let (start, end) = change_block(rows, start);
+        self.selection = (start as u32..end as u32).collect();
+        self.anchor = Some(start as u32);
+        Some((start as u32, end as u32))
     }
 
     /// 選んだ行のうち、変更の行（捨てるのはこの行）。
@@ -1766,6 +1776,25 @@ pub fn change_block(rows: &[amonhen_layout::DiffRow], row: usize) -> (usize, usi
     (start, end)
 }
 
+/// 変更のかたまりの始めの行（All の差分の「hunk」。並べた差分では、ファイルをまたいで上から。macOS 版の
+/// `hunkRows`（`foldsGaps`））。
+pub fn change_block_starts(rows: &[amonhen_layout::DiffRow]) -> Vec<usize> {
+    use amonhen_layout::DiffRow;
+    let change = |r: &DiffRow| matches!(r.kind, DiffRow::ADDED | DiffRow::REMOVED);
+    (0..rows.len())
+        .filter(|&i| change(&rows[i]) && (i == 0 || !change(&rows[i - 1])))
+        .collect()
+}
+
+/// Space で `picked` の行を含める・外した後に選ぶ、次の変更のかたまりの番号（`picked` の最後の行のかたまりの
+/// 次。最後のかたまりなら None）。
+pub fn next_block_after(rows: &[amonhen_layout::DiffRow], picked: &[usize]) -> Option<usize> {
+    let starts = change_block_starts(rows);
+    let last = *picked.iter().max()?;
+    let index = starts.iter().rposition(|&s| s <= last)?;
+    (index + 1 < starts.len()).then_some(index + 1)
+}
+
 /// History の差分のファイル（見出しの右クリックのメニュー）。
 #[derive(Clone, Debug, PartialEq)]
 pub struct DiffFile {
@@ -1857,6 +1886,10 @@ pub struct Data {
     /// 差分が届いた（見たら `false` に戻す）と、前と同じファイル・側の差分を読み直したものか（スクロールを残す）。
     pub working_changed: bool,
     pub working_same: bool,
+    /// Space で含める・外した後、読み直した差分で選ぶ変更のかたまりの番号（All のときだけ。macOS 版の
+    /// `hunkToSelectAfterShow`）と、選んだかたまりの行（始め、終わりの次。見える所へ動かす）。
+    working_next: Option<usize>,
+    pub working_reveal: Option<(u32, u32)>,
     /// Working Copy の差分で開いた隙間（見る側とパスごとに、隙間の番号と上・下から見せる行数。GTK4 版の
     /// `open_gaps`）。
     working_gaps: HashMap<(WorkingSide, String), HashMap<u32, (u32, u32)>>,
@@ -2308,6 +2341,8 @@ impl Data {
             working_wanted: None,
             working_changed: false,
             working_same: false,
+            working_next: None,
+            working_reveal: None,
             working_gaps: HashMap::new(),
             file_view: None,
             file_wanted: None,
@@ -2634,7 +2669,9 @@ impl Data {
 
     /// Working Copy の差分の `rows` を含める・外す（All は、すべて含めていれば外し、そうでなければ含める。片側は
     /// その側から移す）。空白を無視した差分では行ごとには移さない（false。GTK4 版は音で知らせる）。
-    pub fn stage_working_toggle(&self, rows: Vec<usize>) -> bool {
+    pub fn stage_working_toggle(&mut self, rows: Vec<usize>) -> bool {
+        // マウスの操作（ボタン・帯・行番号・右クリック）の後は、次のかたまりを選ばない。
+        self.working_next = None;
         let Some(working) = &self.working else {
             return false;
         };
@@ -2647,6 +2684,21 @@ impl Data {
             !working.diff.staged
         };
         self.stage_working_rows(rows, stage);
+        true
+    }
+
+    /// Space: 選んだ行 `rows` を含める・外し、All なら読み直した差分で次の変更のかたまりを選ぶ（最後のかたまり
+    /// なら選ばない。macOS 版の `toggleSelectedStaged`）。扱ったら true。
+    pub fn stage_working_space(&mut self, rows: Vec<usize>) -> bool {
+        let next = self
+            .working
+            .as_ref()
+            .filter(|w| w.side == WorkingSide::All && w.diff.combined.is_some())
+            .and_then(|w| next_block_after(&w.diff.view.rows, &rows));
+        if !self.stage_working_toggle(rows) {
+            return false;
+        }
+        self.working_next = next;
         true
     }
 
@@ -3214,7 +3266,7 @@ impl Data {
                         changed = true;
                     }
                 }
-                Event::Working(shown, seq) => {
+                Event::Working(mut shown, seq) => {
                     if seq == self.working_seq
                         && self.working_wanted.as_deref() == Some(shown.path.as_str())
                     {
@@ -3222,6 +3274,9 @@ impl Data {
                             .working
                             .as_ref()
                             .is_some_and(|w| w.path == shown.path && w.side == shown.side);
+                        // Space で含める・外した後は、次の変更のかたまりを選ぶ（同じファイル・側を読み直したときだけ）。
+                        let next = self.working_next.take().filter(|_| self.working_same);
+                        self.working_reveal = next.and_then(|i| shown.select_block(i));
                         self.working = Some(shown);
                         self.working_note = None;
                         self.apply_wrap();
@@ -4457,6 +4512,41 @@ mod tests {
         assert_eq!(hunk_rows(&rows, 0), [2, 3, 5]);
         // 最後の隙間の行の下に変更はない（hunk の操作を出さない）。
         assert!(hunk_rows(&rows, 6).is_empty());
+    }
+
+    #[test]
+    fn space_selects_the_next_change_block_across_files() {
+        use amonhen_layout::DiffRow;
+        let row = |kind| DiffRow {
+            kind,
+            ..Default::default()
+        };
+        // 並べた差分: 1 つ目のファイルに 2 つのかたまり、2 つ目のファイルに 1 つ。
+        let rows = [
+            row(DiffRow::FILE),
+            row(DiffRow::HUNK),
+            row(DiffRow::REMOVED),
+            row(DiffRow::ADDED),
+            row(DiffRow::CONTEXT),
+            row(DiffRow::ADDED),
+            row(DiffRow::HUNK),
+            row(DiffRow::ADDED),
+            row(DiffRow::FILE),
+            row(DiffRow::HUNK),
+            row(DiffRow::REMOVED),
+        ];
+        assert_eq!(change_block_starts(&rows), [2, 5, 7, 10]);
+        assert_eq!(next_block_after(&rows, &[3]), Some(1));
+        assert_eq!(next_block_after(&rows, &[2, 3]), Some(1));
+        // 隙間をまたいでも、次のファイルへも進む。
+        assert_eq!(next_block_after(&rows, &[5]), Some(2));
+        assert_eq!(next_block_after(&rows, &[7]), Some(3));
+        // いくつかのかたまりにまたがれば、最後の行のかたまりの次。
+        assert_eq!(next_block_after(&rows, &[2, 7]), Some(3));
+        // 最後のかたまりなら選ばない。
+        assert_eq!(next_block_after(&rows, &[10]), None);
+        assert_eq!(next_block_after(&rows, &[]), None);
+        assert_eq!(next_block_after(&[], &[0]), None);
     }
 
     #[test]
