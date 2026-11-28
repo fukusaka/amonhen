@@ -1353,6 +1353,16 @@ impl Inner {
                 }));
             }
             items.extend(this.hunk_item(row));
+            // 隙間の行なら、幅によらず開く・畳むを先に出し（札に入りきらないボタンもここで使える）、今までの
+            // 項目は区切りの後ろに残す。
+            let mut gap = this.diff.gap_menu(row);
+            if !gap.is_empty() {
+                if !items.is_empty() {
+                    gap.push(crate::menu::Item::Separator);
+                }
+                gap.append(&mut items);
+                items = gap;
+            }
             if !items.is_empty() {
                 crate::menu::popup(&this.diff, x, y, items);
             }

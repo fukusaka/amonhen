@@ -566,6 +566,73 @@ struct GapLayout {
     function: Option<(f32, pango::Layout)>,
     /// hunk の操作が効く行（選んだ行か、hunk の変更すべて）。
     target: Vec<usize>,
+    /// その隙間で出せる開く・畳む（メニューの項目）。
+    gap_actions: Vec<(GapAction, String)>,
+    /// 開く・畳むのボタンが札の右に入りきらない（札を押すとメニューを開く）。
+    overflows: bool,
+}
+
+/// 隙間の行の札とボタンの置き方（[`gap_fit`] の答え）。
+#[derive(Debug, PartialEq)]
+struct GapFit {
+    /// 札の左端（出さなければ None）。
+    pill_x: Option<f32>,
+    /// 短い札にした。
+    short: bool,
+    /// 並べたボタン（`chips` の中の位置と左端）。
+    chips: Vec<(usize, f32)>,
+    /// 並べられなかったボタンがある（札を出さないときは、ボタンがあれば true）。
+    overflows: bool,
+}
+
+/// 札と hunk の操作・ボタンのあいだ。
+const GAP_MARGIN: f32 = 8.0;
+/// ボタンどうしのあいだ。
+const GAP_SPACE: f32 = 6.0;
+
+/// 隙間の行の札とボタンの置き方（部品の中の座標）。札は自分の幅 `pill` で `center` を中心に置き、右の hunk の
+/// 操作（`right` から左）に [`GAP_MARGIN`] より近づくなら左へずらす（`left` まで）。それでも入らなければ短い札
+/// `short_pill`、それも入らなければ札を出さない。ボタン（幅 `chips`）は札の右に入るものだけ並べる。
+fn gap_fit(
+    left: f32,
+    center: f32,
+    right: f32,
+    pill: f32,
+    short_pill: Option<f32>,
+    chips: &[f32],
+) -> GapFit {
+    let limit = right - GAP_MARGIN;
+    let fit = |w: f32| {
+        let x = (center - w / 2.0).max(left).min(limit - w);
+        (x >= left).then_some(x)
+    };
+    let (pill_x, short, width) = match (fit(pill), short_pill) {
+        (Some(x), _) => (Some(x), false, pill),
+        (None, Some(w)) => (fit(w), fit(w).is_some(), w),
+        (None, None) => (None, false, pill),
+    };
+    let Some(pill_x) = pill_x else {
+        return GapFit {
+            pill_x: None,
+            short: false,
+            chips: Vec::new(),
+            overflows: !chips.is_empty(),
+        };
+    };
+    let mut x = pill_x + width + GAP_SPACE;
+    let mut placed = Vec::new();
+    for (i, &w) in chips.iter().enumerate() {
+        if x + w < limit {
+            placed.push((i, x));
+            x += w + GAP_SPACE;
+        }
+    }
+    GapFit {
+        pill_x: Some(pill_x),
+        short,
+        overflows: placed.len() < chips.len(),
+        chips: placed,
+    }
 }
 
 /// ファイルの見出し・差分の行を右クリックしたときに呼ぶ（見出しの上ならファイルの番号、パス、x、y）。
@@ -3692,8 +3759,9 @@ impl DiffWidget {
         } else {
             String::new()
         };
+        // その隙間で出せる開く・畳む（行を選んでいれば出さない）。ボタンはマウスが乗っているときだけ並べる。
         let mut gap_actions: Vec<(GapAction, String)> = Vec::new();
-        if st.hovered_gap.is_some_and(|(r, _)| r == index) && selected.is_empty() {
+        if selected.is_empty() {
             if hidden > GAP_STEP {
                 if !leading {
                     gap_actions.push((
@@ -3737,22 +3805,48 @@ impl DiffWidget {
             ));
             right -= w + 2.0;
         }
-        // 中央の札（自分の幅だけで中央に置く。ボタンが出ても動かない）と、その右の開く・畳む。
+        // 中央の札（自分の幅だけで中央に置く。ボタンが出ても動かない）と、その右の開く・畳む。hunk の操作に
+        // かかるなら左へずらし、入らなければ短い札（「⋯ n」。変更のない行を隠しているときだけ）にする。
         let mut pill = None;
+        let mut overflows = false;
         if !pill_text.is_empty() {
             let layout = self.small_layout(&pill_text, false);
-            let w = size(&layout).0 + 20.0;
-            let mut x = (text_x + (width - text_x - w) / 2.0).max(text_x + 8.0);
-            pill = Some((graphene::Rect::new(x, y, w, height), layout));
-            x += w + 6.0;
-            for (action, title) in gap_actions {
-                let layout = self.small_layout(&title, true);
-                let cw = size(&layout).0 + 16.0;
-                if x + cw >= right - 8.0 {
-                    break;
+            let short = (selected.is_empty() && hidden > 0)
+                .then(|| self.small_layout(&format!("⋯ {hidden}"), false));
+            let chips: Vec<pango::Layout> = gap_actions
+                .iter()
+                .map(|(_, title)| self.small_layout(title, true))
+                .collect();
+            let widths: Vec<f32> = chips.iter().map(|l| size(l).0 + 16.0).collect();
+            let fit = gap_fit(
+                text_x + 8.0,
+                text_x + (width - text_x) / 2.0,
+                right,
+                size(&layout).0 + 20.0,
+                short.as_ref().map(|l| size(l).0 + 20.0),
+                &widths,
+            );
+            overflows = fit.overflows;
+            if let Some(x) = fit.pill_x {
+                let layout = match short {
+                    Some(short) if fit.short => short,
+                    _ => layout,
+                };
+                let w = size(&layout).0 + 20.0;
+                pill = Some((graphene::Rect::new(x, y, w, height), layout));
+                if st.hovered_gap.is_some_and(|(r, _)| r == index) {
+                    let mut chips: Vec<Option<pango::Layout>> =
+                        chips.into_iter().map(Some).collect();
+                    for (i, cx) in fit.chips {
+                        if let Some(layout) = chips[i].take() {
+                            buttons.push((
+                                gap_actions[i].0,
+                                graphene::Rect::new(cx, y, widths[i], height),
+                                layout,
+                            ));
+                        }
+                    }
                 }
-                buttons.push((action, graphene::Rect::new(x, y, cw, height), layout));
-                x += cw + 6.0;
             }
         }
         // 左の関数名（札にかかるなら出さない）。
@@ -3769,6 +3863,8 @@ impl DiffWidget {
             buttons,
             function,
             target,
+            gap_actions,
+            overflows,
         }
     }
 
@@ -3945,29 +4041,31 @@ impl DiffWidget {
         }
     }
 
-    /// 隙間の行を押した: ボタンならその操作、札ならすべて開く（すべて開いていれば畳む）。
-    fn gap_click(&self, x: f32, y: f32, index: u32) {
+    /// `index` 行目（隙間の行）の今の置き場所。
+    fn gap_layout_of(&self, index: u32) -> Option<GapLayout> {
         let scroll = self.vadjustment().map_or(0.0, |a| a.value()) as f32;
         let width = self.width() as f32;
-        let (layout, gap, row, opening, on_set, on_discard) = {
-            let mut st = self.state();
-            self.ensure_font(&mut st);
-            let Some(view) = st.view.clone() else { return };
-            let top = st.row_y(index) - scroll;
-            let text_x = Self::text_left(&st, &view);
-            let layout = self.gap_layout(&st, &view, index, top, width, text_x);
-            let Ok(gap) = st.gap_rows.binary_search(&index) else {
-                return;
-            };
-            let gap = gap as u32;
-            (
-                layout,
-                gap,
-                view.view.rows[index as usize],
-                st.gap_openings.get(&gap).copied().unwrap_or((0, 0)),
-                st.on_set_gap.clone(),
-                st.on_discard_rows.clone(),
-            )
+        let mut st = self.state();
+        self.ensure_font(&mut st);
+        let view = st.view.clone()?;
+        if st.gap_rows.binary_search(&index).is_err() {
+            return None;
+        }
+        let top = st.row_y(index) - scroll;
+        let text_x = Self::text_left(&st, &view);
+        Some(self.gap_layout(&st, &view, index, top, width, text_x))
+    }
+
+    /// 隙間の行を押した: ボタンならその操作、札ならすべて開く（すべて開いていれば畳む）。ボタンが入りきらない
+    /// ときは、札で開く・畳むのメニューを開く。
+    fn gap_click(&self, x: f32, y: f32, index: u32) {
+        let Some(layout) = self.gap_layout_of(index) else {
+            return;
+        };
+        let row = {
+            let st = self.state();
+            let Some(view) = st.view.as_ref() else { return };
+            view.view.rows[index as usize]
         };
         let p = graphene::Point::new(x, y);
         let inside = |r: &graphene::Rect| {
@@ -3980,6 +4078,17 @@ impl DiffWidget {
             && inside(r)
             && (row.old_no > 0 || row.new_no > 0)
         {
+            // 入りきらないボタンがあれば、札の下にメニューを開く（出せる開く・畳むすべて）。
+            if layout.overflows {
+                let items = self.gap_items(index, &layout);
+                crate::menu::popup(
+                    self,
+                    f64::from(r.x() + r.width() / 2.0),
+                    f64::from(r.y() + r.height()),
+                    items,
+                );
+                return;
+            }
             if row.old_no > 0 {
                 GapAction::All
             } else {
@@ -3987,6 +4096,53 @@ impl DiffWidget {
             }
         } else {
             return;
+        };
+        self.apply_gap(index, action, layout.target);
+    }
+
+    /// 隙間の行の開く・畳むのメニューの項目（札を押したとき・右クリック）。
+    fn gap_items(&self, index: u32, layout: &GapLayout) -> Vec<crate::menu::Item> {
+        layout
+            .gap_actions
+            .iter()
+            .map(|(action, title)| {
+                let (weak, action) = (self.downgrade(), *action);
+                crate::menu::action(title.clone(), move || {
+                    if let Some(view) = weak.upgrade() {
+                        view.apply_gap(index, action, Vec::new());
+                    }
+                })
+            })
+            .collect()
+    }
+
+    /// 右クリックのメニューの、隙間の行の開く・畳む（幅によらず。隙間の行でなければ空）。
+    pub fn gap_menu(&self, row: usize) -> Vec<crate::menu::Item> {
+        let Ok(index) = u32::try_from(row) else {
+            return Vec::new();
+        };
+        if !self.state().folds {
+            return Vec::new();
+        }
+        self.gap_layout_of(index)
+            .map(|layout| self.gap_items(index, &layout))
+            .unwrap_or_default()
+    }
+
+    /// 隙間の行の操作をする（開く・畳むは隙間に、stage・unstage・discard は `target` の行に）。
+    fn apply_gap(&self, index: u32, action: GapAction, target: Vec<usize>) {
+        let (gap, opening, on_set, on_discard) = {
+            let st = self.state();
+            let Ok(gap) = st.gap_rows.binary_search(&index) else {
+                return;
+            };
+            let gap = gap as u32;
+            (
+                gap,
+                st.gap_openings.get(&gap).copied().unwrap_or((0, 0)),
+                st.on_set_gap.clone(),
+                st.on_discard_rows.clone(),
+            )
         };
         let grow = |v: u32| v.saturating_add(GAP_STEP);
         let (top, bottom) = opening;
@@ -3997,12 +4153,12 @@ impl DiffWidget {
             GapAction::All => Some((top, u32::MAX)),
             GapAction::Collapse => None,
             GapAction::Stage | GapAction::Unstage => {
-                self.stage_rows(layout.target);
+                self.stage_rows(target);
                 return;
             }
             GapAction::Discard => {
                 if let Some(f) = on_discard {
-                    f(layout.target);
+                    f(target);
                 }
                 return;
             }
@@ -4174,6 +4330,48 @@ pub(crate) fn syntax_color(kind: u8, fg: &gdk::RGBA) -> Option<(f32, f32, f32)> 
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    fn fit(right: f32, chips: &[f32]) -> GapFit {
+        gap_fit(0.0, 300.0, right, 100.0, Some(30.0), chips)
+    }
+
+    #[test]
+    fn gap_fit_centers_the_pill_and_places_every_button_when_wide() {
+        let f = fit(1000.0, &[40.0, 40.0, 30.0]);
+        assert_eq!(f.pill_x, Some(250.0));
+        assert!(!f.short);
+        assert_eq!(f.chips.iter().map(|c| c.0).collect::<Vec<_>>(), [0, 1, 2]);
+        assert!(!f.overflows);
+    }
+
+    #[test]
+    fn gap_fit_shifts_the_pill_left_so_it_does_not_reach_the_hunk_actions() {
+        let f = fit(320.0, &[40.0, 40.0, 30.0]);
+        assert_eq!(f.pill_x, Some(212.0));
+        assert!(f.pill_x.unwrap() + 100.0 <= 320.0 - GAP_MARGIN);
+        assert!(f.chips.is_empty());
+        assert!(f.overflows);
+    }
+
+    #[test]
+    fn gap_fit_overflows_when_some_buttons_do_not_fit() {
+        let f = fit(460.0, &[40.0, 40.0, 30.0]);
+        assert_eq!(f.chips, [(0, 356.0), (1, 402.0)]);
+        assert!(f.overflows);
+    }
+
+    #[test]
+    fn gap_fit_uses_the_short_pill_then_drops_it() {
+        let f = fit(60.0, &[40.0]);
+        assert_eq!(f.pill_x, Some(22.0));
+        assert!(f.short);
+        assert!(f.overflows);
+        let f = fit(30.0, &[40.0]);
+        assert_eq!(f.pill_x, None);
+        assert!(f.overflows);
+        assert!(!gap_fit(0.0, 300.0, 30.0, 100.0, None, &[]).overflows);
+        assert!(!fit(320.0, &[]).overflows);
+    }
 
     #[test]
     fn finds_without_case_when_lowercasing_changes_the_length() {
