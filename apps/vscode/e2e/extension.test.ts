@@ -39,6 +39,7 @@ import { samePath } from '../src/git/worktrees.ts';
 import type { activate } from '../src/extension.ts';
 import type { HostMessage, Sheet, SheetAnswer } from '../src/view/protocol.ts';
 import type { Drawing } from '../src/history/drawing.ts';
+import { folderChildren, statusOverlay } from '../src/workingCopy/treeFiles.ts';
 
 type Api = Awaited<ReturnType<typeof activate>>;
 type Message<T extends HostMessage['type']> = Extract<HostMessage, { type: T }>;
@@ -194,6 +195,33 @@ function waitPosted<T extends HostMessage['type']>(
       return [kinds.join(', ') || 'なし', ...errors.slice(-3).map((e) => `エラー「${e}」`)].join('、');
     },
   );
+}
+
+/**
+ * Webview への頼み（ファイルを選ぶなど）を送り、その答えを待つ。本物の Webview も読み直しのたびに自分で選び直して
+ * 頼むので、試験の頼みが後から来た Webview の頼みに替えられることがある（新しい頼みが勝つのが正しいふるまい）。
+ * そのときは頼み直す
+ */
+async function sendAndWait<T extends HostMessage['type']>(
+  send: () => Promise<unknown>,
+  type: T,
+  match: (m: Message<T>) => boolean,
+): Promise<Message<T>> {
+  for (let attempt = 0; ; attempt++) {
+    const at = posted.length;
+    await send();
+    const last = attempt === 2;
+    try {
+      return await until(
+        `${type} のメッセージ`,
+        () => posted.slice(at).find((m): m is Message<T> => m.type === type && match(m as Message<T>)),
+        last ? WAIT : WAIT / 4,
+        () => posted.slice(at).map((m) => m.type).join(', ') || 'なし',
+      );
+    } catch (err) {
+      if (last) throw err;
+    }
+  }
 }
 
 /**
@@ -2330,9 +2358,13 @@ async function workingSidesFlow(): Promise<void> {
     await waitPosted('wcFiles', mark, (m) => m.engine && m.files.some((f) => f.group === 'staged' && f.path === 'sides.txt'));
 
     // 最初は Unstaged（index → 作業ツリー）
-    mark = posted.length;
-    await wc.handle({ type: 'wcSelect', group: 'unstaged', path: 'sides.txt', side: 'unstaged' });
-    const unstagedDiff = (await waitPosted('wcDiff', mark, (m) => m.diff?.path === 'sides.txt' && m.side === 'unstaged')).diff!;
+    const unstagedDiff = (
+      await sendAndWait(
+        () => wc.handle({ type: 'wcSelect', group: 'unstaged', path: 'sides.txt', side: 'unstaged' }),
+        'wcDiff',
+        (m) => m.diff?.path === 'sides.txt' && m.side === 'unstaged',
+      )
+    ).diff!;
     assert.deepEqual(changed(unstagedDiff).map((l) => [l.kind, l.text]), [['-', 'd'], ['+', 'D']]);
     assert.equal(unstagedDiff.combined, undefined);
 
@@ -2430,9 +2462,13 @@ async function workingFoldFlow(): Promise<void> {
     let mark = posted.length;
     await vscode.commands.executeCommand('amonhen.refresh');
     await waitPosted('wcFiles', mark, (m) => m.engine && m.files.some((f) => f.path === 'fold.txt'));
-    mark = posted.length;
-    await wc.handle({ type: 'wcSelect', group: 'unstaged', path: 'fold.txt', side: 'unstaged' });
-    const closed = (await waitPosted('wcDiff', mark, (m) => m.diff?.path === 'fold.txt' && m.side === 'unstaged')).diff!;
+    const closed = (
+      await sendAndWait(
+        () => wc.handle({ type: 'wcSelect', group: 'unstaged', path: 'fold.txt', side: 'unstaged' }),
+        'wcDiff',
+        (m) => m.diff?.path === 'fold.txt' && m.side === 'unstaged',
+      )
+    ).diff!;
     // `@@` の見出しの代わりに隙間の行: 頭の 6 行、間の 43 行、末尾の 17 行
     assert.equal(closed.folded, true);
     assert.deepEqual(gapsOf(closed), [
@@ -2464,6 +2500,8 @@ async function workingFoldFlow(): Promise<void> {
       return { dispose() {} };
     };
     const ten = changedLines(closed).slice(0, 2);
+    // stage した後の読み直しは、amonhen.refresh より先に届くことがある（そのときは refresh では送り直さない）
+    mark = posted.length;
     await withWindow({ setStatusBarMessage }, () =>
       wc.handle({
         type: 'wcStageLines',
@@ -2477,7 +2515,6 @@ async function workingFoldFlow(): Promise<void> {
     await until('10 行目の stage', () => git('diff', '--cached', '--', 'fold.txt').includes('+LINE 10'));
     assert.ok(!git('diff', '--cached', '--', 'fold.txt').includes('LINE 60'));
     // 開き方はファイルと側ごとに覚える（読み直しても開いたまま）
-    mark = posted.length;
     await vscode.commands.executeCommand('amonhen.refresh');
     const kept = (await waitPosted('wcDiff', mark, (m) => m.diff?.path === 'fold.txt' && !changedLines(m.diff).some((l) => l.text === 'LINE 10'))).diff!;
     assert.deepEqual(gapsOf(kept).at(-1), [gapsOf(kept).length - 1, 0, 17]);
@@ -2542,9 +2579,11 @@ async function workingStackFlow(): Promise<void> {
   const config = vscode.workspace.getConfiguration('amonhen');
   /** ファイルを選んで、並べた差分を待つ */
   const choose = async (paths: string[], match: (m: Message<'wcStack'>) => boolean = () => true) => {
-    const at = posted.length;
-    await wc.handle({ type: 'wcSelectFiles', group: 'unstaged', path: paths.at(-1)!, paths });
-    return waitPosted('wcStack', at, (m) => m.paths.join() === paths.join() && match(m));
+    return sendAndWait(
+      () => wc.handle({ type: 'wcSelectFiles', group: 'unstaged', path: paths.at(-1)!, paths }),
+      'wcStack',
+      (m) => m.paths.join() === paths.join() && match(m),
+    );
   };
   try {
     for (const name of names) writeFileSync(join(root, name), `${lines.join('\n')}\n`);
@@ -2615,6 +2654,139 @@ async function workingStackFlow(): Promise<void> {
     await wc.handle({ type: 'wcSide', side: 'unstaged' });
     git('reset', '-q', '--hard', start);
     for (const name of names) rmSync(join(root, name), { force: true });
+    await vscode.commands.executeCommand('amonhen.refresh');
+  }
+}
+
+/**
+ * Working Copy の All Files（エンジン）: HEAD の木（treeEntries）に status（untracked など）を重ねる。変えていない
+ * ファイルは HEAD の中身（treeFile の plain。HEAD で変えたファイルでも印は付けない）、変えたファイルはファイル全体の
+ * HEAD → 作業ツリーの差分で、その行を stage できる。変えた画像は前と後、変えていない画像は 1 枚の絵
+ */
+async function workingAllFilesFlow(): Promise<void> {
+  const start = git('rev-parse', 'HEAD').trim();
+  const dir = join(root, 'allfiles');
+  const wc = (await showView('amonhen.showWorkingCopy')).workingCopy;
+  // 1×1 の PNG（赤と青）
+  const red = Buffer.from('iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mP8z8DwHwAFBQIAX8jx0gAAAABJRU5ErkJggg==', 'base64');
+  const blue = Buffer.from('iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mNkYPhfDwAChwGA60e6kgAAAABJRU5ErkJggg==', 'base64');
+  const lines = Array.from({ length: 12 }, (_, i) => `line ${i + 1}`);
+  const changedLines = (diff: FileDiff) => diff.hunks.flatMap((h) => h.lines).filter((l) => l.kind !== ' ');
+  try {
+    mkdirSync(dir, { recursive: true });
+    writeFileSync(join(dir, 'kept.txt'), 'one\n');
+    writeFileSync(join(dir, 'changed.txt'), `${lines.join('\n')}\n`);
+    writeFileSync(join(dir, 'pic.png'), red);
+    writeFileSync(join(dir, 'same.png'), red);
+    git('add', 'allfiles');
+    git('commit', '-q', '-m', 'add allfiles');
+    // HEAD で kept.txt を変える（History の All Files なら印が付く）
+    writeFileSync(join(dir, 'kept.txt'), 'one\ntwo\n');
+    git('add', 'allfiles/kept.txt');
+    git('commit', '-q', '-m', 'change kept.txt');
+    const head = git('rev-parse', 'HEAD').trim();
+    // 作業ツリーで 2 行目と 11 行目、画像を変え、untracked のファイルを足す
+    writeFileSync(join(dir, 'changed.txt'), `${lines.map((l) => (l === 'line 2' || l === 'line 11' ? l.toUpperCase() : l)).join('\n')}\n`);
+    writeFileSync(join(dir, 'pic.png'), blue);
+    mkdirSync(join(dir, 'new'), { recursive: true });
+    writeFileSync(join(dir, 'new', 'u.txt'), 'untracked\n');
+    let mark = posted.length;
+    await vscode.commands.executeCommand('amonhen.refresh');
+    const filesMessage = await waitPosted('wcFiles', mark, (m) => m.engine && m.head === head && m.files.some((f) => f.path === 'allfiles/new/u.txt'));
+    await wc.handle({ type: 'wcContent', allFiles: true });
+
+    // 木: HEAD のフォルダの中身に、untracked のフォルダ・ファイルを重ねる
+    const entries = async (path: string) => {
+      const at = posted.length;
+      await wc.handle({ type: 'wcTreeEntries', path });
+      return waitPosted('wcTreeEntries', at, (m) => m.path === path);
+    };
+    const top = await entries('');
+    assert.equal(top.head, head);
+    assert.ok(top.entries.some((e) => e.name === 'allfiles' && e.kind === 'folder'), JSON.stringify(top.entries));
+    const inside = await entries('allfiles');
+    assert.deepEqual(inside.entries.map((e) => e.name).sort(), ['changed.txt', 'kept.txt', 'pic.png', 'same.png']);
+    const overlay = statusOverlay(filesMessage.files);
+    assert.ok(overlay.folders.has('allfiles') && overlay.folders.has('allfiles/new'));
+    assert.deepEqual(
+      folderChildren('allfiles', inside.entries, overlay).map((n) => [n.name, n.folder, n.mark?.letter ?? '']),
+      [
+        ['new', true, ''],
+        ['changed.txt', false, 'M'],
+        ['kept.txt', false, ''],
+        ['pic.png', false, 'M'],
+        ['same.png', false, ''],
+      ],
+    );
+    assert.deepEqual(folderChildren('allfiles/new', [], overlay).map((n) => [n.path, n.mark?.letter]), [['allfiles/new/u.txt', 'U']]);
+
+    // 変えていないファイル: HEAD の中身だけ（HEAD で変えた行にも印を付けない）
+    mark = posted.length;
+    await wc.handle({ type: 'wcTreeOpen', path: 'allfiles/kept.txt' });
+    const kept = await waitPosted('wcTreeFile', mark, (m) => m.path === 'allfiles/kept.txt');
+    assert.equal(kept.view.kind, 'text');
+    if (kept.view.kind === 'text') {
+      assert.deepEqual(kept.view.lines.map((l) => l.text), ['one', 'two']);
+      assert.ok(kept.view.lines.every((l) => l.mark === undefined && l.removedBefore === undefined), JSON.stringify(kept.view.lines));
+    }
+
+    // 変えたファイル: ファイル全体の HEAD → 作業ツリーの差分（Changes と同じ隙間の行の形で、隠した行はない）。
+    // 2 行目の書き換えだけを stage する
+    mark = posted.length;
+    await wc.handle({ type: 'wcTreeOpen', path: 'allfiles/changed.txt' });
+    const whole = (await waitPosted('wcDiff', mark, (m) => m.diff?.path === 'allfiles/changed.txt')).diff!;
+    assert.equal(whole.combined, true);
+    assert.equal(whole.folded, true, '隙間の行の形');
+    assert.ok(whole.hunks.every((h) => (h.gap?.hidden ?? 0) === 0), JSON.stringify(whole.hunks.map((h) => h.gap)));
+    assert.equal(whole.hunks.flatMap((h) => h.lines).filter((l) => l.kind !== '-').length, 12, 'ファイル全体');
+    const two = changedLines(whole).filter((l) => l.text.endsWith('2'));
+    assert.equal(two.length, 2, JSON.stringify(changedLines(whole)));
+    await wc.handle({
+      type: 'wcStageLines',
+      group: 'unstaged',
+      path: 'allfiles/changed.txt',
+      version: whole.version,
+      lines: two.map((l): SelectedLine => (l.kind === '-' ? { kind: '-', old: l.old! } : { kind: '+', new: l.new! })),
+      stage: true,
+      combined: true,
+    });
+    await until('2 行目の stage', () => git('diff', '--cached', '--', 'allfiles/changed.txt').includes('+LINE 2'));
+    assert.ok(!git('diff', '--cached', '--', 'allfiles/changed.txt').includes('LINE 11'));
+    // 読み直しても、All Files ではファイル全体の差分のまま（2 行目は stage 済み）
+    const again = (await waitPosted('wcDiff', mark, (m) => m.diff?.path === 'allfiles/changed.txt' && changedLines(m.diff).some((l) => l.staged))).diff!;
+    assert.ok(again.hunks.every((h) => (h.gap?.hidden ?? 0) === 0), '読み直してもファイル全体');
+    assert.deepEqual(changedLines(again).map((l) => [l.text, l.staged === true]), [['line 2', true], ['LINE 2', true], ['line 11', false], ['LINE 11', false]]);
+
+    // 変えた画像は前（HEAD）と後（作業ツリー）、変えていない画像は 1 枚の絵
+    mark = posted.length;
+    await wc.handle({ type: 'wcTreeOpen', path: 'allfiles/pic.png' });
+    const pic = await waitPosted('wcImage', mark, (m) => m.path === 'allfiles/pic.png');
+    assert.equal(pic.side, 'all');
+    assert.equal(pic.before?.url, `data:image/png;base64,${red.toString('base64')}`);
+    assert.equal(pic.after?.url, `data:image/png;base64,${blue.toString('base64')}`);
+    mark = posted.length;
+    await wc.handle({ type: 'wcTreeOpen', path: 'allfiles/same.png' });
+    const same = await waitPosted('wcTreeFile', mark, (m) => m.path === 'allfiles/same.png');
+    assert.equal(same.view.kind, 'image');
+
+    // Changes に戻ると、変更の一覧の見る側（Unstaged）で比べる: 前は index、後は作業ツリー
+    await wc.handle({ type: 'wcContent', allFiles: false });
+    mark = posted.length;
+    await wc.handle({ type: 'wcSelect', group: 'unstaged', path: 'allfiles/pic.png', side: 'unstaged' });
+    const unstagedPic = await waitPosted('wcImage', mark, (m) => m.path === 'allfiles/pic.png');
+    assert.equal(unstagedPic.side, 'unstaged');
+    assert.equal(unstagedPic.before?.url, `data:image/png;base64,${red.toString('base64')}`);
+    assert.equal(unstagedPic.after?.url, `data:image/png;base64,${blue.toString('base64')}`);
+    // 変更の一覧の差分は、たたんだ差分に戻る
+    mark = posted.length;
+    await wc.handle({ type: 'wcSelect', group: 'unstaged', path: 'allfiles/changed.txt', side: 'unstaged' });
+    const folded = (await waitPosted('wcDiff', mark, (m) => m.diff?.path === 'allfiles/changed.txt')).diff!;
+    assert.equal(folded.folded, true);
+  } finally {
+    await wc.handle({ type: 'wcContent', allFiles: false });
+    await wc.handle({ type: 'wcSide', side: 'unstaged' });
+    git('reset', '-q', '--hard', start);
+    rmSync(dir, { recursive: true, force: true });
     await vscode.commands.executeCommand('amonhen.refresh');
   }
 }
@@ -5340,6 +5512,10 @@ suite('Amon Hen in VSCode', () => {
 
   test('stacks the diffs of several selected files in Working Copy and stages lines of one of them through the daemon', async () => {
     await workingStackFlow();
+  });
+
+  test('shows every file of the working tree in Working Copy’s All Files and stages lines of a changed one through the daemon', async () => {
+    await workingAllFilesFlow();
   });
 
   test('opens a commit’s first files, up to Files to open together, in History', async () => {
