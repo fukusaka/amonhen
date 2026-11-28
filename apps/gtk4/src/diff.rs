@@ -72,6 +72,8 @@ pub fn wrap_button() -> gtk::Button {
     button.set_child(Some(&icon));
     button.add_css_class("flat");
     button.set_valign(gtk::Align::Center);
+    // 押してもフォーカスを取らない（差分の J・K・Space がそのまま効くように。macOS 版と同じ）。
+    button.set_focus_on_click(false);
     let update = {
         let (button, icon) = (button.downgrade(), icon.downgrade());
         move || {

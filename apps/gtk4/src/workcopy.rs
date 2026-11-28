@@ -368,6 +368,8 @@ impl WorkingCopy {
             Some("win.amend-last-commit"),
         );
         commit_menu.set_menu_model(Some(&menu));
+        // 開いて閉じた後も、Summary・差分などにフォーカスを残す（macOS 版と同じ）。
+        crate::menu::keep_focus(&commit_menu);
         let aids = crate::commitmsg::MessageAids::new(&subject, &body, &amend);
         aids.install_fixups(&commit_menu, menu);
         let commit_group = gtk::Box::new(gtk::Orientation::Horizontal, 0);
@@ -653,6 +655,17 @@ impl WorkingCopy {
         // macOS 版と同じく、捨てる・行を含める の順。
         bar.append(&discard);
         bar.append(&lines);
+        // 帯のボタンは押してもフォーカスを取らない（押した後も差分の J・K・Space が効くように。macOS 版と同じ）。
+        for b in [
+            whole_file.upcast_ref::<gtk::Widget>(),
+            worktree_side.upcast_ref(),
+            staged_side.upcast_ref(),
+            all_side.upcast_ref(),
+            discard.upcast_ref(),
+            lines.upcast_ref(),
+        ] {
+            b.set_focus_on_click(false);
+        }
         let diff = DiffWidget::default();
         let diff_scrolled = gtk::ScrolledWindow::builder()
             .child(&diff)

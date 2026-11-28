@@ -67,6 +67,8 @@ impl Picker {
         let button = gtk::Button::new();
         button.add_css_class("flat");
         button.set_valign(gtk::Align::Center);
+        // 押してもフォーカスを取らない（差分の J・K・Space がそのまま効くように。macOS 版と同じ）。
+        button.set_focus_on_click(false);
         let icon = crate::icon::Icon::default();
         button.set_child(Some(&icon));
         button.update_property(&[gtk::accessible::Property::Label(&tr!("Whitespace"))]);

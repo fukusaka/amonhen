@@ -527,11 +527,19 @@ pub fn popup_returning(
         }
     });
     let on_destroy = std::cell::RefCell::new(Some(on_destroy));
+    // 押してもフォーカスを取らないボタン（差分の帯など）から出したなら、閉じた後にフォーカスを前の部品へ戻す
+    // （GTK は吹き出しの親のボタンへ移すので、差分の J・K などが届かなくなる。macOS 版と同じく元のまま）。
+    let restore = (!parent.gets_focus_on_click())
+        .then(|| parent.root().and_then(|r| r.focus()))
+        .flatten()
+        .filter(|w| w != &parent)
+        .map(|w| w.downgrade());
     let parent = parent.downgrade();
     // 閉じたら外す（次は作り直す）。項目のアクションは閉じた後に呼ばれるので、外すのは少し後。
     popover.connect_closed(move |p| {
         let p = p.clone();
         let (parent, id) = (parent.clone(), on_destroy.borrow_mut().take());
+        let restore = restore.clone();
         glib::idle_add_local_once(move || {
             if let (Some(parent), Some(id)) = (parent.upgrade(), id) {
                 parent.disconnect(id);
@@ -539,8 +547,74 @@ pub fn popup_returning(
             if p.parent().is_some() {
                 p.unparent();
             }
+            // 外した後に、親のボタン・吹き出しの中の項目に残ったフォーカスを戻す（項目のアクションがほかへ
+            // 動かしていればそのまま）。
+            glib::idle_add_local_once(move || {
+                if let (Some(parent), Some(prev)) =
+                    (parent.upgrade(), restore.and_then(|w| w.upgrade()))
+                {
+                    restore_focus(&parent, Some(p.upcast_ref()), &prev);
+                }
+            });
         });
     });
     popover.popup();
     Some(popover)
+}
+
+/// 吹き出しを閉じた後、フォーカスが親のボタン（`parent`）・その中・吹き出し（`popover`）の中に残っているか、
+/// どこにもなければ、開く前の部品 `prev` へ戻す。項目のアクションがほかへ動かしていればそのまま。入力の欄なら、
+/// 文字を選び直さずにカーソルの位置も元のまま戻す（`grab_focus` は欄の文字をすべて選ぶので、続けて打つと消える）。
+fn restore_focus(parent: &gtk::Widget, popover: Option<&gtk::Widget>, prev: &gtk::Widget) {
+    let focus = parent.root().and_then(|r| r.focus());
+    let left = focus.is_none_or(|f| {
+        &f == parent
+            || f.is_ancestor(parent)
+            || popover.is_some_and(|p| f.is_ancestor(p))
+            || !f.is_mapped()
+    });
+    if !left || !prev.is_mapped() {
+        return;
+    }
+    if let Some(text) = prev.downcast_ref::<gtk::Text>() {
+        text.grab_focus_without_selecting();
+    } else {
+        prev.grab_focus();
+    }
+}
+
+/// `button`（▾ のような MenuButton）の吹き出しを閉じた後も、フォーカスを開く前の部品（Summary・差分など）に
+/// 残す（macOS 版のポップアップと同じ。GTK は押したボタンへ移すので、閉じた後に打った字・J・K が届かない）。
+/// 下の段（Fixup など）へ進んで閉じたときも同じ。
+pub fn keep_focus(button: &gtk::MenuButton) {
+    let prev: std::rc::Rc<std::cell::RefCell<Option<glib::WeakRef<gtk::Widget>>>> =
+        std::rc::Rc::default();
+    // ボタンがフォーカスを取る前（押した瞬間、子のボタンより先）に覚える。
+    let click = gtk::GestureClick::new();
+    click.set_propagation_phase(gtk::PropagationPhase::Capture);
+    let (p, b) = (prev.clone(), button.downgrade());
+    click.connect_pressed(move |_, _, _, _| {
+        let Some(b) = b.upgrade() else { return };
+        let focus = b
+            .root()
+            .and_then(|r| r.focus())
+            .filter(|f| f != b.upcast_ref::<gtk::Widget>() && !f.is_ancestor(&b));
+        p.replace(focus.map(|f| f.downgrade()));
+    });
+    button.add_controller(click);
+    button.connect_active_notify(move |b| {
+        if b.is_active() {
+            return;
+        }
+        let Some(prev) = prev.take() else { return };
+        let b = b.downgrade();
+        // 閉じた後に GTK がボタンへ移すのを待ってから戻す。
+        glib::idle_add_local_once(move || {
+            glib::idle_add_local_once(move || {
+                if let (Some(b), Some(prev)) = (b.upgrade(), prev.upgrade()) {
+                    restore_focus(b.upcast_ref(), None, &prev);
+                }
+            });
+        });
+    });
 }
