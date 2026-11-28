@@ -236,10 +236,10 @@ GTK4 のアプリは macOS のアプリと同じふるまいをめざす。わ�
 | Fixup / Squash Commit For | ✓ | ✓ | ✓ | ✓ | n/a | ✓ | TUI: Working Copy の `F`。Tab で squash! に切り替える。 |
 | hooks の出力のシート | ✓ | ✓ | ✓ | ✓ | n/a | ✓ | TUI: 1 行目を一番下の行に出し、`!` で全部を枠に出す。 |
 | Commit が押せない理由を出す | ✓ | ✓ | ✓ | ✓ | n/a | ✓ | ボタンのツールチップに。<br>TUI: 一番下の行に。 |
-| HEAD → 作業ツリーの 1 つの差分と、行・hunk のチェック | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | macOS: All の側。stage 済みの行はチェックの代わりに塗った帯。<br>VSCode: All の側、エンジンがあれば。なければ別々の未ステージ・ステージ済みの差分で行をステージ。<br>CLI: `diff --combined`・`stage --rows`。 |
+| HEAD → 作業ツリーの 1 つの差分と、行・hunk のチェック | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | macOS: All の側。stage 済みの行はチェックの代わりに塗った帯。<br>VSCode: All の側、エンジンがあれば（同じ帯）。なければ別々の未ステージ・ステージ済みの差分で行をステージ。<br>CLI: `diff --combined`・`stage --rows`。 |
 | Unstaged・Staged・All（見る側は Working Copy で 1 つ） | ✓ | ✓ | ✓ | ✓ | ✓ | △ | VSCode: エンジンがあれば。なければ Staged と Unstaged の節が、それぞれの側を出す。<br>CLI: `diff`・`diff --staged`・`diff --combined`。<br>TUI: 差分の `s` で側を切り替える。 |
-| 変更のない行を畳み、20 行ずつ・すべて開く | ✓ | ✓ | ✓ | — | n/a | — |  |
-| hunk の見出しの Stage Hunk・Discard Hunk（選ぶと Lines）か変更の帯を、設定で選ぶ | ✓ | ✓ | ✓ | — | n/a | — |  |
+| 変更のない行を畳み、20 行ずつ・すべて開く | ✓ | ✓ | ✓ | ✓ | n/a | — | VSCode: エンジンがあれば。メニューは VSCode の右クリックのメニュー、Show Whole File は差分の帯のボタン。 |
+| hunk の見出しの Stage Hunk・Discard Hunk（選ぶと Lines）か変更の帯を、設定で選ぶ | ✓ | ✓ | ✓ | ✓ | n/a | — | VSCode: エンジンがあれば。設定は `amonhen.diff.lineStaging`。VSCode のメニューの名前は決まっているので、右クリックの項目は数を言わない（Stage Selected Lines）。エンジンがなければ `@@` の見出しに Stage Hunk・Discard Hunk。 |
 | 選んだいくつかのファイルの差分を並べる | ✓ | ✓ | ✓ | — | n/a | — | macOS, GTK4, Windows: 一度に開いて並べるファイル（Settings > 差分とマージ）の数まで。 |
 | 行の範囲の選択、J/K・⌥J/⌥K | ✓ | ✓ | ✓ | ✓ | n/a | ✓ | TUI: `v` で範囲を始め、`[` `]` で hunk の見出しへ。 |
 | 重ねられないファイルの Unstaged / Staged の切り替え | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | macOS, GTK4, VSCode: いつもあり、All もある（VSCode: エンジンがあれば。なければいつも別々に出す）。<br>CLI: `diff --staged`。<br>TUI: 初めは stage していない側。差分の `s` で替える。 |
