@@ -37,6 +37,19 @@ export interface StackedFile {
   open: GapOpen[];
 }
 
+/**
+ * 並べた差分で選んだ行の、1 ファイルの分（wcLineParts）。group・version はそのファイルの差分のもの。combined は
+ * 行が HEAD → 作業ツリーの差分（All）のもので、stage はそこで入れるか（true）外すか（false）
+ */
+export interface LinePart {
+  group: ChangeGroup;
+  path: string;
+  version: string;
+  lines: SelectedLine[];
+  stage?: boolean;
+  combined?: boolean;
+}
+
 export interface FileStat {
   path: string;
   added: number | null;
@@ -159,6 +172,11 @@ export type WorkingCopyWebviewMessage =
    * （true）外すか（false）
    */
   | { type: 'wcStageLines'; group: ChangeGroup; path: string; version: string; lines: SelectedLine[]; stage?: boolean; combined?: boolean }
+  /**
+   * 並べた差分で選んだ行（ファイルをまたいでよい）を、ファイルごとに分けて stage・unstage（op が stage）か破棄
+   * （discard）する。どれかのファイルの版が今と違えば、どれも当てずに読み直す
+   */
+  | { type: 'wcLineParts'; op: 'stage' | 'discard'; parts: LinePart[] }
   /** 作業ツリーの側（unstaged）のファイルを丸ごと破棄する */
   | { type: 'wcDiscardFiles'; paths: string[] }
   /** 作業ツリーの側の、選んだ行だけを破棄する。combined は行が All の差分のもの */

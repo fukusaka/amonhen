@@ -2576,6 +2576,7 @@ async function workingStackFlow(): Promise<void> {
   const wc = (await showView('amonhen.showWorkingCopy')).workingCopy;
   const lines = Array.from({ length: 30 }, (_, i) => `line ${i + 1}`);
   const changedLines = (diff: FileDiff) => diff.hunks.flatMap((h) => h.lines).filter((l) => l.kind !== ' ');
+  const selectedOf = (l: DiffLine): SelectedLine => (l.kind === '-' ? { kind: '-', old: l.old! } : { kind: '+', new: l.new! });
   const config = vscode.workspace.getConfiguration('amonhen');
   /** ファイルを選んで、並べた差分を待つ */
   const choose = async (paths: string[], match: (m: Message<'wcStack'>) => boolean = () => true) => {
@@ -2623,7 +2624,7 @@ async function workingStackFlow(): Promise<void> {
       group: second.group,
       path: second.diff.path,
       version: second.diff.version,
-      lines: five.map((l): SelectedLine => (l.kind === '-' ? { kind: '-', old: l.old! } : { kind: '+', new: l.new! })),
+      lines: five.map(selectedOf),
     });
     await until('2 つ目の 5 行目の stage', () => git('diff', '--cached', '--', names[1]!).includes('+LINE 5'));
     assert.ok(!git('diff', '--cached', '--', names[1]!).includes('LINE 25'));
@@ -2639,11 +2640,29 @@ async function workingStackFlow(): Promise<void> {
     assert.equal(after.side, 'unstaged');
     assert.equal(after.total, 2);
     assert.deepEqual(after.files.map((f) => f.diff.path), [names[1], names[2]]);
-    // Staged の側では、stage した 1 つ目と、一部を stage した 2 つ目
+    // 2 つのファイルにまたがって選んだ行（2 つ目の 25 行目と 3 つ目の 5 行目）を 1 回で stage する（ファイルごとに、
+    // そのファイルの差分の版で。アプリと同じ）。本物の Webview が読み直して版が替わったら、最後に届いた並べた差分で頼み直す
+    let latest = after;
+    await sendAndWait(
+      async () => {
+        latest =
+          [...posted].reverse().find((m): m is Message<'wcStack'> => m.type === 'wcStack' && m.side === 'unstaged' && m.paths.join() === three.join()) ?? latest;
+        await wc.handle({
+          type: 'wcLineParts',
+          op: 'stage',
+          parts: latest.files.map((f) => ({ group: f.group, path: f.diff.path, version: f.diff.version, lines: changedLines(f.diff).map(selectedOf) })),
+        });
+      },
+      'wcStack',
+      (m) => m.side === 'unstaged' && m.paths.join() === three.join() && m.files.length === 0,
+    );
+    await until('2 つのファイルにまたがった行の stage', () => git('diff', '--cached', '--', names[1]!).includes('+LINE 25') && git('diff', '--cached', '--', names[2]!).includes('+LINE 5'));
+    assert.equal(git('diff', '--', ...three).trim(), '');
+    // Staged の側では、stage した 3 つとも
     mark = posted.length;
     await wc.handle({ type: 'wcSide', side: 'staged' });
     const staged = await waitPosted('wcStack', mark, (m) => m.side === 'staged');
-    assert.deepEqual(staged.files.map((f) => [f.group, f.diff.path]), [['staged', names[0]], ['staged', names[1]]]);
+    assert.deepEqual(staged.files.map((f) => [f.group, f.diff.path]), three.map((n) => ['staged', n]));
     // All では 3 つとも（HEAD → 作業ツリー）
     mark = posted.length;
     await wc.handle({ type: 'wcSide', side: 'all' });
