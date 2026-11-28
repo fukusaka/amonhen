@@ -2803,6 +2803,12 @@ impl Data {
         });
     }
 
+    /// 並べた差分の `file` 番目のファイルのパス。
+    pub fn working_multi_path(&self, file: usize) -> Option<String> {
+        let m = self.working.as_ref()?.multi.as_ref()?;
+        Some(m.diffs.get(file)?.entry.path.clone())
+    }
+
     /// 並べた差分の `file` 番目のファイルを畳む・開く（読み直さずに、並べ直す）。
     pub fn toggle_working_file(&mut self, file: usize) -> bool {
         let Some(working) = &self.working else {

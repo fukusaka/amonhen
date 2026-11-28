@@ -1823,20 +1823,18 @@ impl Renderer {
             || file.is_some_and(|f| commit.tree.is_some_and(|t| t.panels.contains(&f)));
         // 右から置く: ⋯、行の数。
         let mut right = width - HEADER_MENU_WIDTH;
-        // ⋯ は、ほかより一回り大きく（macOS 版と同じ）。Working Copy で並べた差分には出さない（見出しを押すと
-        // 畳む・開くだけ。ファイルの操作は一覧の右クリック）。
-        if commit.folds.is_none() {
-            let large = self.subject_format.clone();
-            self.draw_small(
-                "⋯",
-                &large,
-                width - HEADER_MENU_WIDTH,
-                top,
-                HEADER_MENU_WIDTH - 6.0,
-                &secondary(),
-                true,
-            )?;
-        }
+        // ⋯ は、ほかより一回り大きく（macOS 版と同じ）。Working Copy で並べた差分では、そのファイルの Stage・
+        // Unstage・Discard…（macOS 版・GTK4 版と同じ）。
+        let large = self.subject_format.clone();
+        self.draw_small(
+            "⋯",
+            &large,
+            width - HEADER_MENU_WIDTH,
+            top,
+            HEADER_MENU_WIDTH - 6.0,
+            &secondary(),
+            true,
+        )?;
         // まだ差分を取っていないファイルは、詳細の `stats` の行の数（macOS 版の `fileCounts`）。
         let (added, removed) = if row.flags & DiffRow::PENDING != 0 {
             let path = String::from_utf8_lossy(commit.view.strings.bytes(row.text));

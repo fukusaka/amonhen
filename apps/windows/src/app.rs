@@ -490,6 +490,9 @@ struct Root {
     diff_file: Option<crate::data::DiffFile>,
     /// Working Copy の差分で右クリックした行のメニュー（名前、効く行、操作。GTK4 版の `stage_menu`）。
     diff_rows: Vec<(String, Vec<usize>, crate::data::GapAction)>,
+    /// Working Copy で並べた差分の、⋯・右クリックを押した見出しのファイルのパス（そのファイルの Stage・Unstage・
+    /// Discard… のメニュー。macOS 版・GTK4 版と同じ）。
+    diff_working_file: Option<String>,
     /// 署名のあるタグの状態と署名者（サイドバーの印とタグのメニュー）。
     tag_signatures: std::collections::HashMap<String, (crate::signature::Status, String)>,
     /// 署名のあるタグの `tagSignatures` の 1 件（署名の吹き出しの中身）。
@@ -1323,6 +1326,8 @@ enum Message {
     DiffFileAt(Option<crate::data::DiffFile>),
     /// Working Copy の差分で右クリックした行のメニュー（名前、効く行、操作）。
     DiffRowsAt(Vec<(String, Vec<usize>, crate::data::GapAction)>),
+    /// Working Copy で並べた差分の見出しの ⋯・右クリック（そのファイルのパス）。
+    WorkingHeaderAt(String),
     /// Working Copy の差分の行の変更を作業ツリーから捨てる（隙間の行の Discard Hunk・Discard Lines）。
     DiscardWorkingRows(Vec<usize>),
     /// ファイル全体を表示（Working Copy の差分の変更のない所をすべて開く・畳む）。
@@ -1813,6 +1818,7 @@ impl Component for Root {
             diff_area: ElementRef::new(),
             diff_file: None,
             diff_rows: Vec::new(),
+            diff_working_file: None,
             tag_signatures: std::collections::HashMap::new(),
             tag_signature_details: std::collections::HashMap::new(),
             mark_popover: None,
@@ -5986,16 +5992,39 @@ impl Root {
                 if browser.open.as_deref() == Some(row.node.path.as_str()) {
                     return;
                 }
-                browser.open = Some(row.node.path.clone());
+                let entry = self.status.as_ref().and_then(|s| {
+                    s.status
+                        .entries
+                        .iter()
+                        .find(|e| e.path == row.node.path)
+                        .cloned()
+                });
+                // マージエディタを出している間に別のファイルを開いた: 直しかけなら離れない（一覧で選び直したときと
+                // 同じく確かめる）。でなければ閉じて、そのファイルへ。
+                if self.merge_embedded() {
+                    if self.merge.as_ref().is_some_and(crate::merge::State::dirty) {
+                        self.dialog = Some(Dialog::CloseMerge);
+                        return;
+                    }
+                    self.merge = None;
+                    self.page = Page::WorkingCopy;
+                }
+                if let Some(browser) = self.working_browser.as_mut() {
+                    browser.open = Some(row.node.path.clone());
+                }
                 // 変えたファイルなら、変更に戻ったときにも選んでおく（macOS 版・GTK4 版と同じ）。
-                let changed = self
-                    .status
+                let conflicted = entry
                     .as_ref()
-                    .is_some_and(|s| s.status.entries.iter().any(|e| e.path == row.node.path));
-                if changed {
-                    self.working_file = Some(row.node.path);
+                    .is_some_and(|e| e.kind == amonhen_model::StatusKind::Unmerged);
+                if entry.is_some() {
+                    self.working_file = Some(row.node.path.clone());
                 }
                 self.load_working_diff();
+                // コンフリクトのあるファイルは、変更の一覧で選んだときと同じくマージエディタで開く（macOS 版・
+                // GTK4 版も変更の一覧と同じ開き方）。
+                if conflicted {
+                    self.update(Message::OpenMerge(row.node.path), context);
+                }
             }
             Message::WorkingAllRow(None) => {}
             Message::Committed(failed, hooks) => {
@@ -9028,6 +9057,7 @@ impl Root {
                 }
                 self.diff_file = file;
                 self.diff_rows.clear();
+                self.diff_working_file = None;
             }
             Message::WorkingNote(note) => {
                 self.working_note = note;
@@ -9059,6 +9089,13 @@ impl Root {
                 }
                 self.diff_rows = rows;
                 self.diff_file = None;
+                self.diff_working_file = None;
+            }
+            Message::WorkingHeaderAt(path) => {
+                self.diff_menu_request += 1;
+                self.diff_working_file = Some(path);
+                self.diff_file = None;
+                self.diff_rows.clear();
             }
             Message::DiscardWorkingRows(rows) => self.discard_working_rows(rows, context),
             Message::WholeFile(on) => self.with_history(|h| h.session.data.set_working_whole(on)),
@@ -13714,6 +13751,19 @@ impl Root {
     /// 差分で右クリックしたファイルのメニュー（GTK4 版の `commitfiles` の見出しのメニュー: 畳む・Blame・
     /// File History・パスのコピー・ファイルで表示・エディタ・既定のアプリ）。
     fn diff_file_menu(&self) -> Vec<MenuItem> {
+        // Working Copy で並べた差分の見出し: そのファイルの Stage（stage 済みで作業ツリーに変更がなければ
+        // Unstage）と、作業ツリーに変更があれば Discard…（macOS 版・GTK4 版の `fileMenu` と同じ）。
+        if let Some(entry) = self.diff_working_entry() {
+            let unstage = entry.is_staged() && !entry.is_unstaged();
+            let mut items = vec![MenuItem::item(
+                "working-stage",
+                if unstage { "Unstage" } else { "Stage" },
+            )];
+            if entry.is_unstaged() {
+                items.push(MenuItem::item("working-discard", "Discard…"));
+            }
+            return items;
+        }
         // Working Copy の差分: 選んだ行・その hunk・その行の Stage（Unstage）と Discard（GTK4 版の `stage_menu`）。
         if !self.diff_rows.is_empty() {
             return self
@@ -13824,7 +13874,31 @@ impl Root {
         });
     }
 
+    /// Working Copy で並べた差分の、⋯・右クリックを押した見出しのファイル。
+    fn diff_working_entry(&self) -> Option<amonhen_model::StatusEntry> {
+        let path = self.diff_working_file.as_ref()?;
+        self.status
+            .as_ref()?
+            .status
+            .entries
+            .iter()
+            .find(|e| &e.path == path)
+            .cloned()
+    }
+
     fn diff_file_action(&mut self, key: &str, context: &ComponentContext<Self>) {
+        if key == "working-stage" || key == "working-discard" {
+            let Some(entry) = self.diff_working_entry() else {
+                return beep();
+            };
+            if key == "working-discard" {
+                self.update(Message::DiscardFile(entry.path), context);
+            } else {
+                let unstage = entry.is_staged() && !entry.is_unstaged();
+                self.update(Message::Stage(entry.path, !unstage), context);
+            }
+            return;
+        }
         if let Some(index) = key.strip_prefix("stage-menu:") {
             let Some((_, rows, action)) = index
                 .parse::<usize>()
@@ -24727,6 +24801,19 @@ fn attach_input(element: &IInspectable, target: Target) -> windows_core_reactor:
                     // Working Copy の差分なら選んだ行・hunk・その行の、History の差分ならファイルのメニュー。
                     if h.working_page {
                         let Some(row) = h.row_at_y(at.Y) else { return };
+                        // 並べた差分の見出し: そのファイルの Stage・Unstage・Discard…（⋯ と同じ）。
+                        if let Some(path) = h
+                            .session
+                            .data
+                            .working
+                            .as_ref()
+                            .and_then(|w| w.header_file(row))
+                            .and_then(|f| h.session.data.working_multi_path(f))
+                        {
+                            DIFF_AT.with(|a| *a.borrow_mut() = Some((source.clone(), at)));
+                            h.sender.send(Message::WorkingHeaderAt(path));
+                            return;
+                        }
                         let items = h
                             .session
                             .data
@@ -24954,6 +25041,14 @@ fn working_press(
         .as_ref()
         .and_then(|w| w.header_file(row))
     {
+        // 右端の ⋯: そのファイルの Stage・Unstage・Discard…（右クリックと同じ。macOS 版と同じく右の 30pt）。
+        if position.X >= h.diff_width() - crate::render::HEADER_MENU_WIDTH {
+            if let Some(path) = h.session.data.working_multi_path(file) {
+                DIFF_AT.with(|a| *a.borrow_mut() = Some((source.clone(), position)));
+                h.sender.send(Message::WorkingHeaderAt(path));
+            }
+            return;
+        }
         if h.session.data.toggle_working_file(file) && stuck.is_some() {
             // 張り付いた見出しで畳んだら、その見出しを一番上に。
             if let Some(line) = h.line_of_row(row as u32) {

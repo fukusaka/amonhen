@@ -223,7 +223,7 @@ The GTK4 app aims to behave like the macOS app. These are the only intended diff
 | One checkbox list (☑ ▣ ☐, header and folder checks) | ✓ | ✓ | ✓ | ✓ | n/a | ✓ | VSCode: Separate Staged and Changes groups.<br>TUI: `[x]` `[-]` `[ ]` per file; `+` stages every file (no folders). |
 | List / Tree / File Name | ✓ | ✓ | ✓ | ✓ | n/a | ✓ | TUI: `v` in the list cycles them; a folder row stages what is under it, Enter folds it. |
 | Staged and Unstaged sections in the list, switched with one list | ✓ | ✓ | ✓ | ✓ | n/a | — | VSCode: Always separate Staged and Changes groups. |
-| Changes or every file of the working tree (All Files) | ✓ | ✓ | △ | — | n/a | — | Windows: Markdown shows as text, and a conflicted file opens as a diff, not in the merge editor. |
+| Changes or every file of the working tree (All Files) | ✓ | ✓ | ✓ | — | n/a | — |  |
 | Filter on paths | ✓ | ✓ | ✓ | ✓ | n/a | ✓ | TUI: `/` in the list. |
 | Per-row +/− counts and Discard on hover | ✓ | ✓ | ✓ | ✓ | △ | ✓ | VSCode: Counts need the engine.<br>CLI: `diff --stat`.<br>Windows: The ↶ stays on the last row the pointer was on.<br>TUI: The counts at the right of each row; ↶ on hover, or `d`, discards. |
 | Space toggles, ⌫ discards | ✓ | ✓ | ✓ | ✓ | n/a | ✓ | VSCode: On every selected file (⌘- or Ctrl-click, Shift-click or Shift+↑↓ select several; the row buttons and Stash… act on them too).<br>TUI: Space and `d`. |
@@ -240,7 +240,7 @@ The GTK4 app aims to behave like the macOS app. These are the only intended diff
 | Unstaged, Staged and All, one side for the Working Copy | ✓ | ✓ | ✓ | △ | ✓ | △ | VSCode: The Changes and Staged groups each show their own side.<br>CLI: `diff`, `diff --staged`, `diff --combined`.<br>TUI: `s` in the diff switches sides. |
 | Unchanged lines folded, opened 20 lines at a time or all | ✓ | ✓ | ✓ | — | n/a | — |  |
 | Stage Hunk and Discard Hunk on the hunk header (Lines when selected), or the change bar, by a setting | ✓ | ✓ | ✓ | — | n/a | — |  |
-| Several selected files stacked in the diff | ✓ | ✓ | △ | — | n/a | — | macOS, GTK4, Windows: Up to Files to open together (Settings > Diff & Merge).<br>Windows: The file headers have no ⋯; a click folds the file, and the file actions are on the list's right-click. |
+| Several selected files stacked in the diff | ✓ | ✓ | ✓ | — | n/a | — | macOS, GTK4, Windows: Up to Files to open together (Settings > Diff & Merge). |
 | Range selection in the gutter, J/K and ⌥J/⌥K | ✓ | ✓ | ✓ | ✓ | n/a | ✓ | TUI: `v` starts a range; `[` `]` go to the hunk headers. |
 | Unstaged / Staged switch for files that can't be overlaid | ✓ | ✓ | ✓ | n/a | ✓ | ✓ | macOS, GTK4: Always there, with All.<br>VSCode: Always shown separately.<br>CLI: `diff --staged`.<br>TUI: The unstaged side first; `s` in the diff switches sides. |
 | Diff options (unified/split, context, wrap) | △ | △ | △ | △ | n/a | △ | macOS, GTK4: Wrapping long lines only (Wrap Long Lines, for every diff, file contents and the merge editor); no side-by-side view.<br>Windows: The same.<br>VSCode: Wrapping long lines only (`amonhen.wrapLongLines`, Alt+Z or the ↩︎ above the diff; the merge editor is VSCode's own).<br>TUI: Wrapping long lines only (Alt-z or Wrap Long Lines in the command list, for this run); no side-by-side view. |
