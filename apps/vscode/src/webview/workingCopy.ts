@@ -481,10 +481,11 @@ export function createWorkingCopyView(): View {
     row.dataset.vscodeContext = JSON.stringify({
       webviewSection: 'wcFile',
       path: f.path,
-      // Stage・Discard…（作業ツリーの側があれば）と Unstage（index の側があれば）を出し分ける
-      ...(f.unstaged ? { wcUnstaged: true } : {}),
-      ...(f.staged ? { wcStaged: true } : {}),
-      // いくつも選んでいれば、その中で使えるもの（Stash…）だけを、選んだものすべてに
+      // Stage・Unstage はチェックに合わせて片方（入っていれば Unstage。押すとチェックと同じく、この行だけ）。
+      // Discard… は作業ツリーの側に変更があれば（節の Staged の行でも）。どちらも右クリックした行に効く（アプリと同じ）
+      ...(rowCheck(f) === 'on' ? { wcChecked: true } : {}),
+      ...(files.some((x) => x.group === 'unstaged' && x.path === f.path) ? { wcUnstaged: true } : {}),
+      // 右クリックした行を含めていくつも選んでいれば、Stash… は選んだものすべてに（アプリと同じ）
       ...(many ? { wcMulti: true, paths: [...new Set(targetsOf(f).map((x) => x.path))] } : {}),
       // コンフリクトのファイル（Stash… を出さない）
       ...(f.conflict ? { wcConflict: true } : {}),
