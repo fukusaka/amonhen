@@ -13,9 +13,9 @@ final class Actions {
     var onUndoChange: ((String?) -> Void)?
     /// 操作が最後まで終わった（ステータスバーに一言出し、前の失敗の行を消す）。
     var onSuccess: (([String: Any]) -> Void)?
-    /// 操作がコンフリクトか途中で止まった（Working Copy を開いて最初のコンフリクトを選ぶ）。なければ警告のシートを出す。
+    /// 操作がコンフリクトか途中で止まった（Working Copy を開いて最初のコンフリクトを選ぶ）。
     var onStop: (() -> Void)?
-    /// 操作が失敗した（ウィンドウの帯で知らせる）。なければ警告のシートを出す。
+    /// 操作が失敗した（ウィンドウの帯で知らせる）。
     var onFailure: ((OperationFailure) -> Void)?
     /// 書き込む先の worktree の名前（worktree が 2 つ以上あるときだけ）。確認のシートに出す。
     var worktreeName: String?
@@ -43,25 +43,14 @@ final class Actions {
                 let json = try Repository.json(command)
                 let result = try await Task.detached(priority: .userInitiated) { try repository.run(json: json) }.value
                 switch result.outcome {
-                case .conflict where onStop != nil && !result.remaining.isEmpty:
+                case .conflict where !result.remaining.isEmpty:
                     // 1 つずつの merge が途中で止まった。まだ merge していないものは、ここでしか言えない。
                     onStop?()
                     await alert(L("Not merged yet: %@", ListFormatter.localizedString(byJoining: result.remaining)),
                                 L("Merge them again after resolving these conflicts."))
-                case .conflict where onStop != nil, .stopped where onStop != nil:
+                case .conflict, .stopped:
                     // どこで止まったか・次に何をするかはウィンドウの帯に出る。Working Copy でコンフリクトを開く。
                     onStop?()
-                case .conflict where (command["op"] as? String) == "am":
-                    // 当たらずに止まったのか、3-way でコンフリクトを残したのかは、帯に出す。
-                    await alert(L("Stopped at a Patch"), L("The bar under the toolbar says why and what you can do next."))
-                case .conflict where !result.remaining.isEmpty:
-                    // 1 つずつの merge が途中で止まった。残りは、解決してから改めて merge する。
-                    await alert(L("There are conflicts"), L("Resolve them in Working Copy, then Continue or Abort. Not merged yet: %@.",
-                                                            ListFormatter.localizedString(byJoining: result.remaining)))
-                case .conflict:
-                    await alert(L("There are conflicts"), L("Resolve them in Working Copy, then Continue or Abort."))
-                case .stopped:
-                    await alert(L("Stopped partway"), L("Check Working Copy, then Continue."))
                 default:
                     break
                 }
@@ -116,12 +105,7 @@ final class Actions {
 
     @MainActor
     func fail(_ failure: OperationFailure) async {
-        if let onFailure {
-            onFailure(failure)
-        } else {
-            await alert(failure.title, [failure.summary, failure.advice, failure.kind == nil ? nil : failure.message]
-                .compactMap { $0 }.joined(separator: "\n\n"))
-        }
+        onFailure?(failure)
     }
 
     @MainActor

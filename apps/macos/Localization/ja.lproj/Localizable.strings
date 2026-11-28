@@ -803,10 +803,6 @@
 /* main.swift */
 
 /* Actions.swift */
-"There are conflicts" = "コンフリクトがあります";
-"Resolve them in Working Copy, then Continue or Abort." = "Working Copy で解決してから Continue するか、Abort してください。";
-"Stopped partway" = "途中で止まりました";
-"Check Working Copy, then Continue." = "Working Copy で確かめてから Continue してください。";
 "The operation failed" = "操作に失敗しました";
 "Edit Message" = "メッセージを編集";
 "Change" = "変更";
@@ -1291,7 +1287,6 @@
 
 
 // History の行に出す項目
-"History Items" = "History の表示項目";
 "Branches and Tags" = "ブランチとタグ";
 "Date" = "日時";
 "Commit ID" = "コミット ID";
@@ -1299,7 +1294,6 @@
 "CI Status" = "CI の状態";
 
 // History の並び順
-"History Order" = "History の並び順";
 "Date Order" = "日付順";
 "Topological Order" = "トポロジー順";
 "Newest first wherever the graph allows (like git log --date-order)" = "グラフが許す限り新しいものから（git log --date-order と同じ）";
@@ -1667,8 +1661,6 @@
 "Stage the changes too (--index)" = "stage もする（--index）";
 "Couldn’t Save the Patches" = "パッチを保存できませんでした";
 "Couldn’t Apply the Patch" = "パッチを当てられませんでした";
-"Stopped at a Patch" = "パッチで止まりました";
-"The bar under the toolbar says why and what you can do next." = "理由と次にできることは、ツールバーの下の帯に出ています。";
 "Retry with 3-Way Merge" = "3-way merge で当て直す";
 "Applying patches to %@" = "%@ にパッチを当てている途中";
 "Applying patches" = "パッチを当てている途中";
@@ -1686,7 +1678,6 @@
 "Message: %@" = "メッセージ: %@";
 "Can’t Merge Them in One Commit" = "1 つのコミットにまとめられません";
 "git stopped because one of them conflicts before the last, and nothing was changed. Merge them one by one instead? Each makes its own merge commit, and you resolve conflicts as they come. Undo puts them all back." = "最後より前のものがコンフリクトしたので git は止まりました。何も変わっていません。代わりに 1 つずつ merge しますか？ それぞれが merge のコミットになり、コンフリクトはその都度解きます。Undo ですべて戻せます。";
-"Resolve them in Working Copy, then Continue or Abort. Not merged yet: %@." = "Working Copy で解決してから Continue するか、Abort してください。まだ merge していないもの: %@。";
 "Merge %ld into %@…" = "%1$ld 個を %2$@ に Merge…";
 "Older history isn’t fetched (shallow clone)" = "これより古い履歴は取得していません";
 "Fetch More" = "さらに取る";
