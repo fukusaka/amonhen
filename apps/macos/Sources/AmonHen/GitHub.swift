@@ -194,9 +194,12 @@ struct CommitCheck: Sendable, Hashable {
 /// アプリはトークンに触れない。gh がなければ連携の機能を出さない。
 enum GitHub {
     /// gh の場所。Finder から起動したアプリには端末の PATH がないので、よくある場所も探す。
+    /// 環境変数 `AMONHEN_GH` があれば、それを先に使う（git の `AMONHEN_GIT` と同じ。試験で偽の gh を使うため）。
     static let ghPath: String? = {
-        let candidates = ["/opt/homebrew/bin/gh", "/usr/local/bin/gh", "/usr/bin/gh"]
-            + (ProcessInfo.processInfo.environment["PATH"] ?? "").split(separator: ":").map { "\($0)/gh" }
+        let environment = ProcessInfo.processInfo.environment
+        let candidates = [environment["AMONHEN_GH"]].compactMap { $0 }.filter { !$0.isEmpty }
+            + ["/opt/homebrew/bin/gh", "/usr/local/bin/gh", "/usr/bin/gh"]
+            + (environment["PATH"] ?? "").split(separator: ":").map { "\($0)/gh" }
         return candidates.first { FileManager.default.isExecutableFile(atPath: $0) }
     }()
 
