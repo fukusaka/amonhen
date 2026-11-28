@@ -205,8 +205,10 @@ enum GitHub {
 
     static var isAvailable: Bool { ghPath != nil }
 
-    struct Failure: Error, CustomStringConvertible {
+    /// gh の失敗。文は gh の標準エラーそのもの（`localizedDescription` にも出す）。
+    struct Failure: LocalizedError, CustomStringConvertible {
         let description: String
+        var errorDescription: String? { description }
     }
 
     /// gh を `dir` で実行し、標準出力を返す。失敗したら標準エラーの文を投げる。裏で動く。

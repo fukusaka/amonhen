@@ -1927,6 +1927,8 @@
 "Push %@" = "%@ を Push";
 "Split %@" = "%@ を Split";
 "Create Pull Request" = "プルリクエストを作成";
+"Couldn’t Create the Pull Request" = "プルリクエストを作成できませんでした";
+"Couldn’t Check Out #%ld" = "#%ld を Checkout できませんでした";
 "Always Create a Merge Commit" = "いつも merge コミットを作る";
 "Squash into One Commit" = "1 つのコミットにまとめる（squash）";
 "Uses merge.ff, as git merge in a terminal does: fast-forward when possible, otherwise a merge commit." = "端末の git merge と同じく merge.ff に従います。fast-forward できればそうし、できなければ merge コミットを作ります。";
