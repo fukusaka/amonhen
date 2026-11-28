@@ -496,6 +496,8 @@ pub struct Callbacks<'a> {
     pub file_menu: Box<dyn Fn(String) -> Callback<String> + 'a>,
     /// ファイルの行にマウスが載った。
     pub hover: Box<dyn Fn(String) -> Callback<PointerEventInfo> + 'a>,
+    /// マウスが一覧の包みから出た（中の行から出た知らせも上がってくる）。
+    pub left: Callback<PointerEventInfo>,
     /// 行の変更を捨てるボタン（確かめてから。右クリックの Discard File と同じ）。
     pub discard: Box<dyn Fn(String) -> Callback<()> + 'a>,
     /// `#` の候補のメニュー（項目のキーは `issue:番号`）と、それを持つ見えない部品（`#` を打った所に開く）。
@@ -1101,7 +1103,7 @@ pub fn view(input: Input, callbacks: Callbacks) -> Parts {
                     discard,
                 ));
             // 載せた行を覚える（離れたときには消さない: ボタンを押すとボタンがマウスを取り、行から離れたことに
-            // なって、押す前にボタンが消える）。
+            // なって、押す前にボタンが消える）。消すのは一覧の外へ出たとき（下の一覧の包み）。
             let row = Border::new()
                 .background(Brush::Solid(Color::transparent()))
                 .on_pointer_entered((callbacks.hover)(entry.path.clone()))
@@ -1200,10 +1202,12 @@ pub fn view(input: Input, callbacks: Callbacks) -> Parts {
             list,
         )]),
     };
-    let list = Grid::new()
-        .element_ref(input.list_host)
+    // 一覧の外へ出たら、乗っていた行の ↶ を消す（macOS 版の `mouseExited`、GTK4 版の `connect_leave`。reactor の
+    // Grid には出たときの知らせがないので、Border で包む）。
+    let list = Border::new()
         .grid_row(3)
-        .children((list,));
+        .on_pointer_exited(callbacks.left)
+        .content(Grid::new().element_ref(input.list_host).children((list,)));
     let list = Grid::new()
         .rows([
             GridLength::Auto,
