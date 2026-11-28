@@ -369,8 +369,8 @@ function sizeText(bytes: number): string {
   return `${(bytes / 1024 / 1024).toFixed(1)} MB`;
 }
 
-/** 行番号と印を付けたファイルの中身 */
-function renderLines(lines: readonly ViewLine[], removedAtEnd?: number): HTMLElement {
+/** 行番号と印を付けたファイルの中身（Working Copy の All Files の、変えていないファイルにも） */
+export function renderLines(lines: readonly ViewLine[], removedAtEnd?: number): HTMLElement {
   const box = el('div', 'lines file-lines');
   const shown = lines.slice(0, MAX_LINES);
   shown.forEach((line, i) => {
@@ -400,8 +400,8 @@ function drawablePicture(image: ImageBlob, notes: readonly string[]): HTMLElemen
   return box;
 }
 
-/** 拡大縮小できる画像（ボタン、⌘・Ctrl を押してスクロール）。`unit` は大きさの単位（VectorDrawable の dp） */
-function zoomableImage(image: ImageBlob, unit = ''): HTMLElement {
+/** 拡大縮小できる画像（ボタン、⌘・Ctrl を押してスクロール。Working Copy の All Files の、変えていない画像にも）。`unit` は大きさの単位（VectorDrawable の dp） */
+export function zoomableImage(image: ImageBlob, unit = ''): HTMLElement {
   const box = el('div', 'zoom-image');
   const bar = el('div', 'zoom-bar');
   const frame = el('div', 'zoom-frame');

@@ -1467,6 +1467,11 @@ First release.
 
 ### Unreleased
 
+#### Added
+
+- With the engine, Working Copy's All Files lists every file of the working tree with the changes marked; a changed
+  file shows its whole diff with line staging, and changed images are compared as in History.
+
 #### Changed
 
 - Working Copy is laid out as the app's: the list takes the left column and the commit box sits above the diff,

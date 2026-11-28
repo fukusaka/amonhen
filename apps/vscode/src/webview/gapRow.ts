@@ -19,6 +19,8 @@ export interface GapRowSpec {
   onOp: (op: StageOp) => void;
   /** 札を押したが、開く・畳むのボタンが入りきらない: メニューを開く（行と札を渡す） */
   onMenu: (row: HTMLElement, pill: HTMLElement) => void;
+  /** 開く・畳むを出さない（All Files のファイル全体の差分。いつもすべて見せる。アプリと同じ） */
+  fixed?: boolean;
 }
 
 /** 置き直すための、行の部品と文字 */
@@ -42,8 +44,8 @@ export function gapRow(spec: GapRowSpec): HTMLElement {
   const { text, short } = pillText(gap, spec.selected);
   const pill = el('button', spec.selected > 0 ? 'gap-pill selected' : 'gap-pill');
   pill.textContent = text;
-  pill.hidden = text === '';
-  const actions = gapActions(gap, spec.selected > 0);
+  pill.hidden = text === '' || (spec.fixed === true && spec.selected === 0);
+  const actions = spec.fixed ? [] : gapActions(gap, spec.selected > 0);
   const chips = actions.map(({ action, label }) => {
     const chip = el('button', 'gap-chip', label);
     chip.dataset.action = action;
@@ -55,7 +57,7 @@ export function gapRow(spec: GapRowSpec): HTMLElement {
   });
   pill.addEventListener('click', (e) => {
     e.stopPropagation();
-    if (spec.selected > 0) return;
+    if (spec.selected > 0 || spec.fixed) return;
     // 入りきらないボタンがあれば、出せる開く・畳むすべてをメニューで。でなければ、すべて開く（開いていれば畳む）
     if (parts.get(row)?.overflows && actions.length > 0) {
       spec.onMenu(row, pill);

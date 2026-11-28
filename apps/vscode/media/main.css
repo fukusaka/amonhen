@@ -1034,6 +1034,19 @@ button.sheet-list-item:hover {
   border-bottom: 1px solid var(--vscode-panel-border);
 }
 
+.wc-tools[hidden] {
+  display: none;
+}
+
+/* 一覧の上の段: Changes・All Files と、⊟・見せ方（エンジンがあるとき） */
+.wc-content-row .spacer {
+  flex: 1;
+}
+
+.wc-content button {
+  padding: 1px 6px;
+}
+
 .wc-tools input[type='search'] {
   flex: 1;
   min-width: 0;
@@ -1105,6 +1118,52 @@ button.sheet-list-item:hover {
   width: auto;
   height: auto;
   color: var(--vscode-gitDecoration-conflictingResourceForeground, var(--vscode-errorForeground));
+}
+
+/* All Files: HEAD の木に status を重ねたもの。変更のないものは薄く、消したものは赤の取り消し線、変更を含むフォルダは ● */
+.wc-tree-row .name {
+  flex: 0 1 auto;
+}
+
+.wc-tree-row.unchanged .name {
+  color: var(--vscode-descriptionForeground);
+  /* テーマによっては説明の色が本文とほとんど同じなので、さらに薄く */
+  opacity: 0.7;
+}
+
+.wc-tree-row.wc-dir:not(.unchanged) .name {
+  color: var(--vscode-foreground);
+}
+
+.wc-tree-row.deleted .name {
+  color: var(--vscode-gitDecoration-deletedResourceForeground);
+  text-decoration: line-through;
+}
+
+.wc-tree-row .status.conflict {
+  width: auto;
+  color: var(--vscode-gitDecoration-conflictingResourceForeground, var(--vscode-errorForeground));
+}
+
+.wc-tree-row .changed-dot {
+  flex: none;
+  font-size: 0.6em;
+  color: var(--vscode-gitDecoration-modifiedResourceForeground);
+}
+
+.wc-tree-row.disabled {
+  color: var(--vscode-disabledForeground);
+}
+
+.wc-tree-note {
+  padding: 2px 12px;
+  font-size: 0.9em;
+  color: var(--vscode-descriptionForeground);
+}
+
+/* All Files で開いた、変えていないファイルの中身 */
+.wc-diff.wc-file-view .zoom-image {
+  padding: 8px 12px;
 }
 
 /* 差分で見る側: Unstaged | Staged | All */

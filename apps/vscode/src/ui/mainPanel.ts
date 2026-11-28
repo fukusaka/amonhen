@@ -318,6 +318,10 @@ export class MainPanel implements vscode.Disposable {
       case 'wcWhitespace':
       case 'wcGaps':
       case 'wcResolve':
+      case 'wcContent':
+      case 'wcTreeEntries':
+      case 'wcTreeOpen':
+      case 'wcShowText':
         await this.workingCopy.handle(message);
         break;
       case 'reflogLoad':
