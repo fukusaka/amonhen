@@ -17833,7 +17833,9 @@ impl Root {
     }
 
     /// Working Copy の一覧で 1 つの行を選んだ（`index` 番目の行。GTK4 版の `follow_selection`）。
-    fn working_pick(&mut self, index: usize, context: &ComponentContext<Self>) {
+    /// `follow` は利用者が押した選択（節の行ならその節の側で見る）。作り直した一覧の選び直しでは false
+    /// （見る側を保つ。別の節へ移ったときの側は `refresh_working_choice` が替える）。
+    fn working_pick(&mut self, index: usize, follow: bool, context: &ComponentContext<Self>) {
         let path = self.status.as_ref().and_then(|s| {
             let visible = crate::workcopy::visible(&s.status.entries, &self.working_filter);
             match crate::workcopy::list_rows(
@@ -17853,9 +17855,9 @@ impl Root {
         });
         // 節の見出しを選んだときは何もしない。
         let Some(path) = path else { return };
-        // 節の行を選んだら、その節の側で見る（GTK4 版と同じ）。
+        // 節の行を押したら、その節の側で見る（GTK4 版と同じ）。選び直しでは側を保つ（All なら All のまま）。
         let path = path.map(|(path, section)| {
-            if let Some(side) = section {
+            if follow && let Some(side) = section {
                 self.working_side = side;
             }
             path
@@ -17941,6 +17943,7 @@ impl Root {
             }
         }
         // 選び直す行として覚えるのはファイルの行だけ（ディレクトリの行は押すたびに畳む・開く）。
+        let before = std::mem::take(&mut self.working_tags);
         self.working_tags = tags
             .iter()
             .filter(|t| rows_files.iter().any(|(key, _)| key == *t))
@@ -17961,8 +17964,26 @@ impl Root {
             _ => index,
         };
         if let Some(index) = index {
-            self.working_pick(index, context);
+            // 選んでいた 1 つの行と同じ行の知らせは、作り直した一覧の選び直し（部品から行の鍵を読めなかった）。
+            // 選んでいる行を押し直しても一覧は知らせないので、利用者が押したのではない。
+            let key = self.working_row_key_at(index);
+            let reselect = key.is_some_and(|key| before == [key]);
+            self.working_pick(index, !reselect, context);
         }
+    }
+
+    /// Working Copy の一覧の `index` 番目の行の鍵。
+    fn working_row_key_at(&self, index: usize) -> Option<String> {
+        let s = self.status.as_ref()?;
+        let visible = crate::workcopy::visible(&s.status.entries, &self.working_filter);
+        crate::workcopy::list_rows(
+            &visible,
+            self.working_layout,
+            &self.working_collapsed,
+            self.working_sections,
+        )
+        .get(index)
+        .map(crate::workcopy::row_key)
     }
 
     /// 一覧を作り直した後、行ができてから選び直す（作ったばかりの一覧は、行を少しずつ作る）。
@@ -18229,6 +18250,10 @@ impl Root {
                 }
             }
             tags.sort();
+            // 1 つの行を選んでいて、その行がもう一方の節へ移った（すべて stage した・外した）: 見る側が Unstaged・
+            // Staged ならその節の側に替える。All なら All のまま。同じ節に残っていれば側はそのまま。
+            self.working_side =
+                crate::workcopy::reselected_side(&self.working_tags, &tags, self.working_side);
             self.working_tags = tags;
         }
         if let Some(open) = self.working_browser.as_ref().map(|b| b.open.clone()) {
