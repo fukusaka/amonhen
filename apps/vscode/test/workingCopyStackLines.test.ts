@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict';
 import { test } from 'node:test';
-import { linesOf, nextBlock, parseStackLineKey, splitByFile, stackLineKey } from '../src/workingCopy/stackLines.ts';
+import { blockAfter, linesOf, nextBlock, parseStackLineKey, splitByFile, stackLineKey } from '../src/workingCopy/stackLines.ts';
 
 test('a stacked line key keeps the path and the line key apart', () => {
   const key = stackLineKey('dir/a:b.txt', 'new:7');
@@ -46,4 +46,21 @@ test('J and K step from the selected block across the stacked files', () => {
   assert.equal(nextBlock(blocks, both, true), 2);
   assert.equal(nextBlock(blocks, both, false), -1);
   assert.equal(nextBlock(blocks, new Set([stackLineKey('b', 'new:9')]), true), 3);
+});
+
+test('after Space the next change block is selected, across files, and nothing after the last', () => {
+  const blocks = [
+    [stackLineKey('a', 'old:2'), stackLineKey('a', 'new:2')],
+    [stackLineKey('a', 'new:9')],
+    [stackLineKey('b', 'old:4')],
+  ];
+  assert.equal(blockAfter(blocks, new Set([stackLineKey('a', 'new:2')])), 1);
+  // 1 つ目のファイルの最後のかたまりから、次のファイルへ
+  assert.equal(blockAfter(blocks, new Set([stackLineKey('a', 'new:9')])), 2);
+  // いくつかのかたまりにまたがれば、最後のかたまりの次
+  assert.equal(blockAfter(blocks, new Set([stackLineKey('a', 'old:2'), stackLineKey('a', 'new:9')])), 2);
+  // 最後のかたまりなら何も選ばない（選び直さない）
+  assert.equal(blockAfter(blocks, new Set([stackLineKey('b', 'old:4')])), undefined);
+  assert.equal(blockAfter(blocks, new Set()), undefined);
+  assert.equal(blockAfter([], new Set(['x'])), undefined);
 });

@@ -72,6 +72,8 @@ pub fn wrap_button() -> gtk::Button {
     button.set_child(Some(&icon));
     button.add_css_class("flat");
     button.set_valign(gtk::Align::Center);
+    // 押してもフォーカスを取らない（差分の J・K・Space がそのまま効くように。macOS 版と同じ）。
+    button.set_focus_on_click(false);
     let update = {
         let (button, icon) = (button.downgrade(), icon.downgrade());
         move || {
@@ -1524,7 +1526,7 @@ impl DiffWidget {
         }
         self.configure_adjustments();
         self.refresh_matches();
-        // 含める・外すの後は、次の hunk を選ぶ（macOS 版と同じ）。
+        // Space で含める・外した後は、次の hunk を選ぶ（macOS 版と同じ）。
         let after = self.state().hunk_after.take();
         if let Some(index) = after {
             self.select_hunk(index);
@@ -1810,13 +1812,9 @@ impl DiffWidget {
                 let Some(f) = f.filter(|_| marks && !rows.is_empty()) else {
                     return glib::Propagation::Proceed;
                 };
-                // 切り替えた後は、次の hunk へ進む。
+                // 切り替えた後は、次の hunk へ進む（最後の hunk なら何も選ばない。macOS 版と同じ）。
                 let hunks = self.hunk_rows();
-                if let Some(&last) = rows.iter().max()
-                    && let Some(i) = hunks.iter().rposition(|&h| h as usize <= last)
-                {
-                    self.state().hunk_after = Some((i + 1).min(hunks.len() - 1));
-                }
+                self.state().hunk_after = next_hunk(&rows, &hunks);
                 f(rows);
             }
             gdk::Key::j if plain => self.move_hunk(1),
@@ -1828,9 +1826,23 @@ impl DiffWidget {
         glib::Propagation::Stop
     }
 
-    /// hunk の見出しの行。
+    /// hunk の見出しの行（隙間の行にたたんだ差分では、変更のかたまりの最初の行）。
     fn hunk_rows(&self) -> Vec<u32> {
-        self.rows_of(DiffRow::HUNK)
+        let st = self.state();
+        if !st.folds {
+            drop(st);
+            return self.rows_of(DiffRow::HUNK);
+        }
+        // 隙間の行にたたんだ差分では、HUNK の行は隙間の行（末尾の隙間もある）なので、変更のかたまりの最初の行を
+        // hunk とする（macOS 版と同じ）。
+        let Some(view) = &st.view else {
+            return Vec::new();
+        };
+        let rows = &view.view.rows;
+        (0..rows.len())
+            .filter(|&i| Self::is_change(&rows[i]) && (i == 0 || !Self::is_change(&rows[i - 1])))
+            .map(|i| i as u32)
+            .collect()
     }
 
     /// ファイルの見出しの行。
@@ -1900,14 +1912,25 @@ impl DiffWidget {
         self.select_hunk(target as usize);
     }
 
-    /// `index` 番目の hunk を選び（選べる差分なら、見出しから次の hunk までの行すべて。前後の行も。macOS 版と同じ）、
-    /// 見えるところへスクロールする。
+    /// `index` 番目の hunk を選び（選べる差分なら、見出しから次の hunk までの行すべて。前後の行も。隙間の行に
+    /// たたんだ差分では変更のかたまりの行だけ。macOS 版と同じ）、見えるところへスクロールする。
     pub fn select_hunk(&self, index: usize) {
         let hunks = self.hunk_rows();
         let Some(&start) = hunks.get(index) else {
             return;
         };
-        let end = hunks.get(index + 1).copied().unwrap_or(self.row_count());
+        let block_end = {
+            let st = self.state();
+            st.folds
+                .then(|| {
+                    st.view
+                        .as_ref()
+                        .map(|v| Self::change_block(&v.view.rows, start as usize).1 as u32)
+                })
+                .flatten()
+        };
+        let end =
+            block_end.unwrap_or_else(|| hunks.get(index + 1).copied().unwrap_or(self.row_count()));
         {
             let mut st = self.state();
             st.hunk_cursor = Some(index);
@@ -2284,12 +2307,9 @@ impl DiffWidget {
                 vec![index as usize]
             };
             let f = self.state().on_mark.clone();
-            if let (Some(f), Some(&last)) = (f, picked.iter().max()) {
-                // 切り替えた後は、次の hunk へ進む（Space と同じ）。
-                let hunks = self.hunk_rows();
-                if let Some(i) = hunks.iter().rposition(|&h| h as usize <= last) {
-                    self.state().hunk_after = Some((i + 1).min(hunks.len() - 1));
-                }
+            if let Some(f) = f.filter(|_| !picked.is_empty()) {
+                // マウスの操作の後は何も選ばない（次の hunk へ進むのは Space だけ。macOS 版と同じ）。
+                self.state().hunk_after = None;
                 f(picked);
             }
             return;
@@ -3610,6 +3630,8 @@ impl DiffWidget {
     fn stage_rows(&self, rows: Vec<usize>) {
         let f = self.state().on_mark.clone();
         if let Some(f) = f.filter(|_| !rows.is_empty()) {
+            // マウスの操作の後は何も選ばない（読み直せなかった Space の予約も残さない）。
+            self.state().hunk_after = None;
             f(rows);
         }
     }
@@ -4327,9 +4349,41 @@ pub(crate) fn syntax_color(kind: u8, fg: &gdk::RGBA) -> Option<(f32, f32, f32)> 
     crate::theme::syntax_color(kind, fg)
 }
 
+/// Space で含める・外した後に選ぶ hunk: `rows`（切り替えた変更の行）の最後の行を含む hunk の次の番号。
+/// 最後の hunk なら None（何も選ばない）。`hunks` は hunk の見出しの行（昇順）。
+fn next_hunk(rows: &[usize], hunks: &[u32]) -> Option<usize> {
+    let last = *rows.iter().max()?;
+    let index = hunks.iter().rposition(|&h| h as usize <= last)?;
+    (index + 1 < hunks.len()).then_some(index + 1)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn next_hunk_selects_the_hunk_after_the_toggled_one() {
+        assert_eq!(next_hunk(&[3, 4], &[2, 10, 20]), Some(1));
+        assert_eq!(next_hunk(&[11], &[2, 10, 20]), Some(2));
+    }
+
+    #[test]
+    fn next_hunk_uses_the_last_toggled_row_when_rows_span_hunks() {
+        assert_eq!(next_hunk(&[4, 12], &[2, 10, 20]), Some(2));
+    }
+
+    #[test]
+    fn next_hunk_selects_nothing_after_the_last_hunk() {
+        assert_eq!(next_hunk(&[21, 22], &[2, 10, 20]), None);
+        assert_eq!(next_hunk(&[3], &[2]), None);
+    }
+
+    #[test]
+    fn next_hunk_selects_nothing_without_rows_or_hunks() {
+        assert_eq!(next_hunk(&[], &[2, 10]), None);
+        assert_eq!(next_hunk(&[5], &[]), None);
+        assert_eq!(next_hunk(&[1], &[2, 10]), None);
+    }
 
     fn fit(right: f32, chips: &[f32]) -> GapFit {
         gap_fit(0.0, 300.0, right, 100.0, Some(30.0), chips)

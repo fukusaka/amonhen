@@ -519,6 +519,8 @@ impl CommitDiff {
             find.upcast_ref(),
             options.upcast_ref(),
         ] {
+            // 押してもフォーカスを取らない（押した後も差分の J・K が効くように。macOS 版と同じ）。
+            w.set_focus_on_click(false);
             bar_box.append(w);
         }
         // 狭いときは右の側から切れる（右の列の幅を押し広げない。macOS 版と同じ）。

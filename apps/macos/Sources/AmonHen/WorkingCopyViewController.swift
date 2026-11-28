@@ -603,7 +603,7 @@ final class WorkingCopyViewController: NSSplitViewController, NSOutlineViewDataS
     private func reloadShownDiff() {
         if let multi, !showsAllFiles {
             let chosen = multi.paths.compactMap { path in entries.first { $0.item.path == path } }
-            if chosen.count >= 2 { return showMulti(chosen, keepScroll: true) }
+            if chosen.count >= 2 { return showMulti(chosen, keepScroll: true, onlyIfChanged: true) }
         }
         if showsAllFiles, let path = treeFilePath ?? selectedKey?.path {
             // 変えていないファイルはそのまま（作業ツリーで書き換えれば status が変わり、作り直す）。
@@ -1319,7 +1319,9 @@ final class WorkingCopyViewController: NSSplitViewController, NSOutlineViewDataS
 
     /// 選んだいくつかのファイルの差分を、見出しでつないで並べる（上から `Settings.diffOpenFiles` 個まで）。見る側
     /// （Unstaged・Staged・All）は 1 ファイルのときと同じ。その側に変更のないファイルは並べない。
-    private func showMulti(_ chosen: [Entry], keepScroll: Bool = false) {
+    /// `onlyIfChanged` なら、読んだ差分が出しているものと同じ中身のとき出し直さない（選んだ行を外さない。
+    /// 1 ファイルの `showDiff` と同じ。Space で予約した次の hunk を、続く読み直しで消さないように）。
+    private func showMulti(_ chosen: [Entry], keepScroll: Bool = false, onlyIfChanged: Bool = false) {
         guard let status else { return }
         let chosen = Self.distinctFiles(chosen)
         let side = diffSide
@@ -1364,14 +1366,19 @@ final class WorkingCopyViewController: NSSplitViewController, NSOutlineViewDataS
                 }
             }.value
             guard request == self.request, multi?.paths == paths else { return }
-            showStacked(diffs, keepScroll: keepScroll)
+            showStacked(diffs, keepScroll: keepScroll, onlyIfChanged: onlyIfChanged)
         }
     }
 
-    /// 並べる差分を、畳んだファイルを除いてつなぎ、出す。
-    private func showStacked(_ diffs: [WorkingFileDiff], keepScroll: Bool) {
+    /// 並べる差分を、畳んだファイルを除いてつなぎ、出す。`onlyIfChanged` なら、出している並べた差分と同じ中身のとき
+    /// 出し直さない。
+    private func showStacked(_ diffs: [WorkingFileDiff], keepScroll: Bool, onlyIfChanged: Bool = false) {
         let collapsed = diffs.map { multiCollapsed.contains($0.item.path) }
         let stacked = WorkingStackedDiff(files: diffs, collapsed: collapsed)
+        if onlyIfChanged, let shown = multi?.stacked, shown.files.map(\.item.path) == diffs.map(\.item.path),
+           shown.hasSameRows(as: stacked) {
+            return
+        }
         multi?.stacked = stacked
         // 隙間の番号は、並べた差分の頭から数える（畳んだファイルには隙間の行がない）。ファイルごとに直す。
         var offsets: [(file: Int, first: Int, count: Int)] = []
@@ -1553,6 +1560,11 @@ final class WorkingCopyViewController: NSSplitViewController, NSOutlineViewDataS
 
     @objc private func sideChanged() {
         diffSide = DiffSide(rawValue: sideControl.selectedSegment) ?? .unstaged
+        // いくつか選んで並べていれば、並べたまま見る側を替える（並べた差分では selectedKey がない）。
+        if multi != nil, !showsAllFiles {
+            let chosen = chosenEntries()
+            if chosen.count >= 2 { return showMulti(chosen) }
+        }
         guard let key = selectedKey else { return }
         // 節分けでは、一覧の選択もその側の節の行に移す（その節になければ、そのまま）。
         if showsSections, let entry = entries.first(where: { $0.item.path == key.path && $0.section == diffSide }) {
