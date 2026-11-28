@@ -22271,7 +22271,23 @@ impl HistoryView {
             s.renderer.forget_diff();
             // 同じファイル・側を読み直した（隙間を開いた・stage した）なら、同じ所のまま。
             if std::mem::take(&mut s.data.working_same) {
-                let rows = s.data.working_content().map_or(0, |c| c.line_count());
+                let reveal = s.data.working_reveal.take();
+                let content = s.data.working_content();
+                let rows = content.as_ref().map_or(0, |c| c.line_count());
+                // Space の後に選んだ次の変更のかたまりが見えていなければ、上から 3 分の 1 の所へ（macOS 版の
+                // `selectHunk`）。
+                if let Some((start, end)) = reveal {
+                    let line =
+                        |row: u32| content.as_ref().and_then(|c| c.line_of(row)).unwrap_or(row);
+                    let (top, bottom) = (
+                        line(start) as f32 * DIFF_ROW_HEIGHT,
+                        (line(end.saturating_sub(1).max(start)) + 1) as f32 * DIFF_ROW_HEIGHT,
+                    );
+                    let height = self.diff.height();
+                    if top < self.diff.scroll_y || bottom > self.diff.scroll_y + height {
+                        self.diff.scroll_y = top - height / 3.0;
+                    }
+                }
                 self.diff.scroll_by(0.0, rows);
             } else {
                 self.diff.scroll_y = 0.0;
@@ -25071,6 +25087,7 @@ fn attach_input(element: &IInspectable, target: Target) -> windows_core_reactor:
                 h.sender.send(Message::DiffFindOpen(true));
             }
             // Working Copy の差分で行を選んでいれば、Space でその行を含める・外す（macOS 版・GTK4 版と同じ）。
+            // All なら、読み直した差分で次の変更のかたまりを選ぶ。
             Target::Diff
                 if key == xaml::VirtualKey::Space
                     && h.working_page
@@ -25087,7 +25104,7 @@ fn attach_input(element: &IInspectable, target: Target) -> windows_core_reactor:
                     .as_ref()
                     .map(|w| w.selected_changes())
                     .unwrap_or_default();
-                if !h.session.data.stage_working_toggle(rows) {
+                if !h.session.data.stage_working_space(rows) {
                     beep();
                 }
             }
