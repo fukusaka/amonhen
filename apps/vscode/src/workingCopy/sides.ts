@@ -242,3 +242,33 @@ export function reselectTarget(
 export function adoptSide(row: RowKey, side: DiffSide): DiffSide {
   return row.section === 'staged' || row.section === 'unstaged' ? row.section : side;
 }
+
+/**
+ * いくつか選んだファイルのうち、並べて差分を出すもの（アプリの showMulti と同じ）: 見る側 side に変更のあるもの
+ * （All はすべて）を選んだ順に、上から limit 個まで。total はその側に変更のある数
+ */
+export function stackedPaths(
+  paths: readonly string[],
+  has: (path: string, group: 'staged' | 'unstaged') => boolean,
+  side: DiffSide,
+  limit: number,
+): { shown: string[]; total: number } {
+  const candidates = paths.filter((p) => side === 'all' || has(p, side));
+  return { shown: candidates.slice(0, limit), total: candidates.length };
+}
+
+/** 並べた差分の帯の題（アプリと同じ文言）: 選んだ数と、その側に変更のある数が多くて削ったときは出した数 */
+export function stackTitle(chosen: number, total: number, shown: number): string {
+  const title = `${chosen} files`;
+  return total > shown ? `${title}  (showing the first ${shown})` : title;
+}
+
+/** 並べた差分に何も出さないときのわけ（アプリと同じ文言） */
+export function stackEmptyText(side: DiffSide): string {
+  return side === 'staged' ? 'No staged changes in these files' : 'No unstaged changes in these files';
+}
+
+/** 並べる相手になる、選んだ行のパス（一覧の順、重ねない。コンフリクトは並べない） */
+export function stackCandidates(rows: readonly ListRow[]): string[] {
+  return [...new Set(rows.filter((r) => r.section !== 'conflicts').map((r) => r.path))];
+}

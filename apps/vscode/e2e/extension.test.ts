@@ -2528,6 +2528,136 @@ async function workingFoldFlow(): Promise<void> {
   }
 }
 
+/**
+ * Working Copy でいくつか選んだファイルの並べた差分（エンジン）: 選んだ見る側に変更のあるファイルの差分が、ファイル
+ * ごとに届く。Files to open together の数で削る。並べた中の 1 つのファイルの行を、そのファイルの差分で stage できる。
+ * 1 つをすべて stage しても、選んだまま並べ直す（見る側は替えない。そのファイルは Unstaged の側から外れる）
+ */
+async function workingStackFlow(): Promise<void> {
+  const start = git('rev-parse', 'HEAD').trim();
+  const names = Array.from({ length: 6 }, (_, i) => `stack-${i + 1}.txt`);
+  const wc = (await showView('amonhen.showWorkingCopy')).workingCopy;
+  const lines = Array.from({ length: 30 }, (_, i) => `line ${i + 1}`);
+  const changedLines = (diff: FileDiff) => diff.hunks.flatMap((h) => h.lines).filter((l) => l.kind !== ' ');
+  const config = vscode.workspace.getConfiguration('amonhen');
+  /** ファイルを選んで、並べた差分を待つ */
+  const choose = async (paths: string[], match: (m: Message<'wcStack'>) => boolean = () => true) => {
+    const at = posted.length;
+    await wc.handle({ type: 'wcSelectFiles', group: 'unstaged', path: paths.at(-1)!, paths });
+    return waitPosted('wcStack', at, (m) => m.paths.join() === paths.join() && match(m));
+  };
+  try {
+    for (const name of names) writeFileSync(join(root, name), `${lines.join('\n')}\n`);
+    git('add', ...names);
+    git('commit', '-q', '-m', 'add stack files');
+    // どれも 5 行目を、2 つ目は 25 行目も書き換える
+    for (const [i, name] of names.entries()) {
+      writeFileSync(join(root, name), `${lines.map((l) => (l === 'line 5' || (i === 1 && l === 'line 25') ? l.toUpperCase() : l)).join('\n')}\n`);
+    }
+    let mark = posted.length;
+    await vscode.commands.executeCommand('amonhen.refresh');
+    await waitPosted('wcFiles', mark, (m) => m.engine && names.every((n) => m.files.some((f) => f.path === n)));
+    await wc.handle({ type: 'wcSide', side: 'unstaged' });
+
+    // 3 つ選ぶと、3 つの差分が選んだ順に、ファイルごとに届く
+    const three = names.slice(0, 3);
+    const stacked = await choose(three, (m) => m.files.length === 3);
+    assert.equal(stacked.side, 'unstaged');
+    assert.equal(stacked.total, 3);
+    assert.deepEqual(stacked.files.map((f) => [f.group, f.diff.path, f.diff.folded]), three.map((n) => ['unstaged', n, true]));
+    assert.deepEqual(changedLines(stacked.files[1]!.diff).map((l) => [l.kind, l.text]), [['-', 'line 5'], ['+', 'LINE 5'], ['-', 'line 25'], ['+', 'LINE 25']]);
+
+    // Files to open together の数で削る（6 つ選んで、5 つまで）
+    await config.update('diff.filesToOpenTogether', 5, vscode.ConfigurationTarget.Global);
+    const capped = await choose(names, (m) => m.files.length === 5);
+    assert.equal(capped.total, 6);
+    assert.deepEqual(capped.files.map((f) => f.diff.path), names.slice(0, 5));
+    await config.update('diff.filesToOpenTogether', undefined, vscode.ConfigurationTarget.Global);
+
+    // 並べた中の 2 つ目のファイルの、5 行目の書き換えだけを stage する（そのファイルの差分で頼む）
+    const again = await choose(three, (m) => m.files.length === 3);
+    const second = again.files[1]!;
+    const five = changedLines(second.diff).slice(0, 2);
+    mark = posted.length;
+    await wc.handle({
+      type: 'wcStageLines',
+      group: second.group,
+      path: second.diff.path,
+      version: second.diff.version,
+      lines: five.map((l): SelectedLine => (l.kind === '-' ? { kind: '-', old: l.old! } : { kind: '+', new: l.new! })),
+    });
+    await until('2 つ目の 5 行目の stage', () => git('diff', '--cached', '--', names[1]!).includes('+LINE 5'));
+    assert.ok(!git('diff', '--cached', '--', names[1]!).includes('LINE 25'));
+    assert.equal(git('diff', '--cached', '--name-only').trim(), names[1]);
+    // 並べたまま読み直す: 2 つ目は 25 行目だけ
+    const restacked = await waitPosted('wcStack', mark, (m) => m.paths.join() === three.join() && m.files.length === 3 && changedLines(m.files[1]!.diff).length === 2);
+    assert.ok(changedLines(restacked.files[1]!.diff).every((l) => l.text.endsWith('25')), JSON.stringify(changedLines(restacked.files[1]!.diff)));
+
+    // 1 つ目をすべて stage しても、3 つとも選んだまま。見る側は Unstaged のまま、1 つ目は並べた差分から外れる
+    mark = posted.length;
+    await wc.handle({ type: 'wcStageFiles', op: 'stage', files: [{ group: 'unstaged', path: names[0]! }] });
+    const after = await waitPosted('wcStack', mark, (m) => m.paths.join() === three.join() && m.files.length === 2);
+    assert.equal(after.side, 'unstaged');
+    assert.equal(after.total, 2);
+    assert.deepEqual(after.files.map((f) => f.diff.path), [names[1], names[2]]);
+    // Staged の側では、stage した 1 つ目と、一部を stage した 2 つ目
+    mark = posted.length;
+    await wc.handle({ type: 'wcSide', side: 'staged' });
+    const staged = await waitPosted('wcStack', mark, (m) => m.side === 'staged');
+    assert.deepEqual(staged.files.map((f) => [f.group, f.diff.path]), [['staged', names[0]], ['staged', names[1]]]);
+    // All では 3 つとも（HEAD → 作業ツリー）
+    mark = posted.length;
+    await wc.handle({ type: 'wcSide', side: 'all' });
+    const all = await waitPosted('wcStack', mark, (m) => m.side === 'all');
+    assert.deepEqual(all.files.map((f) => [f.diff.path, f.diff.combined]), three.map((n) => [n, true]));
+  } finally {
+    await config.update('diff.filesToOpenTogether', undefined, vscode.ConfigurationTarget.Global);
+    await wc.handle({ type: 'wcSide', side: 'unstaged' });
+    git('reset', '-q', '--hard', start);
+    for (const name of names) rmSync(join(root, name), { force: true });
+    await vscode.commands.executeCommand('amonhen.refresh');
+  }
+}
+
+/**
+ * History でコミットを選ぶと、先頭から Files to open together の数だけ開いて、その差分を求める（Webview が求め、
+ * 拡張が答える）。生成物（lockfile）は畳んだまま、数より後のファイルも畳んだまま
+ */
+async function historyFirstOpenFlow(): Promise<void> {
+  const start = git('rev-parse', 'HEAD').trim();
+  const names = ['hf/1.txt', 'hf/2/Cargo.lock', 'hf/3.txt', 'hf/4.txt', 'hf/5.txt', 'hf/6.txt', 'hf/7.txt'];
+  const config = vscode.workspace.getConfiguration('amonhen');
+  try {
+    await config.update('diff.filesToOpenTogether', 5, vscode.ConfigurationTarget.Global);
+    for (const name of names) {
+      mkdirSync(dirname(join(root, name)), { recursive: true });
+      writeFileSync(join(root, name), `${name}\n`);
+    }
+    git('add', 'hf');
+    git('commit', '-q', '-m', 'add hf files');
+    const oid = git('rev-parse', 'HEAD').trim();
+    const panel = await showView('amonhen.showHistory');
+    let mark = posted.length;
+    await vscode.commands.executeCommand('amonhen.refresh');
+    await waitPosted('rows', mark, (m) => m.rows.some((r) => r.oid === oid));
+    mark = posted.length;
+    await panel.history.handle({ type: 'select', oid });
+    const { details } = await waitPosted('details', mark, (m) => m.details.oid === oid);
+    assert.deepEqual(details.files.map((f) => f.path), names);
+    const opened = ['hf/1.txt', 'hf/3.txt', 'hf/4.txt', 'hf/5.txt'];
+    for (const path of opened) await waitPosted('commitDiff', mark, (m) => m.oid === oid && m.path === path);
+    // 少し待っても、畳んだままのファイルの差分は求めない
+    await new Promise((r) => setTimeout(r, 1500));
+    const asked = posted.slice(mark).flatMap((m) => (m.type === 'commitDiff' && m.oid === oid ? [m.path] : []));
+    assert.deepEqual([...new Set(asked)].sort(), opened, JSON.stringify(asked));
+  } finally {
+    await config.update('diff.filesToOpenTogether', undefined, vscode.ConfigurationTarget.Global);
+    git('reset', '-q', '--hard', start);
+    rmSync(join(root, 'hf'), { recursive: true, force: true });
+    await vscode.commands.executeCommand('amonhen.refresh');
+  }
+}
+
 /** git notes は詳細の残り（commitExtras）で届く（エンジン） */
 async function notesFlow(): Promise<void> {
   const start = git('rev-parse', 'HEAD').trim();
@@ -5206,6 +5336,14 @@ suite('Amon Hen in VSCode', () => {
 
   test('folds unchanged lines in the Working Copy diff and stages lines of an opened one through the daemon', async () => {
     await workingFoldFlow();
+  });
+
+  test('stacks the diffs of several selected files in Working Copy and stages lines of one of them through the daemon', async () => {
+    await workingStackFlow();
+  });
+
+  test('opens a commit’s first files, up to Files to open together, in History', async () => {
+    await historyFirstOpenFlow();
   });
 
   test('shows git notes in the details through the daemon', async () => {

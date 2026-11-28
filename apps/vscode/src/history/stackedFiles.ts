@@ -57,3 +57,22 @@ export function renamedPath(from: string, to: string): string {
   const mid = (parts: string[]) => parts.slice(head, parts.length - tail).join('/');
   return `${prefix}{${mid(a)} → ${mid(b)}}${suffix}`;
 }
+
+/** 設定「Files to open together」（`amonhen.diff.filesToOpenTogether`）で選べる数と既定。アプリと同じ */
+export const OPEN_TOGETHER_CHOICES = [5, 10, 20, 50, 100] as const;
+export const OPEN_TOGETHER_DEFAULT = 20;
+
+/** 設定の値を、選べる数に（ほかの値は既定） */
+export function openTogether(value: unknown): number {
+  return (OPEN_TOGETHER_CHOICES as readonly unknown[]).includes(value) ? (value as number) : OPEN_TOGETHER_DEFAULT;
+}
+
+/**
+ * コミットを選んだときに開いておくファイル（並べた順の位置）: 先頭から limit 個のうち、生成物と変わった行の多い
+ * もの（heavy）を除いたもの。除いたものも数に入る（アプリと同じく、先頭 limit 個の中から選ぶ）
+ */
+export function firstOpen(files: readonly { heavy: boolean }[], limit: number): number[] {
+  const out: number[] = [];
+  for (let i = 0; i < Math.min(limit, files.length); i++) if (!files[i]!.heavy) out.push(i);
+  return out;
+}

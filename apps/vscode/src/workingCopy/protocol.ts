@@ -29,6 +29,14 @@ export type DiffMenuAction =
   | 'unstageLine'
   | 'discardLine';
 
+/** 並べた差分の 1 ファイル（group は差分の側のグループ。All なら今そのファイルがあるグループ） */
+export interface StackedFile {
+  group: ChangeGroup;
+  diff: FileDiff;
+  /** たたんだ差分の隙間の開き方 */
+  open: GapOpen[];
+}
+
 export interface FileStat {
   path: string;
   added: number | null;
@@ -68,6 +76,12 @@ export type WorkingCopyHostMessage =
   | { type: 'wcDiff'; group: ChangeGroup; diff: FileDiff; whitespace?: DiffWhitespace; side?: DiffSide; open?: GapOpen[] }
   /** 差分を出さない。gone は変更がなくなったので選びを外したファイル */
   | { type: 'wcDiff'; group?: undefined; diff: undefined; whitespace?: undefined; side?: undefined; open?: undefined; gone?: string }
+  /**
+   * いくつか選んだファイルの差分を並べる（エンジンがあるとき。アプリと同じ）。paths は選んだファイル（一覧の順）、
+   * total はその側に変更のある数、files は並べるもの（上から Files to open together の数まで）。note は何も
+   * 並べないわけ（All で空白を無視している）
+   */
+  | { type: 'wcStack'; side: DiffSide; whitespace: DiffWhitespace; paths: string[]; total: number; files: StackedFile[]; note?: SideNote }
   /** 選んだ側の差分を出さず、わけを言う（その側に変更がない・All で出せない） */
   | { type: 'wcDiffNote'; group: ChangeGroup; path: string; side: DiffSide; whitespace: DiffWhitespace; note: SideNote }
   /** 節ごとの追加・削除の行数（HEAD → index と index → 作業ツリー。エンジンがあって節に分けているときだけ） */
@@ -103,6 +117,11 @@ export type WorkingCopyHostMessage =
 export type WorkingCopyWebviewMessage =
   /** ファイルを選んだ。side は、節の行を選んで見る側をその節にそろえたとき */
   | { type: 'wcSelect'; group: ChangeGroup; path: string; side?: DiffSide }
+  /**
+   * いくつかのファイルを選んだ（エンジンがあるとき。差分を並べる）。paths は選んだファイル（一覧の順）、group と
+   * path は最後に押した行（並べるのをやめたら、その差分を出す）
+   */
+  | { type: 'wcSelectFiles'; group: ChangeGroup; path: string; paths: string[]; side?: DiffSide }
   /** 差分で見る側を選び直した（エンジンがあるとき。覚えない） */
   | { type: 'wcSide'; side: DiffSide }
   /** たたんだ差分の隙間の開き方を変えた（ファイルと側ごとに、拡張が動いている間だけ覚える） */

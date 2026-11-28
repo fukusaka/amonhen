@@ -3885,3 +3885,22 @@ body.monospace-message .details-head pre.body {
   opacity: 0.5;
   cursor: default;
 }
+
+/* Working Copy でいくつか選んだファイルの並べた差分。上の帯（N files・見る側）は上に止め、ファイルの見出しはその下に止める */
+.wc-diff .wc-stack-band {
+  z-index: 2;
+}
+
+.wc-diff .wc-stack-file > .wc-stack-head {
+  top: var(--wc-stack-top, 0);
+  flex-wrap: nowrap;
+  background: var(--vscode-sideBarSectionHeader-background, var(--vscode-editor-background));
+}
+
+.wc-diff .wc-stack-file > .wc-stack-head .path {
+  flex: 1;
+}
+
+.wc-diff .wc-stack-head .status {
+  font-weight: bold;
+}

@@ -431,6 +431,18 @@
           ],
           "markdownDescription": "How lines are staged in the Working Copy diff (with the engine), as in the app's Settings > Diff & Merge > Staging lines."
         },
+        "amonhen.diff.filesToOpenTogether": {
+          "type": "number",
+          "default": 20,
+          "enum": [
+            5,
+            10,
+            20,
+            50,
+            100
+          ],
+          "markdownDescription": "When a diff lists several files (a commit in History, files selected in Working Copy with the engine), this many are shown open from the top. Generated files and very large changes stay folded. As in the app's Settings > Diff & Merge > Files to open together."
+        },
         "amonhen.diagrams.colors": {
           "type": "string",
           "default": "mermaid",
@@ -3274,6 +3286,26 @@
           "command": "amonhen.wcFile.open",
           "when": "webviewId == 'amonhen.main' && webviewSection == 'wcFile' && !wcMulti && !wcDeleted",
           "group": "9_copy@3"
+        },
+        {
+          "command": "amonhen.wcFile.stage",
+          "when": "webviewId == 'amonhen.main' && webviewSection == 'wcStackFile' && !wcStagedOnly",
+          "group": "0_change@1"
+        },
+        {
+          "command": "amonhen.wcFile.unstage",
+          "when": "webviewId == 'amonhen.main' && webviewSection == 'wcStackFile' && wcStagedOnly",
+          "group": "0_change@1"
+        },
+        {
+          "command": "amonhen.wcFile.discard",
+          "when": "webviewId == 'amonhen.main' && webviewSection == 'wcStackFile' && wcUnstaged && !wcUntracked",
+          "group": "0_change@2"
+        },
+        {
+          "command": "amonhen.wcFile.delete",
+          "when": "webviewId == 'amonhen.main' && webviewSection == 'wcStackFile' && wcUnstaged && wcUntracked",
+          "group": "0_change@2"
         },
         {
           "command": "amonhen.wcDiff.gapDown",

@@ -15,6 +15,10 @@ import {
   sectionRows,
   sideNoteFor,
   sideNoteText,
+  stackCandidates,
+  stackEmptyText,
+  stackedPaths,
+  stackTitle,
   toggleRequest,
   type RowKey,
 } from '../src/workingCopy/sides.ts';
@@ -139,4 +143,22 @@ test('choosing a section row adopts its side; Mixed and conflict rows keep the s
   assert.equal(adoptSide(k('a', 'unstaged'), 'all'), 'unstaged');
   assert.equal(adoptSide(k('a'), 'all'), 'all');
   assert.equal(adoptSide(k('a', 'conflicts'), 'staged'), 'staged');
+});
+
+test('several selected files stack the ones changed on the side, in order, up to the limit', () => {
+  const files = [unstaged('a'), staged('b'), unstaged('c'), staged('c'), unstaged('d')];
+  const has = (path: string, group: 'staged' | 'unstaged') => files.some((f) => f.path === path && f.group === group);
+  const paths = ['a', 'b', 'c', 'd'];
+  assert.deepEqual(stackedPaths(paths, has, 'unstaged', 20), { shown: ['a', 'c', 'd'], total: 3 });
+  assert.deepEqual(stackedPaths(paths, has, 'staged', 20), { shown: ['b', 'c'], total: 2 });
+  assert.deepEqual(stackedPaths(paths, has, 'all', 2), { shown: ['a', 'b'], total: 4 });
+  assert.equal(stackTitle(4, 4, 2), '4 files  (showing the first 2)');
+  assert.equal(stackTitle(4, 3, 3), '4 files');
+  assert.equal(stackEmptyText('staged'), 'No staged changes in these files');
+  assert.equal(stackEmptyText('unstaged'), 'No unstaged changes in these files');
+});
+
+test('the files to stack are the selected rows’ paths once each, without conflicts', () => {
+  const rows = [...sectionRows([conflict('x')], 'conflicts'), ...sectionRows([staged('a'), staged('b')], 'staged'), ...sectionRows([unstaged('a')], 'unstaged')];
+  assert.deepEqual(stackCandidates(rows), ['a', 'b']);
 });

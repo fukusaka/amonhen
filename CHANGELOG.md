@@ -1475,6 +1475,8 @@ First release.
 - With the engine, unchanged lines in the Working Copy diff fold into one row with Stage Hunk and Discard Hunk, opened
   20 lines at a time or all, and lines are staged by selecting them or, with `amonhen.diff.lineStaging`, from the
   change bar; All marks staged lines with filled bars.
+- With the engine, selecting several files in Working Copy stacks their diffs, and History opens a commit's first files;
+  both go up to the new `amonhen.diff.filesToOpenTogether` (20 at first).
 
 - The sidebar's icons are an icon font, so they take the theme's icon color, high contrast and the selected row's
   color like VSCode's own icons.
