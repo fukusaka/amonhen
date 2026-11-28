@@ -293,6 +293,8 @@ export class MainPanel implements vscode.Disposable {
         break;
       }
       case 'wcSelect':
+      case 'wcSide':
+      case 'wcLook':
       case 'wcLayout':
       case 'wcDraft':
       case 'wcPickRecent':

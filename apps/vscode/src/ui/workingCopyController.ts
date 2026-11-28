@@ -15,9 +15,10 @@ import { templateFilePath } from '../settings/templateFile.ts';
 import { COMMIT_TYPES, fixupSubjects, templateMessage, type MessageParts } from '../workingCopy/commitMessage.ts';
 import type { DiffWhitespace } from '../history/protocol.ts';
 import type { FileStat, WorkingCopyHostMessage, WorkingCopyWebviewMessage } from '../workingCopy/protocol.ts';
+import { modeOf, sideNoteFor, type DiffSide, type SideNote } from '../workingCopy/sides.ts';
 import { commitStaged } from './commit.ts';
 import { openConflict } from './diff.ts';
-import { commitDraft, fileLayout, setCommitDraft, setFileLayout } from './preferences.ts';
+import { commitDraft, fileLayout, setCommitDraft, setFileLayout, setWorkingCopyLook, workingCopyLook } from './preferences.ts';
 import { acceptConflicts, indexMode, showError, stageChanges } from './stageCommands.ts';
 
 /**
@@ -48,6 +49,8 @@ export class WorkingCopyController implements vscode.Disposable {
     vscode.Disposable.from(...this.listeners).dispose();
     this.repo = repo;
     this.selected = undefined;
+    // 見る側は Working Copy で 1 つ。開き直したら Unstaged から（アプリと同じく覚えない）
+    this.side = 'unstaged';
     this.head = undefined;
     this.recent = [];
     this.listeners = repo
@@ -103,7 +106,17 @@ export class WorkingCopyController implements vscode.Disposable {
       }
       lastMessage = this.head.message;
     }
-    this.post({ type: 'wcFiles', files: this.files, branch: status?.branch.head, lastMessage, layout: fileLayout() });
+    const engine = repo ? (await daemonFor(repo.root).catch(() => undefined)) !== undefined : false;
+    if (repo !== this.repo) return;
+    this.post({
+      type: 'wcFiles',
+      files: this.files,
+      branch: status?.branch.head,
+      lastMessage,
+      layout: fileLayout(),
+      engine,
+      ...workingCopyLook(),
+    });
     if (repo) void this.sendEngineFacts(repo).catch(() => undefined);
   }
 
@@ -117,9 +130,20 @@ export class WorkingCopyController implements vscode.Disposable {
     if (reading !== this.factsReading) return;
     const info = reply.json['info'] as { stats?: FileStat[] } | undefined;
     if (repo === this.repo) this.post({ type: 'wcStats', stats: info?.stats ?? [] });
+    if (workingCopyLook().sections) await this.sendSplitStats(repo, reading);
     const form = await client.call({ op: 'run', command: { op: 'repositoryForm' } });
     const sparse = (form.json['info'] as { sparse?: { cone: boolean; folders: string[] } | null } | undefined)?.sparse;
     if (repo === this.repo && reading === this.factsReading) this.post({ type: 'wcSparse', sparse: sparse ?? null });
+  }
+
+  /** 節ごとの行数（Staged の節は HEAD → index、Unstaged の節は index → 作業ツリー）。節に分けているときだけ読む */
+  private async sendSplitStats(repo: Repository, reading = this.factsReading): Promise<void> {
+    const client = await daemonFor(repo.root);
+    if (!client) return;
+    const reply = await client.call({ op: 'run', command: { op: 'workingStatsSplit' } });
+    if (reading !== this.factsReading || repo !== this.repo) return;
+    const info = reply.json['info'] as { staged?: FileStat[]; unstaged?: FileStat[] } | undefined;
+    this.post({ type: 'wcSplitStats', staged: info?.staged ?? [], unstaged: info?.unstaged ?? [] });
   }
 
   /** 最近のコミット 30 個を読む（一覧と ⌥↑・⌥↓ のため） */
@@ -229,6 +253,10 @@ export class WorkingCopyController implements vscode.Disposable {
 
   /** 差分で行を比べるときに無視する空白（エンジンがあるときだけ。覚えない） */
   private whitespace: DiffWhitespace = 'exact';
+  /** 差分で見る側（エンジンがあるときだけ。ファイルを替えても同じ、覚えない） */
+  private side: DiffSide = 'unstaged';
+  /** 差分を頼んだ回数（読む間に選び直したら、古い差分を送らない） */
+  private diffRequest = 0;
 
   /** 選んでいるファイルの差分を送る。stage してグループが変わっても、同じファイルを見続ける */
   private async sendDiff(): Promise<void> {
@@ -241,7 +269,7 @@ export class WorkingCopyController implements vscode.Disposable {
       this.files.find((f) => f.path === selected.path);
     if (!change) {
       this.selected = undefined;
-      this.post({ type: 'wcDiff', diff: undefined });
+      this.post({ type: 'wcDiff', diff: undefined, gone: selected.path });
       return;
     }
     this.selected = { group: change.group, path: change.path };
@@ -256,13 +284,16 @@ export class WorkingCopyController implements vscode.Disposable {
   }
 
   private async sendDiffOf(change: Change): Promise<void> {
-    // 読んでいる間に空白の扱いを選び直したら、この差分は送らない（選び直しで読み直した方を送る。古い差分に新しい
-    // 扱いの札を付けない）
+    // 読んでいる間に空白の扱い・見る側・ファイルを選び直したら、この差分は送らない（選び直しで読み直した方を送る。
+    // 古い差分に新しい扱いの札を付けない）
     const whitespace = this.whitespace;
-    let daemon: DaemonDiff | undefined;
+    const side = this.side;
+    const request = ++this.diffRequest;
+    const stale = () => request !== this.diffRequest || whitespace !== this.whitespace || side !== this.side;
+    let shown: SideDiff | undefined;
     for (let attempt = 0; ; attempt++) {
       try {
-        daemon = await this.daemonDiff(change, whitespace);
+        shown = await this.sideDiff(change, side, whitespace);
         break;
       } catch (err) {
         // daemon は拡張より新しい status を読むので、その間に変更がなくなったファイルは断られる。読み直して、もう変更が
@@ -275,25 +306,62 @@ export class WorkingCopyController implements vscode.Disposable {
         }
         if (this.selected?.path === change.path) {
           this.selected = undefined;
-          this.post({ type: 'wcDiff', diff: undefined });
+          this.post({ type: 'wcDiff', diff: undefined, gone: change.path });
         }
         return;
       }
     }
-    const diff = daemon ? daemon.diff : (await this.loadDiff(change)).diff;
-    if (whitespace !== this.whitespace) return;
-    this.post({ type: 'wcDiff', group: change.group, diff, ...(daemon ? { whitespace } : {}) });
-    if (daemon) void this.sendSyntax(daemon, change.group, whitespace);
+    if (stale()) return;
+    if (shown && 'note' in shown) {
+      this.post({ type: 'wcDiffNote', group: change.group, path: change.path, side, whitespace, note: shown.note });
+      return;
+    }
+    if (shown) {
+      const message = { type: 'wcDiff', group: shown.group, diff: shown.daemon.diff, whitespace, side } as const;
+      this.post(message);
+      void this.sendSyntax(shown.daemon, message, stale);
+      return;
+    }
+    const { diff } = await this.loadDiff(change);
+    if (stale()) return;
+    this.post({ type: 'wcDiff', group: change.group, diff });
+  }
+
+  /**
+   * エンジンで読む、見る側の差分（エンジンがない・コンフリクトなら undefined）。その側に変更がない・All で出せない
+   * ときは、そのわけ
+   */
+  private async sideDiff(change: Change, side: DiffSide, whitespace: DiffWhitespace): Promise<SideDiff | undefined> {
+    if (change.group === 'conflicts' || !this.repo || !(await daemonFor(this.repo.root))) return undefined;
+    const has = {
+      staged: this.files.some((f) => f.group === 'staged' && f.path === change.path),
+      unstaged: this.files.some((f) => f.group === 'unstaged' && f.path === change.path),
+    };
+    const note = sideNoteFor(side, has, whitespace !== 'exact');
+    if (note) return { note };
+    if (side !== 'all') {
+      return { group: side, daemon: (await this.daemonDiff(change, side, whitespace))! };
+    }
+    try {
+      return { group: change.group, daemon: (await this.daemonDiff(change, 'combined'))! };
+    } catch (err) {
+      // index を「HEAD に変更の一部を当てたもの」で表せないファイルは、コアが断る。片方の側は読めれば、そう言って
+      // Unstaged・Staged へ案内する（読めなければ、読めないわけを出す）
+      await this.daemonDiff(change, has.unstaged ? 'unstaged' : 'staged').catch(() => {
+        throw err;
+      });
+      return { note: 'allUnavailable' };
+    }
   }
 
   /** 構文の色を後から頼み、付いたら同じ差分を送り直す（選んだ行はそのまま）。古いエンジンが断れば色なしのまま */
-  private async sendSyntax(daemon: DaemonDiff, group: ChangeGroup, whitespace: DiffWhitespace): Promise<void> {
+  private async sendSyntax(daemon: DaemonDiff, message: WorkingCopyHostMessage, stale: () => boolean): Promise<void> {
     try {
       const client = this.repo && (await daemonFor(this.repo.root));
       if (!client) return;
       const touched = applySyntax(await client.call({ op: 'diffSyntax', diff: daemon.handle }), daemon.lines);
-      if (touched.size > 0 && this.selected?.path === daemon.diff.path && whitespace === this.whitespace) {
-        this.post({ type: 'wcDiff', group, diff: daemon.diff, whitespace });
+      if (touched.size > 0 && this.selected?.path === daemon.diff.path && !stale()) {
+        this.post(message);
       }
     } catch {
       // 色なしのまま
@@ -301,10 +369,14 @@ export class WorkingCopyController implements vscode.Disposable {
   }
 
   /**
-   * 共有の daemon で読んだ差分（設定 `amonhen.daemon.path` があるとき）。コンフリクトは出さないので undefined。
-   * 行単位の stage・破棄も、この差分の行の番号で daemon に頼む
+   * 共有の daemon で読んだ差分（エンジンがあるとき）。コンフリクトは出さないので undefined。
+   * 行単位の stage・破棄も、この差分の行の番号で daemon に頼むので、見せた差分と同じ mode で読む
    */
-  private async daemonDiff(change: Change, whitespace = this.whitespace): Promise<DaemonDiff | undefined> {
+  private async daemonDiff(
+    change: Change,
+    mode: 'unstaged' | 'staged' | 'combined',
+    whitespace = this.whitespace,
+  ): Promise<DaemonDiff | undefined> {
     if (change.group === 'conflicts' || !this.repo) {
       return undefined;
     }
@@ -312,21 +384,9 @@ export class WorkingCopyController implements vscode.Disposable {
     if (!client) {
       return undefined;
     }
-    // 空白を無視するときは、選んだ側（Changes・Staged）の差分（HEAD → 作業ツリーの差分では無視できない）
-    if (whitespace !== 'exact') {
-      const mode = change.group === 'staged' ? 'staged' : 'unstaged';
-      return readWorkingDiff(
-        await client.call({ op: 'workingDiff', path: change.path, mode, whitespace }),
-      );
-    }
-    // HEAD → 作業ツリーの 1 つの差分（行ごとに staged の印）。index を「HEAD に変更の一部を当てたもの」で表せない
-    // ファイルは、コアが断るので、今までどおり Changes・Staged の差分に
-    try {
-      return readWorkingDiff(await client.call({ op: 'workingDiff', path: change.path, mode: 'combined' }));
-    } catch {
-      const mode = change.group === 'staged' ? 'staged' : 'unstaged';
-      return readWorkingDiff(await client.call({ op: 'workingDiff', path: change.path, mode }));
-    }
+    // HEAD → 作業ツリーの差分では空白を無視できない（コアが断る）
+    const ws = mode !== 'combined' && whitespace !== 'exact' ? { whitespace } : {};
+    return readWorkingDiff(await client.call({ op: 'workingDiff', path: change.path, mode, ...ws }));
   }
 
   private async loadDiff(change: Change): Promise<ComputedDiff> {
@@ -357,6 +417,14 @@ export class WorkingCopyController implements vscode.Disposable {
   async handle(message: WorkingCopyWebviewMessage): Promise<void> {
     if (message.type === 'wcLayout') {
       await setFileLayout(message.layout);
+      return;
+    }
+    if (message.type === 'wcLook') {
+      const { type: _, ...patch } = message;
+      const before = workingCopyLook().sections;
+      await setWorkingCopyLook(patch);
+      // 節に分けたら、節ごとの行数を読む
+      if (patch.sections && !before && this.repo) await this.sendSplitStats(this.repo).catch(() => undefined);
       return;
     }
     const repo = this.repo;
@@ -393,7 +461,14 @@ export class WorkingCopyController implements vscode.Disposable {
     switch (message.type) {
       case 'wcSelect':
         this.selected = { group: message.group, path: message.path };
+        if (message.side) this.side = message.side;
         await this.sendDiff();
+        break;
+      case 'wcSide':
+        if (message.side !== this.side) {
+          this.side = message.side;
+          await this.sendDiff();
+        }
         break;
       case 'wcStageFiles': {
         const changes = message.files.flatMap((f) => find(f.group, f.path) ?? []);
@@ -404,7 +479,7 @@ export class WorkingCopyController implements vscode.Disposable {
         if (this.whitespace !== 'exact') break;
         const change = find(message.group, message.path);
         if (change) {
-          await this.stageLines(repo, change, message.version, message.lines, message.stage ?? true).catch(showError);
+          await this.stageLines(repo, change, message.version, message.lines, message.stage ?? true, message.combined === true).catch(showError);
         }
         break;
       }
@@ -432,11 +507,11 @@ export class WorkingCopyController implements vscode.Disposable {
         if (this.whitespace !== 'exact') break;
         const change = find('unstaged', message.path);
         if (!change) break;
-        const daemon = await this.daemonDiff(change);
+        const daemon = await this.daemonDiff(change, message.combined ? 'combined' : 'unstaged');
         if (daemon) {
           if (daemon.diff.version !== message.version) {
-            this.post({ type: 'wcDiff', group: change.group, diff: daemon.diff, whitespace: this.whitespace });
             vscode.window.setStatusBarMessage('The file changed, so the diff was updated. Select the lines again.', 4000);
+            await this.sendDiff();
             break;
           }
           const client = (await daemonFor(repo.root))!;
@@ -507,8 +582,9 @@ export class WorkingCopyController implements vscode.Disposable {
     version: string,
     lines: Extract<WorkingCopyWebviewMessage, { type: 'wcStageLines' }>['lines'],
     stage = true,
+    combined = false,
   ): Promise<void> {
-    const daemon = await this.daemonDiff(change);
+    const daemon = await this.daemonDiff(change, combined ? 'combined' : change.group === 'staged' ? 'staged' : 'unstaged');
     if (daemon) {
       return this.stageLinesThroughDaemon(repo, change, version, lines, daemon, stage);
     }
@@ -549,8 +625,8 @@ export class WorkingCopyController implements vscode.Disposable {
     stage: boolean,
   ): Promise<void> {
     if (fresh.diff.version !== version) {
-      this.post({ type: 'wcDiff', group: change.group, diff: fresh.diff, whitespace: this.whitespace });
       vscode.window.setStatusBarMessage('The file changed, so the diff was updated. Select the lines again.', 4000);
+      await this.sendDiff();
       return;
     }
     const rows = selectedRows(fresh.rows, lines);
@@ -586,6 +662,9 @@ export class WorkingCopyController implements vscode.Disposable {
     vscode.Disposable.from(...this.listeners).dispose();
   }
 }
+
+/** エンジンで読んだ、見る側の差分（group はその側のグループ）か、出さないわけ */
+type SideDiff = { group: ChangeGroup; daemon: DaemonDiff } | { note: SideNote };
 
 /** `commit.template` のファイルの中身。相対パスはリポジトリから（git と同じ） */
 async function commitTemplate(repo: Repository): Promise<MessageParts | undefined> {

@@ -429,10 +429,13 @@ async function workingCopyFlow(label: string): Promise<void> {
   await waitPosted('wcFiles', mark, (m) => m.layout === 'tree' && m.files.some((f) => f.group === 'unstaged' && f.path === FILE));
   await wc.handle({ type: 'wcLayout', layout: 'list' });
 
-  /** 差分を選び、変わった行が 1 行の書き換えだけであることを確かめて、その行を返す */
+  /**
+   * 差分を選び、変わった行が 1 行の書き換えだけであることを確かめて、その行を返す。節の行を選んだときと同じく、
+   * 見る側をその節にそろえる（エンジンがなければ見る側はなく、節の側を出す）
+   */
   const select = async (group: 'unstaged' | 'staged') => {
     const at = posted.length;
-    await wc.handle({ type: 'wcSelect', group, path: FILE });
+    await wc.handle({ type: 'wcSelect', group, path: FILE, side: group });
     const { diff } = await waitPosted('wcDiff', at, (m) => m.group === group && m.diff?.path === FILE);
     const lines = diff!.hunks.flatMap((h) => h.lines).filter((l) => l.kind !== ' ');
     assert.deepEqual(
@@ -444,14 +447,8 @@ async function workingCopyFlow(label: string): Promise<void> {
       '変えた 1 行だけが差分になる（改行の違いで全体が書き換えに見えない）',
     );
     const selected = lines.map((l): SelectedLine => (l.kind === '-' ? { kind: '-', old: l.old! } : { kind: '+', new: l.new! }));
-    // エンジンがあれば HEAD → 作業ツリーの 1 つの差分で、行に staged の印がある
-    if (label === 'daemon') {
-      assert.equal(diff!.combined, true, 'HEAD → 作業ツリーの差分');
-      assert.deepEqual(
-        lines.map((l) => l.staged),
-        lines.map(() => group === 'staged'),
-      );
-    }
+    // エンジンがあっても、見る側が Unstaged・Staged ならその側の差分（All は workingSidesFlow）
+    assert.equal(diff!.combined, undefined, 'その側の差分');
     return { group, path: FILE, version: diff!.version, lines: selected };
   };
   const numstat = (...args: string[]) => git('diff', '--numstat', ...args).trim();
@@ -2291,6 +2288,116 @@ async function workingWhitespaceFlow(): Promise<void> {
     await wc.handle({ type: 'wcWhitespace', whitespace: 'exact' });
     git('reset', '-q', '--hard', start);
     rmSync(file, { force: true });
+    await vscode.commands.executeCommand('amonhen.refresh');
+  }
+}
+
+/**
+ * Working Copy の差分で見る側を選ぶ（エンジン）: Unstaged・Staged・All はファイルを替えても同じで、その側に変更が
+ * なければ、空白を無視していて All を出せなければ、HEAD → 作業ツリーの 1 つの差分で表せなければ、そう言う。
+ * 節に分けたら、節ごとの行数（workingStatsSplit）を送る
+ */
+async function workingSidesFlow(): Promise<void> {
+  const start = git('rev-parse', 'HEAD').trim();
+  const file = join(root, 'sides.txt');
+  const other = join(root, 'sides-other.txt');
+  const wc = (await showView('amonhen.showWorkingCopy')).workingCopy;
+  const changed = (diff: { hunks: { lines: { kind: string; text: string; staged?: boolean }[] }[] }) =>
+    diff.hunks.flatMap((h) => h.lines).filter((l) => l.kind !== ' ');
+  /** 見る側を選んで、その答え（差分かわけ）を待つ */
+  const choose = async (side: 'unstaged' | 'staged' | 'all', path = 'sides.txt') => {
+    const at = posted.length;
+    await wc.handle({ type: 'wcSide', side });
+    return waitPosted('wcDiff', at, (m) => m.diff?.path === path && m.side === side);
+  };
+  const note = async (run: () => Promise<unknown>, path = 'sides.txt') => {
+    const at = posted.length;
+    await run();
+    return (await waitPosted('wcDiffNote', at, (m) => m.path === path)).note;
+  };
+  try {
+    writeFileSync(file, 'a\nb\nc\nd\ne\n');
+    writeFileSync(other, 'x\n');
+    git('add', 'sides.txt', 'sides-other.txt');
+    git('commit', '-q', '-m', 'add sides.txt');
+    // 2 行目を stage し、4 行目は作業ツリーだけで変える
+    writeFileSync(file, 'a\nB\nc\nd\ne\n');
+    git('add', 'sides.txt');
+    writeFileSync(file, 'a\nB\nc\nD\ne\n');
+    writeFileSync(other, 'y\n');
+    let mark = posted.length;
+    await vscode.commands.executeCommand('amonhen.refresh');
+    await waitPosted('wcFiles', mark, (m) => m.engine && m.files.some((f) => f.group === 'staged' && f.path === 'sides.txt'));
+
+    // 最初は Unstaged（index → 作業ツリー）
+    mark = posted.length;
+    await wc.handle({ type: 'wcSelect', group: 'unstaged', path: 'sides.txt', side: 'unstaged' });
+    const unstagedDiff = (await waitPosted('wcDiff', mark, (m) => m.diff?.path === 'sides.txt' && m.side === 'unstaged')).diff!;
+    assert.deepEqual(changed(unstagedDiff).map((l) => [l.kind, l.text]), [['-', 'd'], ['+', 'D']]);
+    assert.equal(unstagedDiff.combined, undefined);
+
+    // Staged（HEAD → index）
+    const stagedDiff = await choose('staged');
+    assert.equal(stagedDiff.group, 'staged');
+    assert.deepEqual(changed(stagedDiff.diff!).map((l) => [l.kind, l.text]), [['-', 'b'], ['+', 'B']]);
+
+    // All（HEAD → 作業ツリー）: 行ごとに stage したか
+    const all = await choose('all');
+    assert.equal(all.diff!.combined, true);
+    assert.deepEqual(
+      changed(all.diff!).map((l) => [l.kind, l.text, l.staged]),
+      [
+        ['-', 'b', true],
+        ['+', 'B', true],
+        ['-', 'd', false],
+        ['+', 'D', false],
+      ],
+    );
+
+    // 見る側はファイルを替えても同じ。stage していないファイルの All は、作業ツリーの側だけ
+    mark = posted.length;
+    await wc.handle({ type: 'wcSelect', group: 'unstaged', path: 'sides-other.txt' });
+    const otherAll = await waitPosted('wcDiff', mark, (m) => m.diff?.path === 'sides-other.txt');
+    assert.equal(otherAll.side, 'all');
+    assert.ok(changed(otherAll.diff!).every((l) => l.staged === false), JSON.stringify(otherAll.diff));
+    // Staged に変更がなければ、そう言う
+    assert.equal(await note(() => wc.handle({ type: 'wcSide', side: 'staged' }), 'sides-other.txt'), 'noStaged');
+
+    // 空白を無視している間は All を出さない（黙って替えず、わけを言う）
+    mark = posted.length;
+    await wc.handle({ type: 'wcSelect', group: 'unstaged', path: 'sides.txt', side: 'all' });
+    await waitPosted('wcDiff', mark, (m) => m.diff?.path === 'sides.txt' && m.side === 'all');
+    assert.equal(await note(() => wc.handle({ type: 'wcWhitespace', whitespace: 'all' })), 'allWhitespace');
+    mark = posted.length;
+    await wc.handle({ type: 'wcWhitespace', whitespace: 'exact' });
+    await waitPosted('wcDiff', mark, (m) => m.diff?.path === 'sides.txt' && m.diff.combined === true);
+
+    // index の変更を作業ツリーで戻した: 1 つの差分では表せない（status の形は変わらないので、一覧は送り直さない）
+    writeFileSync(file, 'a\nb\nc\nd\ne\n');
+    await vscode.commands.executeCommand('amonhen.refresh');
+    assert.equal(await note(() => wc.handle({ type: 'wcSelect', group: 'unstaged', path: 'sides.txt' })), 'allUnavailable');
+    // Unstaged・Staged では読める
+    assert.deepEqual(changed((await choose('unstaged')).diff!).map((l) => [l.kind, l.text]), [['-', 'B'], ['+', 'b']]);
+
+    // 節に分けたら、節ごとの行数（Staged は HEAD → index、Unstaged は index → 作業ツリー）
+    writeFileSync(file, 'a\nB\nc\nD\ne\nf\n');
+    await vscode.commands.executeCommand('amonhen.refresh');
+    mark = posted.length;
+    await wc.handle({ type: 'wcLook', sections: true });
+    const split = await waitPosted('wcSplitStats', mark, (m) => m.unstaged.some((s) => s.path === 'sides.txt'));
+    const count = (list: { path: string; added: number | null; removed: number | null }[]) => {
+      const s = list.find((x) => x.path === 'sides.txt')!;
+      return [s.added, s.removed];
+    };
+    assert.deepEqual(count(split.staged), [1, 1]);
+    assert.deepEqual(count(split.unstaged), [2, 1]);
+  } finally {
+    await wc.handle({ type: 'wcLook', sections: false });
+    await wc.handle({ type: 'wcWhitespace', whitespace: 'exact' });
+    await wc.handle({ type: 'wcSide', side: 'unstaged' });
+    git('reset', '-q', '--hard', start);
+    rmSync(file, { force: true });
+    rmSync(other, { force: true });
     await vscode.commands.executeCommand('amonhen.refresh');
   }
 }
@@ -4965,6 +5072,10 @@ suite('Amon Hen in VSCode', () => {
 
   test('ignores whitespace in the Working Copy diff through the daemon', async () => {
     await workingWhitespaceFlow();
+  });
+
+  test('shows the Unstaged, Staged or All side of the Working Copy diff through the daemon', async () => {
+    await workingSidesFlow();
   });
 
   test('shows git notes in the details through the daemon', async () => {
