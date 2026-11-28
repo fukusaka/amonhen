@@ -81,6 +81,8 @@ pub enum Row<'a> {
         files: Vec<String>,
         all: bool,
         some: bool,
+        /// 節分けのときの節（両方の節に同じディレクトリが出るので、行の鍵に足す）。
+        section: Option<WorkingSide>,
     },
     File {
         entry: &'a StatusEntry,
@@ -121,7 +123,7 @@ pub fn list_rows<'a>(
             paths: part.iter().map(|e| e.path.clone()).collect(),
         });
         for mut row in rows(&part, layout, collapsed) {
-            if let Row::File { section, .. } = &mut row {
+            if let Row::File { section, .. } | Row::Dir { section, .. } = &mut row {
                 *section = side;
             }
             out.push(row);
@@ -190,6 +192,7 @@ pub fn rows<'a>(
                 files: Vec::new(),
                 all: false,
                 some: false,
+                section: None,
             });
             let inside = walk(child, &path, depth + 1, out);
             if let Row::Dir {
@@ -455,6 +458,11 @@ pub struct Input<'a> {
     /// 一覧を Staged・Unstaged の節に分けるか、と節ごとの行数（Staged, Unstaged。パスごと。読めていなければ None）。
     pub sections: bool,
     pub split_stats: Option<&'a (LineStats, LineStats)>,
+    /// すべてのファイル（HEAD の木に作業ツリーの変更を重ねたもの）を出しているなら、その木（macOS 版・GTK4 版の
+    /// 一覧の上の「変更｜すべてのファイル」）。
+    pub browser: Option<&'a crate::allfiles::Browser>,
+    /// 一覧が最後に知らせた選んだ位置（同じ一覧の間だけ。渡さないと、描き直したときに選択が外れる）。
+    pub selected_index: Option<Option<usize>>,
 }
 
 /// パスごとの行数（追加, 削除。バイナリは None）。
@@ -495,6 +503,10 @@ pub struct Callbacks<'a> {
     pub issue_host: &'a ElementRef<Grid>,
     /// コミットの入力を件名の 1 行に畳む・開く。
     pub collapse: Callback<()>,
+    /// 変更（false）とすべてのファイル（true）を切り替える。
+    pub all_files: Box<dyn Fn(bool) -> Callback<()> + 'a>,
+    /// すべてのファイルの行を選んだ（`Browser::rows` の番号）。
+    pub all_row: Callback<Option<usize>>,
 }
 
 /// Working Copy の 2 つの部分: まん中の列のファイルの一覧と、右の列の上のコミットの入力（macOS 版・GTK4 版と
@@ -519,6 +531,31 @@ fn mark(entry: &StatusEntry) -> char {
             char::from(side)
         }
     }
+}
+
+/// 一覧の行の鍵（行の Tag にもする。選んだ行を部品から読んで、行に戻す）。一部だけ stage したファイルは両方の
+/// 節に出るので、鍵に節を足す。
+pub fn row_key(row: &Row) -> String {
+    match row {
+        Row::Section { side, .. } => format!("section:{side:?}"),
+        Row::Dir {
+            path,
+            section: Some(side),
+            ..
+        } => format!("dir:{side:?}:{path}"),
+        Row::Dir { path, .. } => format!("dir:{path}"),
+        Row::File {
+            entry,
+            section: Some(side),
+            ..
+        } => format!("{side:?}:{}", entry.path),
+        Row::File { entry, .. } => entry.path.clone(),
+    }
+}
+
+/// 一覧を作り直す鍵の、status の分（status が替わるたびに作り直す）。
+pub fn list_key(status: Option<&StatusSnapshot>) -> u64 {
+    status.map_or(0, |s| s.generation)
 }
 
 /// 次のコミットに含めているか（stage 済みで、作業ツリーに残りがない）。
@@ -788,27 +825,41 @@ pub fn view(input: Input, callbacks: Callbacks) -> Parts {
         .placeholder_text(tr!("Filter"))
         .margin(Thickness::new(0.0, 0.0, 0.0, 6.0))
         .on_text_changed(callbacks.filter);
-    // 一覧の上の行: 含めるチェックと数、右端に見せ方の切り替え（macOS 版の一覧の上の行）。
+    // 一覧の上の行: 左に変更とすべてのファイルの切り替え、右端に節分けと見せ方の切り替え（macOS 版の一覧の上の
+    // 行）。含めるチェックと数はその下の行（すべてのファイルでは出さない）。
+    let all_files = input.browser.is_some();
     let header = Grid::new()
-        .columns([
-            GridLength::Star(1.0),
-            GridLength::Auto,
-            GridLength::Auto,
-            GridLength::Auto,
-        ])
+        .columns([GridLength::Auto, GridLength::Star(1.0), GridLength::Auto])
         .margin(Thickness::new(0.0, 0.0, 0.0, 6.0))
         .grid_row(0)
         .children((
-            include,
-            // 節分けの切り替えと、見せ方の切り替え（macOS 版の一覧の上の行の右端）。
             StackPanel::new()
-                .grid_column(1)
+                .orientation(Orientation::Horizontal)
+                .spacing(2.0)
+                .vertical_alignment(VerticalAlignment::Center)
+                .children((
+                    crate::small::toggle(tr!("Changes"), !all_files, |b| {
+                        b.on_click((callbacks.all_files)(false))
+                    })
+                    .tooltip(tr!("Changed files, with checkboxes for the next commit")),
+                    crate::small::toggle(tr!("All Files"), all_files, |b| {
+                        b.on_click((callbacks.all_files)(true))
+                    })
+                    .tooltip(tr!(
+                        "Every file in the working tree (ignored files are left out)"
+                    )),
+                )),
+            // 節分けの切り替えと、見せ方の切り替え（macOS 版の一覧の上の行の右端）。すべてのファイルでは節に
+            // 分けない（GTK4 版と同じ）。
+            StackPanel::new()
+                .grid_column(2)
                 .orientation(Orientation::Horizontal)
                 .spacing(2.0)
                 .vertical_alignment(VerticalAlignment::Center)
                 .children((
                     crate::small::toggle("⊟", input.sections, |b| {
                         b.margin(Thickness::new(0.0, 0.0, 6.0, 0.0))
+                            .is_enabled(!all_files)
                             .on_click(callbacks.sections.clone())
                     })
                     .tooltip(tr!(
@@ -823,14 +874,30 @@ pub fn view(input: Input, callbacks: Callbacks) -> Parts {
                     ),
                 )),
         ));
-    // sparse checkout の注記は、絞り込みの欄の上。
-    let filter = StackPanel::new()
+    // 含めるチェックと数の行（すべてのファイルでは空。行はいつも置いておく）。
+    let include = Border::new()
         .grid_row(1)
-        .children((sparse_note, filter_row));
+        .margin(Thickness::new(
+            0.0,
+            0.0,
+            0.0,
+            if all_files { 0.0 } else { 6.0 },
+        ))
+        .content(if all_files { View::empty() } else { include });
+    // sparse checkout の注記は、絞り込みの欄の上（すべてのファイルでは絞り込まない）。
+    let filter = StackPanel::new().grid_row(2).children((
+        sparse_note,
+        Border::new().content(if all_files {
+            View::empty()
+        } else {
+            filter_row.into()
+        }),
+    ));
     let indent = |depth: usize| Thickness::new(18.0 * depth as f64, 0.0, 0.0, 0.0);
     let rows = list_rows(&entries, input.layout, input.collapsed, input.sections)
         .into_iter()
         .map(|row| {
+            let key = row_key(&row);
             let (entry, depth, section) = match row {
                 // 節の見出し: 名前と数、右端に Stage All・Unstage All（GTK4 版と同じ）。
                 Row::Section { side, paths } => {
@@ -867,7 +934,6 @@ pub fn view(input: Input, callbacks: Callbacks) -> Parts {
                                 .grid_column(1),
                             action,
                         ));
-                    let key = format!("section:{side:?}");
                     return (
                         key.clone(),
                         ListViewItem::new()
@@ -878,12 +944,12 @@ pub fn view(input: Input, callbacks: Callbacks) -> Parts {
                 }
                 Row::Dir {
                     name,
-                    path,
                     depth,
                     collapsed,
                     files,
                     all,
                     some,
+                    ..
                 } => {
                     // 一部だけ含めているディレクトリは ▣（どちらでもない状態。状態が変わるたびに作り直す）。
                     let check = compact(CheckBox::new())
@@ -891,7 +957,7 @@ pub fn view(input: Input, callbacks: Callbacks) -> Parts {
                         .is_enabled(!files.is_empty())
                         .on_is_checked_changed((callbacks.stage_all)(files, !all));
                     let check = if some && !all {
-                        check.element_ref(&(input.mixed)(&format!("dir:{path}")))
+                        check.element_ref(&(input.mixed)(&key))
                     } else {
                         check
                     };
@@ -912,7 +978,6 @@ pub fn view(input: Input, callbacks: Callbacks) -> Parts {
                                 .text_trimming(TextTrimming::CharacterEllipsis)
                                 .grid_column(1),
                         ));
-                    let key = format!("dir:{path}");
                     return (
                         key.clone(),
                         ListViewItem::new()
@@ -1085,11 +1150,6 @@ pub fn view(input: Input, callbacks: Callbacks) -> Parts {
             } else {
                 row.menu(Menu::new(items, (callbacks.file_menu)(entry.path.clone())))
             };
-            // 一部だけ stage したファイルは両方の節に出るので、鍵に節を足す。
-            let key = match section {
-                Some(side) => format!("{side:?}:{}", entry.path),
-                None => entry.path.clone(),
-            };
             (
                 key.clone(),
                 ListViewItem::new()
@@ -1098,30 +1158,61 @@ pub fn view(input: Input, callbacks: Callbacks) -> Parts {
                     .content(row),
             )
         });
+    // Ctrl・Shift で複数選べる（選んだファイルの差分を並べる。macOS 版・GTK4 版と同じ。選んだ行は部品から読む）。
     let list = ListView::new()
-        .on_selection_changed(callbacks.selected)
-        .collection_slot(ListViewSlot::Items, rows);
+        .selection_mode(ListViewSelectionMode::Extended)
+        .on_selection_changed(callbacks.selected);
+    let list = match input.selected_index {
+        Some(index) => list.selected_index(index),
+        None => list,
+    }
+    .collection_slot(ListViewSlot::Items, rows);
     // reactor の ListView は、キーつきの項目を消すと、その場所が空いたまま残る。status が替わるたびに一覧ごと
     // 作り直して避ける（替わるのは stage・コミット・外での変更のとき）。
     // 絞り込みを変えたときも作り直す。
-    let generation = input.status.map_or(0, |s| s.generation);
-    let list = Grid::new()
-        .element_ref(input.list_host)
-        .grid_row(2)
-        .children((View::keyed_fragment([(
+    let list: View = match input.browser {
+        // すべてのファイル: HEAD の木に作業ツリーの変更を重ねた木（History のすべてのファイルと同じ一覧）。
+        Some(browser) => {
+            let chosen = browser
+                .open
+                .as_deref()
+                .and_then(|open| browser.rows.iter().position(|r| r.node.path == open));
+            View::keyed_fragment([(
+                "all".to_owned(),
+                crate::allfiles::list(
+                    &browser.rows,
+                    input.layout != Layout::Tree,
+                    &browser.expanded,
+                    chosen,
+                    callbacks.all_row,
+                ),
+            )])
+        }
+        None => View::keyed_fragment([(
             format!(
-                "{generation}:{}:{}:{}:{}",
+                "{}:{}:{}:{}:{}",
+                list_key(input.status),
                 input.filter,
                 input.layout.name(),
                 input.collapsed.len(),
                 input.sections
             ),
             list,
-        )]),));
+        )]),
+    };
     let list = Grid::new()
-        .rows([GridLength::Auto, GridLength::Auto, GridLength::Star(1.0)])
+        .element_ref(input.list_host)
+        .grid_row(3)
+        .children((list,));
+    let list = Grid::new()
+        .rows([
+            GridLength::Auto,
+            GridLength::Auto,
+            GridLength::Auto,
+            GridLength::Star(1.0),
+        ])
         .margin(Thickness::new(14.0, 10.0, 14.0, 0.0))
-        .children((header, filter, list));
+        .children((header, include, filter, list));
     // 右の列の上: 件名、本文（畳んでいれば出さない）、Amend と Commit の行。
     let description: View = if collapsed {
         View::empty()

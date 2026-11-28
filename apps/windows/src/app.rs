@@ -659,6 +659,14 @@ struct Root {
     working_side: crate::data::WorkingSide,
     /// 差分の代わりに出している一言（その側に変更がない・All で出せない）。
     working_note: Option<String>,
+    /// Working Copy の一覧で 2 つ以上選んでいるファイル（パス、一覧の順。差分を並べる）。1 つなら空。
+    working_files: Vec<String>,
+    /// Working Copy の一覧で選んでいるファイルの行の鍵（並べ替えたもの。作り直した一覧で選び直す）。
+    working_tags: Vec<String>,
+    /// Working Copy の一覧が最後に知らせた選んだ位置と、その一覧の鍵（同じ一覧の間は描くたびに渡す）。
+    working_list_index: Option<(String, Option<usize>)>,
+    /// Working Copy の一覧の代わりに出している、すべてのファイルの木（変更に戻すまで）。
+    working_browser: Option<crate::allfiles::Browser>,
     /// 走っている操作（ステータスバーに出す）。
     busy: Option<String>,
     /// Range Diff の画面（開いている間だけ。サイドバーに行を出す）と、比べた回数（古い答えを捨てる）。
@@ -1321,6 +1329,8 @@ enum Message {
     WholeFile(bool),
     /// Settings > Diff & Merge の行の Stage の仕方を選んだ（0 は選んでから、1 は変更の帯）。
     SettingsLineStage(Option<usize>),
+    /// Settings > Diff & Merge の、先頭から開くファイルの数（選んだ番号）。
+    SettingsOpenFiles(Option<usize>),
     /// 行を捨て終えた（失敗ならそのわけ）。
     LinesDiscarded(Option<String>),
     /// 差分の代わりの一言が替わった（なければ None）。
@@ -1713,6 +1723,14 @@ enum Message {
     DiscardFile(String),
     /// Working Copy の一覧で選んだファイル（何番目か）。
     WorkingFile(Option<usize>),
+    /// Working Copy の一覧で選んでいる行（知らせの行の番号と、部品から読んだ行の鍵）。
+    WorkingPicked(Option<usize>, Vec<String>),
+    /// Working Copy の一覧の上の、変更（false）とすべてのファイル（true）の切り替え。
+    WorkingAllFiles(bool),
+    /// Working Copy のすべてのファイルの行を選んだ（何番目か）。
+    WorkingAllRow(Option<usize>),
+    /// 作り直した Working Copy の一覧で、選んでいたファイルの行を選び直す（行ができてから）。
+    WorkingReselect,
     /// 新しいブランチの名前が変わった。
     BranchName(String),
     /// Pull のダイアログで、取り込み方を選んだ。
@@ -1930,6 +1948,10 @@ impl Component for Root {
             working_file: None,
             working_side: Default::default(),
             working_note: None,
+            working_files: Vec::new(),
+            working_tags: Vec::new(),
+            working_list_index: None,
+            working_browser: None,
             busy: None,
             dialog_input: ElementRef::new(),
             tab_host: ElementRef::new(),
@@ -2438,6 +2460,15 @@ impl Root {
                 }
                 self.refs = Some(refs);
                 self.repo = Some(repo.clone());
+                // HEAD が動いたら、すべてのファイルの木を作り直す（開いているファイルも読み直す）。
+                let head = self.refs.as_ref().and_then(|r| r.refs.head);
+                if let Some(browser) = &self.working_browser
+                    && head.is_some_and(|h| h != browser.commit)
+                {
+                    let open = browser.open.clone();
+                    self.rebuild_working_browser(open);
+                    self.load_working_diff();
+                }
                 let tab = self.tab.borrow().clone();
                 OPEN_REPOS.with(|r| {
                     let mut r = r.borrow_mut();
@@ -5710,7 +5741,9 @@ impl Root {
                     });
                 }
                 // 選んでいるファイルの差分も読み直す（stage で行の印が、外での変更で中身が変わる）。
+                self.refresh_working_choice();
                 self.load_working_diff();
+                self.schedule_reselect(context);
             }
             Message::IssueCandidates(body, at, text, items) => {
                 // 読んでいる間に打ち進めていたら出さない（macOS 版と同じ）。
@@ -5896,76 +5929,75 @@ impl Root {
                 });
             }
             Message::WorkingFile(index) => {
+                // 部品が知らせた選んだ位置を覚えて、次に描くときも同じ位置を渡す（渡さないと選択が外れる）。
+                self.working_list_index = Some((self.working_list_key(), index));
                 // 一覧は status が替わるたびに作り直すので、選び直しの知らせ（None）は無視して前の選択を保つ。
+                // 選んだ行は部品から読む（reactor の一覧は 1 つしか知らせない）。読めなければ知らせの行だけ。
                 if let Some(index) = index {
-                    let path = self.status.as_ref().and_then(|s| {
-                        let visible =
-                            crate::workcopy::visible(&s.status.entries, &self.working_filter);
-                        match crate::workcopy::list_rows(
-                            &visible,
-                            self.working_layout,
-                            &self.working_collapsed,
-                            self.working_sections,
-                        )
-                        .get(index)
-                        {
-                            Some(crate::workcopy::Row::File { entry, section, .. }) => {
-                                Some(Ok((entry.path.clone(), *section)))
-                            }
-                            Some(crate::workcopy::Row::Dir { path, .. }) => Some(Err(path.clone())),
-                            Some(crate::workcopy::Row::Section { .. }) | None => None,
-                        }
+                    let cell = self.history.clone();
+                    let requested = self.working_list.request_native_element(move |result| {
+                        let tags = result
+                            .ok()
+                            .map(|element| xaml::selected_tags(&element))
+                            .unwrap_or_default();
+                        with_cell(&cell, |h| {
+                            h.sender
+                                .send(Message::WorkingPicked(Some(index), tags.clone()));
+                        });
                     });
-                    // 節の見出しを選んだときは何もしない。
-                    let Some(path) = path else { return };
-                    // 節の行を選んだら、その節の側で見る（GTK4 版と同じ）。
-                    let path = path.map(|(path, section)| {
-                        if let Some(side) = section {
-                            self.working_side = side;
-                        }
-                        path
-                    });
-                    // ディレクトリの行を選んだら、畳む・開く（差分は前のファイルのまま）。
-                    let path = match path {
-                        Err(dir) => {
-                            if !self.working_collapsed.remove(&dir) {
-                                self.working_collapsed.insert(dir);
-                            }
-                            return;
-                        }
-                        Ok(path) => Some(path),
-                    };
-                    // コンフリクトのあるファイルを選び直したら、マージエディタで開く（GTK4 版・macOS 版は右の列に
-                    // 埋め込む）。同じファイルの選び直しの知らせでは開き直さない（閉じた後にまた開かないように）。
-                    let changed = path != self.working_file;
-                    let conflicted = path.as_ref().and_then(|p| {
-                        let s = self.status.as_ref()?;
-                        s.status
-                            .entries
-                            .iter()
-                            .find(|e| &e.path == p)
-                            .map(|e| e.kind == amonhen_model::StatusKind::Unmerged)
-                    });
-                    // マージエディタを出している間に別のファイルを選んだ: 直しかけなら離れない（Close と同じく
-                    // 確かめる）。でなければ閉じて、そのファイルの差分（コンフリクトならそのマージエディタ）へ。
-                    if changed && self.merge_embedded() {
-                        if self.merge.as_ref().is_some_and(crate::merge::State::dirty) {
-                            self.dialog = Some(Dialog::CloseMerge);
-                            return;
-                        }
-                        self.merge = None;
-                        self.page = Page::WorkingCopy;
-                    }
-                    self.working_file = path.clone();
-                    self.load_working_diff();
-                    if changed
-                        && conflicted == Some(true)
-                        && let Some(path) = path
-                    {
-                        self.update(Message::OpenMerge(path), context);
+                    if !requested {
+                        self.update(Message::WorkingPicked(Some(index), Vec::new()), context);
                     }
                 }
             }
+            Message::WorkingPicked(index, tags) => self.working_picked(index, tags, context),
+            Message::WorkingAllFiles(on) => {
+                self.set_working_all_files(on);
+                if !on {
+                    self.schedule_reselect(context);
+                }
+            }
+            Message::WorkingReselect => {
+                if self.working_browser.is_none()
+                    && self.page == Page::WorkingCopy
+                    && !self.working_tags.is_empty()
+                {
+                    let tags = self.working_tags.clone();
+                    let _ = self.working_list.request_native_element(move |result| {
+                        if let Ok(element) = result {
+                            xaml::select_tags(&element, &tags);
+                        }
+                    });
+                }
+            }
+            Message::WorkingAllRow(Some(index)) => {
+                let flat = self.working_layout != crate::workcopy::Layout::Tree;
+                let Some(browser) = self.working_browser.as_mut() else {
+                    return;
+                };
+                let Some(row) = browser.rows.get(index).cloned() else {
+                    return;
+                };
+                if row.node.is_dir {
+                    browser.toggle(&row.node.path);
+                    browser.refresh(flat);
+                    return;
+                }
+                if browser.open.as_deref() == Some(row.node.path.as_str()) {
+                    return;
+                }
+                browser.open = Some(row.node.path.clone());
+                // 変えたファイルなら、変更に戻ったときにも選んでおく（macOS 版・GTK4 版と同じ）。
+                let changed = self
+                    .status
+                    .as_ref()
+                    .is_some_and(|s| s.status.entries.iter().any(|e| e.path == row.node.path));
+                if changed {
+                    self.working_file = Some(row.node.path);
+                }
+                self.load_working_diff();
+            }
+            Message::WorkingAllRow(None) => {}
             Message::Committed(failed, hooks) => {
                 self.committing = false;
                 if let Some(output) = hooks {
@@ -6823,6 +6855,9 @@ impl Root {
                 });
                 if let Some(path) = first {
                     self.working_file = Some(path);
+                    self.working_files.clear();
+                    self.working_tags.clear();
+                    self.working_browser = None;
                     self.load_working_diff();
                 }
             }
@@ -8933,6 +8968,10 @@ impl Root {
             Message::WorkingLayout(layout) => {
                 if layout != self.working_layout {
                     self.working_layout = layout;
+                    // すべてのファイルの木も、リストか木かを合わせる。
+                    if let Some(browser) = self.working_browser.as_mut() {
+                        browser.refresh(layout != crate::workcopy::Layout::Tree);
+                    }
                     let _ =
                         crate::prefs::set_string(crate::prefs::WORKING_COPY_LAYOUT, layout.name());
                 }
@@ -9038,6 +9077,22 @@ impl Root {
                     self.with_history(|h| {
                         h.session.renderer.forget_diff();
                         h.diff.dirty = true;
+                    });
+                }
+            }
+            Message::SettingsOpenFiles(index) => {
+                let Some(&n) = index.and_then(|i| crate::prefs::DIFF_OPEN_FILES_CHOICES.get(i))
+                else {
+                    return;
+                };
+                // 次に開く差分から効く（開いている差分の畳み方は変えない。GTK4 版と同じ）。
+                if n != crate::prefs::diff_open_files()
+                    && let Err(e) =
+                        crate::prefs::set_string(crate::prefs::DIFF_OPEN_FILES, &n.to_string())
+                {
+                    self.dialog = Some(Dialog::Failed {
+                        title: tr!("Save"),
+                        message: e,
                     });
                 }
             }
@@ -13752,14 +13807,19 @@ impl Root {
         self.with_history(|h| {
             let data = &h.session.data;
             if data.whitespace == amonhen_core::diff::Whitespace::Exact {
-                target = data.working_diff().filter(|(_, d)| !d.staged);
+                // いくつか並べていれば、ファイルごとの差分の行に分ける。
+                target = data
+                    .working_targets(&rows)
+                    .filter(|(_, t)| !t.is_empty() && t.iter().all(|(d, _)| !d.staged));
             }
         });
-        let Some((repo, diff)) = target.filter(|_| !rows.is_empty()) else {
+        let Some((repo, targets)) = target.filter(|_| !rows.is_empty()) else {
             return beep();
         };
         context.spawn_background(move |_| {
-            let result = repo.discard_rows(&diff, &rows);
+            let result = targets
+                .iter()
+                .try_for_each(|(diff, rows)| repo.discard_rows(diff, rows));
             Message::LinesDiscarded(result.err().map(|e| e.to_string()))
         });
     }
@@ -17141,6 +17201,7 @@ impl Root {
                 math_scale: context.callback(Message::SettingsMathScale),
                 math_time_limit: context.callback(Message::SettingsMathTimeLimit),
                 line_stage: context.callback(Message::SettingsLineStage),
+                open_files: context.callback(Message::SettingsOpenFiles),
                 mermaid_button: Box::new(|key: String| {
                     context.callback(move |()| Message::SettingsMermaidButton(key.clone()))
                 }),
@@ -17659,19 +17720,353 @@ impl Root {
         });
     }
 
-    /// Working Copy で選んでいるファイルの差分を読む（なくなっていれば消す）。
-    fn load_working_diff(&self) {
-        let entry = self.working_file.as_ref().and_then(|path| {
-            self.status
-                .as_ref()?
-                .status
+    /// Working Copy の一覧で 1 つの行を選んだ（`index` 番目の行。GTK4 版の `follow_selection`）。
+    fn working_pick(&mut self, index: usize, context: &ComponentContext<Self>) {
+        let path = self.status.as_ref().and_then(|s| {
+            let visible = crate::workcopy::visible(&s.status.entries, &self.working_filter);
+            match crate::workcopy::list_rows(
+                &visible,
+                self.working_layout,
+                &self.working_collapsed,
+                self.working_sections,
+            )
+            .get(index)
+            {
+                Some(crate::workcopy::Row::File { entry, section, .. }) => {
+                    Some(Ok((entry.path.clone(), *section)))
+                }
+                Some(crate::workcopy::Row::Dir { path, .. }) => Some(Err(path.clone())),
+                Some(crate::workcopy::Row::Section { .. }) | None => None,
+            }
+        });
+        // 節の見出しを選んだときは何もしない。
+        let Some(path) = path else { return };
+        // 節の行を選んだら、その節の側で見る（GTK4 版と同じ）。
+        let path = path.map(|(path, section)| {
+            if let Some(side) = section {
+                self.working_side = side;
+            }
+            path
+        });
+        // ディレクトリの行を選んだら、畳む・開く（差分は前のファイルのまま）。
+        let path = match path {
+            Err(dir) => {
+                if !self.working_collapsed.remove(&dir) {
+                    self.working_collapsed.insert(dir);
+                }
+                return;
+            }
+            Ok(path) => Some(path),
+        };
+        // コンフリクトのあるファイルを選び直したら、マージエディタで開く（GTK4 版・macOS 版は右の列に
+        // 埋め込む）。同じファイルの選び直しの知らせでは開き直さない（閉じた後にまた開かないように）。
+        let changed = path != self.working_file;
+        let conflicted = path.as_ref().and_then(|p| {
+            let s = self.status.as_ref()?;
+            s.status
                 .entries
                 .iter()
-                .find(|e| &e.path == path)
-                .cloned()
+                .find(|e| &e.path == p)
+                .map(|e| e.kind == amonhen_model::StatusKind::Unmerged)
         });
+        // マージエディタを出している間に別のファイルを選んだ: 直しかけなら離れない（Close と同じく
+        // 確かめる）。でなければ閉じて、そのファイルの差分（コンフリクトならそのマージエディタ）へ。
+        if changed && self.merge_embedded() {
+            if self.merge.as_ref().is_some_and(crate::merge::State::dirty) {
+                self.dialog = Some(Dialog::CloseMerge);
+                return;
+            }
+            self.merge = None;
+            self.page = Page::WorkingCopy;
+        }
+        self.working_file = path.clone();
+        self.load_working_diff();
+        if changed
+            && conflicted == Some(true)
+            && let Some(path) = path
+        {
+            self.update(Message::OpenMerge(path), context);
+        }
+    }
+
+    /// Working Copy の一覧で選んでいる行が変わった（`tags` は選んでいる行の鍵。読めなければ空で、知らせの
+    /// `index` 番目の行だけ）。2 つ以上のファイルなら差分を並べ、1 つならその行（macOS 版・GTK4 版と同じ）。
+    fn working_picked(
+        &mut self,
+        index: Option<usize>,
+        mut tags: Vec<String>,
+        context: &ComponentContext<Self>,
+    ) {
+        tags.sort();
+        // 作り直した一覧で選び直した（同じ行）なら、何もしない。
+        if !tags.is_empty() && tags == self.working_tags {
+            return;
+        }
+        let rows_files: Vec<(String, String)> = self.status.as_ref().map_or_else(Vec::new, |s| {
+            let visible = crate::workcopy::visible(&s.status.entries, &self.working_filter);
+            crate::workcopy::list_rows(
+                &visible,
+                self.working_layout,
+                &self.working_collapsed,
+                self.working_sections,
+            )
+            .iter()
+            .filter_map(|row| match row {
+                crate::workcopy::Row::File { entry, .. }
+                    if entry.kind != amonhen_model::StatusKind::Unmerged =>
+                {
+                    Some((crate::workcopy::row_key(row), entry.path.clone()))
+                }
+                _ => None,
+            })
+            .collect()
+        });
+        // 選んだファイル（一覧の順。ディレクトリ・節の見出しの行とコンフリクトは除く。両方の節に出るファイルは
+        // 1 つ）。
+        let mut files: Vec<String> = Vec::new();
+        for (key, path) in &rows_files {
+            if tags.contains(key) && !files.contains(path) {
+                files.push(path.clone());
+            }
+        }
+        // 選び直す行として覚えるのはファイルの行だけ（ディレクトリの行は押すたびに畳む・開く）。
+        self.working_tags = tags
+            .iter()
+            .filter(|t| rows_files.iter().any(|(key, _)| key == *t))
+            .cloned()
+            .collect();
+        if files.len() >= 2 {
+            if files != self.working_files {
+                self.working_files = files;
+                self.working_file = None;
+                self.load_working_diff();
+            }
+            return;
+        }
+        self.working_files.clear();
+        // 1 つだけ選んでいれば、その行（知らせの番号は、選んだ最初の行のことがある）。
+        let index = match tags.as_slice() {
+            [tag] => self.working_row_of(tag).or(index),
+            _ => index,
+        };
+        if let Some(index) = index {
+            self.working_pick(index, context);
+        }
+    }
+
+    /// 一覧を作り直した後、行ができてから選び直す（作ったばかりの一覧は、行を少しずつ作る）。
+    fn schedule_reselect(&self, context: &ComponentContext<Self>) {
+        if self.working_tags.is_empty() {
+            return;
+        }
+        for wait in [80, 300] {
+            context.spawn_background(move |_| {
+                std::thread::sleep(std::time::Duration::from_millis(wait));
+                Message::WorkingReselect
+            });
+        }
+    }
+
+    /// Working Copy の一覧を作り直す鍵（これが替わると一覧ごと作り直す）。
+    fn working_list_key(&self) -> String {
+        format!(
+            "{}:{}:{}:{}:{}:{}",
+            crate::workcopy::list_key(self.status.as_deref()),
+            self.working_filter,
+            self.working_layout.name(),
+            self.working_collapsed.len(),
+            self.working_sections,
+            self.working_browser.is_some()
+        )
+    }
+
+    /// Working Copy の一覧で、鍵が `key` の行の番号。
+    fn working_row_of(&self, key: &str) -> Option<usize> {
+        let s = self.status.as_ref()?;
+        let visible = crate::workcopy::visible(&s.status.entries, &self.working_filter);
+        crate::workcopy::list_rows(
+            &visible,
+            self.working_layout,
+            &self.working_collapsed,
+            self.working_sections,
+        )
+        .iter()
+        .position(|row| crate::workcopy::row_key(row) == key)
+    }
+
+    /// Working Copy の一覧の上の、変更（false）とすべてのファイル（true）の切り替え（GTK4 版の
+    /// `all_files_changed`）。すべてのファイルでは、差分に出していたファイルを木でも開く（ファイル全体の差分）。
+    /// 変更に戻ったら、出していた（変えた）ファイルを選び直す。
+    fn set_working_all_files(&mut self, on: bool) {
+        if on == self.working_browser.is_some() {
+            return;
+        }
+        if on {
+            let open = self.working_file.clone();
+            self.working_files.clear();
+            self.rebuild_working_browser(open);
+            if self.working_browser.is_none() {
+                return beep();
+            }
+        } else {
+            self.working_browser = None;
+            // 一覧を作り直したら、出していたファイルの行を選び直す（効き目は use_effect）。
+            self.working_tags = self
+                .working_file
+                .as_deref()
+                .and_then(|path| {
+                    let s = self.status.as_ref()?;
+                    let visible = crate::workcopy::visible(&s.status.entries, &self.working_filter);
+                    let rows = crate::workcopy::list_rows(
+                        &visible,
+                        self.working_layout,
+                        &self.working_collapsed,
+                        self.working_sections,
+                    );
+                    let mine = |row: &crate::workcopy::Row, side: bool| match row {
+                        crate::workcopy::Row::File { entry, section, .. } => {
+                            entry.path == path && (!side || *section == Some(self.working_side))
+                        }
+                        _ => false,
+                    };
+                    rows.iter()
+                        .find(|r| mine(r, true))
+                        .or_else(|| rows.iter().find(|r| mine(r, false)))
+                        .map(crate::workcopy::row_key)
+                })
+                .into_iter()
+                .collect();
+        }
+        self.load_working_diff();
+    }
+
+    /// すべてのファイルの木を、今の HEAD と status で作り直す（開いているフォルダは保つ。GTK4 版の
+    /// `rebuild_browser`）。HEAD がなければ（まだコミットがない）作らない。
+    fn rebuild_working_browser(&mut self, open: Option<String>) {
+        use amonhen_model::{ChangeKind, FileChange};
+        let Some(repo) = self.repo.clone() else {
+            return;
+        };
+        let head = self.refs.as_ref().and_then(|r| r.refs.head).or_else(|| {
+            serde_json::from_str::<Value>(&repo.run_json(r#"{"op":"resolveCommit","rev":"HEAD"}"#))
+                .ok()
+                .and_then(|v| v["text"].as_str().and_then(amonhen_model::Oid::from_hex))
+        });
+        let Some(head) = head else {
+            self.working_browser = None;
+            return;
+        };
+        let mut changes = Vec::new();
+        for e in self
+            .status
+            .as_ref()
+            .map_or(&[][..], |s| &s.status.entries[..])
+        {
+            let state = if e.worktree != b'.' {
+                e.worktree
+            } else {
+                e.index
+            };
+            let kind = match state {
+                b'?' | b'A' => ChangeKind::Added,
+                b'D' => ChangeKind::Deleted,
+                b'R' => ChangeKind::Renamed,
+                _ => ChangeKind::Modified,
+            };
+            changes.push(FileChange {
+                kind,
+                path: e.path.clone(),
+                old_path: e.orig_path.clone(),
+                old_id: None,
+                new_id: None,
+                submodule: false,
+            });
+            // 名前を変えたファイルの元の名前は、作業ツリーにはもうない（消したファイルと同じく赤の取り消し線）。
+            if let Some(orig) = &e.orig_path {
+                changes.push(FileChange {
+                    kind: ChangeKind::Deleted,
+                    path: orig.clone(),
+                    old_path: None,
+                    old_id: None,
+                    new_id: None,
+                    submodule: false,
+                });
+            }
+        }
+        let expanded = self.working_browser.as_ref().map(|b| b.expanded.clone());
+        let mut browser = crate::allfiles::Browser::new_working(repo, head, changes);
+        if let Some(expanded) = expanded {
+            browser.expanded = expanded;
+        }
+        browser.open = open;
+        browser.refresh(self.working_layout != crate::workcopy::Layout::Tree);
+        self.working_browser = Some(browser);
+    }
+
+    /// Working Copy で選んでいるファイルの差分を読む（なくなっていれば消す）。
+    /// すべてのファイルでは開いたファイル（変えたならファイル全体の差分、変えていなければ HEAD の中身）、
+    /// いくつか選んでいれば並べた差分。
+    fn load_working_diff(&self) {
+        let entries = self
+            .status
+            .as_ref()
+            .map_or(&[][..], |s| &s.status.entries[..]);
+        let find = |path: &str| entries.iter().find(|e| e.path == path).cloned();
         let side = self.working_side;
-        self.with_history(|h| h.session.data.want_working(entry, side));
+        if let Some(browser) = &self.working_browser {
+            let open = browser.open.clone();
+            let head = browser.commit;
+            self.with_history(|h| {
+                let data = &mut h.session.data;
+                match open.as_deref().map(|p| (p, find(p))) {
+                    // 変えたファイルは畳まない（側は All、表せなければ変更のある側。GTK4 版と同じ）。
+                    Some((_, Some(entry))) => {
+                        use crate::data::WorkingSide;
+                        let side = match (entry.is_staged(), entry.is_unstaged()) {
+                            (true, true) => WorkingSide::All,
+                            (true, false) => WorkingSide::Staged,
+                            _ => WorkingSide::Unstaged,
+                        };
+                        data.want_working(Some(entry), side, true);
+                    }
+                    Some((path, None)) => data.want_working_plain_at(head, path.to_owned()),
+                    None => data.want_working(None, side, false),
+                }
+            });
+            return;
+        }
+        if self.working_files.len() >= 2 {
+            let chosen: Vec<amonhen_model::StatusEntry> = self
+                .working_files
+                .iter()
+                .filter_map(|p| find(p))
+                .filter(|e| e.kind != amonhen_model::StatusKind::Unmerged)
+                .collect();
+            self.with_history(|h| h.session.data.want_working_multi(chosen, side));
+            return;
+        }
+        let entry = self.working_file.as_deref().and_then(find);
+        self.with_history(|h| h.session.data.want_working(entry, side, false));
+    }
+
+    /// status が替わった: 並べているファイルのうち、もう変更のないものを除く（1 つになったら、そのファイルだけ）。
+    /// すべてのファイルの木は作り直す。
+    fn refresh_working_choice(&mut self) {
+        if !self.working_files.is_empty() {
+            let entries = self
+                .status
+                .as_ref()
+                .map_or(&[][..], |s| &s.status.entries[..]);
+            self.working_files
+                .retain(|p| entries.iter().any(|e| &e.path == p));
+            if self.working_files.len() < 2 {
+                self.working_file = self.working_files.pop();
+                self.working_files.clear();
+            }
+        }
+        if let Some(open) = self.working_browser.as_ref().map(|b| b.open.clone()) {
+            self.rebuild_working_browser(open);
+        }
     }
 
     /// 欄の中身を、開いている worktree の下書きとして覚える（どちらも空なら消す。GTK4 版の `save_draft`）。
@@ -17867,9 +18262,12 @@ impl Root {
         }
         // 差分の帯: 左にファイルのパス、右に空白・折り返し・検索、見る側（Unstaged・Staged・All。Working Copy で
         // 1 つ）、Discard File（macOS 版・GTK4 版と同じ並び）。
+        // すべてのファイルで開いたファイルは見る側を選ばない（ファイル全体の差分。GTK4 版は隠す）。
+        let all_files = self.working_browser.is_some();
         let side_button = |side: crate::data::WorkingSide, index: usize| -> View {
-            crate::small::toggle(side.title(), self.working_side == side, |b| {
-                b.on_click(context.callback(move |()| Message::WorkingSide(Some(index))))
+            crate::small::toggle(side.title(), self.working_side == side && !all_files, |b| {
+                b.is_enabled(!all_files)
+                    .on_click(context.callback(move |()| Message::WorkingSide(Some(index))))
             })
         };
         // 小さな切り替えは Button なので、押しても自分では切り替わらない（作り直さずに見た目だけ替える）。
@@ -17882,11 +18280,47 @@ impl Root {
                 side_button(crate::data::WorkingSide::Staged, 1),
                 side_button(crate::data::WorkingSide::All, 2),
             ));
-        let path = self.working_file.clone().unwrap_or_default();
+        // いくつか選んでいれば「N 個のファイル」（Files to open together の数より多く選んで、その側に変更のある
+        // ものがそれより多ければ、上から何個かを書き添える。GTK4 版・macOS 版と同じ）。すべてのファイルでは開いた
+        // ファイル。
+        let shown_file = match &self.working_browser {
+            Some(browser) => browser.open.clone(),
+            None => self.working_file.clone(),
+        };
+        let path = if self.working_files.len() >= 2 {
+            let side = self.working_side;
+            let candidates = self.status.as_ref().map_or(0, |s| {
+                s.status
+                    .entries
+                    .iter()
+                    .filter(|e| self.working_files.contains(&e.path))
+                    .filter(|e| match side {
+                        crate::data::WorkingSide::Unstaged => e.is_unstaged(),
+                        crate::data::WorkingSide::Staged => e.is_staged(),
+                        crate::data::WorkingSide::All => true,
+                    })
+                    .count()
+            });
+            let n = crate::prefs::diff_open_files();
+            let mut title = tr!("{count} files", count = self.working_files.len());
+            if candidates > n {
+                title += &format!("  {}", tr!("(showing the first {n})", n = n));
+            }
+            title
+        } else {
+            shown_file.clone().unwrap_or_default()
+        };
         // いつも置いておき、ファイルを選んでいなければ押せない（出し入れすると reactor が差し込む位置を誤る）。
+        // すべてのファイルで開いた、変えていないファイルにも押せない。
         let discard: View = {
             {
-                let path = self.working_file.clone();
+                let path = shown_file.filter(|p| {
+                    self.working_files.len() < 2
+                        && self
+                            .status
+                            .as_ref()
+                            .is_some_and(|s| s.status.entries.iter().any(|e| &e.path == p))
+                });
                 crate::small::button("Discard File", |b| {
                     b.margin(Thickness::new(6.0, 0.0, 0.0, 0.0))
                         .is_enabled(path.is_some())
@@ -18390,6 +18824,7 @@ impl Root {
                 &browser.rows,
                 flat,
                 &browser.expanded,
+                None,
                 context.callback(Message::AllFilesRow),
             ))
     }
@@ -18580,9 +19015,15 @@ impl Root {
                 .data
                 .working
                 .as_ref()
+                // 並べた差分・画像・すべてのファイルで開いたファイルでは押せない（GTK4 版と同じ）。
+                .filter(|w| w.multi.is_none() && w.image.is_none())
                 .map_or((0, 0), |w| w.gap_counts());
         });
-        let (gaps, folded) = counts;
+        let (gaps, folded) = if self.working_browser.is_some() {
+            (0, 0)
+        } else {
+            counts
+        };
         let on = gaps > 0 && folded == 0;
         let icon = crate::icons::icon("files", 16.0);
         let hint =
@@ -18957,6 +19398,8 @@ impl Root {
             issue_menu: context.callback(Message::IssueMenu),
             issue_host: &self.issue_host,
             collapse: context.callback(|()| Message::CommitCollapse),
+            all_files: Box::new(|on| context.callback(move |()| Message::WorkingAllFiles(on))),
+            all_row: context.callback(Message::WorkingAllRow),
         };
         let parts = crate::workcopy::view(
             crate::workcopy::Input {
@@ -18980,6 +19423,12 @@ impl Root {
                 commit_collapsed: self.commit_collapsed,
                 sections: self.working_sections,
                 split_stats: self.split_stats.as_ref(),
+                browser: self.working_browser.as_ref(),
+                selected_index: self
+                    .working_list_index
+                    .as_ref()
+                    .filter(|(key, _)| *key == self.working_list_key())
+                    .map(|(_, index)| *index),
                 mixed: &|key: &str| {
                     self.mixed_used.borrow_mut().push(key.to_owned());
                     self.mixed_checks
@@ -18999,7 +19448,28 @@ impl Root {
             used.iter().filter_map(|k| checks.get(k).cloned()).collect()
         };
         let generation = self.status.as_ref().map(|s| s.generation);
-        context.use_effect("mixed-checks", (used, generation), move || {
+        // 一覧を作り直したら（status が替わるたびに作り直す）、選んでいたファイルの行を選び直す（GTK4 版の
+        // `rebuild_list`。選び直しの知らせは、同じ行なので何もしない）。
+        let list_key = self.working_list_key();
+        let (host, tags) = (self.working_list.clone(), self.working_tags.clone());
+        let shown = self.working_browser.is_none() && self.page == Page::WorkingCopy;
+        context.use_effect(
+            "working-reselect",
+            (list_key, tags.clone(), shown),
+            move || {
+                if shown && !tags.is_empty() {
+                    let _ = host.request_native_element(move |result| {
+                        if let Ok(element) = result {
+                            xaml::select_tags(&element, &tags);
+                        }
+                    });
+                }
+                None
+            },
+        );
+        // すべてのファイルから戻ったときも（チェックを作り直している）。
+        let all_files = self.working_browser.is_some();
+        context.use_effect("mixed-checks", (used, generation, all_files), move || {
             for r in &refs {
                 let _ = r.request_native_element(|result| {
                     if let Ok(element) = result
@@ -21574,11 +22044,7 @@ impl HistoryView {
             s.renderer.forget_diff();
             // 同じファイル・側を読み直した（隙間を開いた・stage した）なら、同じ所のまま。
             if std::mem::take(&mut s.data.working_same) {
-                let rows = s
-                    .data
-                    .working
-                    .as_ref()
-                    .map_or(0, |w| w.content().line_count());
+                let rows = s.data.working_content().map_or(0, |c| c.line_count());
                 self.diff.scroll_by(0.0, rows);
             } else {
                 self.diff.scroll_y = 0.0;
@@ -21589,7 +22055,7 @@ impl HistoryView {
         // 差分が替わったら、差分の中の検索をし直す（一致の数だけ。移るのは次・前を押したとき）。
         if diff_replaced && !self.diff_query.is_empty() {
             let view = if self.working_page {
-                s.data.working.as_ref().map(|w| &w.diff.view)
+                s.data.working_content().map(|c| c.view)
             } else {
                 s.data.shown_content().map(|c| c.view)
             };
@@ -21644,7 +22110,7 @@ impl HistoryView {
                 .draw_diff(
                     surface,
                     if self.working_page {
-                        s.data.working.as_deref().map(|w| w.content())
+                        s.data.working_content()
                     } else {
                         s.data.shown_content()
                     },
@@ -21676,7 +22142,7 @@ impl HistoryView {
         use amonhen_layout::DiffRow;
         let data = &self.session.data;
         let view = if self.working_page {
-            data.working.as_ref().map(|w| &w.diff.view)
+            data.working_content().map(|c| c.view)
         } else {
             data.shown_content().map(|c| c.view)
         };
@@ -21716,7 +22182,7 @@ impl HistoryView {
         }
         let data = &self.session.data;
         let view = if self.working_page {
-            data.working.as_ref().map(|w| &w.diff.view)
+            data.working_content().map(|c| c.view)
         } else {
             data.shown_content().map(|c| c.view)
         };
@@ -21880,9 +22346,7 @@ impl HistoryView {
     fn diff_rows(&self) -> usize {
         let data = &self.session.data;
         if self.working_page {
-            data.working
-                .as_ref()
-                .map_or(0, |w| w.content().line_count())
+            data.working_content().map_or(0, |c| c.line_count())
         } else {
             data.shown_content().map_or(0, |c| c.line_count())
         }
@@ -21905,7 +22369,7 @@ impl HistoryView {
     /// 差分の `row` 行目の、表示の行（隠したファイルの見出しなら None）。
     fn line_of_row(&self, row: u32) -> Option<u32> {
         if self.working_page {
-            return self.session.data.working.as_ref()?.content().line_of(row);
+            return self.session.data.working_content()?.line_of(row);
         }
         self.session.data.shown_content()?.line_of(row)
     }
@@ -21956,21 +22420,17 @@ impl HistoryView {
             .map_or(0.0, |s| s.width as f32 / self.diff.scale.max(0.01));
         let top = first as f32 * DIFF_ROW_HEIGHT - self.diff.scroll_y;
         let mode = image::mode();
-        let Some(commit) = self.session.data.commit.as_mut() else {
+        // 欄の持ち主は、Working Copy なら選んだファイルの差分、History ならコミットの差分。
+        let working = self.working_page;
+        let Some((key, path)) = self.session.data.image_file(working, file) else {
             return false;
         };
-        let svg = commit
-            .stacked
-            .files
-            .get(file)
-            .is_some_and(|(path, _)| image::is_svg(path));
+        let svg = image::is_svg(&path);
         let layout = image::layout(top, width, mode, svg);
-        let common = self
-            .session
-            .renderer
-            .image_common(commit.content().key, file);
-        let key = commit.content().key;
-        let view = commit.image_views.entry(file).or_default();
+        let common = self.session.renderer.image_common(key, file);
+        let Some(view) = self.session.data.image_view_mut(working, file) else {
+            return false;
+        };
         let area = if mode == Mode::TwoUp {
             image::two_up_area(layout.canvas, 1)
         } else {
@@ -21980,7 +22440,12 @@ impl HistoryView {
         match image::hit(&layout, mode, view, common, x, y, alt) {
             Some(Hit::Mode(m)) => image::set_mode(m),
             Some(Hit::ShowText) => {
-                if self.session.data.show_svg_as_text(file) {
+                let shown = if working {
+                    self.session.data.show_working_svg_as_text()
+                } else {
+                    self.session.data.show_svg_as_text(file)
+                };
+                if shown {
                     self.session.renderer.forget_diff();
                     self.diff.dirty = true;
                 }
@@ -22029,7 +22494,13 @@ impl HistoryView {
             .as_ref()
             .map_or(0.0, |s| s.width as f32 / self.diff.scale.max(0.01));
         let layout = image::single_layout(width, self.diff.height());
-        let Some(file) = self.session.data.file_view.as_mut() else {
+        // Working Copy では、すべてのファイルで開いた変えていないファイル。
+        let file = if self.working_page {
+            self.session.data.working_plain.as_mut()
+        } else {
+            self.session.data.file_view.as_mut()
+        };
+        let Some(file) = file else {
             return false;
         };
         if file.picture.is_none() {
@@ -22075,9 +22546,12 @@ impl HistoryView {
     fn image_drag(&mut self, file: usize, first: usize, drag: ImageDrag, x: f32, y: f32) {
         // すべてのファイルで開いた画像を動かしている。
         if file == usize::MAX {
-            if let (Some(f), ImageDrag::Pan(x0, y0, px, py)) =
-                (self.session.data.file_view.as_mut(), drag)
-            {
+            let shown = if self.working_page {
+                self.session.data.working_plain.as_mut()
+            } else {
+                self.session.data.file_view.as_mut()
+            };
+            if let (Some(f), ImageDrag::Pan(x0, y0, px, py)) = (shown, drag) {
                 f.picture_view.pan = (px + x - x0, py + y - y0);
                 self.diff.dirty = true;
             }
@@ -22090,20 +22564,15 @@ impl HistoryView {
             .as_ref()
             .map_or(0.0, |s| s.width as f32 / self.diff.scale.max(0.01));
         let top = first as f32 * DIFF_ROW_HEIGHT - self.diff.scroll_y;
-        let Some(commit) = self.session.data.commit.as_mut() else {
+        let working = self.working_page;
+        let Some((key, path)) = self.session.data.image_file(working, file) else {
             return;
         };
-        let svg = commit
-            .stacked
-            .files
-            .get(file)
-            .is_some_and(|(path, _)| image::is_svg(path));
-        let layout = image::layout(top, width, image::mode(), svg);
-        let common = self
-            .session
-            .renderer
-            .image_common(commit.content().key, file);
-        let view = commit.image_views.entry(file).or_default();
+        let layout = image::layout(top, width, image::mode(), image::is_svg(&path));
+        let common = self.session.renderer.image_common(key, file);
+        let Some(view) = self.session.data.image_view_mut(working, file) else {
+            return;
+        };
         match drag {
             ImageDrag::Position(true) => {
                 if let Some(slider) = layout.slider {
@@ -22123,7 +22592,7 @@ impl HistoryView {
 
     fn diff_line(&self, line: usize) -> Option<crate::data::DiffLine> {
         if self.working_page {
-            return self.session.data.working.as_ref()?.content().line(line);
+            return self.session.data.working_content()?.line(line);
         }
         self.session.data.shown_content()?.line(line)
     }
@@ -24441,9 +24910,58 @@ fn working_press(
     args: &xaml::PointerRoutedEventArgs,
 ) {
     use amonhen_layout::DiffRow;
-    let Some(row) = h.row_at_y(position.Y) else {
+    // すべてのファイルで開いた変えていない画像: 拡大縮小・拡大した絵を動かす。
+    if h.session.data.working_plain.is_some() {
+        if h.picture_press(position.X, position.Y)
+            && let Ok(pointer) = args.Pointer()
+        {
+            let _ = source.CapturePointer(&pointer);
+        }
+        return;
+    }
+    // 画像の比べる欄: 比べ方・位置・拡大縮小・絵を動かす（History と同じ）。
+    let line = ((h.diff.scroll_y + position.Y) / DIFF_ROW_HEIGHT).floor();
+    if line >= 0.0
+        && let Some(crate::data::DiffLine::Panel(file, k)) = h.diff_line(line as usize)
+    {
+        let first = line as usize - k as usize;
+        let alt = xaml::InputKeyboardSource::GetKeyStateForCurrentThread(xaml::VirtualKey::Menu)
+            .is_ok_and(|s| s.contains(xaml::CoreVirtualKeyStates::Down));
+        if h.image_press(file as usize, first, position.X, position.Y, alt)
+            && let Ok(pointer) = args.Pointer()
+        {
+            let _ = source.CapturePointer(&pointer);
+        }
+        return;
+    }
+    // 並べた差分のファイルの見出し（上に張り付いたものも）: そのファイルを畳む・開く（GTK4 版と同じ）。
+    let stuck = h.session.data.working.as_ref().and_then(|w| {
+        w.multi.as_ref()?;
+        crate::render::sticky_header(w.content().file_lines(), h.diff.scroll_y)
+            .filter(|&(_, top)| position.Y >= top && position.Y < top + DIFF_ROW_HEIGHT)
+            .and_then(|(line, _)| match w.content().line(line) {
+                Some(crate::data::DiffLine::Row(i)) => Some(i as usize),
+                _ => None,
+            })
+    });
+    let Some(row) = stuck.or_else(|| h.row_at_y(position.Y)) else {
         return;
     };
+    if let Some(file) = h
+        .session
+        .data
+        .working
+        .as_ref()
+        .and_then(|w| w.header_file(row))
+    {
+        if h.session.data.toggle_working_file(file) && stuck.is_some() {
+            // 張り付いた見出しで畳んだら、その見出しを一番上に。
+            if let Some(line) = h.line_of_row(row as u32) {
+                h.diff.scroll_y = line as f32 * DIFF_ROW_HEIGHT;
+            }
+        }
+        return;
+    }
     let bar = crate::prefs::line_stage_bar();
     let width = h.diff_width();
     let top = h.row_screen_top(row as u32);

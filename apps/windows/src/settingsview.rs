@@ -214,6 +214,8 @@ pub struct Callbacks<'a> {
     pub math_time_limit: Callback<Option<usize>>,
     /// Diff & Merge: 行の Stage の仕方を選んだ（0 は選んでから hunk の見出しで、1 は変更の帯・行番号を押して）。
     pub line_stage: Callback<Option<usize>>,
+    /// 先頭から開くファイルの数（選んだ番号）。
+    pub open_files: Callback<Option<usize>>,
     /// 窓の背景の欄（Choose…・Remove、位置、横棒、ツールバーの色を敷くか・色）。
     pub backdrop: BackdropCallbacks<'a>,
     pub ssh: crate::sshhosts::Callbacks<'a>,
@@ -1047,6 +1049,33 @@ pub fn view(state: &State, callbacks: Callbacks) -> View {
                 state.auto_magic_merge,
                 tr!("Resolve unambiguous conflicts when the merge editor opens"),
             ),
+            // 複数のファイルを並べた差分で、先頭から開くファイルの数（GTK4 版・macOS 版と同じ）。
+            StackPanel::new()
+                .orientation(Orientation::Horizontal)
+                .spacing(12.0)
+                .margin(Thickness::new(0.0, 8.0, 0.0, 0.0))
+                .children((
+                    TextBlock::new()
+                        .text(tr!("Files to open together"))
+                        .vertical_alignment(VerticalAlignment::Center),
+                    ComboBox::new()
+                        .items_source(
+                            crate::prefs::DIFF_OPEN_FILES_CHOICES
+                                .iter()
+                                .map(|n| n.to_string())
+                                .collect::<Vec<_>>(),
+                        )
+                        .selected_index(
+                            crate::prefs::DIFF_OPEN_FILES_CHOICES
+                                .iter()
+                                .position(|&n| n == crate::prefs::diff_open_files())
+                                .unwrap_or(2),
+                        )
+                        .on_selection_changed(callbacks.open_files.clone()),
+                )),
+            note(tr!(
+                "When a diff lists several files (a commit in History, files selected in Working Copy), this many are shown open from the top."
+            )),
             // Working Copy の差分で行を stage する形（GTK4 版・macOS 版と同じ 2 つ）。
             StackPanel::new()
                 .orientation(Orientation::Horizontal)

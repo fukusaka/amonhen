@@ -508,19 +508,248 @@ pub struct WorkingShown {
     /// 隙間の行（hunk の見出しの行）の番号（昇順。並びが隙間の番号）。
     pub gap_rows: Vec<u32>,
     pub pointer: WorkingPointer,
+    /// 選んだいくつかのファイルを並べているなら、その中身（`diff` は並べた表示を持つ、仮の差分）。
+    pub multi: Option<WorkingMulti>,
+    /// 画像なら、差分の代わりに出す前と後の比べる欄（そのファイルだけの全ファイルの差分と、欄の表示の行）と、
+    /// 欄の見せ方、絵を読んだものを取っておく鍵（読むたびに新しい）。
+    pub image: Option<(Arc<StackedDiff>, DiffTree)>,
+    pub image_views: HashMap<usize, crate::imagediff::View>,
+    pub key: u64,
+}
+
+/// Working Copy の一覧で 2 つ以上選んだときに並べている差分（GTK4 版の `Multi`）。
+pub struct WorkingMulti {
+    /// 並べたファイルの差分（その側に変更のあるものの、上から Files to open together の数まで）と、畳んだか。
+    pub diffs: Vec<Arc<amonhen_core::WorkingDiff>>,
+    pub collapsed: Vec<bool>,
+    /// ファイルごとの隙間の番号の始まり（ファイルの番号・並べた差分での最初の番号・数。畳んだファイルはない）。
+    pub offsets: Vec<(usize, u32, u32)>,
+    /// ファイルの見出しの行の番号と、見出しの印（A・D・M・R）。
+    pub file_rows: Vec<u32>,
+    pub file_marks: Vec<char>,
+}
+
+/// 並べた差分のファイルの見出しの印（GTK4 版の `header_mark`）。
+fn header_mark(entry: &amonhen_model::StatusEntry) -> char {
+    let state = if entry.worktree != b'.' {
+        entry.worktree
+    } else {
+        entry.index
+    };
+    match state {
+        b'?' | b'A' => 'A',
+        b'D' => 'D',
+        b'R' => 'R',
+        _ => 'M',
+    }
+}
+
+/// 差分を読むたびに新しい、画像を読んだものを取っておく鍵。
+fn next_key() -> u64 {
+    static NEXT: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(1 << 48);
+    NEXT.fetch_add(1, std::sync::atomic::Ordering::Relaxed)
+}
+
+/// Working Copy の差分の代わりに画像の比べる欄を出すか（画像でバイナリ、または絵で見ている SVG。GTK4 版の
+/// `shows_as_image`）。
+fn working_image(diff: &amonhen_core::WorkingDiff, svg_text: &HashSet<String>) -> bool {
+    let path = &diff.entry.path;
+    let svg = crate::imagediff::is_svg(path);
+    (crate::imagediff::is_image(path) && diff.file.binary) || (svg && !svg_text.contains(path))
+}
+
+/// 画像の比べる欄（そのファイルだけの全ファイルの差分と、欄の表示の行）。足したファイルは前を、消したファイルは
+/// 後を空に（GTK4 版の `show_image`）。
+fn image_panel(diff: &amonhen_core::WorkingDiff) -> (Arc<StackedDiff>, DiffTree) {
+    let e = &diff.entry;
+    let added = e.worktree == b'?' || ((diff.combined.is_some() || diff.staged) && e.index == b'A');
+    let deleted = e.worktree == b'D' || (diff.staged && e.index == b'D');
+    let mut file = diff.file.clone();
+    if added {
+        file.old = Default::default();
+    }
+    if deleted {
+        file.new = Default::default();
+    }
+    let tree = DiffTree {
+        lines: (0..crate::imagediff::PANEL_LINES as u32)
+            .map(|k| DiffLine::Panel(0, k))
+            .collect(),
+        line_of_row: vec![u32::MAX; diff.view.rows.len()],
+        panels: [0].into_iter().collect(),
+        ..Default::default()
+    };
+    (
+        Arc::new(StackedDiff {
+            files: vec![(e.path.clone(), file)],
+        }),
+        tree,
+    )
+}
+
+/// 選んだいくつかのファイルの差分 `diffs` を見出しでつないだ表示（畳んだファイルは見出しだけ。GTK4 版の
+/// `show_multi_view`）。`own` はファイルごとの開いた隙間。
+fn multi_shown(
+    path: String,
+    diffs: Vec<Arc<amonhen_core::WorkingDiff>>,
+    collapsed: Vec<bool>,
+    own: &[HashMap<u32, (u32, u32)>],
+    side: WorkingSide,
+) -> WorkingShown {
+    use amonhen_layout::DiffRow;
+    let refs: Vec<&amonhen_core::WorkingDiff> = diffs.iter().map(|d| d.as_ref()).collect();
+    let mut view = amonhen_core::WorkingDiff::stacked_view(&refs, &collapsed, &PROFILE);
+    // stage 済みの側の変更は、どれも index に入っている（1 ファイルのときと同じく印を埋める）。
+    if side == WorkingSide::Staged {
+        for row in &mut view.rows {
+            if matches!(row.kind, DiffRow::ADDED | DiffRow::REMOVED) {
+                row.flags |= DiffRow::STAGED;
+            }
+        }
+    }
+    // 隙間の番号は、並べた差分の頭から数える（畳んだファイルには隙間の行がない）。ファイルごとに直す。
+    let mut offsets = Vec::new();
+    let mut openings = HashMap::new();
+    let mut next = 0u32;
+    for (i, d) in diffs.iter().enumerate() {
+        if collapsed[i] || d.file.binary {
+            continue;
+        }
+        let count = d
+            .file
+            .lines
+            .iter()
+            .filter(|l| l.kind == DiffRow::HUNK)
+            .count() as u32;
+        for (&gap, &o) in own.get(i).into_iter().flatten() {
+            if gap < count {
+                openings.insert(next + gap, o);
+            }
+        }
+        offsets.push((i, next, count));
+        next += count;
+    }
+    let rows_of = |kind: u8| -> Vec<u32> {
+        view.rows
+            .iter()
+            .enumerate()
+            .filter(|(_, r)| r.kind == kind)
+            .map(|(i, _)| i as u32)
+            .collect()
+    };
+    let (gap_rows, file_rows) = (rows_of(DiffRow::HUNK), rows_of(DiffRow::FILE));
+    let combined = (side == WorkingSide::All).then(|| {
+        view.rows
+            .iter()
+            .map(|r| r.flags & DiffRow::STAGED != 0)
+            .collect()
+    });
+    let (highlights, syntax) = (highlights_of(&view), syntax_of(&view));
+    let first = &diffs[0];
+    let diff = amonhen_core::WorkingDiff {
+        entry: first.entry.clone(),
+        staged: side == WorkingSide::Staged,
+        combined,
+        file: first.file.clone(),
+        view,
+        line_endings: None,
+    };
+    let file_marks = diffs.iter().map(|d| header_mark(&d.entry)).collect();
+    WorkingShown {
+        path,
+        diff: Arc::new(diff),
+        highlights,
+        syntax,
+        tree: None,
+        wrap_cols: 0,
+        selection: Default::default(),
+        anchor: None,
+        side,
+        openings,
+        gap_rows,
+        pointer: WorkingPointer::default(),
+        multi: Some(WorkingMulti {
+            diffs,
+            collapsed,
+            offsets,
+            file_rows,
+            file_marks,
+        }),
+        image: None,
+        image_views: HashMap::new(),
+        key: next_key(),
+    }
 }
 
 impl WorkingShown {
+    /// 並べた差分の `rows`（並べた表示の行）を、ファイルごとの差分の行に分ける（ファイルの差分と、その中の行。
+    /// GTK4 版の `split_multi_rows`）。1 ファイルならそのまま。
+    pub fn split_rows(&self, rows: &[usize]) -> Vec<(Arc<amonhen_core::WorkingDiff>, Vec<usize>)> {
+        let Some(m) = &self.multi else {
+            return vec![(self.diff.clone(), rows.to_vec())];
+        };
+        let mut out: Vec<(usize, Vec<usize>)> = Vec::new();
+        for &row in rows {
+            let Some(file) = m.file_rows.iter().rposition(|&f| (f as usize) < row) else {
+                continue;
+            };
+            let local = row - m.file_rows[file] as usize - 1;
+            match out.iter_mut().find(|(f, _)| *f == file) {
+                Some((_, list)) => list.push(local),
+                None => out.push((file, vec![local])),
+            }
+        }
+        out.into_iter()
+            .filter_map(|(f, rows)| Some((m.diffs.get(f)?.clone(), rows)))
+            .collect()
+    }
+
+    /// 並べた差分の `row` 行目がファイルの見出しなら、そのファイルの番号。
+    pub fn header_file(&self, row: usize) -> Option<usize> {
+        self.multi
+            .as_ref()?
+            .file_rows
+            .binary_search(&(row as u32))
+            .ok()
+    }
+
     pub fn content(&self) -> DiffContent<'_> {
+        // 画像: 差分の行の代わりに前と後の比べる欄（History と同じ欄）。
+        if let Some((stacked, tree)) = &self.image {
+            return DiffContent {
+                view: &self.diff.view,
+                highlights: &self.highlights,
+                syntax: &self.syntax,
+                file_rows: &[],
+                marks: false,
+                file_marks: &[],
+                tree: Some(tree),
+                counts: None,
+                widen: false,
+                stacked: Some(stacked),
+                image_views: Some(&self.image_views),
+                key: self.key,
+                file_mode: false,
+                picture: None,
+                mobile: None,
+                picture_caption: None,
+                selection: None,
+                folds: None,
+            };
+        }
+        let (file_rows, file_marks): (&[u32], &[char]) = match &self.multi {
+            Some(m) => (&m.file_rows, &m.file_marks),
+            None => (&[], &[]),
+        };
         DiffContent {
             view: &self.diff.view,
             highlights: &self.highlights,
             syntax: &self.syntax,
-            file_rows: &[],
+            file_rows,
             // 行の左の帯: All ではいつも（staged かを見せる）、片側では「変更の帯」の形のときだけ（GTK4 版の
             // `mark_column`）。
             marks: self.diff.combined.is_some() || crate::prefs::line_stage_bar(),
-            file_marks: &[],
+            file_marks,
             tree: self.tree.as_ref(),
             counts: None,
             widen: false,
@@ -991,8 +1220,14 @@ pub struct CommitShown {
 }
 
 impl CommitShown {
-    fn new(row: u32, info: serde_json::Value, stacked: Arc<StackedDiff>) -> Self {
-        // 最初はすべて畳んで、見出しだけを並べる（macOS 版・GTK4 版と同じ）。
+    fn new(
+        row: u32,
+        info: serde_json::Value,
+        stacked: Arc<StackedDiff>,
+        repo: &Repository,
+    ) -> Self {
+        // 先頭から Settings > Diff & Merge > Files to open together の数だけ開き、残りは畳んで見出しだけを並べる
+        // （macOS 版・GTK4 版と同じ。下で開く）。
         let collapsed = vec![true; stacked.files.len()];
         let file_marks = stacked.files.iter().map(|(_, d)| change_mark(d)).collect();
         let mut shown = Self {
@@ -1021,8 +1256,21 @@ impl CommitShown {
             },
             version: 0,
         };
-        // 最初の表示（構文の色は、読み込んだ所がこの版 0 の表示のものを送る。最初は隠すファイルがないので、
-        // 畳み方は `collapsed` のまま）。
+        // 生成物と、変更が多すぎるファイルは畳んだまま（macOS 版・GTK4 版と同じ）。まだ差分を取っていないファイルは
+        // ここで取る。
+        for file in 0..shown
+            .stacked
+            .files
+            .len()
+            .min(crate::prefs::diff_open_files())
+        {
+            shown.load_pending(repo, file);
+            let (added, removed) = shown.file_counts(file);
+            if !shown.stacked.generated(file) && added + removed <= EXPAND_ALL_LIMIT {
+                shown.collapsed[file] = false;
+            }
+        }
+        // 最初の表示（構文の色は、読み込んだ所がこの版 0 の表示のものを送る。`syntax_args`）。
         shown.rebuild_view();
         shown.version = 0;
         shown
@@ -1208,9 +1456,27 @@ impl CommitShown {
         (count, added, removed)
     }
 
-    /// 表示を作り直す（構文の色は捨てる）。色を付け直すための、全ファイルと畳んでいるかを返す。
-    fn rebuild_view(&mut self) -> (Arc<StackedDiff>, Vec<bool>) {
-        let stacked = self.stacked.clone();
+    /// 構文の色を求めるための、全ファイルと、今の表示で畳んでいるか（畳んだフォルダの中・比べる欄の画像も畳む）。
+    fn syntax_args(&self) -> (Arc<StackedDiff>, Vec<bool>) {
+        let (_, _, collapsed) = self.view_parts();
+        (self.stacked.clone(), collapsed)
+    }
+
+    /// 表示の木の形（木で見せるとき）、比べる欄を出す画像、表示で畳むファイル。
+    #[allow(clippy::type_complexity)]
+    fn view_parts(
+        &self,
+    ) -> (
+        Option<(
+            HashMap<usize, Vec<FolderLine>>,
+            Vec<u32>,
+            Vec<String>,
+            HashSet<usize>,
+        )>,
+        HashSet<usize>,
+        Vec<bool>,
+    ) {
+        let stacked = &self.stacked;
         // 木なら、畳んだフォルダの中のファイルも畳む（見出しごと隠す）。
         let layout = self.tree_on.then(|| {
             let paths: Vec<&str> = stacked.files.iter().map(|(p, _)| p.as_str()).collect();
@@ -1239,6 +1505,13 @@ impl CommitShown {
         for &file in &panels {
             collapsed[file] = true;
         }
+        (layout, panels, collapsed)
+    }
+
+    /// 表示を作り直す（構文の色は捨てる）。色を付け直すための、全ファイルと畳んでいるかを返す。
+    fn rebuild_view(&mut self) -> (Arc<StackedDiff>, Vec<bool>) {
+        let stacked = self.stacked.clone();
+        let (layout, panels, collapsed) = self.view_parts();
         self.diff = stacked.view(&collapsed, &PROFILE);
         self.index_highlights();
         let layout = layout.or_else(|| {
@@ -1512,6 +1785,8 @@ enum Event {
     Syntax(u64, u32, u32, HashMap<u32, Vec<(u32, u32, u8)>>),
     /// 「すべてのファイル」で開いたファイルの、その時点の中身。
     File(Box<FileShown>),
+    /// Working Copy のすべてのファイルで開いた、変えていないファイルの中身（頼んだ回の番号）。
+    WorkingPlain(Box<FileShown>, u64),
     Extras(u64, u32, serde_json::Value),
     Status(Arc<StatusSnapshot>),
     Working(Box<WorkingShown>, u64),
@@ -1624,7 +1899,17 @@ pub struct Data {
     /// 最後に読んだ差分（空白の扱いを変えたとき、同じものを読み直す）。
     last_want: Option<Want>,
     /// Working Copy で読んだファイルと、両側に変更があるとき stage 済みの側を読んだか（空白の扱いを変えたら読み直す）。
-    working_entry: Option<(amonhen_model::StatusEntry, WorkingSide)>,
+    /// 読んだファイル・側と、ファイル全体で読んだか（すべてのファイルで開いた）。
+    working_entry: Option<(amonhen_model::StatusEntry, WorkingSide, bool)>,
+    /// いくつか選んで並べているなら、そのファイルと側（status が替わったら読み直す）と、並べた差分で畳んだ
+    /// ファイル（選んだファイルが同じ間は保つ。GTK4 版と同じ）。
+    working_multi: Option<(Vec<amonhen_model::StatusEntry>, WorkingSide)>,
+    multi_collapsed: (Vec<String>, HashSet<String>),
+    /// 「テキストで見る」にした Working Copy の SVG（パス。絵の代わりに差分）。
+    working_svg_text: HashSet<String>,
+    /// すべてのファイルで開いた、変えていないファイルの HEAD の中身（届いたもの）と、頼んだ回の番号。
+    pub working_plain: Option<Box<FileShown>>,
+    working_plain_seq: u64,
     /// 差分の代わりに出す一言（その側に変更がない・All で出せない）と、頼んだ回の番号（古い答えを捨てる）。
     pub working_note: Option<String>,
     working_seq: u64,
@@ -2013,6 +2298,11 @@ impl Data {
             commit_wanted: None,
             last_want: None,
             working_entry: None,
+            working_multi: None,
+            multi_collapsed: Default::default(),
+            working_svg_text: HashSet::new(),
+            working_plain: None,
+            working_plain_seq: 0,
             working_note: None,
             working_seq: 0,
             whitespace: Whitespace::Exact,
@@ -2138,9 +2428,17 @@ impl Data {
     /// Working Copy のファイルの差分を、見る側（`side`）で裏で読む。その側に変更がなければ、読まずに一言（macOS 版・
     /// GTK4 版と同じ）。All は HEAD と作業ツリーの 1 本の差分で、表せないとき・空白を無視しているときは一言で
     /// Unstaged と Staged へ案内する。`None` なら出さない。
-    pub fn want_working(&mut self, entry: Option<amonhen_model::StatusEntry>, side: WorkingSide) {
+    /// `whole` ならファイル全体で読む（すべてのファイルで開いた。畳まない）。
+    pub fn want_working(
+        &mut self,
+        entry: Option<amonhen_model::StatusEntry>,
+        side: WorkingSide,
+        whole: bool,
+    ) {
         self.working_seq += 1;
         let seq = self.working_seq;
+        self.working_multi = None;
+        self.want_working_plain(None);
         let Some(entry) = entry else {
             self.working_wanted = None;
             self.working = None;
@@ -2153,7 +2451,8 @@ impl Data {
             return;
         };
         self.working_wanted = Some(entry.path.clone());
-        self.working_entry = Some((entry.clone(), side));
+        self.working_entry = Some((entry.clone(), side, whole));
+        let svg_text = self.working_svg_text.clone();
         let nothing = match side {
             WorkingSide::Unstaged => {
                 (!entry.is_unstaged()).then(|| tr!("No unstaged changes in this file"))
@@ -2181,13 +2480,19 @@ impl Data {
             .iter()
             .map(|(&gap, &(top, bottom))| amonhen_core::diff::GapOpen { gap, top, bottom })
             .collect();
+        let context = if whole { u32::MAX } else { 3 };
         std::thread::spawn(move || {
             let diff = match side {
                 WorkingSide::All if whitespace != Whitespace::Exact => Err(tr!(
                     "All can’t be shown while whitespace is ignored. See Unstaged and Staged."
                 )),
                 WorkingSide::All => {
-                    match repo.working_diff_combined_context(&entry, 3, Some(&opened), &PROFILE) {
+                    match repo.working_diff_combined_context(
+                        &entry,
+                        context,
+                        Some(&opened),
+                        &PROFILE,
+                    ) {
                         Ok(Some(diff)) => Ok(diff),
                         Ok(None) => Err(tr!(
                             "This file’s staged and unstaged changes can’t be shown in one diff. See Unstaged and Staged."
@@ -2199,7 +2504,7 @@ impl Data {
                     .working_diff_context(
                         &entry,
                         side == WorkingSide::Staged,
-                        3,
+                        context,
                         Some(&opened),
                         whitespace,
                         &PROFILE,
@@ -2228,6 +2533,8 @@ impl Data {
                         .filter(|(_, r)| r.kind == DiffRow::HUNK)
                         .map(|(i, _)| i as u32)
                         .collect();
+                    // 画像は History と同じく、前と後を比べる欄（GTK4 版・macOS 版と同じ）。
+                    let image = working_image(&diff, &svg_text).then(|| image_panel(&diff));
                     Event::Working(
                         Box::new(WorkingShown {
                             path: entry.path.clone(),
@@ -2242,6 +2549,10 @@ impl Data {
                             openings,
                             gap_rows,
                             pointer: WorkingPointer::default(),
+                            multi: None,
+                            image,
+                            image_views: HashMap::new(),
+                            key: next_key(),
                         }),
                         seq,
                     )
@@ -2256,26 +2567,31 @@ impl Data {
     /// Working Copy の差分の変わった行 `rows` を `stage`（含める・外す）にする。All（1 本の差分）は行ごとの状態を
     /// そのまま、片側の差分はその側から移す（Unstaged なら含め、Staged なら外す。もう `stage` の側なら何もしない）。
     /// 終わったら status を読み直す。
+    /// いくつか並べているなら、ファイルごとの差分の行に分けて移す（GTK4 版の `split_multi_rows`）。
     pub fn stage_working_rows(&self, rows: Vec<usize>, stage: bool) {
         let Some(working) = &self.working else { return };
         if rows.is_empty() || (working.diff.combined.is_none() && working.diff.staged == stage) {
             return;
         }
-        let (Some(repo), diff, changed) = (
+        let (Some(repo), targets, changed) = (
             self.repo.clone(),
-            working.diff.clone(),
+            working.split_rows(&rows),
             self.changed_tx.clone(),
         ) else {
             return;
         };
         std::thread::spawn(move || {
-            let result = if diff.combined.is_some() {
-                repo.set_rows_staged(&diff, &rows, stage)
-            } else {
-                repo.stage_rows(&diff, &rows)
-            };
-            if let Err(e) = result {
-                eprintln!("行を含められない: {e}");
+            for (diff, rows) in targets {
+                let result = if diff.combined.is_some() {
+                    repo.set_rows_staged(&diff, &rows, stage)
+                } else if diff.staged != stage {
+                    repo.stage_rows(&diff, &rows)
+                } else {
+                    Ok(())
+                };
+                if let Err(e) = result {
+                    eprintln!("行を含められない（{}）: {e}", diff.entry.path);
+                }
             }
             let _ = changed.send(amonhen_watch::Changes::INDEX.0);
         });
@@ -2301,12 +2617,26 @@ impl Data {
 
     /// Working Copy の差分の隙間の行 `index` を開く・畳む（`action` は Down・Up・All・Collapse）。開き方を覚えて
     /// 読み直す。
+    /// いくつか並べているなら、その隙間のファイルの隙間として覚える。
     pub fn set_working_gap(&mut self, index: u32, action: GapAction) {
         let Some(working) = &self.working else { return };
         let Some((gap, opening)) = working.gap_opening(index, action) else {
             return;
         };
-        let key = (working.side, working.path.clone());
+        let (path, gap) = match &working.multi {
+            Some(m) => {
+                let Some(&(file, first, _)) = m
+                    .offsets
+                    .iter()
+                    .find(|&&(_, first, count)| gap >= first && gap < first + count)
+                else {
+                    return;
+                };
+                (m.diffs[file].entry.path.clone(), gap - first)
+            }
+            None => (working.path.clone(), gap),
+        };
+        let key = (working.side, path);
         let map = self.working_gaps.entry(key).or_default();
         match opening {
             Some(o) => {
@@ -2321,7 +2651,9 @@ impl Data {
 
     /// ファイル全体を表示: 変更のない所をすべて開く（`on`）・すべて畳む。
     pub fn set_working_whole(&mut self, on: bool) {
-        let Some(working) = &self.working else { return };
+        let Some(working) = self.working.as_ref().filter(|w| w.multi.is_none()) else {
+            return;
+        };
         let open: HashMap<u32, (u32, u32)> = if on {
             (0..working.gap_rows.len() as u32)
                 .map(|g| (g, (0, u32::MAX)))
@@ -2334,16 +2666,255 @@ impl Data {
         self.reload_working();
     }
 
-    /// 今の Working Copy の差分を、同じファイル・側で読み直す。
+    /// 今の Working Copy の差分を、同じファイル・側で読み直す（いくつか並べていれば、並べたまま）。
     fn reload_working(&mut self) {
-        if let Some((entry, side)) = self.working_entry.clone() {
-            self.want_working(Some(entry), side);
+        if let Some((entries, side)) = self.working_multi.clone() {
+            self.want_working_multi(entries, side);
+        } else if let Some((entry, side, whole)) = self.working_entry.clone() {
+            self.want_working(Some(entry), side, whole);
         }
     }
 
-    /// Working Copy の今の差分（行を捨てるのに使う）。
-    pub fn working_diff(&self) -> Option<(Arc<Repository>, Arc<amonhen_core::WorkingDiff>)> {
-        Some((self.repo.clone()?, self.working.as_ref()?.diff.clone()))
+    /// Working Copy の今の差分の `rows` を捨てる先（ファイルの差分と、その中の行。いくつか並べていれば
+    /// ファイルごとに分ける）。
+    #[allow(clippy::type_complexity)]
+    pub fn working_targets(
+        &self,
+        rows: &[usize],
+    ) -> Option<(
+        Arc<Repository>,
+        Vec<(Arc<amonhen_core::WorkingDiff>, Vec<usize>)>,
+    )> {
+        Some((self.repo.clone()?, self.working.as_ref()?.split_rows(rows)))
+    }
+
+    /// Working Copy で選んだいくつかのファイル `entries` の差分を、見出しでつないで並べる（上から Files to open
+    /// together の数まで）。見る側は 1 ファイルのときと同じで、その側に変更のないファイルは並べない（macOS 版・
+    /// GTK4 版と同じ）。1 つもなければ一言。
+    pub fn want_working_multi(
+        &mut self,
+        entries: Vec<amonhen_model::StatusEntry>,
+        side: WorkingSide,
+    ) {
+        self.working_seq += 1;
+        let seq = self.working_seq;
+        self.working_entry = None;
+        self.want_working_plain(None);
+        self.working_multi = Some((entries.clone(), side));
+        let Some(repo) = self.repo.clone() else {
+            return;
+        };
+        let paths: Vec<String> = entries.iter().map(|e| e.path.clone()).collect();
+        let key = paths.join("\n");
+        self.working_wanted = Some(key.clone());
+        // 選んだファイルが替わったら、畳んだファイルを忘れる。
+        if self.multi_collapsed.0 != paths {
+            self.multi_collapsed = (paths, HashSet::new());
+        }
+        let shown: Vec<amonhen_model::StatusEntry> = entries
+            .into_iter()
+            .filter(|e| match side {
+                WorkingSide::Unstaged => e.is_unstaged(),
+                WorkingSide::Staged => e.is_staged(),
+                WorkingSide::All => true,
+            })
+            .take(crate::prefs::diff_open_files())
+            .collect();
+        if shown.is_empty() {
+            self.working = None;
+            self.working_note = Some(if side == WorkingSide::Staged {
+                tr!("No staged changes in these files")
+            } else {
+                tr!("No unstaged changes in these files")
+            });
+            self.working_changed = true;
+            return;
+        }
+        let own: Vec<HashMap<u32, (u32, u32)>> = shown
+            .iter()
+            .map(|e| {
+                self.working_gaps
+                    .get(&(side, e.path.clone()))
+                    .cloned()
+                    .unwrap_or_default()
+            })
+            .collect();
+        let collapsed_paths = self.multi_collapsed.1.clone();
+        let whitespace = self.whitespace;
+        let (tx, wake) = (self.tx.clone(), self.wake.clone());
+        std::thread::spawn(move || {
+            let mut diffs = Vec::new();
+            let mut kept = Vec::new();
+            for (e, open) in shown.iter().zip(&own) {
+                let opened: Vec<amonhen_core::diff::GapOpen> = open
+                    .iter()
+                    .map(|(&gap, &(top, bottom))| amonhen_core::diff::GapOpen { gap, top, bottom })
+                    .collect();
+                // All は 1 本の差分で表せるもの、空白を無視していないときだけ（表せないファイルは並べない）。
+                let diff = match side {
+                    WorkingSide::All => (whitespace == Whitespace::Exact)
+                        .then(|| {
+                            repo.working_diff_combined_context(e, 3, Some(&opened), &PROFILE)
+                                .ok()
+                                .flatten()
+                        })
+                        .flatten(),
+                    side => repo
+                        .working_diff_context(
+                            e,
+                            side == WorkingSide::Staged,
+                            3,
+                            Some(&opened),
+                            whitespace,
+                            &PROFILE,
+                        )
+                        .ok(),
+                };
+                if let Some(diff) = diff {
+                    diffs.push(Arc::new(diff));
+                    kept.push(open.clone());
+                }
+            }
+            let event = if diffs.is_empty() {
+                Event::WorkingNote(
+                    if whitespace != Whitespace::Exact {
+                        tr!(
+                            "All can’t be shown while whitespace is ignored. See Unstaged and Staged."
+                        )
+                    } else {
+                        tr!(
+                            "This file’s staged and unstaged changes can’t be shown in one diff. See Unstaged and Staged."
+                        )
+                    },
+                    seq,
+                )
+            } else {
+                let collapsed = diffs
+                    .iter()
+                    .map(|d| collapsed_paths.contains(&d.entry.path))
+                    .collect();
+                Event::Working(
+                    Box::new(multi_shown(key, diffs, collapsed, &kept, side)),
+                    seq,
+                )
+            };
+            let _ = tx.send(event);
+            wake();
+        });
+    }
+
+    /// 並べた差分の `file` 番目のファイルを畳む・開く（読み直さずに、並べ直す）。
+    pub fn toggle_working_file(&mut self, file: usize) -> bool {
+        let Some(working) = &self.working else {
+            return false;
+        };
+        let Some(m) = &working.multi else {
+            return false;
+        };
+        let Some(d) = m.diffs.get(file) else {
+            return false;
+        };
+        let path = d.entry.path.clone();
+        if !self.multi_collapsed.1.remove(&path) {
+            self.multi_collapsed.1.insert(path);
+        }
+        self.working_seq += 1;
+        let seq = self.working_seq;
+        let diffs = m.diffs.clone();
+        let collapsed: Vec<bool> = diffs
+            .iter()
+            .map(|d| self.multi_collapsed.1.contains(&d.entry.path))
+            .collect();
+        let side = working.side;
+        let own: Vec<HashMap<u32, (u32, u32)>> = diffs
+            .iter()
+            .map(|d| {
+                self.working_gaps
+                    .get(&(side, d.entry.path.clone()))
+                    .cloned()
+                    .unwrap_or_default()
+            })
+            .collect();
+        let key = working.path.clone();
+        let (tx, wake) = (self.tx.clone(), self.wake.clone());
+        // 構文の色を求め直すので裏で。
+        std::thread::spawn(move || {
+            let shown = multi_shown(key, diffs, collapsed, &own, side);
+            let _ = tx.send(Event::Working(Box::new(shown), seq));
+            wake();
+        });
+        true
+    }
+
+    /// 画像の比べる欄で「テキストで見る」にした Working Copy の SVG を、差分で読み直す。
+    pub fn show_working_svg_as_text(&mut self) -> bool {
+        let Some(path) = self
+            .working
+            .as_ref()
+            .and_then(|w| w.image.as_ref())
+            .map(|(s, _)| s.files[0].0.clone())
+        else {
+            return false;
+        };
+        self.working_svg_text.insert(path);
+        self.reload_working();
+        true
+    }
+
+    /// 画像の比べる欄の持ち主（Working Copy の差分か、コミットの差分）の、絵を読んだものの鍵と `file` 番目の
+    /// パス。
+    pub fn image_file(&self, working: bool, file: usize) -> Option<(u64, String)> {
+        if working {
+            let w = self.working.as_ref()?;
+            let (stacked, _) = w.image.as_ref()?;
+            return Some((w.key, stacked.files.get(file)?.0.clone()));
+        }
+        let c = self.commit.as_ref()?;
+        Some((c.content().key, c.stacked.files.get(file)?.0.clone()))
+    }
+
+    /// 画像の比べる欄の `file` 番目の見せ方（なければ作る）。
+    pub fn image_view_mut(
+        &mut self,
+        working: bool,
+        file: usize,
+    ) -> Option<&mut crate::imagediff::View> {
+        let views = if working {
+            &mut self.working.as_mut()?.image_views
+        } else {
+            &mut self.commit.as_mut()?.image_views
+        };
+        Some(views.entry(file).or_default())
+    }
+
+    /// Working Copy の今の差分（ファイル全体の表示の行を含む）か、すべてのファイルで開いた変えていないファイル。
+    pub fn working_content(&self) -> Option<DiffContent<'_>> {
+        match &self.working_plain {
+            Some(plain) => Some(plain.content()),
+            None => self.working.as_ref().map(|w| w.content()),
+        }
+    }
+
+    /// Working Copy のすべてのファイルで開いた、変えていないファイル `path` の HEAD（`head`）の中身を読む（画像は
+    /// 1 枚の絵。History のすべてのファイルと同じ読み方）。None なら出さない。
+    pub fn want_working_plain_at(&mut self, head: amonhen_model::Oid, path: String) {
+        self.working_seq += 1;
+        self.working_wanted = None;
+        self.working = None;
+        self.working_note = None;
+        self.working_entry = None;
+        self.working_multi = None;
+        self.working_changed = true;
+        self.want_working_plain(Some((head, path)));
+    }
+
+    fn want_working_plain(&mut self, want: Option<(amonhen_model::Oid, String)>) {
+        self.working_plain_seq += 1;
+        if self.working_plain.take().is_some() {
+            self.working_changed = true;
+        }
+        let Some((head, path)) = want else { return };
+        self.spawn_file_at(head, None, path, self.working_plain_seq, true);
     }
 
     /// Working Copy の status を読み直す（stage・コミットの後。見張りが拾う前に出す）。
@@ -2594,6 +3165,14 @@ impl Data {
                         changed = true;
                     }
                 }
+                Event::WorkingPlain(shown, seq) => {
+                    if seq == self.working_plain_seq {
+                        self.working_plain = Some(shown);
+                        self.apply_wrap();
+                        self.working_changed = true;
+                        changed = true;
+                    }
+                }
                 Event::Working(shown, seq) => {
                     if seq == self.working_seq
                         && self.working_wanted.as_deref() == Some(shown.path.as_str())
@@ -2718,6 +3297,14 @@ impl Data {
                 .unwrap_or_else(|| file.base.clone());
             changed = true;
         }
+        if let Some(file) = self.working_plain.as_mut()
+            && file.wrap_cols != file_cols
+        {
+            file.wrap_cols = file_cols;
+            file.tree = wrapped(&file.view, Some(file.base.clone()), file_cols)
+                .unwrap_or_else(|| file.base.clone());
+            changed = true;
+        }
         if let Some(working) = self.working.as_mut() {
             let working_cols = cols(working.diff.combined.is_some(), false);
             if working.wrap_cols != working_cols {
@@ -2767,11 +3354,27 @@ impl Data {
             self.missing_changed = true;
         }
         self.file_fetch = Fetch::Idle;
-        let (Some(path), Some(repo)) = (path, self.repo.clone()) else {
+        let Some(path) = path else {
+            return;
+        };
+        self.spawn_file_at(commit, change, path, self.file_seq, false);
+    }
+
+    /// `commit` の時点の `path` の中身を裏で読んで送る（`want_file_at`）。`working` なら Working Copy のすべての
+    /// ファイルで開いた、変えていないファイル（partial clone で中身がなければ読まない）。
+    fn spawn_file_at(
+        &self,
+        commit: amonhen_model::Oid,
+        change: Option<amonhen_model::FileChange>,
+        path: String,
+        seq: u64,
+        working: bool,
+    ) {
+        let Some(repo) = self.repo.clone() else {
             return;
         };
         let (tx, wake) = (self.tx.clone(), self.wake.clone());
-        let (seq, partial) = (self.file_seq, self.partial);
+        let partial = self.partial && !working;
         let (svg_view, renderer) = (self.svg_view, self.mobile_renderer);
         // VectorDrawable の色は、暗い外観なら values-night などを先に引く
         let dark = crate::palette::dark();
@@ -2884,7 +3487,7 @@ impl Data {
             let view = match view {
                 Ok(view) => view,
                 // 確かめた後に中身がなかった（partial clone）: 同じく帯で聞く。
-                Err(e) if amonhen_model::MissingContents::of(&*e).is_some() => {
+                Err(e) if amonhen_model::MissingContents::of(&*e).is_some() && !working => {
                     let ids = amonhen_model::MissingContents::of(&*e)
                         .map(|m| m.ids.clone())
                         .unwrap_or_default();
@@ -2899,7 +3502,7 @@ impl Data {
             let syntax = syntax_of(&view);
             let base = file_lines(&view);
             static NEXT: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(1 << 40);
-            let _ = tx.send(Event::File(Box::new(FileShown {
+            let shown = Box::new(FileShown {
                 path,
                 view,
                 syntax,
@@ -2915,7 +3518,12 @@ impl Data {
                 images: Arc::new(images),
                 mobile,
                 drawable,
-            })));
+            });
+            let _ = tx.send(if working {
+                Event::WorkingPlain(shown, seq)
+            } else {
+                Event::File(shown)
+            });
             wake();
         });
     }
@@ -3052,7 +3660,7 @@ impl Data {
                 let stacked = repo
                     .stacked_diff_ws(&changes, whitespace)
                     .map_err(|e| e.to_string())?;
-                Ok(CommitShown::new(row, info, Arc::new(stacked)))
+                Ok(CommitShown::new(row, info, Arc::new(stacked), &repo))
             };
             let shown = match timed("Load diff", load) {
                 Ok(shown) => shown,
@@ -3062,7 +3670,7 @@ impl Data {
                 }
             };
             // 差分を先に出し、構文の色は後から（ファイル全体を解析するので時間がかかることがある）。
-            let (stacked, collapsed) = (shown.stacked.clone(), shown.collapsed.clone());
+            let (stacked, collapsed) = shown.syntax_args();
             let _ = tx.send(Event::Commit(generation, Box::new(shown)));
             wake();
             send_syntax(tx, wake, generation, row, 0, stacked, collapsed);
@@ -3105,7 +3713,7 @@ impl Data {
                 let stacked = repo
                     .stacked_diff_ws(&changes, whitespace)
                     .map_err(|e| e.to_string())?;
-                Ok(CommitShown::new(key, info, Arc::new(stacked)))
+                Ok(CommitShown::new(key, info, Arc::new(stacked), &repo))
             };
             let shown = match load() {
                 Ok(shown) => shown,
@@ -3114,7 +3722,7 @@ impl Data {
                     return wake();
                 }
             };
-            let (stacked, collapsed) = (shown.stacked.clone(), shown.collapsed.clone());
+            let (stacked, collapsed) = shown.syntax_args();
             let _ = tx.send(Event::Commit(generation, Box::new(shown)));
             wake();
             send_syntax(tx, wake, generation, key, 0, stacked, collapsed);
@@ -3147,7 +3755,7 @@ impl Data {
                 let stacked = repo
                     .stacked_diff_ws(&changes, whitespace)
                     .map_err(|e| e.to_string())?;
-                Ok(CommitShown::new(key, info, Arc::new(stacked)))
+                Ok(CommitShown::new(key, info, Arc::new(stacked), &repo))
             };
             let shown = match load() {
                 Ok(shown) => shown,
@@ -3156,7 +3764,7 @@ impl Data {
                     return wake();
                 }
             };
-            let (stacked, collapsed) = (shown.stacked.clone(), shown.collapsed.clone());
+            let (stacked, collapsed) = shown.syntax_args();
             let _ = tx.send(Event::Commit(generation, Box::new(shown)));
             wake();
             send_syntax(tx, wake, generation, key, 0, stacked, collapsed);
@@ -3202,7 +3810,7 @@ impl Data {
                     "kind": "range", "count": lines.len(), "lines": lines,
                     "title": title, "note": note,
                 }});
-                Ok(CommitShown::new(key, info, Arc::new(stacked)))
+                Ok(CommitShown::new(key, info, Arc::new(stacked), &repo))
             };
             let shown = match load() {
                 Ok(shown) => shown,
@@ -3211,7 +3819,7 @@ impl Data {
                     return wake();
                 }
             };
-            let (stacked, collapsed) = (shown.stacked.clone(), shown.collapsed.clone());
+            let (stacked, collapsed) = shown.syntax_args();
             let _ = tx.send(Event::Commit(generation, Box::new(shown)));
             wake();
             send_syntax(tx, wake, generation, key, 0, stacked, collapsed);
@@ -3259,7 +3867,7 @@ impl Data {
                 let info = serde_json::json!({ "selection": {
                     "kind": kind, "count": rows.len(), "lines": lines,
                 }});
-                Ok(CommitShown::new(key, info, Arc::new(stacked)))
+                Ok(CommitShown::new(key, info, Arc::new(stacked), &repo))
             };
             let shown = match load() {
                 Ok(shown) => shown,
@@ -3268,7 +3876,7 @@ impl Data {
                     return wake();
                 }
             };
-            let (stacked, collapsed) = (shown.stacked.clone(), shown.collapsed.clone());
+            let (stacked, collapsed) = shown.syntax_args();
             let _ = tx.send(Event::Commit(generation, Box::new(shown)));
             wake();
             send_syntax(tx, wake, generation, key, 0, stacked, collapsed);
@@ -3514,9 +4122,7 @@ impl Data {
             Some(Want::Selection(rows)) => self.want_selection(rows),
             None => self.restore = None,
         }
-        if let Some((entry, side)) = self.working_entry.clone() {
-            self.want_working(Some(entry), side);
-        }
+        self.reload_working();
     }
 
     /// 読み直した差分に、前の開き方を戻す（ファイルの数が同じときだけ）。

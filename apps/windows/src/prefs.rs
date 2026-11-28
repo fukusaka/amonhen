@@ -26,6 +26,18 @@ pub const WORKING_COPY_SECTIONS: &str = "workingCopySections";
 /// 押して）。GTK4 版・macOS 版と同じ鍵。
 pub const LINE_STAGE_STYLE: &str = "lineStageStyle";
 
+/// 複数のファイルを並べた差分（History のコミット、Working Copy で選んだファイル）で、先頭から開いて並べる
+/// ファイルの数（GTK4 版・macOS 版と同じ鍵と選べる数）。
+pub const DIFF_OPEN_FILES: &str = "diffOpenFiles";
+pub const DIFF_OPEN_FILES_CHOICES: [usize; 5] = [5, 10, 20, 50, 100];
+
+pub fn diff_open_files() -> usize {
+    string(DIFF_OPEN_FILES)
+        .and_then(|s| s.parse().ok())
+        .filter(|n| DIFF_OPEN_FILES_CHOICES.contains(n))
+        .unwrap_or(20)
+}
+
 /// 行の Stage の仕方が「変更の帯・行番号を押して」か。
 pub fn line_stage_bar() -> bool {
     string(LINE_STAGE_STYLE).as_deref() == Some("bar")
