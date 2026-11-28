@@ -494,7 +494,7 @@ fn errors_from_parallel_reads_are_in_the_requester_language() {
     });
     let text = error.to_string();
     assert!(
-        text.starts_with("コミット ") && text.ends_with(" が見つからない"),
+        text.starts_with("コミット ") && text.ends_with(" が見つかりません"),
         "{text}"
     );
 }
