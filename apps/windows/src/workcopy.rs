@@ -555,6 +555,28 @@ pub fn row_key(row: &Row) -> String {
     }
 }
 
+/// 節分けのファイルの行の鍵（`row_key`）の節。節分けでない行・ディレクトリ・節の見出しは None。
+pub fn key_section(key: &str) -> Option<WorkingSide> {
+    [WorkingSide::Unstaged, WorkingSide::Staged]
+        .into_iter()
+        .find(|side| {
+            key.strip_prefix(&format!("{side:?}:"))
+                .is_some_and(|p| !p.is_empty())
+        })
+}
+
+/// status が替わって選んでいた行を選び直したときの、見る側（`before` は前の行の鍵、`after` は選び直す行の鍵、
+/// `side` は今の側）。1 つの行がもう一方の節へ移った（すべて stage した・外した）ときだけ、見る側が Unstaged・
+/// Staged ならその節の側に替える。All は All のまま、同じ節に残った行・並べた差分（いくつか選んだ）は今の側。
+pub fn reselected_side(before: &[String], after: &[String], side: WorkingSide) -> WorkingSide {
+    match (before, after) {
+        ([old], [new]) if old != new && side != WorkingSide::All => {
+            key_section(new).unwrap_or(side)
+        }
+        _ => side,
+    }
+}
+
 /// 一覧を作り直す鍵の、status の分（status が替わるたびに作り直す）。
 pub fn list_key(status: Option<&StatusSnapshot>) -> u64 {
     status.map_or(0, |s| s.generation)
@@ -1369,6 +1391,36 @@ mod tests {
             Some("x\n\nA: b\nC: d")
         );
         assert_eq!(with_trailer("A: b", "A: b"), None);
+    }
+
+    #[test]
+    fn reselect_keeps_the_side_unless_the_row_moved() {
+        use WorkingSide::{All, Staged, Unstaged};
+        let tags = |keys: &[&str]| keys.iter().map(|k| (*k).to_owned()).collect::<Vec<_>>();
+        let (u, s) = (tags(&["Unstaged:a"]), tags(&["Staged:a"]));
+        // All は選び直しでも All のまま（行が別の節へ移っても）。
+        assert_eq!(reselected_side(&u, &u, All), All);
+        assert_eq!(reselected_side(&u, &s, All), All);
+        // 同じ節に残った行は今の側のまま。
+        assert_eq!(reselected_side(&u, &u, Unstaged), Unstaged);
+        assert_eq!(reselected_side(&s, &s, Unstaged), Unstaged);
+        // 1 つの行がもう一方の節へ移ったら、その節の側。
+        assert_eq!(reselected_side(&u, &s, Unstaged), Staged);
+        assert_eq!(reselected_side(&s, &u, Staged), Unstaged);
+        // 並べた差分は替えない。
+        let both = tags(&["Staged:b", "Unstaged:a"]);
+        assert_eq!(
+            reselected_side(&both, &tags(&["Staged:a", "Staged:b"]), Unstaged),
+            Unstaged
+        );
+        // 節分けでない鍵（パス）は節がない。
+        assert_eq!(
+            reselected_side(&tags(&["a"]), &tags(&["b"]), Unstaged),
+            Unstaged
+        );
+        assert_eq!(key_section("Staged:src/a.rs"), Some(Staged));
+        assert_eq!(key_section("dir:Staged:src"), None);
+        assert_eq!(key_section("section:Staged"), None);
     }
 
     #[test]
