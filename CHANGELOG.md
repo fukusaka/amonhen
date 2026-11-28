@@ -15,7 +15,7 @@ becomes the GitHub Release notes.
   into Staged and Unstaged sections like `git status` (macOS, GTK4, Windows).
 - Working Copy's All Files lists every file of the working tree, with the changes marked (macOS, GTK4, Windows).
 - Unchanged lines in a Working Copy diff fold into one row with the function name, opened 20 lines at a time or all
-  (macOS, GTK4, Windows).
+  from its buttons or from a menu (a right-click, or the label when the buttons do not fit) (macOS, GTK4, Windows).
 - Lines are staged from the row above each hunk (Stage Hunk, Discard Hunk; Stage Lines for selected lines) or, chosen
   in Settings > Diff & Merge, by clicking the change bar and line numbers. Rows can be selected by dragging
   (macOS, GTK4, Windows).

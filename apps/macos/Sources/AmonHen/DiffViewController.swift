@@ -783,8 +783,28 @@ final class DiffViewController: NSViewController, NSSearchFieldDelegate {
     /// 試作: 行の右クリックの「この時点のファイルを開く」（ファイルの番号と、後の側の行番号）。
     var onOpenAtCommit: ((Int, Int?) -> Void)?
 
+    /// 右クリックのメニュー。隙間の行では、幅によらず開く・畳むを先に出し、その行の今までの項目
+    /// （Stage Hunk・Discard Hunk など）があれば区切りの後ろに残す。
     fileprivate func menu(at point: NSPoint) -> NSMenu? {
         if let file = fileHeader(at: point) { return fileMenu?(file) }
+        let row = rowAt(point.y)
+        let base = rowMenu(at: point)
+        guard foldsGaps, gapOfRow[row] != nil,
+              let layout = gapLayout(row: row, top: 0, scale: cachedScale ?? view.window?.backingScaleFactor ?? 2),
+              let gap = gapMenu(row: row, layout: layout)
+        else { return base }
+        if let base, base.numberOfItems > 0 {
+            gap.addItem(.separator())
+            for item in base.items {
+                base.removeItem(item)
+                gap.addItem(item)
+            }
+        }
+        return gap
+    }
+
+    /// 行の右クリックの、隙間の開く・畳むを除いた項目（Stage・Unstage・Discard、この時点のファイル、AI の解説）。
+    private func rowMenu(at point: NSPoint) -> NSMenu? {
         if stagesRows, let menu = stageMenu(at: point) { return menu }
         if let onOpenAtCommit, let diff, !fileRows.isEmpty {
             let row = rowAt(point.y)
@@ -3879,6 +3899,10 @@ extension DiffViewController {
         var function: (text: String, x: CGFloat)?
         /// hunk の操作が効く行（選んだ行か、hunk の変更すべて）。
         var target: [Int]
+        /// その隙間で出せる開く・畳む（メニューの項目）。
+        var gapActions: [(GapAction, String)]
+        /// 開く・畳むのボタンが札の右に入りきらない（札を押すとメニューを開く）。
+        var overflows: Bool
     }
 
     private var gapFont: CTFont { NSFont.systemFont(ofSize: 11) as CTFont }
@@ -3963,8 +3987,9 @@ extension DiffViewController {
         } else {
             pillText = ""
         }
+        // その隙間で出せる開く・畳む（行を選んでいれば出さない）。ボタンはマウスが乗っているときだけ並べる。
         var gapActions: [(GapAction, String)] = []
-        if hoveredGap?.row == row, selected.isEmpty {
+        if selected.isEmpty {
             let step = Int(Self.gapStep)
             if hidden > step {
                 if !leading { gapActions.append((.down, "↓ " + L("%ld lines", step))) }
@@ -3977,7 +4002,6 @@ extension DiffViewController {
         let hunkActions = stageActions(for: target, lines: !selected.isEmpty)
         let height: CGFloat = 16
         let y = top + (lineHeight - height) / 2
-        let space: CGFloat = 6
         let width = textView.bounds.width
         var buttons: [(GapAction, String, CGRect)] = []
         // 右端の hunk の操作（右から並べる）。
@@ -3989,17 +4013,26 @@ extension DiffViewController {
         }
         // 中央の札と、その右の開く・畳む。
         var pill: CGRect?
-        var x = gutterWidth + 8
+        var shownPillText = pillText
+        var overflows = false
         if !pillText.isEmpty {
-            let pillWidth = gapGlyph(pillText, scale: scale).width + 20
-            let chipWidths = gapActions.map { gapGlyph($0.1, scale: scale, bold: true).width + 16 }
-            // 札は自分の幅だけで中央に置く（マウスが乗ってボタンが出ても、札が動かない）。
-            x = max(gutterWidth + 8, gutterWidth + (width - gutterWidth - pillWidth) / 2)
-            pill = CGRect(x: x, y: y, width: pillWidth, height: height)
-            x += pillWidth + space
-            for (i, (action, title)) in gapActions.enumerated() where x + chipWidths[i] < right - 8 {
-                buttons.append((action, title, CGRect(x: x, y: y, width: chipWidths[i], height: height)))
-                x += chipWidths[i] + space
+            // 入らなければ短い札（「⋯ n」）にする。変更のない行を隠しているときだけ。
+            let shortText = selected.isEmpty && hidden > 0 ? "⋯ \(hidden)" : nil
+            let fit = GapFit.place(
+                left: gutterWidth + 8, center: gutterWidth + (width - gutterWidth) / 2, right: right,
+                pill: gapGlyph(pillText, scale: scale).width + 20,
+                shortPill: shortText.map { gapGlyph($0, scale: scale).width + 20 },
+                chips: gapActions.map { gapGlyph($0.1, scale: scale, bold: true).width + 16 })
+            overflows = fit.overflows
+            if let x = fit.pillX {
+                if fit.short, let shortText { shownPillText = shortText }
+                pill = CGRect(x: x, y: y, width: gapGlyph(shownPillText, scale: scale).width + 20, height: height)
+                if hoveredGap?.row == row {
+                    for chip in fit.chips {
+                        let (action, title) = gapActions[chip.index]
+                        buttons.append((action, title, CGRect(x: chip.x, y: y, width: chip.width, height: height)))
+                    }
+                }
             }
         }
         // 左の関数名（札にかかるなら出さない）。
@@ -4009,8 +4042,8 @@ extension DiffViewController {
             let end = gutterWidth + 8 + gapGlyph(text, scale: scale).width
             if end + 12 < (pill?.minX ?? right) { functionPlace = (text, gutterWidth + 8) }
         }
-        return GapLayout(pill: pill, pillText: pillText, pillSelected: !selected.isEmpty, buttons: buttons,
-                         function: functionPlace, target: target)
+        return GapLayout(pill: pill, pillText: shownPillText, pillSelected: !selected.isEmpty, buttons: buttons,
+                         function: functionPlace, target: target, gapActions: gapActions, overflows: overflows)
     }
 
     /// 隙間の行: 破線と、札・ボタン・関数名。
@@ -4069,23 +4102,49 @@ extension DiffViewController {
         }
     }
 
-    /// 隙間の行を押した: ボタンならその操作、札ならすべて開く（すべて開いていれば畳む）。
+    /// 隙間の行を押した: ボタンならその操作、札ならすべて開く（すべて開いていれば畳む）。ボタンが入りきらない
+    /// ときは、札で開く・畳むのメニューを開く。
     fileprivate func gapClick(at point: NSPoint) {
         let row = rowAt(point.y)
         let top = rowY(row) - scrollView.contentView.bounds.origin.y
         let scale = cachedScale ?? view.window?.backingScaleFactor ?? 2
-        guard let gap = gapOfRow[row], let diff, let layout = gapLayout(row: row, top: top, scale: scale) else { return }
+        guard gapOfRow[row] != nil, let diff, let layout = gapLayout(row: row, top: top, scale: scale) else { return }
         let p = visiblePoint(point)
         let action: GapAction
         if let button = layout.buttons.first(where: { $0.rect.insetBy(dx: -2, dy: -3).contains(p) }) {
             action = button.action
         } else if let pill = layout.pill, !layout.pillSelected, pill.insetBy(dx: -2, dy: -3).contains(p) {
+            // 入りきらないボタンがあれば、札の下にメニューを開く（出せる開く・畳むすべて）。
+            if layout.overflows, let menu = gapMenu(row: row, layout: layout) {
+                let origin = scrollView.contentView.bounds.origin
+                menu.popUp(positioning: nil, at: NSPoint(x: pill.minX + origin.x, y: pill.maxY + origin.y + 2), in: document)
+                return
+            }
             let (hidden, shown) = diff.withRows { ($0[row].old_no, $0[row].new_no) }
             guard hidden > 0 || shown > 0 else { return }
             action = hidden > 0 ? .all : .collapse
         } else {
             return
         }
+        applyGap(action, row: row, layout: layout)
+    }
+
+    /// 隙間の行の開く・畳むのメニュー（札を押したとき・右クリック）。出せるものがなければ nil。
+    fileprivate func gapMenu(row: Int, layout: GapLayout) -> NSMenu? {
+        guard !layout.gapActions.isEmpty else { return nil }
+        let menu = NSMenu()
+        for (action, title) in layout.gapActions {
+            menu.addItem(ClosureMenuItem(title: title) { [weak self] in
+                guard let self, let layout = self.gapLayout(row: row, top: 0, scale: self.cachedScale ?? 2) else { return }
+                self.applyGap(action, row: row, layout: layout)
+            })
+        }
+        return menu
+    }
+
+    /// 隙間の行の操作をする（開く・畳むは隙間に、stage・unstage・discard はその下の hunk に）。
+    fileprivate func applyGap(_ action: GapAction, row: Int, layout: GapLayout) {
+        guard let gap = gapOfRow[row] else { return }
         var opening = gapOpenings[gap] ?? GapOpening()
         func grow(_ value: UInt32) -> UInt32 { value > .max - Self.gapStep ? .max : value + Self.gapStep }
         switch action {
@@ -4194,5 +4253,55 @@ extension DiffViewController {
             menu.addItem(ClosureMenuItem(title: L("Explain This Hunk with AI")) { onExplainHunk(path, text) })
         }
         return menu
+    }
+}
+
+/// 隙間の行の札とボタンの置き方（見えている範囲の座標）。札は自分の幅で中央に置き、右の hunk の操作
+/// （`right` から左）に 8 より近づくなら左へずらす（`left` まで）。それでも入らなければ短い札、それも
+/// 入らなければ札を出さない。ボタンは札の右に入るものだけ並べ、入らないものがあれば `overflows`。
+enum GapFit {
+    struct Chip: Equatable {
+        /// `chips` の中の位置。
+        var index: Int
+        var x: CGFloat
+        var width: CGFloat
+    }
+
+    struct Result: Equatable {
+        /// 札の左端（出さなければ nil）。
+        var pillX: CGFloat?
+        /// 短い札にした。
+        var short: Bool
+        var chips: [Chip]
+        /// 並べられなかったボタンがある（札を出さないときは、ボタンがあれば true）。
+        var overflows: Bool
+    }
+
+    static let margin: CGFloat = 8
+    static let space: CGFloat = 6
+
+    /// `pill` は札の幅、`shortPill` は短い札の幅（なければ短くしない）、`chips` は開く・畳むのボタンの幅。
+    static func place(
+        left: CGFloat, center: CGFloat, right: CGFloat, pill: CGFloat, shortPill: CGFloat?, chips: [CGFloat]
+    ) -> Result {
+        let limit = right - margin
+        func fit(_ width: CGFloat) -> CGFloat? {
+            let x = min(max(left, center - width / 2), limit - width)
+            return x >= left ? x : nil
+        }
+        var short = false
+        var pillX = fit(pill)
+        if pillX == nil, let shortPill, let x = fit(shortPill) {
+            pillX = x
+            short = true
+        }
+        guard let pillX else { return Result(pillX: nil, short: false, chips: [], overflows: !chips.isEmpty) }
+        var x = pillX + (short ? shortPill ?? pill : pill) + space
+        var placed: [Chip] = []
+        for (i, width) in chips.enumerated() where x + width < limit {
+            placed.append(Chip(index: i, x: x, width: width))
+            x += width + space
+        }
+        return Result(pillX: pillX, short: short, chips: placed, overflows: placed.count < chips.count)
     }
 }

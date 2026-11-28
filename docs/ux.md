@@ -503,7 +503,7 @@ The diff shows one of git's three diffs. The side is one for the whole Working C
 ```
 
 - Unchanged lines between hunks are folded into one row: a dashed line with "⋯ 56 unchanged lines" in the middle and, at the left, the function of the hunk below (as git finds it for the hunk header). There are no other hunk header rows. A hunk that starts at the first line gets such a row of its own, without the label.
-- On hover the row offers ↓ 20 lines (below the change above), ↑ 20 lines (above the change below), All, and Collapse once something is open. Clicking the label opens it all. An opened part keeps its row ("56 unchanged lines shown") to fold it again. Show Whole File opens or closes every part. Which parts are open is kept per file and side while the app runs.
+- On hover the row offers ↓ 20 lines (below the change above), ↑ 20 lines (above the change below), All, and Collapse once something is open. Clicking the label opens it all. The label stays centered but moves left rather than touch the hunk actions, shrinks to "⋯ 56" and then goes when even that does not fit. When the row is too narrow for all the buttons, clicking the label opens a menu with all of them instead. A right-click on the row always offers them. An opened part keeps its row ("56 unchanged lines shown") to fold it again. Show Whole File opens or closes every part. Which parts are open is kept per file and side while the app runs.
 - How it works: `file_diff_folded` takes the opened amounts per part (`GapOpen`: the part's number and how many lines to show from its top and bottom) and returns the part's row as a `HUNK` row whose `old_no` is the hidden line count, `new_no` the shown one, and text the function name.
 
 ### Staging lines
