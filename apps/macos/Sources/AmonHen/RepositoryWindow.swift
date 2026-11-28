@@ -2405,7 +2405,10 @@ final class RepositoryWindow: NSObject, NSWindowDelegate, NSMenuItemValidation, 
             do {
                 try await GitHub.checkout(pr.number, in: dir, repo: target.repo)
             } catch {
-                _ = await NSAlert(error: error).beginSheetModal(for: window)
+                let alert = NSAlert()
+                alert.messageText = L("Couldn’t Check Out #%ld", pr.number)
+                alert.informativeText = error.localizedDescription
+                _ = await alert.beginSheetModal(for: window)
             }
             refreshRepository(nil)
         }
@@ -2476,7 +2479,10 @@ final class RepositoryWindow: NSObject, NSWindowDelegate, NSMenuItemValidation, 
                             NSWorkspace.shared.open(link)
                         }
                     } catch {
-                        _ = await NSAlert(error: error).beginSheetModal(for: self.window)
+                        let alert = NSAlert()
+                        alert.messageText = L("Couldn’t Create the Pull Request")
+                        alert.informativeText = error.localizedDescription
+                        _ = await alert.beginSheetModal(for: self.window)
                     }
                     self.loadGitHub(force: true)
                 }
