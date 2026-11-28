@@ -9,6 +9,7 @@ import {
   mixedRows,
   modeOf,
   parseKey,
+  reloadSide,
   reselectRows,
   reselectTarget,
   rowCheck,
@@ -143,6 +144,15 @@ test('choosing a section row adopts its side; Mixed and conflict rows keep the s
   assert.equal(adoptSide(k('a', 'unstaged'), 'all'), 'unstaged');
   assert.equal(adoptSide(k('a'), 'all'), 'all');
   assert.equal(adoptSide(k('a', 'conflicts'), 'staged'), 'staged');
+});
+
+test('a reload keeps All; Unstaged and Staged follow a file that moved to the other section', () => {
+  assert.equal(reloadSide(k('a', 'staged'), 'all'), 'all');
+  assert.equal(reloadSide(k('a', 'unstaged'), 'all'), 'all');
+  assert.equal(reloadSide(k('a', 'staged'), 'unstaged'), 'staged');
+  assert.equal(reloadSide(k('a', 'unstaged'), 'staged'), 'unstaged');
+  assert.equal(reloadSide(k('a', 'unstaged'), 'unstaged'), 'unstaged');
+  assert.equal(reloadSide(k('a'), 'staged'), 'staged');
 });
 
 test('several selected files stack the ones changed on the side, in order, up to the limit', () => {

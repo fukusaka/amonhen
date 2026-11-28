@@ -244,6 +244,15 @@ export function adoptSide(row: RowKey, side: DiffSide): DiffSide {
 }
 
 /**
+ * 読み直した後に選び直した行 row での見る側（アプリの WorkingCopyReselect.side）。利用者が行を押したのではないので、
+ * All なら All のまま。Unstaged・Staged なら、選んでいた行がもう一方の節へ移ったとき（すべて stage した・外した）
+ * だけその節の側に替える
+ */
+export function reloadSide(row: RowKey, side: DiffSide): DiffSide {
+  return side === 'all' ? side : adoptSide(row, side);
+}
+
+/**
  * いくつか選んだファイルのうち、並べて差分を出すもの（アプリの showMulti と同じ）: 見る側 side に変更のあるもの
  * （All はすべて）を選んだ順に、上から limit 個まで。total はその側に変更のある数
  */

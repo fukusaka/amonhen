@@ -37,6 +37,7 @@ import {
   keyText,
   mixedRows,
   parseKey,
+  reloadSide,
   reselectRows,
   reselectTarget,
   rowCheck,
@@ -653,7 +654,8 @@ export function createWorkingCopyView(): View {
     fileAnchor = marked.has(fileAnchor ?? '') ? fileAnchor : key;
     selected = keyOf(row);
     const before = side;
-    if (engine && marked.size <= 1) side = adoptSide(row, side);
+    // 見る側が All なら All のまま。Unstaged・Staged なら、選んでいた行が別の節へ移ったときだけその側に（アプリと同じ）
+    if (engine && marked.size <= 1) side = reloadSide(row, side);
     renderFiles();
     // 同じファイルで見る側も同じなら、拡張が読み直した差分を送る
     if (pathChanged || side !== before) {
