@@ -1560,6 +1560,11 @@ final class WorkingCopyViewController: NSSplitViewController, NSOutlineViewDataS
 
     @objc private func sideChanged() {
         diffSide = DiffSide(rawValue: sideControl.selectedSegment) ?? .unstaged
+        // いくつか選んで並べていれば、並べたまま見る側を替える（並べた差分では selectedKey がない）。
+        if multi != nil, !showsAllFiles {
+            let chosen = chosenEntries()
+            if chosen.count >= 2 { return showMulti(chosen) }
+        }
         guard let key = selectedKey else { return }
         // 節分けでは、一覧の選択もその側の節の行に移す（その節になければ、そのまま）。
         if showsSections, let entry = entries.first(where: { $0.item.path == key.path && $0.section == diffSide }) {
