@@ -1819,6 +1819,8 @@ impl Inner {
     fn rebuild_list(this: &Rc<Self>) {
         // いくつか選んで並べていたか（選び直しの途中で 1 ファイルの読み込みが消すので、先に覚える）。
         let was_multi = this.multi.borrow().is_some();
+        // 並べた差分の見る側（選び直しで最初のファイルの節に合わせても、並べたままなら戻す）。
+        let side_before = this.side.get();
         // 前後の空白は除いて比べる（macOS 版と同じ）。
         let filter = this.filter.text().trim().to_lowercase();
         let filtered: Vec<StatusEntry> = this
@@ -1969,9 +1971,10 @@ impl Inner {
                     .or_else(|| entries.iter().position(|e| e.path == *p))
             })
             .or_else(|| {
-                entries.iter().enumerate().position(|(i, e)| {
-                    row_of(i).is_some() && kept.contains(&RowKey::File(e.path.clone(), sections[i]))
-                })
+                entries
+                    .iter()
+                    .enumerate()
+                    .position(|(i, e)| row_of(i).is_some() && kept_file(&kept, &e.path))
             });
         let index = found.unwrap_or(0);
         this.entries.replace(entries);
@@ -2042,10 +2045,15 @@ impl Inner {
             this.selection.select_item(row as u32, false);
         }
         this.rebuilding.set(false);
-        // いくつか選んでいれば、並べた差分のまま読み直す。
+        // いくつか選んでいれば、並べた差分のまま読み直す。見る側は替えない（Unstaged の側で並べていて 1 つを
+        // stage したら、そのファイルは Staged の節へ移っても選んだまま、並べた差分からは外れる）。
         if was_multi {
             let chosen = this.chosen_entries();
             if chosen.len() >= 2 {
+                if this.side.get() != side_before {
+                    this.side.set(side_before);
+                    this.sync_side_buttons();
+                }
                 Inner::show_multi(this, chosen, true);
             }
         }
@@ -5058,13 +5066,25 @@ enum RowKey {
     Dir(String),
 }
 
-/// 作り直した一覧 `rows` で、前に選んでいた行 `kept` に当たる行（なくなったものは除く）。
+/// 作り直した一覧 `rows` で、前に選んでいた行 `kept` に当たる行（なくなったものは除く）。節分けでは行の鍵に節が
+/// 入るので、すべて stage した・外したファイルは同じ鍵の行がない: そのときは別の節の同じパスの行を選ぶ（macOS 版は
+/// パスで選び直すので、別の節に移っても選んだまま）。
 fn rows_to_reselect(kept: &[RowKey], rows: &[Row]) -> Vec<usize> {
-    rows.iter()
-        .enumerate()
-        .filter(|(_, r)| kept.contains(&r.key()))
-        .map(|(i, _)| i)
+    let keys: Vec<RowKey> = rows.iter().map(Row::key).collect();
+    (0..keys.len())
+        .filter(|&i| {
+            kept.contains(&keys[i])
+                || matches!(&keys[i], RowKey::File(path, _) if kept.iter().any(|k| {
+                    matches!(k, RowKey::File(p, _) if p == path) && !keys.contains(k)
+                }))
+        })
         .collect()
+}
+
+/// 前に選んでいた行 `kept` に、パスが `path` のファイルの行があったか（どの節の行でも）。
+fn kept_file(kept: &[RowKey], path: &str) -> bool {
+    kept.iter()
+        .any(|k| matches!(k, RowKey::File(p, _) if p == path))
 }
 
 impl Row {
@@ -5464,6 +5484,51 @@ mod tests {
         // 木: src/・a・b・z。ディレクトリの行も選び直す。
         let (rows, _) = list_rows(&[a, b, c], Layout::Tree, &none);
         assert_eq!(rows_to_reselect(&kept, &rows), vec![0, 1, 3]);
+    }
+
+    /// 節分けでは、stage して別の節へ移ったファイルも選び直す（パスで選び直す。macOS 版と同じ）。
+    #[test]
+    fn reselects_files_moved_to_another_section() {
+        let none = std::collections::HashSet::new();
+        let kept = vec![
+            RowKey::File("a".into(), Some(Side::Unstaged)),
+            RowKey::File("b".into(), Some(Side::Unstaged)),
+        ];
+        // a を stage した: Staged の節に a、Unstaged の節に b。
+        let a = entry(StatusKind::Changed, "a", b'M', b'.');
+        let b = entry(StatusKind::Changed, "b", b'.', b'M');
+        let (rows, _) = section_rows(
+            &[a, b],
+            &[Some(Side::Staged), Some(Side::Unstaged)],
+            Layout::List,
+            &none,
+        );
+        let files: Vec<usize> = rows
+            .iter()
+            .enumerate()
+            .filter(|(_, r)| matches!(r, Row::File { .. }))
+            .map(|(i, _)| i)
+            .collect();
+        assert_eq!(rows_to_reselect(&kept, &rows), files);
+        assert_eq!(files.len(), 2);
+        // 一部だけ stage した: a は両方の節にあり、選んでいた Unstaged の行だけを選ぶ（Staged の行は選ばない）。
+        let a = entry(StatusKind::Changed, "a", b'M', b'M');
+        let b = entry(StatusKind::Changed, "b", b'.', b'M');
+        let (rows, _) = section_rows(
+            &[a.clone(), a, b],
+            &[
+                Some(Side::Staged),
+                Some(Side::Unstaged),
+                Some(Side::Unstaged),
+            ],
+            Layout::List,
+            &none,
+        );
+        let picked: Vec<RowKey> = rows_to_reselect(&kept, &rows)
+            .into_iter()
+            .map(|i| rows[i].key())
+            .collect();
+        assert_eq!(picked, kept);
     }
 
     /// ディレクトリの中かは、名前の区切りで見る（`src` に `srcx/a` は入らない）。
